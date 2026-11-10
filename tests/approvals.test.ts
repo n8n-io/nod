@@ -1563,6 +1563,10 @@ test(
             "UPDATE turns SET status='waiting',waiting_reason='question' WHERE id=$1",
             [worker.turnId],
           );
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text,hidden_at) VALUES($1,$2,$3,$4,'assistant','Retired schedule confirmation fixture',now())",
+            [randomUUID(), ownerId, worker.threadId, worker.turnId],
+          );
           assert.equal(
             (await relay('Yes.', dentist.id)).assistantMessageBeforeLatestUserMessage,
             question,

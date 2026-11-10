@@ -123,6 +123,15 @@
   color: var(--foreground);
 }
 
+.ob-welcome-usage {
+  max-width: 480px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.5;
+  animation: ob-welcome-point 420ms var(--ease-travel, ease-out) both;
+  animation-delay: 560ms;
+}
+
 @keyframes ob-welcome-point {
   from {
     opacity: 0;
@@ -131,7 +140,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ob-welcome-point {
+  .ob-welcome-point,
+  .ob-welcome-usage {
     animation: none;
   }
 }

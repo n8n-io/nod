@@ -57,7 +57,7 @@ Cache classification results by owned origin, taxonomy version, and consent revi
 
 Events fired while sharing is off are lost. Don't replay them when sharing turns on. Native Welcome is outside app analytics.
 
-### Onboarding person properties and research contact email
+### Onboarding person properties and updates email
 
 When an owner submits About you, set its bounded fixed choices on a PostHog person profile under the same installation distinct ID as the events. Do this for every installation with the deployment gate and **Share usage data** enabled, whether or not the owner later volunteers an email.
 
@@ -65,7 +65,7 @@ Store one property per question: `onboarding_scope`, `onboarding_roles`, `onboar
 
 If the person update fails while sharing is still enabled, return a retryable error rather than confirming submission. When sharing is off or the person provider is unavailable, local About you memory can still be saved. Ordinary events still do not create or update profiles. They use `$process_person_profile=false`, so their event-time person properties are empty even after the profile update. Filter linked events by **current** person properties instead. In PostHog Activity, choose **Property filters → SQL expression** and use `pdi.person.properties.onboarding_scope = 'work'` for a single answer or `has(pdi.person.properties.onboarding_roles, 'freelance')` for a selected role. PostHog also supports `hasAny` and `hasAll` for multi-select searches ([array filter guide](https://posthog.com/tutorials/array-filter-breakdown)). Earlier events then reflect the profile's current answers if those answers change.
 
-Only after the owner enters an email address and ticks the separate checkbox for Nod research invitations may Nod set its PostHog `email` person property and contact consent flag, time, and version. Require the deployment gate and **Share usage data** at submission time. Don't send an email address when either gate is off. The consented address joins the existing onboarding profile under the same installation ID. Submission sends no email immediately; the Nod team may contact the owner later with research invitations. Opt-out stops later data sends; deleting an address or answers already stored in PostHog requires a request to the Nod team.
+Only after the owner enters an email address and ticks the consent checkbox for updates about Nod and other n8n products may Nod set its PostHog `email` person property and the `nod_updates_email_consent` flag, time, and version. Require the deployment gate and **Share usage data** at submission time. Don't send an email address when either gate is off. The consented address joins the existing onboarding profile under the same installation ID. Submission sends no email immediately. Opt-out stops later data sends; deleting an address or answers already stored in PostHog requires a request to the Nod team.
 
 ### Outputs
 

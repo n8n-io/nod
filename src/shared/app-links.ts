@@ -22,5 +22,5 @@ export const appPageLinks = Object.entries(appPages)
   .join(', ');
 
 export function appPageUrl(path: NonNullable<ReturnType<typeof appPagePath>>) {
-  return `https://nod-docs.pages.dev/open/#${path}`;
+  return `https://nod.n8n.io/docs/open/#${path}`;
 }

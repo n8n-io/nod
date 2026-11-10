@@ -41,11 +41,11 @@ export function createHistorySearch({
     const { query, before, cursor, from, to, around, order } = inputSchema.parse(raw);
     if (around) {
       const { rows } = await pool.query<HistoryMessage>(
-        `WITH hit AS (SELECT m.created_at,m.id FROM messages m WHERE m.id=$2 AND m.owner_id=$1 AND ${activeThreadSql('m')}),
+        `WITH hit AS (SELECT m.created_at,m.id FROM messages m WHERE m.id=$2 AND m.owner_id=$1 AND m.hidden_at IS NULL AND ${activeThreadSql('m')}),
          nearby AS (
-           (SELECT m.* FROM messages m,hit WHERE m.owner_id=$1 AND ${activeThreadSql('m')} AND (m.created_at,m.id)<(hit.created_at,hit.id) ORDER BY m.created_at DESC,m.id DESC LIMIT 5)
+           (SELECT m.* FROM messages m,hit WHERE m.owner_id=$1 AND m.hidden_at IS NULL AND ${activeThreadSql('m')} AND (m.created_at,m.id)<(hit.created_at,hit.id) ORDER BY m.created_at DESC,m.id DESC LIMIT 5)
            UNION ALL (SELECT m.* FROM messages m,hit WHERE m.id=hit.id)
-           UNION ALL (SELECT m.* FROM messages m,hit WHERE m.owner_id=$1 AND ${activeThreadSql('m')} AND (m.created_at,m.id)>(hit.created_at,hit.id) ORDER BY m.created_at,m.id LIMIT 5))
+           UNION ALL (SELECT m.* FROM messages m,hit WHERE m.owner_id=$1 AND m.hidden_at IS NULL AND ${activeThreadSql('m')} AND (m.created_at,m.id)>(hit.created_at,hit.id) ORDER BY m.created_at,m.id LIMIT 5))
          SELECT id,role,CASE WHEN id=$2 THEN text ELSE left(text,6000) END AS text,id<>$2 AND length(text)>6000 AS shortened,turn_id,created_at FROM nearby ORDER BY created_at,id`,
         [ownerId, around],
       );
@@ -55,7 +55,7 @@ export function createHistorySearch({
     const boundary = before
       ? (
           await pool.query<{ at: Date }>(
-            `SELECT m.created_at AS at FROM messages m WHERE m.id=$2 AND m.owner_id=$1 AND ${activeThreadSql('m')}
+            `SELECT m.created_at AS at FROM messages m WHERE m.id=$2 AND m.owner_id=$1 AND m.hidden_at IS NULL AND ${activeThreadSql('m')}
            UNION ALL SELECT u.created_at FROM turns u WHERE u.id=$2 AND u.owner_id=$1 AND ${activeThreadSql('u')} LIMIT 1`,
             [ownerId, before],
           )
@@ -89,7 +89,7 @@ export function createHistorySearch({
     const page = await pool.query<HistoryMessage & { place: string; total: number }>(
       `${terms}, corpus AS (
          SELECT m.id,m.role,m.text,m.created_at,to_tsvector('english',m.text) AS v
-         FROM messages m CROSS JOIN terms WHERE ${scope('m')}),
+         FROM messages m CROSS JOIN terms WHERE ${scope('m')} AND m.hidden_at IS NULL),
        docs AS (SELECT corpus.* FROM corpus CROSS JOIN terms WHERE $2::text IS NULL OR corpus.v @@ terms.q),
        weights AS (
          SELECT w,ln(1+((SELECT count(*) FROM corpus)-count(*)+0.5)/(count(*)+0.5)) AS idf
@@ -109,7 +109,7 @@ export function createHistorySearch({
     );
     if (cursor && !page.rows.length) {
       const { rows } = await pool.query(
-        `${terms} SELECT m.id FROM messages m CROSS JOIN terms WHERE ${where('m', 'm.text')} AND m.id=$7::uuid`,
+        `${terms} SELECT m.id FROM messages m CROSS JOIN terms WHERE ${where('m', 'm.text')} AND m.hidden_at IS NULL AND m.id=$7::uuid`,
         [...values, cursor],
       );
       if (!rows.length) throw new Error('This history cursor does not match the search.');
@@ -120,7 +120,7 @@ export function createHistorySearch({
       `WITH terms AS (SELECT replace(plainto_tsquery('english',coalesce($4,''))::text,'&','|')::tsquery AS q),
        thread AS (
          SELECT m.id,m.role,m.text,m.turn_id,m.created_at,row_number() OVER (ORDER BY m.created_at,m.id) AS n
-         FROM messages m WHERE m.owner_id=$1 AND ${activeThreadSql('m')}),
+         FROM messages m WHERE m.owner_id=$1 AND m.hidden_at IS NULL AND ${activeThreadSql('m')}),
        picked AS (SELECT t.n,ids.place,t.id FROM unnest($2::uuid[]) WITH ORDINALITY ids(id,place) JOIN thread t ON t.id=ids.id),
        shown AS (
          SELECT t.*,bool_or(p.id=t.id) AS match,min(p.place) AS place FROM thread t

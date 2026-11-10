@@ -1139,7 +1139,9 @@ test('local selection shows startup progress and hands off to app onboarding bef
         assert.equal(choices.length, 0);
         return;
       }
-      page.window.document.querySelector('[data-step="welcome"] button').click();
+      [...page.window.document.querySelectorAll('[data-step="welcome"] button')]
+        .find((button) => button.textContent === 'Get started')
+        .click();
       await settle(() => choices.length >= 1 && calls.length >= 1);
       assert.deepEqual(JSON.parse(JSON.stringify(choices[0])), {
         usageData: true,

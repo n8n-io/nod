@@ -91,6 +91,13 @@
   resize: vertical;
 }
 
+.survey-card-hint {
+  margin-top: -4px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 16px;
+}
+
 .survey-scale {
   display: grid;
   gap: 4px;

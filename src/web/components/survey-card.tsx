@@ -162,6 +162,7 @@ function SurveyForm({ survey, onClose }: { survey: AnalyticsSurvey; onClose(): v
               value={text}
               onChange={(event) => setText(event.target.value)}
             />
+            <small className="survey-card-hint">Please do not enter personal data.</small>
           </label>
           <div className="survey-card-footer">
             <span>Your answer goes to the Nod team.</span>

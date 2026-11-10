@@ -100,7 +100,7 @@ function createSessionStore(
           ...snapshot.session,
           user: null,
           settings: null,
-          capabilities: { developer: false, traces: false, researchContact: false },
+          capabilities: { developer: false, traces: false, updatesEmail: false },
         }
       : null;
     applyTheme(null);

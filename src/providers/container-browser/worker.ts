@@ -356,9 +356,16 @@ export async function startContainerBrowserWorker(
                 let result;
                 try {
                   controller.signal.throwIfAborted();
-                  await (await computer).control(threadId, frame.input, controller.signal);
+                  const text = await (
+                    await computer
+                  ).control(threadId, frame.input, controller.signal);
                   controller.signal.throwIfAborted();
-                  result = { id: frame.id, inputId: frame.inputId, ok: true };
+                  result = {
+                    id: frame.id,
+                    inputId: frame.inputId,
+                    ok: true,
+                    ...(frame.input.type === 'copy' && typeof text === 'string' ? { text } : {}),
+                  };
                 } catch (error) {
                   result = {
                     id: frame.id,

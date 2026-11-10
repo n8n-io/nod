@@ -61,6 +61,9 @@ import { logFailure } from './failure-log.ts';
 
 const unverifiedAccount =
   "Nod can't confirm this is the same account, so it can't reconnect it in place. Connect the app again as a new connection; the old one stays in Apps until you remove it.";
+const retiredNotionMcp = 'notion_mcp';
+const retiredNotionMessage =
+  'This older Notion MCP connection cannot read pages. Connect Notion again, then remove this connection in Apps.';
 
 const slugSchema = z.string().regex(/^[a-z][a-z0-9_]{0,79}$/);
 type Slug = z.infer<typeof slugSchema>;
@@ -440,7 +443,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       logFailure('app_catalog_failed', error);
       throw new IntegrationError('The app catalog is unavailable. Try again later.', 502);
     }
-    serviceCatalog = new Map(entries.map((entry) => [entry.slug, entry]));
+    serviceCatalog = new Map(
+      entries
+        .filter((entry) => entry.slug !== retiredNotionMcp)
+        .map((entry) => [entry.slug, entry]),
+    );
     return serviceCatalog;
   }
 
@@ -451,7 +458,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   }
 
   async function catalog(): Promise<Connection[]> {
-    return [...(await providerCatalog()).values()]
+    const services = await providerCatalog();
+    if (options.discovered && !services.has('notion'))
+      services.set('notion', serviceInfo('notion'));
+    return [...services.values()]
       .sort((left, right) => {
         const featured = (slug: string) => {
           const index = (integrationServiceIds as readonly string[]).indexOf(slug);
@@ -553,6 +563,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     const pending = rows.filter(
       (row) =>
         row.account_id &&
+        row.slug !== retiredNotionMcp &&
         !row.revoked &&
         configurationMatches(row) &&
         (!row.account_checked_at || Date.now() - row.account_checked_at.getTime() > 60_000),
@@ -646,6 +657,25 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           supportsTriggers: false,
           description: service.description,
         });
+        continue;
+      }
+      if (slug === retiredNotionMcp) {
+        for (const row of rows.filter((entry) => entry.slug === slug && entry.account_id))
+          result.push({
+            slug,
+            name: 'Notion MCP',
+            description: retiredNotionMessage,
+            status: 'disconnected',
+            connectionId: row.id,
+            accountId: row.account_id!,
+            accountName: row.account_name ?? undefined,
+            accountEmail: row.account_email ?? undefined,
+            disconnectPending: row.revoked,
+            reconnectRequired: true,
+            canReconnect: false,
+            triggersEnabled: false,
+            supportsTriggers: false,
+          });
         continue;
       }
       const accounts = rows.filter((row) => row.slug === slug && row.account_id);
@@ -835,6 +865,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     turn?: TurnRef,
     replacement?: ConnectionRow,
   ) {
+    if (slug === retiredNotionMcp) throw new IntegrationError(retiredNotionMessage, 409);
     await requireService(slug);
     await pool.query(
       `DELETE FROM app_connections WHERE owner_id=$1 AND account_id IS NULL AND callback_expires<now()
@@ -1018,6 +1049,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     returnTo: ReturnTarget,
     turn?: TurnRef,
   ) {
+    if (slug === retiredNotionMcp) throw new IntegrationError(retiredNotionMessage, 409);
     const row = await selectConnection(configuredOwner, slug, connectionId, true);
     if (protectedCallback(row))
       throw new IntegrationError(
@@ -1432,6 +1464,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       throw new IntegrationError('This connected account is unavailable.', 404);
     const slug = matchingService(action, knownServices(rows));
     if (!slug) throw new IntegrationError('This action is outside the connected apps.', 403);
+    if (slug === retiredNotionMcp) throw new IntegrationError(retiredNotionMessage, 409);
     if (selected && selected.slug !== slug)
       throw new IntegrationError('This connected account is unavailable.', 404);
     return slug;
@@ -1550,6 +1583,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             row.account_id &&
             !row.revoked &&
             row.account_active &&
+            row.slug !== retiredNotionMcp &&
             configurationMatches(row) &&
             (!connectionId || row.id === connectionId),
         );
@@ -1569,11 +1603,14 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 const slug = matchingService(action, services);
                 return (
                   !(slug && officialMcp.has(slug)) &&
+                  slug !== retiredNotionMcp &&
                   (!connectionId || rows.some((row) => row.slug === slug))
                 );
               }),
             );
-            suggestions = found.suggestions;
+            suggestions = found.suggestions.filter((suggestion) =>
+              suggestion.primaryToolSlugs.every((action) => Object.hasOwn(tools, action)),
+            );
             searched = true;
           } catch (error) {
             signal?.throwIfAborted();
@@ -2420,20 +2457,24 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           })
           .strict()
           .parse(request.body ?? {});
-        if (officialMcp.has(request.params.slug)) {
+        const service = request.params.slug === retiredNotionMcp ? 'notion' : request.params.slug;
+        if (request.params.slug === retiredNotionMcp && input.connectionId)
+          throw new IntegrationError(retiredNotionMessage, 409);
+        if (officialMcp.has(service)) {
           if (!options.discovered)
             throw new IntegrationError('Discovered connections are unavailable.', 503);
           const selected = (await options.discovered.list()).find(
-            (entry) =>
-              entry.connectionId === input.connectionId && entry.slug === request.params.slug,
+            (entry) => entry.connectionId === input.connectionId && entry.slug === service,
           );
           if (input.restartAttempt && input.connectionId && !selected)
             throw new IntegrationError(
               'This sign-in changed. Use the newest window or try again.',
               409,
             );
+          if (input.connectionId && !selected)
+            throw new IntegrationError('This connected account is unavailable.', 404);
           return options.discovered.authorize(
-            request.params.slug,
+            service,
             selected?.status === 'disconnected' && !input.newAccount
               ? input.connectionId
               : undefined,
@@ -2808,7 +2849,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           throw new IntegrationError('Discovered connections are unavailable.', 503);
         return options.discovered.propose(proposal, turn);
       }
-      const slug = slugSchema.parse(service);
+      const slug = slugSchema.parse(service === retiredNotionMcp ? 'notion' : service);
+      if (service === retiredNotionMcp && connectionId)
+        throw new IntegrationError(retiredNotionMessage, 409);
       if (officialMcp.has(slug)) {
         if (!options.discovered)
           throw new IntegrationError('Discovered connections are unavailable.', 503);

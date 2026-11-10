@@ -9,9 +9,9 @@ import { analyticsForCurrentSession, captureAnalytics } from '../../../lib/analy
 import type { StepProps } from '..';
 import { Bubble, Footer, Messages } from '../motion';
 
-const privacyUrl = 'https://nod.n8n.io/docs/trust/privacy/#research-invitations';
+const privacyUrl = 'https://n8n.io/legal/privacy/';
 
-export function Join({ onNext, onBack, nextLabel, researchContact, usageShared }: StepProps) {
+export function Join({ onNext, onBack, nextLabel, updatesEmail, usageShared }: StepProps) {
   const [email, setEmail] = useState('');
   const [consent, setConsent] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -20,7 +20,7 @@ export function Join({ onNext, onBack, nextLabel, researchContact, usageShared }
     message: string;
   } | null>(null);
   const submitting = useRef(false);
-  const canSubscribe = Boolean(researchContact && usageShared);
+  const canSubscribe = Boolean(updatesEmail && usageShared);
 
   async function advance(retry = false) {
     if (submitting.current) return;
@@ -31,7 +31,7 @@ export function Join({ onNext, onBack, nextLabel, researchContact, usageShared }
       return;
     }
     if (!consent) {
-      setError({ field: 'consent', message: 'Tick the box to receive Nod research invitations.' });
+      setError({ field: 'consent', message: 'Tick the box to sign up for updates.' });
       return;
     }
     submitting.current = true;
@@ -39,11 +39,11 @@ export function Join({ onNext, onBack, nextLabel, researchContact, usageShared }
     setError(null);
     const capture = analyticsForCurrentSession();
     try {
-      await api('/api/onboarding/research-contact', {
+      await api('/api/onboarding/updates-email', {
         method: 'POST',
         body: JSON.stringify({ email: address, consent: true }),
       });
-      capture('onboarding_research_contact_submitted');
+      capture('onboarding_updates_email_submitted');
       onNext();
     } catch (cause) {
       setError({ field: 'server', message: errorMessage(cause) });
@@ -61,8 +61,8 @@ export function Join({ onNext, onBack, nextLabel, researchContact, usageShared }
           <Bubble>
             {canSubscribe ? (
               <>
-                <strong>Help shape Nod.</strong> Leave your email below for occasional invitations
-                to participate in Nod research.
+                <strong>Stay up to date.</strong> Leave your email for updates about Nod and other
+                n8n products.
               </>
             ) : (
               <>Join the Nod community on Discord or the forum.</>
@@ -115,11 +115,11 @@ export function Join({ onNext, onBack, nextLabel, researchContact, usageShared }
                 }}
               />
               <span>
-                I agree to receive occasional invitations to Nod research by email. I have read the{' '}
+                I agree that n8n GmbH links my email to my Nod usage data and sends me updates about
+                Nod and other n8n products.{' '}
                 <a href={privacyUrl} target="_blank" rel="noreferrer">
-                  privacy policy
+                  Privacy policy
                 </a>
-                .
               </span>
             </label>
             {error && (

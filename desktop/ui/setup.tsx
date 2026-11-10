@@ -10,6 +10,8 @@ import '../../src/web/theme.css';
 import '../../src/web/components/motion.css';
 import '../../src/web/components/setup-progress.css';
 import '../../src/web/components/controls.css';
+import '../../src/web/components/dialog.css';
+import '../../src/web/components/data-sharing.css';
 import '../../src/web/pages/onboarding/onboarding.css';
 import '../../src/web/pages/onboarding/steps/welcome.css';
 
@@ -426,6 +428,8 @@ function Startup() {
           <div className="ob-screen" inert={busy && !handingOff} aria-busy={busy || handingOff}>
             <Welcome
               local
+              usageShared={welcome.usageData}
+              traces={{ enabled: false, onChange: () => Promise.resolve() }}
               arrived="forward"
               onBack={() => {}}
               onNext={() =>

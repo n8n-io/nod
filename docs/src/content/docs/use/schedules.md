@@ -30,6 +30,8 @@ Open **Scheduled**. Select **New schedule** to start a conversation with Nod, wh
 - Select **Ask Nod** to change it in your own words.
 - Select **Delete schedule**. Future runs stop, and past activity stays in [Usage](/use/spending/).
 
+Pausing or deleting a schedule here removes any unanswered request to change or cancel it from Nod's chat. A request already sent to Telegram or WhatsApp remains there, but replying to it cannot change the schedule.
+
 You can also tell Nod in chat, for example "stop the morning summary".
 
 ## What happens when a schedule runs

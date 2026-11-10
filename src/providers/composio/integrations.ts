@@ -281,6 +281,7 @@ export function createComposioProvider(options: {
           if (!parsed.success) continue;
           const item = parsed.data;
           if (
+            item.slug === 'notion_mcp' ||
             item.no_auth ||
             (item.auth_schemes?.length &&
               item.auth_schemes.every((scheme) => scheme.toUpperCase() === 'NO_AUTH'))
@@ -898,7 +899,8 @@ export function createComposioProvider(options: {
       signal.throwIfAborted();
       const connectedAccounts = Object.fromEntries(
         Object.entries(accounts).filter(
-          (entry): entry is [string, string | string[]] => entry[1] !== undefined,
+          (entry): entry is [string, string | string[]] =>
+            entry[1] !== undefined && entry[0] !== 'notion_mcp',
         ),
       );
       const selectedToolkits = [

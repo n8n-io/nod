@@ -30,12 +30,14 @@ const textPiece = 2000;
 const encoder = new TextEncoder();
 const revealed = new Set<string>();
 
-async function post(path: string, body: unknown) {
+async function post<T = unknown>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   try {
-    return await api(path, {
+    return await api<T>(path, {
       method: 'POST',
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(75_000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(75_000)])
+        : AbortSignal.timeout(75_000),
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === 'TimeoutError')
@@ -51,6 +53,13 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
   const dialog = useRef<HTMLDivElement>(null);
   const pending = useRef<BrowserHandoffInput[]>([]);
   const sending = useRef<Promise<void> | null>(null);
+  const lifetime = useRef(new AbortController());
+  const clipboardCopies = useRef(
+    new Map<
+      BrowserHandoffInput,
+      { resolve(value: Blob): void; reject(reason: unknown): void; writing: Promise<void> }
+    >(),
+  );
   const view = useRef(crypto.randomUUID());
   const imageLoad = useRef<{
     url: string;
@@ -72,23 +81,78 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
   const [frame, setFrame] = useState('');
   const unavailable = failures >= 3;
 
+  function stopInput(controller: AbortController = lifetime.current) {
+    controller.abort();
+    pending.current.length = 0;
+    for (const copy of clipboardCopies.current.values()) copy.reject(controller.signal.reason);
+    clipboardCopies.current.clear();
+  }
+
+  useEffect(() => {
+    if (closed) return;
+    if (lifetime.current.signal.aborted) lifetime.current = new AbortController();
+    const controller = lifetime.current;
+    return () => stopInput(controller);
+  }, [closed]);
+
   function flush(): Promise<void> {
+    const signal = lifetime.current.signal;
     sending.current ??= (async () => {
-      while (pending.current.length) {
+      while (pending.current.length && !signal.aborted) {
         const inputs: BrowserHandoffInput[] = [];
         let bytes = 0;
         for (const input of pending.current) {
           const size = encoder.encode(JSON.stringify(input)).length;
-          if (inputs.length && bytes + size > batchBytes) break;
+          if (
+            inputs.length &&
+            (bytes + size > batchBytes || input.type === 'copy' || inputs.at(-1)?.type === 'copy')
+          )
+            break;
           inputs.push(input);
           bytes += size;
         }
         pending.current.splice(0, inputs.length);
         try {
-          await post('/api/browser-handoff', { turnId, inputs });
+          const result = await post<{ copiedText?: string }>(
+            '/api/browser-handoff',
+            { turnId, inputs },
+            signal,
+          );
+          if (signal.aborted) return;
           if (inputs.some((input) => input.type !== 'mouse' || input.event !== 'move'))
             setError('');
+          const copy = inputs.find((input) => input.type === 'copy');
+          const deferred = copy ? clipboardCopies.current.get(copy) : undefined;
+          const copiedText =
+            typeof result.copiedText === 'string' && result.copiedText.length
+              ? result.copiedText
+              : undefined;
+          if (copy) clipboardCopies.current.delete(copy);
+          if (deferred) {
+            if (copiedText) {
+              void deferred.writing.catch(() => {
+                if (!signal.aborted)
+                  setError('The selected text could not be copied to your clipboard.');
+              });
+              deferred.resolve(new Blob([copiedText], { type: 'text/plain' }));
+            } else deferred.reject(new Error('No selected text.'));
+          } else if (copy && copiedText)
+            try {
+              void navigator.clipboard.writeText(copiedText).catch(() => {
+                if (!signal.aborted)
+                  setError('The selected text could not be copied to your clipboard.');
+              });
+            } catch {
+              setError('The selected text could not be copied to your clipboard.');
+            }
         } catch (reason) {
+          if (signal.aborted) return;
+          for (const input of [...inputs, ...pending.current]) {
+            const deferred = clipboardCopies.current.get(input);
+            if (!deferred) continue;
+            clipboardCopies.current.delete(input);
+            deferred.reject(reason);
+          }
           setError(errorMessage(reason));
           setLive(false);
           pending.current.length = 0;
@@ -98,7 +162,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
       }
     })().finally(() => {
       sending.current = null;
-      if (pending.current.length) void flush().catch(() => {});
+      if (pending.current.length && !signal.aborted) void flush().catch(() => {});
     });
     return sending.current;
   }
@@ -160,6 +224,25 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
     if (held) queue({ type: 'mouse', event: 'up', x: held.x, y: held.y, button: held.button });
   }
 
+  function copy() {
+    if (!live || returning || loading) return;
+    const input: BrowserHandoffInput = { type: 'copy' };
+    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+      let resolve!: (value: Blob) => void;
+      let reject!: (reason: unknown) => void;
+      const data = new Promise<Blob>((done, fail) => {
+        resolve = done;
+        reject = fail;
+      });
+      try {
+        const writing = navigator.clipboard.write([new ClipboardItem({ 'text/plain': data })]);
+        void writing.catch(() => {});
+        clipboardCopies.current.set(input, { resolve, reject, writing });
+      } catch {}
+    }
+    queue(input);
+  }
+
   function key(event: React.KeyboardEvent<HTMLDivElement>) {
     if (event.target !== event.currentTarget) return;
     const mac = /Mac|iPhone|iPad/.test(window.navigator.platform);
@@ -176,6 +259,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
     if (event.ctrlKey || event.metaKey) {
       if (!isPrimaryModifier(event, mac) || letter === 'v' || !/^[a-z0-9]$/.test(letter)) return;
       event.preventDefault();
+      if (letter === 'c' && !event.shiftKey) return copy();
       return queue({ type: 'key', key: `Control+${event.shiftKey ? 'Shift+' : ''}${letter}` });
     }
     if (namedKeys.has(event.key)) {
@@ -220,6 +304,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
       await post('/api/browser-handoff/done', { turnId });
       capture('browser_handoff_action', { action: 'done' });
       setReturned(true);
+      stopInput();
       setClosed(true);
     } catch (reason) {
       setError(errorMessage(reason));
@@ -299,6 +384,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
           (reason instanceof DOMException && reason.name === 'AbortError') ||
           (reason instanceof ApiError && reason.status === 423)
         ) {
+          stopInput();
           setClosed(true);
           return;
         }

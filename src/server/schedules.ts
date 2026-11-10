@@ -1,5 +1,6 @@
 import { afterCommit, transaction as inTransaction } from './transaction.ts';
 import { createHash, randomUUID } from 'node:crypto';
+import { cancellationTransaction } from './db.ts';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import type { Job, PgBoss } from 'pg-boss';
@@ -74,6 +75,7 @@ export interface ScheduleDependencies {
   stopConsumer?: (id: string) => Promise<void>;
   enqueueTurn: typeof enqueueTurn;
   refresh(): void;
+  retireScheduleConfirmations?(client: PoolClient, id: string, waitForSend: boolean): Promise<void>;
   now?: () => Date;
   sessionCosts?(sessionIds: string[]): Promise<Record<string, number | null>>;
 }
@@ -178,6 +180,11 @@ export function createSchedules(dependencies: ScheduleDependencies) {
 
   const transaction = <T>(operation: (client: PoolClient) => Promise<T>, shared?: PoolClient) =>
     shared ? operation(shared) : inTransaction(operation, pool);
+
+  const retirementTransaction = <T>(
+    operation: (client: PoolClient) => Promise<T>,
+    shared?: PoolClient,
+  ) => (shared ? operation(shared) : cancellationTransaction(operation, pool));
 
   function validateTiming(input: z.infer<typeof timingSchema>, enabled: boolean) {
     try {
@@ -409,7 +416,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
          LEFT JOIN LATERAL (
            SELECT m.id,left(m.text,4000) AS text FROM messages m
            WHERE m.turn_id=u.id AND m.owner_id=u.owner_id AND m.role='assistant'
-             AND u.channel='web' AND ${activeThreadSql('m')}
+             AND m.hidden_at IS NULL AND u.channel='web' AND ${activeThreadSql('m')}
            ORDER BY date_trunc('milliseconds',m.created_at),m.id LIMIT 1
          ) m ON true
          WHERE r.owner_id=$1 AND ($2::uuid IS NULL OR r.schedule_id=$2)
@@ -753,7 +760,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     z.uuid().parse(id);
     const input = updateSchema.parse(raw);
     if (!Object.keys(input).length) throw invalid('Choose a schedule detail to update.');
-    const row = await transaction(async (client) => {
+    const mutate = input.enabled === false ? retirementTransaction : transaction;
+    const row = await mutate(async (client) => {
       const previous = (
         await client.query<ScheduleRow>(
           `SELECT ${columns} FROM schedules WHERE id=$1 AND owner_id=$2 FOR UPDATE`,
@@ -797,13 +805,16 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       const timingChanged = ['kind', 'cron', 'runAt', 'timeZone', 'enabled'].some(
         (key) => key in input,
       );
-      return enqueue(
+      const updated = await enqueue(
         client,
         saved,
         !timingChanged && saved.enabled && previous.nextRun
           ? previous.nextRun
           : nextOccurrence(saved),
       );
+      if (input.enabled === false)
+        await dependencies.retireScheduleConfirmations?.(client, id, !shared);
+      return updated;
     }, shared);
     afterCommit(shared ?? pool, () => {
       refresh();
@@ -821,7 +832,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
 
   async function remove(id: string) {
     z.uuid().parse(id);
-    const row = await transaction(async (client) => {
+    const row = await retirementTransaction(async (client) => {
       const row = (
         await client.query<ScheduleRow>(
           `SELECT ${columns} FROM schedules WHERE id=$1 AND owner_id=$2 FOR UPDATE`,
@@ -831,6 +842,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       if (!row) throw Object.assign(new Error('Schedule not found.'), { statusCode: 404 });
       await cancelPending(client, row);
       await client.query('DELETE FROM schedules WHERE id=$1 AND owner_id=$2', [id, ownerId]);
+      await dependencies.retireScheduleConfirmations?.(client, id, true);
       return row;
     });
     refresh();
