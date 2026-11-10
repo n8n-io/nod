@@ -23,6 +23,7 @@ export interface ToolCall {
   at: number;
   finishedAt?: number;
   lead: string;
+  handed?: boolean;
 }
 
 export interface ChatMessage {
@@ -181,6 +182,40 @@ function capturedTools(stack: Stack) {
     }
   }
   return tools;
+}
+
+export function handedReads(
+  prompts: Stack['prompts'],
+  turns: Array<{ id: string; startedAt?: number }>,
+): ToolCall[] {
+  return prompts.flatMap(({ turnId, sessionId, instruction }) => {
+    const marker = instruction.indexOf('"sourceReads":');
+    if (marker < 0) return [];
+    let block: string;
+    try {
+      block = JSON.parse(
+        instruction.slice(instruction.indexOf('{'), instruction.lastIndexOf('}') + 1),
+      ).sourceReads;
+    } catch {
+      return [];
+    }
+    const reads = JSON.parse(
+      block.slice(block.indexOf('[{"read":'), block.lastIndexOf(']') + 1),
+    ) as Array<{ read: unknown; result: unknown }>;
+    const at = turns.find((turn) => turn.id === turnId)?.startedAt ?? 0;
+    return reads.map(({ read, result }) => ({
+      turnId,
+      sessionId,
+      name: 'read_source',
+      input: read,
+      output: JSON.stringify(result),
+      isError: false,
+      at,
+      finishedAt: at,
+      lead: '',
+      handed: true,
+    }));
+  });
 }
 
 export async function collectUsage(pool: Stack['pool']): Promise<Run['usage']> {
@@ -357,6 +392,7 @@ export async function collect(options: {
   }));
   requireBackgroundPrompts(turns, stack.prompts);
 
+  tools.push(...handedReads(stack.prompts, turns));
   tools.sort((a, b) => a.at - b.at);
   const schedules = (
     await stack.pool.query(
@@ -499,7 +535,7 @@ export async function collect(options: {
           ...tools.flatMap((call) => [
             {
               at: call.at,
-              text: `TOOL CALL ${call.name}${scope(call.turnId, call)}\n  input: ${clip(JSON.stringify(call.input), outputCap === limit ? limit : 1200)}`,
+              text: `TOOL CALL ${call.name}${call.handed ? ' (server read handed to the check)' : ''}${scope(call.turnId, call)}\n  input: ${clip(JSON.stringify(call.input), outputCap === limit ? limit : 1200)}`,
             },
             ...(call.finishedAt !== undefined || call.output
               ? [
@@ -526,7 +562,7 @@ export async function collect(options: {
         (turn) => turn.status !== 'succeeded' && (turn.status !== 'waiting' || turn.waiting),
       );
       return [
-        `Tool calls: ${tools.length} (${tools.filter((call) => call.isError).length} returned an error).`,
+        `Tool calls: ${tools.filter((call) => !call.handed).length} (${tools.filter((call) => call.isError).length} returned an error).`,
         `Assistant messages shown to the user: ${shown.length}.`,
         ...shown.map(
           (message) =>

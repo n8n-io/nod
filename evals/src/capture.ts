@@ -77,7 +77,11 @@ export function createCapture(proactiveBaseline = false) {
                 }
               : {}),
           });
-          return { ...session, prompt: (text, images) => session.prompt(record(text), images) };
+          return {
+            ...session,
+            prompt: (text, images, audio, stablePrefixes) =>
+              session.prompt(record(text), images, audio, stablePrefixes),
+          };
         },
         dispose: () => base.dispose(),
       };

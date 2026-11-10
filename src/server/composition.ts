@@ -947,6 +947,9 @@ async function initializeApplication(
     consumers,
     stopConsumer: (id) => boss.offWork('scheduled-task', { id, wait: true }),
     sessionCosts: ledger.sessionCosts,
+    recentTurnCost: ledger.recentTurnCost,
+    watchable: async (connectionIds) => integrations.watchable(connectionIds),
+    watchState: async (connectionIds) => integrations.watchState(connectionIds),
   });
   await personal.initialize({ workers: options.workers });
   const tasks = createTasks({
@@ -973,6 +976,7 @@ async function initializeApplication(
     },
     sweep: async () => {
       await sweepArtifacts();
+      await tasks.wakeDue().catch((error) => logFailure('task_wake', error));
       await vault.forgetExpiredHolds().catch((error) => logFailure('vault_expiry', error));
     },
     due: () => proactivity.due(),
@@ -1023,6 +1027,7 @@ async function initializeApplication(
   const icon = previews ? cachedIcons((origin) => previews.icon(origin)) : undefined;
   const integrations = await createIntegrations(pool, {
     mailCheck,
+    paused: async () => (await speechPreferences.get()).proactivePaused,
     analytics: captureAnalytics,
     analyticsConsent,
     admission,

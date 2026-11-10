@@ -27,6 +27,40 @@ const untraced = new Set([
   'classify',
 ]);
 
+const longCache = 55 * 60_000;
+const recentInstructions = new Map<string, number>();
+
+function keepInstructions(key: string) {
+  const now = Date.now();
+  const last = recentInstructions.get(key);
+  recentInstructions.set(key, now);
+  if (recentInstructions.size > 200)
+    for (const [entry, at] of recentInstructions)
+      if (now - at >= longCache) recentInstructions.delete(entry);
+  return last !== undefined && now - last < longCache;
+}
+
+function uncachedInput(payload: unknown) {
+  const request = payload as {
+    messages?: Array<{ content?: unknown }>;
+  } | null;
+  if (!Array.isArray(request?.messages)) return undefined;
+  return {
+    ...request,
+    messages: request.messages.map((message) =>
+      Array.isArray(message.content)
+        ? {
+            ...message,
+            content: message.content.map((block: Record<string, unknown>) => {
+              const { cache_control: _, ...rest } = block;
+              return rest;
+            }),
+          }
+        : message,
+    ),
+  };
+}
+
 function json(text: string) {
   const parse = (body: string) => {
     const start = body.indexOf('{');
@@ -118,6 +152,14 @@ export function createPiMemoryCurator(options: {
         let reply: AssistantMessage | undefined;
         try {
           reply = await runtime.completeSimple(model, context, {
+            ...(model.api === 'anthropic-messages'
+              ? {
+                  onPayload: uncachedInput,
+                  ...(keepInstructions(`${model.provider}:${model.id}:${instructions}`)
+                    ? { cacheRetention: 'long' as const }
+                    : {}),
+                }
+              : {}),
             signal: AbortSignal.any([
               AbortSignal.timeout(task === 'classify' ? 10_000 : 45_000),
               ...(signal ? [signal] : []),

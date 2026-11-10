@@ -92,7 +92,7 @@ For an eligible follow-up after successful delivery, the check also receives the
 
 The check must keep plans separate from completed events and possessions separate from purchases. Earlier assistant messages establish what was said, not whether it was true. The check cannot use them alone to add a factual detail. It cannot run tools, authorize an action or save a note. The normal trust check still decides actions from the owner's words.
 
-Selection uses up to two model calls. An eligible reply can add one check. The runtime reuses the result while the draft and review context are unchanged. These calls count in **Usage** and the session's spending check-in. Each call has a 20-second deadline. Stop ends waiting at once, including when a provider ignores cancellation. A new owner message during the turn clears the old selection and reply-check cache.
+Selection uses up to two model calls with a shared one-second deadline. When that deadline expires, Nod uses word matches and any evidence already found. An eligible reply can add one check with a 20-second deadline. The runtime reuses the result while the draft and review context are unchanged. These calls count in **Usage** and the session's spending check-in. Stop ends waiting at once, including when a provider ignores cancellation. A new owner message during the turn clears the old selection and reply-check cache.
 
 :::caution[Model limits]
 Selection and reply checks can make mistakes. If a call fails or returns invalid data, Nod keeps its word-search fallback or original answer; it does not claim that the answer passed a check.

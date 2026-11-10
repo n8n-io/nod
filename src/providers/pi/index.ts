@@ -154,6 +154,8 @@ function toolSchema(schema: unknown) {
 
 const imageStep = 8;
 const warmCache = 5 * 60_000;
+const longCache = 55 * 60_000;
+
 const warmIdle = 31 * 60_000;
 
 const webAccess = {
@@ -189,6 +191,77 @@ function threadPromptCache(threadId: string) {
     pi.on('before_provider_request', ({ payload }) => {
       const request = payload as { prompt_cache_key?: unknown } | null;
       if (request?.prompt_cache_key) return { ...request, prompt_cache_key: key };
+    });
+  };
+}
+
+type CachedBlock = { type: string; text?: string; cache_control?: unknown };
+type CachedRequest = {
+  system?: CachedBlock[] | string;
+  tools?: Array<Record<string, unknown>>;
+  messages?: Array<{ role: string; content: string | CachedBlock[] }>;
+};
+
+function observerCache(cached: { owner?: string; stable?: string[] }) {
+  const long = { type: 'ephemeral', ttl: '1h' };
+  const short = { type: 'ephemeral' };
+  return (pi: ExtensionAPI) => {
+    pi.on('before_provider_request', ({ payload }) => {
+      const request = payload as CachedRequest | null;
+      if (!request || !Array.isArray(request.messages)) return;
+      if (Array.isArray(request.system) && request.system.filter((b) => b.cache_control).length > 1)
+        return;
+      const blocks = request.messages.flatMap((message, at) =>
+        Array.isArray(message.content)
+          ? message.content.map((block, index) => ({ block, at, index }))
+          : [],
+      );
+      const lastText = (match: (text: string) => boolean) =>
+        blocks.findLast(({ block }) => block.type === 'text' && match(block.text ?? ''));
+      const prefixes = [...new Set(cached.stable ?? [])].sort((a, b) => a.length - b.length);
+      const longest = prefixes.at(-1);
+      const stable = longest
+        ? lastText((text) => text.length > longest.length && text.startsWith(longest))
+        : undefined;
+      const found = cached.owner ? lastText((text) => text === cached.owner) : undefined;
+      const owner =
+        found &&
+        stable &&
+        (found.at < stable.at || (found.at === stable.at && found.index < stable.index))
+          ? found
+          : undefined;
+      const messages = request.messages.map((message, at) =>
+        Array.isArray(message.content)
+          ? {
+              ...message,
+              content: message.content.flatMap((block, index): CachedBlock[] => {
+                const rolling = block.cache_control ? { cache_control: short } : {};
+                if (owner?.at === at && owner.index === index)
+                  return [{ ...block, cache_control: long }];
+                if (stable?.at === at && stable.index === index)
+                  return [
+                    ...prefixes.map((prefix, step) => ({
+                      type: 'text',
+                      text: prefix.slice(step ? prefixes[step - 1]!.length : 0),
+                      cache_control: long,
+                    })),
+                    { ...block, text: block.text!.slice(longest!.length), ...rolling },
+                  ];
+                return [{ ...block, ...rolling }];
+              }),
+            }
+          : message,
+      );
+      return {
+        ...request,
+        ...(owner && Array.isArray(request.system)
+          ? { system: request.system.map(({ cache_control: _, ...block }) => block) }
+          : {}),
+        ...(request.tools
+          ? { tools: request.tools.map(({ cache_control: _, ...tool }) => tool) }
+          : {}),
+        messages,
+      };
     });
   };
 }
@@ -442,6 +515,17 @@ export function createPiAgent(options: {
         input.restartable === true &&
         prior.length > 0 &&
         (!last || Date.now() - last.timestamp >= warmCache || priorTokens > budget.recent);
+      const cached: { owner?: string; stable?: string[] } = { owner: input.ownerContext };
+      const keepCache =
+        restart &&
+        model.api === 'anthropic-messages' &&
+        last !== undefined &&
+        Date.now() - last.timestamp < longCache;
+      if (keepCache) {
+        const stream = runtime.streamSimple.bind(runtime);
+        runtime.streamSimple = (target, context, options) =>
+          stream(target, context, { ...options, cacheRetention: 'long' });
+      }
       if (restart)
         manager.appendCompaction(
           'Earlier checks are saved outside this context. Use the current request and fresh source reads.',
@@ -601,6 +685,7 @@ export function createPiAgent(options: {
           recentImages,
           audioContext(manager, readsNativeAudio(model) && Boolean(input.readAudio)),
           threadPromptCache(input.threadId),
+          ...(keepCache ? [observerCache(cached)] : []),
           ownerContextCopies(input.ownerContext),
           (pi: ExtensionAPI) =>
             pi.on('session_before_compact', async ({ preparation, reason, signal }) => {
@@ -952,7 +1037,8 @@ export function createPiAgent(options: {
         readsImages: model.input.includes('image'),
         readsAudio: readsNativeAudio(model) && Boolean(input.readAudio),
         contextWindow: budget.window,
-        async prompt(text, images, audio) {
+        async prompt(text, images, audio, stablePrefixes) {
+          cached.stable = stablePrefixes;
           if (
             budget.compact &&
             Math.ceil(Buffer.byteLength(text) / 3) + budget.output + budget.margin > budget.window
@@ -965,7 +1051,7 @@ export function createPiAgent(options: {
           if (owner && (copy as { content?: unknown } | undefined)?.content !== owner)
             await session.sendCustomMessage(
               { customType: ownerContextType, content: owner, display: false },
-              { deliverAs: 'nextTurn' },
+              input.restartable && prior.length ? undefined : { deliverAs: 'nextTurn' },
             );
           if (audio && readsNativeAudio(model))
             await session.sendCustomMessage(audioMessage(text, images, audio), {

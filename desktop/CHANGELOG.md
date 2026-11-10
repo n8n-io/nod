@@ -2,6 +2,60 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.6.1 - 2026-11-10
+
+### Features
+
+- **landing:** Load Google Tag Manager on nod.n8n.io. [#662](https://github.com/n8n-io/nod/pull/662) (ac9a1f3)
+- **landing:** Match the social image to the new headline. [#663](https://github.com/n8n-io/nod/pull/663) (44d780f)
+- **landing:** Put Nod in the headline and polish the page. [#661](https://github.com/n8n-io/nod/pull/661) (c1e3f0b)
+- **landing:** Pick each visitor's installer and refresh the social image. [#660](https://github.com/n8n-io/nod/pull/660) (4ce2c1e)
+- **landing:** Ship the new nod.n8n.io landing page. [#659](https://github.com/n8n-io/nod/pull/659) (0790b6a)
+- **onboarding:** Put the usage data note in About you's opening message. [commit](https://github.com/n8n-io/nod/commit/5140548e4c8086d43d4a50c6fb47f068a6668e9b) (5140548)
+- **privacy:** Apply Legal's in-app data texts for launch. [commit](https://github.com/n8n-io/nod/commit/ee4bdca74666edefdd8c6438398e42f0fc0ae147) (ee4bdca)
+- **chat:** Make the live line clearer while Nod works. [commit](https://github.com/n8n-io/nod/commit/755189b90c45ee99b03d109a541f167085db8ba0) (755189b)
+
+### Fixes
+
+- Cap automatic selection latency. [#640](https://github.com/n8n-io/nod/pull/640) (0bf56a2)
+- **feedback:** Reconcile uncertain submissions. [#643](https://github.com/n8n-io/nod/pull/643) (339e908)
+- Clarify model quota and rate limit failures. [#641](https://github.com/n8n-io/nod/pull/641) (3d6aa64)
+- Preserve null diagnostic report fields. [#652](https://github.com/n8n-io/nod/pull/652) (807be28)
+- **runtime:** Deliver long research results as Markdown files. [#645](https://github.com/n8n-io/nod/pull/645) (a482e99)
+- Retire stale schedule confirmations (LAB-795). [#647](https://github.com/n8n-io/nod/pull/647) (ca4c240)
+- **apps:** Route Notion MCP to its official connection. [#644](https://github.com/n8n-io/nod/pull/644) (3e9b25e)
+- **browser:** Copy selected text from handoff (LAB-855). [#649](https://github.com/n8n-io/nod/pull/649) (4322530)
+- **pi:** Recover incomplete assistant blocks. [#646](https://github.com/n8n-io/nod/pull/646) (a6235a2)
+- Point task rules to Chat. [#648](https://github.com/n8n-io/nod/pull/648) (ccc23eb)
+- **chat:** Address review on the live line and task dots. [commit](https://github.com/n8n-io/nod/commit/229a62451216e7213808ae984d37856d9fbdda05) (229a624)
+
+### Performance
+
+- Cut background model spend and show it in Usage. [#656](https://github.com/n8n-io/nod/pull/656) (f9808ea)
+- **integrations:** Narrow connected app discovery. [#651](https://github.com/n8n-io/nod/pull/651) (828a73e)
+
+### Documentation
+
+- Show the OpenSSF Best Practices badge. [#658](https://github.com/n8n-io/nod/pull/658) (26eb290)
+- Point every link at nod.n8n.io. [#653](https://github.com/n8n-io/nod/pull/653) (9f3de9f)
+
+<details>
+<summary>Maintenance (1 changes)</summary>
+
+- Add OpenSSF Best Practices answers. [#657](https://github.com/n8n-io/nod/pull/657) (18851d6)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.6.0...f9808ea0a6276a7f84157bf78ad22bb62d9de621)
+
+<details>
+<summary>Build details</summary>
+
+Source: `f9808ea0a6276a7f84157bf78ad22bb62d9de621`
+Previous release: `nod-v0.6.0`
+
+</details>
+
 ## 0.6.0 - 2026-11-09
 
 ### Features

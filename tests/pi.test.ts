@@ -924,6 +924,127 @@ test('a proactive check starts fresh once its cache is cold or its context outgr
   }
 });
 
+test('a restarted proactive check within the hour reads its stable context from a one-hour cache, and a warm one keeps the rolling cache', async (t) => {
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const backend = createPiModelBackend({
+    fetch: async () => {
+      throw new Error('No live catalog request is allowed.');
+    },
+  });
+  const definition = (await backend.catalog('anthropic', 'api_key')).find(
+    ({ choice }) => choice.id === 'claude-opus-5-5',
+  )!;
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-observer-cache-'));
+  const bodies: Array<Record<string, any>> = [];
+  const stream = [
+    {
+      type: 'message_start',
+      message: {
+        id: 'msg_fixture',
+        type: 'message',
+        role: 'assistant',
+        model: 'claude-opus-5-5',
+        content: [],
+        stop_reason: null,
+        usage: { input_tokens: 10, output_tokens: 1 },
+      },
+    },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Checked.' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2 } },
+    { type: 'message_stop' },
+  ]
+    .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+    .join('');
+  t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (!url.includes('/v1/messages')) throw new Error(`Unexpected request to ${url}`);
+    bodies.push(JSON.parse(String(init?.body)));
+    return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+  });
+  const runtime = createAgentRuntime({
+    agent: createPiAgent({
+      provider: 'anthropic',
+      resolve: async () => ({
+        provider: 'anthropic',
+        method: 'api_key',
+        definition,
+        effort: 'low',
+        read: async () => ({ type: 'api_key', key: 'fixture-key' }),
+      }),
+      sessionRoot: join(directory, 'sessions'),
+    }),
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  const observer = randomUUID();
+  const check = (prompt: string) =>
+    runtime.runTurn({
+      ...({} as RuntimeContext),
+      threadId: 'test-' + observer,
+      turnId: randomUUID(),
+      sessionId: observer,
+      background: true,
+      resumed: false,
+      prompt,
+      memory: 'about/name: The owner is Alex.',
+      history: [
+        { role: 'user', text: 'Earlier owner message', createdAt: new Date().toISOString() },
+      ],
+      workspacePath: directory,
+      signal: new AbortController().signal,
+      attachments: [],
+      emit: async () => {},
+      reply: async () => {},
+      delta: () => {},
+      proactivity: {
+        instructions: 'Fixture observer.',
+        issues: [],
+        sources: [],
+        read: async () => ({}),
+        update: async () => ({}),
+      },
+    });
+  try {
+    await check('FIRST-BATCH');
+    await check('SECOND-BATCH');
+    await check('THIRD-BATCH');
+    const now = Date.now();
+    t.mock.method(Date, 'now', () => now + 13 * 60_000);
+    await check('FOURTH-BATCH');
+  } finally {
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+  assert.equal(bodies.length, 4);
+  assert.equal(JSON.stringify(bodies[0]).includes('"1h"'), false);
+  const restarted = bodies[3];
+  const tail = restarted.messages.flatMap((message: { content: unknown }) =>
+    Array.isArray(message.content) ? message.content : [],
+  );
+  assert.ok(JSON.stringify(restarted).split('"cache_control"').length - 1 <= 4);
+  assert.equal('cache_control' in restarted.system[0], false);
+  assert.deepEqual(
+    tail
+      .filter((block: any) => block.cache_control?.ttl === '1h')
+      .map((block: any) => block.text.slice(0, 20)),
+    ['Owner context. It re', 'Respond to currentIn', '"recentConversation"'],
+  );
+  assert.deepEqual(tail.at(-1).cache_control, { type: 'ephemeral' });
+  for (const [index, body] of bodies.slice(1, 3).entries()) {
+    const blocks = body.messages.flatMap((message: { content: unknown }) =>
+      Array.isArray(message.content) ? message.content : [],
+    );
+    assert.equal(JSON.stringify(body).includes('"1h"'), false);
+    assert.match(blocks.at(-1).text, index ? /THIRD-BATCH/ : /SECOND-BATCH/);
+    assert.deepEqual(blocks.at(-1).cache_control, { type: 'ephemeral' });
+    assert.ok(
+      blocks.some((block: any) => /FIRST-BATCH/.test(block.text) && !('cache_control' in block)),
+    );
+  }
+});
+
 test('messages taken after a Pi turn reach the next request together and not after a question', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-pi-steer-'));
   const requests: string[] = [];

@@ -51,6 +51,7 @@ flowchart TD
 - **It replies where you asked.** A schedule you set up on Telegram sends its messages to Telegram.
 - **Approvals still apply.** Each action is checked against the instruction that created the schedule. If an action isn't covered, Nod asks you first, naming the schedule and what it's for. If the check itself can't decide, the action doesn't run and you aren't asked. See [Approvals](/trust/approvals/).
 - **One run at a time.** While a run is still queued, working or waiting for your answer, a recurring schedule skips its next runs, so it doesn't ask you again while a question is open. A run does its work itself and can't set up more schedules.
+- **Watches skip unchanged runs.** When a recurring check can only find something new after a change in your connected accounts, such as waiting for a reply, Nod saves which accounts it watches. Before each run, Nod checks those accounts for new mail, changed events or app activity without a model call, and skips the run when nothing changed since the last finished run. The first run, and the run after a failed one, always run. Reminders, digests, websites and checks tied to a time don't skip.
 
 Open a schedule's **See details** to read its runs, newest first. Select **Load earlier runs** for older results. Completed one-time schedules remain under **Inactive**, with their runs available to review.
 
@@ -82,7 +83,7 @@ Select **Edit schedule** to review its name, instructions and timing together. T
 
 Quiet hours are on by default, from 22:00 to 08:00. Change them in **Settings → Notifications → Quiet hours**.
 
-During quiet hours, Nod keeps preparing from new mail and app activity. Its nudges wait until they end, except a high-impact one with strong evidence whose deadline comes first. Any task it starts on its own waits too, with its questions and approvals. Schedules you created still run and deliver on time.
+During quiet hours, Nod keeps checking new mail and app activity, but prepares only what may need you before quiet hours end; everything else waits until they end. Its nudges wait until they end, except a high-impact one with strong evidence whose deadline comes first. Any task it starts on its own waits too, with its questions and approvals. Schedules you created still run and deliver on time.
 
 ## Keep Nod running
 

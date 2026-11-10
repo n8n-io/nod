@@ -61,7 +61,13 @@ import { facts, leaderboard } from '../src/writeup.ts';
 import { meetsMinimumPassRate } from '../src/commands.ts';
 import { rejudge } from '../src/rejudge.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
-import { collect, collectUsage, requireBackgroundPrompts, type Run } from '../src/trace.ts';
+import {
+  collect,
+  collectUsage,
+  handedReads,
+  requireBackgroundPrompts,
+  type Run,
+} from '../src/trace.ts';
 import { changes, compareTable, html, markdown, runsTable, terminal } from '../src/report.ts';
 import { fingerprint, scenarios } from '../src/scenarios/index.ts';
 import { createSession, type Session } from '../src/session.ts';
@@ -2586,6 +2592,59 @@ test('the stack records tool calls, model usage and the main prompts of every tu
     ['model_usage', 'child'],
     ['tool_end', 'delegate', 'succeeded', 'The subagent finished without an answer.'],
   ]);
+});
+
+test('reads a screen hands to the observer count as its source reads', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'eval-handed-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const capture = createCapture();
+  const runtime = createAgentRuntime({
+    agent: capture.agent({
+      open: async () => ({ resumed: false, abort() {}, dispose() {}, prompt: async () => {} }),
+      dispose() {},
+    }),
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  t.after(() => runtime.dispose());
+  await runtime.runTurn({
+    threadId: 'handed-fixture',
+    sessionId: 'handed-fixture',
+    turnId: 'handed-fixture',
+    prompt: 'Check changed sources.',
+    history: [],
+    background: true,
+    workspacePath: directory,
+    signal: t.signal,
+    attachments: [],
+    emit: async () => {},
+    delta: () => {},
+    reply: async () => {},
+    publish: async () => {
+      throw new Error('Not used');
+    },
+    requestCredential: async () => ({ filled: true }),
+    integration: async () => ({}),
+    manage: async () => [],
+    proactivity: {
+      instructions: 'Inspect synthetic records.',
+      issues: [],
+      sources: [],
+      read: async () => ({}),
+      update: async () => ({}),
+      screen: async () => [
+        {
+          read: { sourceId: 'builds:release' },
+          result: { records: [{ id: 'r1', data: 'HANDED_RECORD' }] },
+        },
+      ],
+    },
+  });
+  const [read] = handedReads(capture.prompts, [{ id: 'handed-fixture', startedAt: 5 }]);
+  assert.equal(read?.name, 'read_source');
+  assert.deepEqual(read?.input, { sourceId: 'builds:release' });
+  assert.ok(read?.output.includes('HANDED_RECORD'));
+  assert.equal(read?.handed, true);
 });
 
 test('persisted background sessions and child captures count each request and tool once', async (t) => {

@@ -10,7 +10,12 @@ import {
 } from '../src/server/analytics.ts';
 import { analyticsEvent } from '../src/server/analytics-events.ts';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
-import { profileJobs, profileRoles, type OnboardingProfile } from '../src/shared/onboarding.ts';
+import {
+  profileJobs,
+  profileRoles,
+  updatesEmailConsent,
+  type OnboardingProfile,
+} from '../src/shared/onboarding.ts';
 import {
   legacyOnboardingChoiceProperties,
   onboardingPersonProperties,
@@ -274,6 +279,11 @@ test('onboarding answers and updates email update one profile only while usage s
     assert.equal(profiles[1]?.properties.email, 'owner@example.test');
     assert.equal(profiles[1]?.properties.nod_updates_email_consent, true);
     assert.equal(profiles[1]?.properties.nod_updates_email_consent_version, 1);
+    assert.equal(profiles[1]?.properties.nod_updates_email_consent_text, updatesEmailConsent.text);
+    assert.equal(
+      profiles[1]?.properties.nod_updates_email_consent_privacy_url,
+      updatesEmailConsent.privacyUrl,
+    );
     assert.ok(
       !Number.isNaN(Date.parse(String(profiles[1]?.properties.nod_updates_email_consent_at))),
     );

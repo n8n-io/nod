@@ -4,6 +4,7 @@ import { LockKeyhole, MousePointerClick, ShieldCheck, Sparkles } from '../../../
 import { NodGlyph } from '../../../components/motion';
 import { Button } from '../../../components/ui';
 import { desktopRuntimeAvailable } from '../../../lib/desktop';
+import { legalLinks } from '../../../../shared/onboarding';
 import type { StepProps } from '..';
 
 function differentiators(local: boolean) {
@@ -16,7 +17,7 @@ function differentiators(local: boolean) {
     {
       icon: Sparkles,
       title: 'Works proactively',
-      text: 'Nod keeps up with the apps you connect and only notifies you when it matters.',
+      text: 'Nod checks the apps you connect in the background, using your model, and only notifies you when it matters.',
     },
     {
       icon: LockKeyhole,
@@ -84,7 +85,17 @@ export function Welcome({
         )}
         <Button onClick={onNext}>{actionLabel}</Button>
       </div>
-      <p className="ob-welcome-note">This is a preview version of Nod, developed by n8n</p>
+      <p className="ob-welcome-note">
+        This is a preview version of Nod, developed by n8n
+        <br />
+        <a className="ob-link" href={legalLinks.terms} target="_blank" rel="noreferrer">
+          Terms of Use
+        </a>
+        {' · '}
+        <a className="ob-link" href={legalLinks.privacy} target="_blank" rel="noreferrer">
+          Privacy policy
+        </a>
+      </p>
     </section>
   );
 }

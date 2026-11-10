@@ -168,17 +168,17 @@ To report a bug, use the [bug report form](https://github.com/n8n-io/nod/issues/
 
 The `nod-feedback-report-v3` JSON attachment connects the steps before a failure with the affected chat, agent work, app usage, and connections. It helps with support, debugging, and product improvement. It combines technical metadata with recent content after best-effort redaction.
 
-| Section                 | What it shows                                                                                                                               |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime                 | App version, release, platform, known model provider, and model family.                                                                     |
-| Chat                    | Recent user and assistant message text, roles, character and attachment counts, and reply metadata.                                         |
-| Turns and agent work    | Request source, channel, outcome, waiting state, queue and run duration, tool category, and parent-child relationships.                     |
-| Model usage             | Request outcomes, duration, token counts, recorded cost and estimates, and known model categories.                                          |
-| Tasks and schedules     | State, progress counts, enabled state, overdue work, and recent run and failure counts.                                                     |
-| Connections             | Managed app, browser, direct connection, and model connection state, plus reconnect and event-delivery health.                              |
-| Channels                | Receiving and delivery states, with a permitted failure reason.                                                                             |
-| Runtime logs            | Recent tool inputs and results, application and background failures, error messages, validation issues and stacks, and connection activity. |
-| App activity and errors | Recent screen categories, API failure categories and status codes, UI errors, and captured app error messages and stacks.                   |
+| Section                 | What it shows                                                                                                                                                                                         |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime                 | App version, release, platform, known model provider, and model family.                                                                                                                               |
+| Chat                    | Recent user and assistant message text, roles, character and attachment counts, and reply metadata.                                                                                                   |
+| Turns and agent work    | Request source, channel, outcome, waiting state, queue and run duration, tool category, parent-child relationships, and whether a background check stopped at screening (its outcome shows the rest). |
+| Model usage             | Request outcomes, duration, token counts, recorded cost and estimates, and known model categories and operations.                                                                                     |
+| Tasks and schedules     | State, progress counts, enabled state, overdue work, and recent run and failure counts.                                                                                                               |
+| Connections             | Managed app, browser, direct connection, and model connection state, plus reconnect and event-delivery health.                                                                                        |
+| Channels                | Receiving and delivery states, with a permitted failure reason.                                                                                                                                       |
+| Runtime logs            | Recent tool inputs and results, application and background failures, error messages, validation issues and stacks, and connection activity.                                                           |
+| App activity and errors | Recent screen categories, API failure categories and status codes, UI errors, and captured app error messages and stacks.                                                                             |
 
 Database activity covers the latest 24 hours for your account across its conversations and background work. Each database section includes at most 200 entries, or 400 for agent execution events. Connection and schedule sections show current state. Report-local labels preserve execution relationships without exporting their original IDs. Activity uses relative ages and durations.
 
