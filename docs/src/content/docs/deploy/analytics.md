@@ -40,7 +40,11 @@ Turning sharing off stops new analytics events and person-profile updates. It do
 
 ## Identity and environments
 
-Nod counts installations by default. Two installations count as two; a shared installation counts as one. Clients connected to one server share its pseudonymous `local:<installation UUID>` identity. The About you profile can link this installation's events to its fixed choices. If you submit an email address in onboarding, PostHog can link that usage to the address too.
+Analytics groups observed events by a pseudonymous `local:<UUID>` stored with the server data root. A local desktop uses its local profile; web and desktop clients connected to one server share that server's ID. Distinct-ID charts count observed sharing runtime profiles, not downloads, client installations, devices, or people.
+
+The ID persists across updates while its data root exists; removing that data creates a new ID, while a copied profile or explicitly supplied server ID can reuse one. An ID's first recorded `v4` production event marks when it entered the observed sample, not its install or first-open time. Events appear only while collection and sharing are enabled.
+
+The About you profile can link this ID's events to its fixed choices. If you submit an email address in onboarding, PostHog can link that usage to the address too.
 
 | Runtime                      | Identity storage               | Collection available by default |
 | ---------------------------- | ------------------------------ | ------------------------------- |
