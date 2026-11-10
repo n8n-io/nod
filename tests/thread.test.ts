@@ -1518,23 +1518,27 @@ test(
           const message = {
             threadId,
             clientMessageId: randomUUID(),
-            text: 'Context for the recording',
+            text: '  Context for [the] _recording_  ',
+            displayText: '  Context for \\[the\\] \\_recording\\_  ',
           };
           const before = transcriptions.length;
           const accepted = await sendAudio(message);
           assert.equal(accepted.statusCode, 200, accepted.body);
           const receipt = accepted.json<SubmitMessageResponse>();
           assert.equal(receipt.audioCaption, message.text);
+          assert.equal(receipt.displayText, message.displayText);
           const visible = (await request('GET', '/api/state'))
             .json()
             .messages.find((entry: { id: string }) => entry.id === receipt.messageId);
           assert.equal(visible.audioCaption, message.text);
+          assert.equal(visible.displayText, message.displayText);
           const stored = (
-            await db.pool.query('SELECT text,attachments FROM messages WHERE id=$1', [
+            await db.pool.query('SELECT text,display_text,attachments FROM messages WHERE id=$1', [
               receipt.messageId,
             ])
           ).rows[0];
-          assert.equal(stored.text, 'Context for the recording\n\nSynthetic spoken request');
+          assert.equal(stored.text, `${message.text}\n\nSynthetic spoken request`);
+          assert.equal(stored.display_text, message.displayText);
           assert.equal(stored.attachments.length, 1);
           assert.deepEqual(
             await localArtifacts.readArtifact(stored.attachments[0].id),
@@ -1786,6 +1790,47 @@ test(
           );
         },
       );
+
+      await t.test('web paste keeps model text separate from display Markdown', async () => {
+        const text = [
+          '  [',
+          '  {"email":"ada@example.test","notes":"__init__ _legacy_ # call <after>"}',
+          ']  ',
+        ].join('\n');
+        const displayText = [
+          '  \\[\\',
+          '<span>  </span>{"email":"ada\\@example.test","notes":"\\_\\_init\\_\\_ \\_legacy\\_ # call \\<after>"}\\',
+          ']  ',
+        ].join('\n');
+        const payload = { clientMessageId: randomUUID(), text, displayText };
+        const response = await sendJson(payload);
+        assert.equal(response.statusCode, 200, response.body);
+        const receipt = response.json<SubmitMessageResponse>();
+        assert.equal(receipt.displayText, displayText);
+        const saved = (
+          await db.pool.query(
+            `SELECT m.text,m.display_text,t.prompt FROM messages m
+             JOIN turns t ON t.id=m.turn_id WHERE m.id=$1 AND m.owner_id=$2`,
+            [receipt.messageId, ownerId],
+          )
+        ).rows[0];
+        assert.deepEqual(saved, { text, display_text: displayText, prompt: text });
+        const visible = (await request('GET', '/api/state'))
+          .json<{ messages: Array<{ id: string; text: string; displayText?: string }> }>()
+          .messages.find((message) => message.id === receipt.messageId);
+        assert.equal(visible?.text, text);
+        assert.equal(visible?.displayText, displayText);
+        await waitFor(settled(receipt.turnId));
+        assert.equal(await turnStatus(receipt.turnId), 'succeeded');
+        assert.equal(ran(receipt.turnId)?.prompt, text);
+        assert.deepEqual((await sendJson(payload)).json(), receipt);
+        assert.equal(
+          (await sendJson({ ...payload, displayText: `${displayText} changed` })).statusCode,
+          409,
+        );
+        assert.equal((await sendJson({ text: ' \n\t ' })).statusCode, 400);
+        assert.equal((await sendJson({ text: ` ${'x'.repeat(100_000)}` })).statusCode, 400);
+      });
 
       await t.test('a task resumes its own session when its next check is due', async (t) => {
         const id = randomUUID();

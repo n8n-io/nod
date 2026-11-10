@@ -22,6 +22,7 @@ export interface Message {
   id: string;
   role: 'user' | 'assistant';
   text: string;
+  displayText?: string;
   audioCaption?: string;
   turnId: string | null;
   createdAt: string;
@@ -41,6 +42,7 @@ export interface SubmitMessageResponse {
   turnId: string;
   messageId: string;
   messageText?: string;
+  displayText?: string;
   audioCaption?: string;
   verificationStatus?: 'pending' | 'submitted' | 'unavailable';
 }
