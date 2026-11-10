@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <sub>macOS 14 or later · Windows 11 · Free to download · Use your ChatGPT plan or an AI key</sub>
+  <sub>macOS 14 or later · Windows 11 · Free to download · Use ChatGPT Plus or Pro, or an AI key</sub>
 </p>
 
 <a href="docs/src/assets/readme/nod-demo.mp4">
@@ -54,17 +54,17 @@ A client asked about pricing last week. Nod finds the unanswered question and dr
 
 [![Waits for your Nod. Nod drafts a Slack reply from your pricing sheet, asks for approval, and sends it after you say yes.](docs/src/assets/readme/approval.webp)](https://nod.n8n.io/docs/trust/approvals/)
 
-Ask Nod to watch a pricing page. It checks on a schedule and tells you when something changes. See the cost of each check in Usage.
+Ask Nod to watch a pricing page. It reports changes and records each run in Usage. With an API model selected, priced runs also show their cost.
 
 [![Hear about it when it matters. A scheduled price check reports a change from $1,200 to $1,500.](docs/src/assets/readme/price-watch.webp)](https://nod.n8n.io/docs/use/schedules/)
 
 ## Your computer. Your model. Your rules.
 
-- **Runs on your computer.** Your files, memory, and saved logins stay there. Your model provider receives the context it needs for each task.
-- **Uses the model you choose.** Connect your ChatGPT plan, an AI provider, or a local model. Nod does not require n8n.
+- **Runs on your computer or server.** Your files, memory, and saved logins stay on the machine running Nod. Your model provider receives the context it needs for each task.
+- **Uses the model you choose.** Connect ChatGPT Plus or Pro, an AI provider, or a local model. Nod does not require n8n.
 - **Acts on your instructions.** The server checks app actions against your request and rules. It asks when your instructions do not cover an action.
 - **Keeps secrets out of the model.** Vault enters saved passwords and card details privately on the website.
-- **Shows what it did and spent.** Inspect app actions, sign-ins, and model costs in Usage. Set a monthly spending limit.
+- **Shows what it did.** Inspect app actions and sign-ins in Usage. With an API model selected, review costs for priced usage and set a monthly limit.
 
 [How trust works](https://nod.n8n.io/docs/trust/) · [Where your data goes](https://nod.n8n.io/docs/trust/privacy/)
 
@@ -83,6 +83,8 @@ Nod scored **93.2% on LongMemEval**, with 500 questions about past chats in a fr
 ## Get Nod
 
 **[Download for Mac or Windows](https://github.com/n8n-io/nod/releases).** Install the app, connect your model and apps, then ask for your first task.
+
+Nod shares basic usage data by default for new users. Turn off **Share usage data** in **Settings → Privacy & data** to stop new sends.
 
 Nod is free to download. Paid model providers bill you for use. Schedules run while the computer that runs Nod is on.
 
