@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
+import { updatesEmailConsent } from '../../src/shared/onboarding.ts';
 
 const source = ts.createSourceFile(
   'onboarding-updates.workflow.ts',
@@ -33,7 +34,9 @@ const base = {
   version: 1,
   email: '  PERSON@EXAMPLE.TEST  ',
   consent: true,
-  consent_version: 1,
+  consent_version: updatesEmailConsent.version,
+  consent_text: updatesEmailConsent.text,
+  consent_privacy_url: updatesEmailConsent.privacyUrl,
 };
 
 test('onboarding workflow accepts only consented email and fixed answer choices', () => {
@@ -41,6 +44,9 @@ test('onboarding workflow accepts only consented email and fixed answer choices'
   assert.equal(accepted.valid, true);
   assert.equal(accepted.email, 'person@example.test');
   assert.match(accepted.consent_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  assert.equal(accepted.consent_version, updatesEmailConsent.version);
+  assert.equal(accepted.consent_text, updatesEmailConsent.text);
+  assert.equal(accepted.consent_privacy_url, updatesEmailConsent.privacyUrl);
 
   const profile = {
     onboarding_profile_completed: true,
@@ -58,7 +64,9 @@ test('onboarding workflow accepts only consented email and fixed answer choices'
     { ...base, consent: false },
     { ...base, email: 'not an email' },
     { ...base, consent_at: '2026-11-10T10:00:00.000Z' },
-    { ...base, consent_version: 2 },
+    { ...base, consent_version: 1 },
+    { ...base, consent_text: 'Different consent wording' },
+    { ...base, consent_privacy_url: 'https://example.test/privacy/' },
     { ...base, extra: 'not allowed' },
     { ...base, profile: { ...profile, roleText: 'private synthetic answer' } },
     { ...base, profile: { ...profile, onboarding_roles: ['agency', 'agency'] } },

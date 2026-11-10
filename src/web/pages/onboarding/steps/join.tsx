@@ -1,6 +1,10 @@
 import { useRef, useState } from 'react';
 import { regexes } from 'zod';
-import { communityLinks, type OnboardingProfile } from '../../../../shared/onboarding';
+import {
+  communityLinks,
+  updatesEmailConsent,
+  type OnboardingProfile,
+} from '../../../../shared/onboarding';
 import { ArrowUpRight } from '../../../components/icons';
 import { ServiceLogo } from '../../../components/service-logo';
 import { Input } from '../../../components/ui';
@@ -9,8 +13,6 @@ import { analyticsForCurrentSession, captureAnalytics } from '../../../lib/analy
 import type { StepProps } from '..';
 import { Bubble, Footer, Messages } from '../motion';
 import { readStored } from '../storage';
-
-const privacyUrl = 'https://n8n.io/legal/privacy/';
 
 export function Join({ onNext, onBack, nextLabel, updatesEmail, usageShared }: StepProps) {
   const [email, setEmail] = useState('');
@@ -124,9 +126,8 @@ export function Join({ onNext, onBack, nextLabel, updatesEmail, usageShared }: S
                 }}
               />
               <span>
-                I agree that n8n GmbH links my email to my Nod usage data and sends me updates about
-                Nod and other n8n products.{' '}
-                <a href={privacyUrl} target="_blank" rel="noreferrer">
+                {updatesEmailConsent.text}{' '}
+                <a href={updatesEmailConsent.privacyUrl} target="_blank" rel="noreferrer">
                   Privacy policy
                 </a>
               </span>
@@ -147,6 +148,11 @@ export function Join({ onNext, onBack, nextLabel, updatesEmail, usageShared }: S
             )}
           </form>
         </div>
+      )}
+      {canSubscribe && (
+        <p className="ob-join-consent-note">
+          You can withdraw at any time via the unsubscribe link in every email or at privacy@n8n.io.
+        </p>
       )}
       <div className="ob-join-community" data-analytics-public>
         <div className="ob-join-links">

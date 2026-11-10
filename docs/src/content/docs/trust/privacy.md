@@ -61,7 +61,7 @@ The trace also includes Nod's instructions, the model name, token counts, and co
 | Default    | On                                                                                                                                                                                                                      |
 | Includes   | Screens and features you use, kinds of tasks, timings, costs, failures, basic device details such as browser, OS, screen and viewport size, pseudonymous session and window IDs, and your onboarding and survey answers |
 | Excludes   | Your messages to Nod, Nod's replies, what Nod reads, saved passwords and cards, and screen recordings or session replays. Survey answers may contain personal details because Nod sends them as typed                   |
-| Your email | If you give it in onboarding, it is linked to your usage data so that n8n can send you updates about Nod and other n8n products. Withdraw via the unsubscribe link in every email or at privacy@n8n.io.                 |
+| Your email | If you give it in onboarding, it is linked to your usage data so that n8n can email you about Nod and other n8n products. Withdraw via the unsubscribe link in every email or at privacy@n8n.io.                        |
 | Stored in  | n8n's PostHog project in the EU. A consented email and fixed About you choices also go to n8n's Customer.io Labs workspace in the US.                                                                                   |
 | Switch     | **Share usage data**                                                                                                                                                                                                    |
 | Details    | [Analytics](/deploy/analytics/)                                                                                                                                                                                         |
@@ -116,9 +116,13 @@ See [Report contents and limits](/deploy/troubleshooting/#report-contents-and-li
 
 ## Email updates
 
-The last onboarding step lets you leave your email address for updates about Nod and other n8n products. Its consent checkbox starts unchecked. Ticking it means you agree that n8n GmbH links your email to your Nod usage data and sends you those updates. Nod sends the address only when you enter it, tick that box, and select **Start chatting**, or **Continue** in the desktop app, while **Share usage data** is on and the contact workflow is configured. It stores the address on this installation's PostHog person profile and sends it to an internal n8n workflow that creates or updates an unverified Customer.io Labs profile. Both PostHog and Customer.io receive the consent flag, time, and version; n8n stamps its own receipt time for Customer.io. Customer.io also receives the fixed About you choices if you shared them successfully; neither Customer.io nor PostHog receives words typed under **Something else**. Ordinary usage events do not carry the address. If you leave the address blank or sharing is off, Nod does not send it.
+The last onboarding step lets you leave your email address for updates about Nod and other n8n products. Its consent checkbox starts unchecked. Ticking it means you agree that n8n GmbH links your email to your Nod usage data and emails you about Nod and other n8n products, including invitations to research. A line under the box says how to withdraw.
 
-Submitting the form sends no email immediately. Updates require a later email confirmation flow before they are sent. If submission fails partway through, your address may already be in PostHog; you can retry or request deletion. You can withdraw your consent at any time, with effect for the future, through the unsubscribe link in every email or at privacy@n8n.io. Turning off **Share usage data** stops new analytics and profile updates; it does not delete data already in PostHog or Customer.io. To remove stored answers or contact data, request deletion through **Send feedback** or at privacy@n8n.io. See n8n's [privacy policy](https://n8n.io/legal/privacy/).
+Nod sends the address only when you enter it, tick that box, and select **Start chatting**, or **Continue** in the desktop app, while **Share usage data** is on and the contact workflow is configured. It stores the address as the `email` property on this installation's PostHog person profile, with the consent flag, time, version, exact checkbox wording, and privacy policy link. An internal n8n workflow creates or updates an unverified Customer.io Labs profile with the address, consent flag, receipt time, version, exact checkbox wording, and privacy policy link. Customer.io also receives the fixed About you choices if you shared them successfully. Neither service receives words typed under **Something else**.
+
+The checkbox controls the email, not the fixed About you answers. Ordinary usage events do not carry the address. If you leave the address blank or sharing is off, Nod does not send it.
+
+Submitting the form sends no email immediately. Updates require a later email confirmation flow before they are sent. If submission fails partway through, your address may already be in PostHog or Customer.io; you can retry or request deletion. You can withdraw your consent at any time, with effect for the future, through the unsubscribe link in every email or at privacy@n8n.io. Turning off **Share usage data** stops new analytics and profile updates; it does not delete data already in PostHog or Customer.io. To remove stored answers or contact data, request deletion through **Send feedback** or at privacy@n8n.io. See n8n's [privacy policy](https://n8n.io/legal/privacy/).
 
 ## What memory learns from
 
@@ -148,3 +152,5 @@ You can't clear only your chat history yet. **Remove all data** deletes it along
 - [Conversation traces](/trust/conversation-traces/)
 - [Security review guide](/trust/security-review/)
 - [Security model and limits](/trust/security-model/)
+- [n8n privacy policy](https://n8n.io/legal/privacy/)
+- [Nod Terms of Use](https://n8n.io/legal/nod-terms-of-use/)

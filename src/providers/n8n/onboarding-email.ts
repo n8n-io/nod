@@ -3,6 +3,7 @@ import type {
   OnboardingEmailSubmission,
 } from '../../ports/onboarding-email.ts';
 import { onboardingPersonProperties } from '../../shared/onboarding-analytics.ts';
+import { updatesEmailConsent } from '../../shared/onboarding.ts';
 
 export function createN8nOnboardingEmail(options: {
   url?: string;
@@ -34,7 +35,9 @@ export function createN8nOnboardingEmail(options: {
             version: 1,
             email: input.email,
             consent: true,
-            consent_version: 1,
+            consent_version: updatesEmailConsent.version,
+            consent_text: updatesEmailConsent.text,
+            consent_privacy_url: updatesEmailConsent.privacyUrl,
             ...(input.profile ? { profile: onboardingPersonProperties(input.profile) } : {}),
           }),
           signal: AbortSignal.any([signal, AbortSignal.timeout(35_000)]),

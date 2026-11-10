@@ -57,6 +57,14 @@
 .ob-join-consent a:hover {
   color: var(--link-hover);
 }
+.ob .ob-join-consent-note {
+  width: min(492px, calc(100% - 44px));
+  margin: -12px 0 0 44px;
+  padding: 0 16px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.45;
+}
 .ob-join-feedback {
   margin-top: 2px;
   font-size: 12px;
