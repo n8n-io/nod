@@ -22,7 +22,7 @@ import { PgBoss } from 'pg-boss';
 import type { Pool, PoolClient } from 'pg';
 import { cancellationTransaction, pool } from './db.ts';
 import { afterCommit, afterRollback, transaction } from './transaction.ts';
-import { turnChainSql } from './turn-chain.ts';
+import { laterSupersedingTurnSql, turnChainSql } from './turn-chain.ts';
 import { dataRoot, databaseUrl, ownerId } from './config.ts';
 import { delta, refresh, working } from './events.ts';
 import {
@@ -671,8 +671,7 @@ export async function submitUserMessage(
        WHERE u.owner_id=$1 AND u.thread_id=$2 AND (u.channel=$3 OR $4::uuid IS NOT NULL) AND u.status='waiting' AND u.waiting_reason='question'
          AND m.role='assistant' AND (($4::uuid IS NOT NULL AND m.id=$4) OR ($4::uuid IS NULL AND u.session_id=$2))
          AND m.id=(SELECT q.id FROM messages q WHERE q.turn_id=u.id AND q.owner_id=u.owner_id AND q.role='assistant' ORDER BY q.created_at DESC,q.id DESC LIMIT 1)
-         AND NOT EXISTS(SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id
-           AND (n.created_at,n.id)>(u.created_at,u.id))
+         AND NOT ${laterSupersedingTurnSql}
        ORDER BY m.created_at DESC,m.id DESC LIMIT 1`,
           [ownerId, thread.id, channel, options.replyToMessageId ?? null],
         )
@@ -920,7 +919,7 @@ export async function retryCredentials(turnId: string) {
 }
 
 export const activeHandoffSql = `u.status='waiting' AND u.waiting_reason='question' AND u.handoff_browser_id IS NOT NULL
-    AND NOT EXISTS(SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id AND (n.created_at,n.id)>(u.created_at,u.id))`;
+    AND NOT ${laterSupersedingTurnSql}`;
 
 export async function resumeAfterHandoff(turnId: string) {
   const resumed = await transaction(async (client) => {
@@ -1099,7 +1098,7 @@ async function failTurn(
        AND status='failed' AND error=$7
        AND ((NOT $6::boolean AND (SELECT id FROM messages WHERE owner_id=$2 AND thread_id=$3 AND role='user'
             ORDER BY created_at DESC,id DESC LIMIT 1) IS NOT DISTINCT FROM $5::uuid)
-         OR ($6::boolean AND NOT EXISTS (SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id AND (n.created_at,n.id)>(u.created_at,u.id))))
+         OR ($6::boolean AND NOT ${laterSupersedingTurnSql}))
        AND NOT EXISTS (SELECT 1 FROM messages WHERE owner_id=$2 AND thread_id=$3 AND stream_id=$4) FOR UPDATE`,
       [
         turnId,
