@@ -1199,7 +1199,7 @@ test(
           for (const method of ['PATCH', 'DELETE'] as const) {
             const schedule = await reminder({
               kind: 'recurring',
-              cron: '0 0 1 1 *',
+              cron: '0 0 * * 0',
               runAt: null,
             });
             const prompt = `Synthetic scheduled cancellation ${randomUUID()}`;
@@ -1307,7 +1307,7 @@ test(
       await t.test(
         'retiring a schedule confirmation leaves its saved task open with a reply target',
         async () => {
-          const schedule = await reminder({ kind: 'recurring', cron: '0 0 1 1 *', runAt: null });
+          const schedule = await reminder({ kind: 'recurring', cron: '0 0 * * 0', runAt: null });
           const taskId = randomUUID();
           const parentId = randomUUID();
           const ownerMessageId = randomUUID();
@@ -1534,7 +1534,7 @@ test(
       await t.test(
         'direct schedule pause waits for a channel confirmation already in flight',
         async () => {
-          const schedule = await reminder({ kind: 'recurring', cron: '0 0 1 1 *', runAt: null });
+          const schedule = await reminder({ kind: 'recurring', cron: '0 0 * * 0', runAt: null });
           const prompt = `Synthetic channel cancellation ${randomUUID()}`;
           const sourceId = `channel:telegram:bot:${randomUUID()}`;
           const channel = 'telegram:synthetic';
@@ -1744,7 +1744,7 @@ test(
       await t.test(
         'legacy schedule cancellation approval still pauses the saved schedule',
         async () => {
-          const schedule = await reminder({ kind: 'recurring', cron: '0 0 1 1 *', runAt: null });
+          const schedule = await reminder({ kind: 'recurring', cron: '0 0 * * 0', runAt: null });
           const turn = await propose('schedule_pause', { id: schedule.id });
           const [approval] = await approvalsFor(turn);
           await pool.query("UPDATE approvals SET action='NOD_schedule_cancel' WHERE id=$1", [
