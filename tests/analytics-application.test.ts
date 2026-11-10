@@ -151,12 +151,12 @@ test(
       });
       assert.equal(response.statusCode, 200, response.body);
     };
-    const send = async (text: string) => {
+    const send = async (text: string, clientMessageId = randomUUID()) => {
       const response = await application.app.inject({
         method: 'POST',
         url: '/api/messages',
         headers,
-        payload: { text, clientMessageId: randomUUID() },
+        payload: { text, clientMessageId },
       });
       assert.equal(response.statusCode, 200, response.body);
       return response.json().turnId as string;
@@ -182,7 +182,18 @@ test(
         async () => {
           await sharing(true);
           const before = events.length;
-          const id = await send('Compare two synthetic products.');
+          const clientMessageId = randomUUID();
+          const id = await send('Compare two synthetic products.', clientMessageId);
+          assert.equal(await send('Compare two synthetic products.', clientMessageId), id);
+          const accepted = events
+            .slice(before)
+            .filter((event) => event.event === 'owner_message_accepted');
+          assert.equal(accepted.length, 1);
+          assert.equal(accepted[0]!.properties.channel, 'web');
+          assert.equal(accepted[0]!.properties.analytics_schema, 'v4');
+          assert.equal(accepted[0]!.properties.capture_source, 'server');
+          assert.equal(Object.hasOwn(accepted[0]!.properties, 'run_id'), false);
+          assert.equal(JSON.stringify(accepted).includes('Compare two synthetic products.'), false);
           await waitFor(async () => currentClassification.entered.settled, 'Classifier dispatch');
           await settle(id);
           const started = events.slice(before).find((event) => event.event === 'turn_started')!;

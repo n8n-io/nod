@@ -2695,6 +2695,7 @@ test(
     let reads = 0;
     let message: InboundMessage;
     const submissions: { text: string; attachments: Artifact[] }[] = [];
+    const acceptedChannels: string[] = [];
     const privateCodes: string[] = [];
     const presentations: { kind: string; reason?: string }[] = [];
     let voiceFailure: Error | undefined;
@@ -2755,10 +2756,23 @@ test(
           privateCodes.push(text);
           return { messageText: 'Code entered privately.' };
         },
-        submit: async (text, sourceId, client, channel, _messageId, answer, _reply, files) => {
+        messageAccepted: () => (channel) => acceptedChannels.push(channel),
+        submit: async (
+          text,
+          sourceId,
+          client,
+          channel,
+          _messageId,
+          answer,
+          _reply,
+          files,
+          onInserted,
+        ) => {
           assert.equal(answer, undefined);
           submissions.push({ text, attachments: files ?? [] });
-          return fixtureTurn(client, threadId, owner, channel, sourceId);
+          const turnId = await fixtureTurn(client, threadId, owner, channel, sourceId);
+          onInserted?.();
+          return turnId;
         },
       });
       channels.registerRoutes(app);
@@ -2798,6 +2812,7 @@ test(
     await fixture.channels.drain();
     assert.equal(reads, 1);
     assert.equal(submissions.length, 1);
+    assert.deepEqual(acceptedChannels, ['telegram']);
     assert.equal(submissions[0].text, 'Inspect this image');
     assert.equal(submissions[0].attachments.length, 1);
     assert.deepEqual(
@@ -2810,6 +2825,7 @@ test(
     await fixture.channels.drain();
     assert.equal(reads, 1);
     assert.equal(submissions.length, 1);
+    assert.deepEqual(acceptedChannels, ['telegram']);
     message = {
       ...message,
       messageId: 'private-voice',
@@ -2820,6 +2836,7 @@ test(
     await fixture.channels.drain();
     assert.deepEqual(privateCodes, ['483729']);
     assert.equal(submissions.length, 1);
+    assert.deepEqual(acceptedChannels, ['telegram']);
     assert.equal(
       (await pool.query('SELECT count(*)::int AS count FROM artifacts')).rows[0].count,
       1,

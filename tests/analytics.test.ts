@@ -527,6 +527,47 @@ test('turn analytics keep the actual agent provider and remove stale model detai
   }
 });
 
+test('accepted owner messages do not inherit an unrelated run context', async () => {
+  const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+  const analytics = await createAnalytics({
+    provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+    environment: 'production',
+    dataRoot: '.',
+    installationId: randomUUID(),
+  });
+  try {
+    const owner = 'synthetic-owner';
+    analytics.setUsageData(owner, true);
+    await analytics.withRun(owner, async () => {
+      analytics.capture(owner, {
+        event: 'turn_started',
+        properties: {
+          source: 'user',
+          channel: 'web',
+          background: false,
+          work_type: 'immediate',
+          owner_requested: true,
+        },
+      });
+      analytics.capture(
+        owner,
+        {
+          event: 'owner_message_accepted',
+          properties: { channel: 'telegram' },
+        },
+        { runId: randomUUID() },
+      );
+    });
+    assert.equal(captured.length, 2);
+    assert.ok(captured[0]!.properties.run_id);
+    assert.equal(Object.hasOwn(captured[1]!.properties, 'run_id'), false);
+    assert.equal(Object.hasOwn(captured[1]!.properties, 'work_type'), false);
+    assert.equal(captured[1]!.properties.channel, 'telegram');
+  } finally {
+    await analytics.shutdown();
+  }
+});
+
 test('analytics reject the old provider field instead of accepting two contracts', () => {
   const turn = {
     source: 'user',

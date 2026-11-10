@@ -110,6 +110,7 @@ Model events use one `provider` property. Onboarding completion and execution st
 | `local_setting_changed`                           | Changed, persisted local theme, launch-at-login, or notification choice with a fixed value.                                                         |
 | `notification_opened`                             | Clicked browser reply notification, without its content. Native notification clicks aren't observed.                                                |
 | `chat_message_sent`                               | Attachment/reply booleans, text/voice input, and composer/task-card/ask-Nod/task-reply/answer-choice source.                                        |
+| `owner_message_accepted`                          | Newly committed owner message by bounded channel, excluding duplicates, channel commands, and private verification. No content or ID.               |
 | `chat_stop_requested`                             | Stop requested in the app.                                                                                                                          |
 | `task_card_started`, `task_action`                | Card kind and bounded position, or fixed task control.                                                                                              |
 | `setup_link_clicked`, `link_opened`               | Setup kind or text/tooltip source and optional bounded position. No link destination.                                                               |
@@ -260,7 +261,7 @@ The primary return table starts at an installation's first observed successful o
 
 The return proxy is a later execution start with `owner_requested=true` and `source=user` or `task`. It can be an agent-created child of an existing owner request, so it doesn't establish a fresh message or human visit. All resume starts are excluded, including genuine confirmation messages. Queue delays and later child starts can cross window boundaries without new owner input; messages merged into a running turn don't create separate starts. Active-use and first-attempt return charts use the same execution-start proxy.
 
-Measuring fresh owner return across channels would require a deduplicated server event for each accepted owner input. The existing `chat_message_sent` event covers web and desktop only and is insufficient for that measure.
+`owner_message_accepted` measures fresh owner messages across the web app, Telegram, and WhatsApp after the event ships. It is emitted after a new message commits, including messages merged into running work, and excludes duplicate deliveries, commands, and private verification replies. It has no analytics run ID. Earlier `v4` history lacks this event. `chat_message_sent` covers web and desktop UI only and can differ when a client closes before recording the response.
 
 | Window | Elapsed time after first success | Included in the denominator after |
 | ------ | -------------------------------- | --------------------------------- |

@@ -23,6 +23,7 @@ import {
   analyticsEnabled,
   analyticsEnvironment,
   createAnalytics,
+  snapshotAnalytics,
   toolUsed,
   type CaptureAnalytics,
 } from './analytics.ts';
@@ -1624,9 +1625,23 @@ async function initializeApplication(
     resume: resumeAfterPayment,
     record: (turn, entry, client) => vaultAccess.record(turn, entry, client),
   });
+  const ownerMessageAccepted = () => {
+    const capture = snapshotAnalytics(captureAnalytics);
+    return (channel: string) => {
+      const source = channel.split(':')[0];
+      capture?.({
+        event: 'owner_message_accepted',
+        properties: {
+          channel:
+            source === 'web' || source === 'telegram' || source === 'whatsapp' ? source : 'other',
+        },
+      });
+    };
+  };
   const submittedMessages = createUserMessageService({
     confirmAction: approvals.chat,
     taskReply: tasks.resolveReply,
+    accepted: ownerMessageAccepted,
   });
   const userMessages = {
     ...submittedMessages,
@@ -2304,6 +2319,7 @@ async function initializeApplication(
         answer,
         replyToMessageId,
         attachments,
+        onInserted,
       ) =>
         (
           await userMessages.submit(text, attachments, {
@@ -2313,8 +2329,10 @@ async function initializeApplication(
             clientMessageId: messageId,
             replyToMessageId,
             answer,
+            onInserted,
           })
         ).turnId,
+      messageAccepted: ownerMessageAccepted,
       answer: (text, channel, replyToMessageId) =>
         userMessages.answer(text, { channel, replyToMessageId }),
     });

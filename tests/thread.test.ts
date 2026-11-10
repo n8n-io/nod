@@ -44,7 +44,7 @@ import { createMemoryLearning } from '../src/server/memory-learning.ts';
 import { createMemoryService } from '../src/server/memory.ts';
 import { memoryObjectStore } from './fixtures/object-store.ts';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
-import { createAnalytics } from '../src/server/analytics.ts';
+import { createAnalytics, snapshotAnalytics } from '../src/server/analytics.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 import { suggestedTaskStatus } from '../src/web/lib/chat-messages.ts';
 
@@ -1259,15 +1259,34 @@ test(
           background: false,
           thread_id: threadId,
         });
+        const before = analyticsEvents.length;
+        const accepted = thread.createUserMessageService({
+          accepted: () => {
+            const capture = snapshotAnalytics(captureAnalytics);
+            return () =>
+              capture?.({ event: 'owner_message_accepted', properties: { channel: 'web' } });
+          },
+        });
+        const clientMessageId = randomUUID();
         const results = await Promise.all(
           Array.from({ length: 3 }, () =>
-            thread.submitUserMessage('Approved fixture result', [], {
+            accepted.submit('Approved fixture result', [], {
               sourceId: 'approval:fixture',
+              clientMessageId,
             }),
           ),
         );
+        assert.equal(
+          (await accepted.submit('Approved fixture result', [], { clientMessageId })).turnId,
+          results[0]!.turnId,
+        );
         assert.equal(new Set(results.map((result) => result.turnId)).size, 1);
         assert.equal(new Set(results.map((result) => result.messageId)).size, 1);
+        assert.equal(
+          analyticsEvents.slice(before).filter((event) => event.event === 'owner_message_accepted')
+            .length,
+          1,
+        );
         firstUserTurnId = results[0]!.turnId;
         assert.equal(
           (
@@ -1275,6 +1294,30 @@ test(
               "SELECT id FROM messages WHERE role='user' AND text='Approved fixture result'",
             )
           ).rowCount,
+          1,
+        );
+        let entered!: () => void;
+        const waiting = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+        let release!: () => void;
+        const proceed = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const stale = accepted.submit('Stale sharing fixture', [], {
+          persistSubmission: async () => {
+            entered();
+            await proceed;
+          },
+        });
+        await waiting;
+        analytics.setUsageData(ownerId, false);
+        analytics.setUsageData(ownerId, true);
+        release();
+        await stale;
+        assert.equal(
+          analyticsEvents.slice(before).filter((event) => event.event === 'owner_message_accepted')
+            .length,
           1,
         );
       });

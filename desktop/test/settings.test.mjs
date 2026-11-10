@@ -2945,6 +2945,12 @@ test('packaged pages add their content policy without replacing server policy or
   );
   assert.equal(response.responseHeaders['content-security-policy'][0], original);
   assert.equal(response.responseHeaders['content-security-policy'].length, 2);
+  assert.equal(
+    response.responseHeaders['content-security-policy'][1]
+      .split('; ')
+      .find((directive) => directive.startsWith('connect-src')),
+    "connect-src 'self' https://eu.i.posthog.com",
+  );
   for (const url of [
     'https://other.example.test/',
     'http://127.0.0.1:4310/api/artifacts/synthetic',

@@ -94,6 +94,12 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
+      event: z.literal('owner_message_accepted'),
+      properties: z.object({ channel: z.enum(['web', 'telegram', 'whatsapp', 'other']) }).strict(),
+    })
+    .strict(),
+  z
+    .object({
       event: z.literal('output_created'),
       properties: z.union([
         z

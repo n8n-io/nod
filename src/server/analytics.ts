@@ -183,8 +183,9 @@ export async function createAnalytics(options: {
     const config = configuration(owner);
     if (!config.enabled || !config.distinctId) return;
     const current = consent(owner);
-    const run = runs.getStore();
-    const system = systems.getStore();
+    const independent = event.event === 'owner_message_accepted';
+    const run = independent ? undefined : runs.getStore();
+    const system = independent ? undefined : systems.getStore();
     const context = run ?? system;
     if (
       context &&
@@ -194,7 +195,7 @@ export async function createAnalytics(options: {
         context.consent.version !== current.version)
     )
       return;
-    const runId = delivery.runId ?? run?.id;
+    const runId = independent ? undefined : (delivery.runId ?? run?.id);
     if (runId !== undefined && !z.uuid().safeParse(runId).success) return;
     if (run && delivery.runId !== undefined && delivery.runId !== run.id) return;
     if (delivery.consentRevision !== undefined && delivery.consentRevision !== current.revision)

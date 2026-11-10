@@ -86,7 +86,9 @@ interface ChannelOptions {
     answer?: ChatConfirmationInput['answer'],
     replyToMessageId?: string,
     attachments?: Artifact[],
+    onInserted?: () => void,
   ) => Promise<string>;
+  messageAccepted?: () => (channel: string) => void;
   answer?: (
     text: string,
     channel: string,
@@ -945,6 +947,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       )
     ).rows[0];
     if (!pending) return false;
+    const messageAccepted = options.messageAccepted?.();
     const channel = conversationChannel(pending);
     if (closed || replacing) return false;
     const permittedBeforeAnswer = permitted(pending);
@@ -1054,6 +1057,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         return true;
       }
       const messageId = row.message_id ?? randomUUID();
+      let inserted = false;
       const turnId = await options.submit(
         row.text,
         row.source_id,
@@ -1063,13 +1067,16 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         retiredBeforeAnswer ? undefined : answer,
         retiredBeforeAnswer ? undefined : replyToMessageId,
         row.attachments ?? [],
+        () => {
+          inserted = true;
+        },
       );
       await options.attributeMediaUsage?.(client, row.media_usage_ids ?? [], turnId);
       await client.query(
         "UPDATE channel_inbox SET state='submitted',turn_id=$2,message_id=$3,channel=$5 WHERE source_id=$1 AND owner_id=$4",
         [row.source_id, turnId, messageId, ownerId, channel],
       );
-      return true;
+      return { acceptedChannel: inserted ? row.provider : undefined };
     }, pool).catch(async (cause) => {
       if (cause === replyTargetChanged) return true;
       if (
@@ -1084,6 +1091,11 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       return true;
     });
     if (submitted === undefined) return false;
+    if (submitted && typeof submitted !== 'boolean' && submitted.acceptedChannel) {
+      try {
+        messageAccepted?.(submitted.acceptedChannel);
+      } catch {}
+    }
     await afterCommit?.();
     if (submitted) options.refresh?.();
     return true;

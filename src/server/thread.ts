@@ -114,6 +114,7 @@ interface SubmitUserMessageOptions {
   answer?: ChatConfirmationInput['answer'];
   prepareAttachments?: (client: PoolClient, threadId: string) => Promise<Artifact[]>;
   persistSubmission?: (client: PoolClient, result: SubmitUserMessageResult) => Promise<void>;
+  onInserted?: () => void;
 }
 export interface SubmitUserMessageResult {
   threadId: string;
@@ -507,11 +508,22 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
 }
 
 export function createUserMessageService(
-  options: { confirmAction?: ConfirmAction; taskReply?: TaskReply } = {},
+  options: {
+    confirmAction?: ConfirmAction;
+    taskReply?: TaskReply;
+    accepted?: () => (channel: string) => void;
+  } = {},
 ) {
   return {
     submit: (text: string, attachments: Artifact[] = [], input: SubmitUserMessageOptions = {}) =>
-      submitUserMessage(text, attachments, input, options.confirmAction, options.taskReply),
+      submitUserMessage(
+        text,
+        attachments,
+        input,
+        options.confirmAction,
+        options.taskReply,
+        options.accepted?.(),
+      ),
     answer: (text: string, input: SubmitUserMessageOptions = {}) =>
       readAnswer(text, false, input, options.confirmAction),
   };
@@ -548,6 +560,7 @@ export async function submitUserMessage(
   options: SubmitUserMessageOptions = {},
   confirmAction?: ConfirmAction,
   taskReply?: TaskReply,
+  onAccepted?: (channel: string) => void,
 ): Promise<SubmitUserMessageResult> {
   validateSource(options.sourceId, options.channel);
   const channel = options.channel ?? 'web';
@@ -565,6 +578,7 @@ export async function submitUserMessage(
     : options.client
       ? options.answer
       : await readAnswer(text, confirmation.hasAttachments, options, confirmAction);
+  let inserted = false;
   const submit = async (client: PoolClient): Promise<SubmitUserMessageResult> => {
     const thread = await lockThread(client);
     if (options.threadId !== undefined && options.threadId !== thread.id)
@@ -711,6 +725,8 @@ export async function submitUserMessage(
       ],
     );
     await sendDrain(client, thread.id);
+    inserted = true;
+    options.onInserted?.();
     return { threadId: thread.id, turnId, messageId };
   };
   let result: SubmitUserMessageResult;
@@ -726,6 +742,11 @@ export async function submitUserMessage(
     if (options.clientMessageId && code === '23505' && constraint === 'messages_pkey')
       throw messageIdInUse();
     throw error;
+  }
+  if (!options.client && inserted) {
+    try {
+      onAccepted?.(channel);
+    } catch {}
   }
   if (!options.client) refresh();
   return result;
