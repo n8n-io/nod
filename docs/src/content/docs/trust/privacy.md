@@ -11,7 +11,7 @@ Nod keeps your data on your computer, or on your server if you self-host. This p
 
 Nod can share two kinds of data with the Nod team at n8n. Both help the team find where Nod gets stuck.
 
-- **Usage data** is on by default. It records the screens and features you use, and your onboarding and survey answers. Onboarding answers are your fixed About you choices, never what you type under **Something else**. They also appear on an installation profile so the team can filter events by those answers. It excludes your messages to Nod and Nod's replies. If you give your email in onboarding and tick its consent box, it is linked to the same profile.
+- **Usage data** is on by default. It records the screens and features you use, and your onboarding and survey answers. Onboarding answers are your fixed About you choices, never what you type under **Something else**. They also appear on a PostHog profile tied to a pseudonymous analytics ID so the team can filter events by those answers. It excludes your messages to Nod and Nod's replies. If you give your email in onboarding and tick its consent box, it is linked to the same profile.
 - **Conversation traces** are off by default. They include the conversation, with personal details removed on your computer first.
 
 ### Example: one request
@@ -115,7 +115,7 @@ See [Report contents and limits](/deploy/troubleshooting/#report-contents-and-li
 
 ## Email updates
 
-The last onboarding step lets you leave your email address for updates about Nod and other n8n products. Its consent checkbox starts unchecked. Ticking it means you agree that n8n GmbH links your email to your Nod usage data and sends you those updates. Nod sends the address only when you enter it, tick that box, and select **Start chatting**, or **Continue** in the desktop app, while **Share usage data** is on. It stores the address as the `email` property on this installation's PostHog person profile, with a consent flag, time, and version. This checkbox controls the email, not the fixed About you answers. Ordinary events do not carry the address. If you leave the address blank or sharing is off, Nod does not send it.
+The last onboarding step lets you leave your email address for updates about Nod and other n8n products. Its consent checkbox starts unchecked. Ticking it means you agree that n8n GmbH links your email to your Nod usage data and sends you those updates. Nod sends the address only when you enter it, tick that box, and select **Start chatting**, or **Continue** in the desktop app, while **Share usage data** is on. It stores the address as the `email` property on the PostHog profile tied to the same analytics ID as your usage events, with a consent flag, time, and version. This checkbox controls the email, not the fixed About you answers. Ordinary events do not carry the address. If you leave the address blank or sharing is off, Nod does not send it.
 
 Submitting the form sends no email immediately. You can withdraw your consent at any time, with effect for the future, through the unsubscribe link in every email or at privacy@n8n.io. Turning off **Share usage data** stops new analytics and profile updates; it does not delete data already in PostHog. To remove stored answers or contact data, request deletion through **Send feedback** or at privacy@n8n.io. See n8n's [privacy policy](https://n8n.io/legal/privacy/).
 

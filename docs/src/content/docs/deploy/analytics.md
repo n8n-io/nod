@@ -9,7 +9,7 @@ Nod shares bounded product events so the team can understand usage, reliability,
 
 Usage sharing is on for new owners. It sends bounded product data to the Nod team at n8n through its EU-hosted PostHog project, including from independent source installations. The public ingestion identifier is fixed; there is no runtime override for another project.
 
-Messages, generated content, connected-app results, and credentials are excluded from analytics events. About you sends only fixed choices and stores them on an installation profile so the team can filter usage by those answers. Answers you choose to submit in an in-app [survey](#surveys), including typed text, are the content exception. If you enter an email address for updates about Nod and other n8n products and tick its consent checkbox in onboarding, Nod also stores that address on the same PostHog profile. While sharing is on, a separate model request assigns a fixed [task category](#task-categories); its input goes to your selected model connection, not PostHog.
+Messages, generated content, connected-app results, and credentials are excluded from analytics events. About you sends only fixed choices and stores them on a PostHog profile tied to the analytics ID so the team can filter usage by those answers. Answers you choose to submit in an in-app [survey](#surveys), including typed text, are the content exception. If you enter an email address for updates about Nod and other n8n products and tick its consent checkbox in onboarding, Nod also stores that address on the same PostHog profile. While sharing is on, a separate model request assigns a fixed [task category](#task-categories); its input goes to your selected model connection, not PostHog.
 
 ## Turn usage sharing on or off
 
@@ -40,7 +40,7 @@ Turning sharing off stops new analytics events and person-profile updates. It do
 
 ## Identity and environments
 
-Analytics groups observed events by a pseudonymous `local:<UUID>` stored with the server data root. A local desktop uses its local profile; web and desktop clients connected to one server share that server's ID. Distinct-ID charts count observed sharing runtime profiles, not downloads, client installations, devices, or people.
+Analytics groups observed events by a pseudonymous analytics ID (`local:<UUID>`) stored with the server data root. A local desktop uses its local profile; web and desktop clients connected to one server share that server's ID. Distinct-ID charts count observed sharing runtime profiles, not downloads, client installations, devices, or people.
 
 The ID persists across updates while its data root exists; removing that data creates a new ID, while a copied profile or explicitly supplied server ID can reuse one. An ID's first recorded `v4` production event marks when it entered the observed sample, not its install or first-open time. Events appear only while collection and sharing are enabled.
 
@@ -51,7 +51,7 @@ The About you profile can link this ID's events to its fixed choices. If you sub
 | Source or self-hosted server | `<NOD_DATA_ROOT>/analytics-id` | `NODE_ENV=production`           |
 | Local desktop runtime        | Desktop profile                | Packaged apps                   |
 
-The owner's sharing choice still applies. Nod disables IP geolocation. Ordinary events don't create PostHog person profiles. Submitting About you explicitly creates or updates a profile with fixed choices under the installation ID while **Share usage data** is on. This happens whether or not you provide an email. The profile has `onboarding_profile_completed=true` and one property per question:
+The owner's sharing choice still applies. Nod disables IP geolocation. Ordinary events don't create PostHog person profiles. Submitting About you explicitly creates or updates a profile with fixed choices under the analytics ID while **Share usage data** is on. This happens whether or not you provide an email. The profile has `onboarding_profile_completed=true` and one property per question:
 
 | Person property           | Value                                                                |
 | ------------------------- | -------------------------------------------------------------------- |
@@ -63,7 +63,7 @@ The owner's sharing choice still applies. Nod disables IP geolocation. Ordinary 
 
 The typed **Something else** text stays out of PostHog. The `onboarding_profile_answered` event keeps per-option booleans for event-time analysis. A new About submission removes any old per-option person properties; existing profiles keep them until resubmitted. Separate consent lets Nod add `email` and the consent flag, time, and version to the same profile.
 
-Packaged release builds with a plain `x.y.z` version report `production`. Local and prerelease desktop builds report `development`. Source installs report `production` when `NODE_ENV=production` and `NOD_APP_VERSION` isn't a prerelease, unless overridden. Dashboards filter to production and include both staff and external installations. Internal/test exclusions are off; separating internal use into another project is deferred.
+Packaged release builds with a plain `x.y.z` version report `production`. Local and prerelease desktop builds report `development`. Source installs report `production` when `NODE_ENV=production` and `NOD_APP_VERSION` isn't a prerelease, unless overridden. Dashboards filter to production and include both staff and external usage. Internal/test exclusions are off; separating internal use into another project is deferred.
 
 ## What is excluded
 
@@ -87,7 +87,7 @@ UI events add `surface` (`web` or `desktop`) and a normalized app `route`. Serve
 
 Browser SDK metadata can include the browser and OS names/versions, device type, screen and viewport dimensions, SDK name/version, event time/UUID, and pseudonymous session/window IDs. The public ingestion identifier is included for routing. This metadata doesn't contain the raw browser user-agent string or private Nod owner, thread, turn, or message IDs.
 
-The server SDK adds its name and version, event timestamp and UUID, and a constant server marker (`$is_server=true`). Ordinary events disable GeoIP lookup (`$geoip_disable=true`) and person-profile processing (`$process_person_profile=false`). Explicit `$set` calls add the fixed About you choices and, after separate consent, `email` and consent metadata under the installation's distinct ID.
+The server SDK adds its name and version, event timestamp and UUID, and a constant server marker (`$is_server=true`). Ordinary events disable GeoIP lookup (`$geoip_disable=true`) and person-profile processing (`$process_person_profile=false`). Explicit `$set` calls add the fixed About you choices and, after separate consent, `email` and consent metadata under the analytics ID.
 
 Server events captured within a turn add a random analytics `run_id`, `work_type` (`immediate`, `scheduled`, or `background`), and `owner_requested`. Resumed work retains its originating execution mode. The separate `task_type` describes the request's purpose. UI presentation and artifact events don't include `run_id`. Private turn and message IDs are excluded.
 
@@ -128,7 +128,7 @@ Model events use one `provider` property. Onboarding completion and execution st
 
 Settings sections are `general`, `notifications`, `models`, `voice`, `memory`, and `privacy`. A section view means it was reached by navigation or scrolling, not that a setting changed. Settings paths normalize to `/settings`. Apps tabs are `all` and `connected`; `/tasks` is the Scheduled page and has no tab events.
 
-Connecting email is optional. About you answers are counted as fixed choices in an event and stored on the installation's PostHog person profile, even if you don't provide an email. The team can filter linked events by the profile's **current** choices. Ordinary events don't carry event-time person-property snapshots, including those captured after About you, so PostHog's event-time person-property filter does not match them. Earlier events can be included by current-person filtering and reflect later edits to the answers. Words typed under **Something else** stay in the owner's memory note. Entering an address for updates in the final step does not send it until its consent checkbox is ticked and setup is finished. The address is added to the same profile. Submission sends no email immediately. Model setup can be bypassed when already configured. The setup funnel measures observed step visits, not connection success. Sharing must be enabled when a step appears to observe it; native Welcome is outside this sample.
+Connecting email is optional. About you answers are counted as fixed choices in an event and stored on the PostHog person profile tied to the analytics ID, even if you don't provide an email. The team can filter linked events by the profile's **current** choices. Ordinary events don't carry event-time person-property snapshots, including those captured after About you, so PostHog's event-time person-property filter does not match them. Earlier events can be included by current-person filtering and reflect later edits to the answers. Words typed under **Something else** stay in the owner's memory note. Entering an address for updates in the final step does not send it until its consent checkbox is ticked and setup is finished. The address is added to the same profile. Submission sends no email immediately. Model setup can be bypassed when already configured. The setup funnel measures observed step visits, not connection success. Sharing must be enabled when a step appears to observe it; native Welcome is outside this sample.
 
 ### Runs, models, and connected services
 
@@ -159,7 +159,7 @@ An execution segment ends with `succeeded`, a waiting state, `failed`, `cancelle
 
 Task completion records a declared status, not verified success. `notified` means an offer message was saved, not that an external notification arrived or was read. Prepared-work feedback records the requested action, which can be performed through Nod's tools. It isn't a survey or a rating for every task. Rejected, rolled-back, and unchanged writes don't count. These events exclude task identifiers, titles, prepared content, and feedback text.
 
-`duration_ms` measures execution time. `queue_duration_ms` measures waiting to start. They exclude time awaiting an owner response between segments. Join related measurements using the installation identity and analytics `run_id`.
+`duration_ms` measures execution time. `queue_duration_ms` measures waiting to start. They exclude time awaiting an owner response between segments. Join related measurements using the analytics ID and analytics `run_id`.
 
 `cost_usd` is a model price estimate, including API-equivalent estimates for plan usage. Check `pricing` (`api`, `plan_estimate`, `unavailable`) before interpreting totals. Unpriced usage isn't free. Browser runtime fees, independent integration charges, and who pays aren't measured.
 
@@ -175,7 +175,7 @@ The `system` setting actor identifies app-reported automatic browser-timezone in
 
 ### Task categories
 
-Nod assigns one broad purpose to eligible requests after the execution segment ends. Classification runs separately and doesn't delay the reply. `task_classified` joins to the segment using installation identity and the random analytics `run_id`; it doesn't reveal the task's title or exact request.
+Nod assigns one broad purpose to eligible requests after the execution segment ends. Classification runs separately and doesn't delay the reply. `task_classified` joins to the segment using the analytics ID and random analytics `run_id`; it doesn't reveal the task's title or exact request.
 
 Taxonomy version `1` has these fixed values:
 
@@ -213,7 +213,7 @@ The result is reused for resumed segments and later segments in the same task se
 
 The last three statuses use `task_type=unknown`. Read both properties: a model's uncertainty, an unavailable classifier, and a failed request are different observations. An absent classification event is a separate missing observation, not `unknown`.
 
-Category views show the observed mix, execution outcomes and duration, known model costs with pricing coverage, classification coverage, and classifier overhead. They count execution segments, not whole jobs: resumed segments can repeat the category, and duration excludes time waiting between them. Distinct installation reach shows breadth, but installations can appear in several categories. Classification eligibility depends on the selected provider/model and work type, so the mix may not represent all work. Coverage includes all observed completed segments with usable run IDs. The taxonomy marker distinguishes supported measurement from `not instrumented` observations, which remain in the denominator. Coverage allows 60 seconds after completion for asynchronous classification before reporting a missing result; older events without the marker aren't classification failures.
+Category views show the observed mix, execution outcomes and duration, known model costs with pricing coverage, classification coverage, and classifier overhead. They count execution segments, not whole jobs: resumed segments can repeat the category, and duration excludes time waiting between them. Reach across analytics IDs shows breadth, but an ID can appear in several categories. Classification eligibility depends on the selected provider/model and work type, so the mix may not represent all work. Coverage includes all observed completed segments with usable run IDs. The taxonomy marker distinguishes supported measurement from `not instrumented` observations, which remain in the denominator. Coverage allows 60 seconds after completion for asynchronous classification before reporting a missing result; older events without the marker aren't classification failures.
 
 ### Outputs and answer choices
 
@@ -253,7 +253,7 @@ These answers go to the same EU PostHog project as other usage events. Text is s
 
 ### Read first-attempt outcomes
 
-The first-attempt table starts with each installation's first observed `v4` onboarding completion, then applies the selected cohort dates. It selects the earliest owner-requested chat or Tasks execution start within seven elapsed days. Only that execution's matching completion determines its outcome. Later attempts and resumed executions can't replace an initial failure or waiting state.
+The first-attempt table starts with each analytics ID's first observed `v4` onboarding completion, then applies the selected cohort dates. It selects the earliest owner-requested chat or Tasks execution start within seven elapsed days. Only that execution's matching completion determines its outcome. Later attempts and resumed executions can't replace an initial failure or waiting state.
 
 No start is separated into an open seven-day window or an elapsed window. A start without a matching completion remains unknown, not failed. Missing analytics run IDs are reported separately. Results include observations up to the earlier of now and the selected end date. A matching completion can occur after the seven-day start window.
 
@@ -261,7 +261,7 @@ The denominator includes all selected observed onboarding completions, including
 
 ### Read return and cost measurements
 
-The primary return table starts at an installation's first observed successful owner-requested execution segment in `v4`, before applying the selected cohort date range. A resumed segment can establish that first success. This is an execution milestone, not proof of a useful completed task or an onboarding-qualified cohort.
+The primary return table starts at an analytics ID's first observed successful owner-requested execution segment in `v4`, before applying the selected cohort date range. A resumed segment can establish that first success. This is an execution milestone, not proof of a useful completed task or an onboarding-qualified cohort.
 
 The return proxy is a later execution start with `owner_requested=true` and `source=user` or `task`. It can be an agent-created child of an existing owner request, so it doesn't establish a fresh message or human visit. All resume starts are excluded, including genuine confirmation messages. Queue delays and later child starts can cross window boundaries without new owner input; messages merged into a running turn don't create separate starts. Active-use and first-attempt return charts use the same execution-start proxy.
 
@@ -274,9 +274,9 @@ The return proxy is a later execution start with `owner_requested=true` and `sou
 | W2     | 14 days to less than 21 days     | 21 days                           |
 | W4     | 28 days to less than 35 days     | 35 days                           |
 
-Only fully elapsed windows count, as of the earlier of now and the selected end date. No mature sample means no rate. The 30% W4 reference applies to this completed-execution cohort as a product proxy; it doesn't establish human return or whole-task retention. The separate first-attempt return charts start at the first matching execution start, including existing installations and failed attempts; they are diagnostic and aren't compared with that reference.
+Only fully elapsed windows count, as of the earlier of now and the selected end date. No mature sample means no rate. The 30% W4 reference applies to this completed-execution cohort as a product proxy; it doesn't establish human return or whole-task retention. The separate first-attempt return charts start at the first matching execution start, including previously observed analytics IDs and failed attempts; they are diagnostic and aren't compared with that reference.
 
-The segment-cost table groups `model_used` records by installation and random analytics `run_id`, then shows known subtotals for whole segments and their provider/model contributions. Provider and model come from actual usage records, not the last model on the completion event. Resumes have separate run IDs.
+The segment-cost table groups `model_used` records by analytics ID and random analytics `run_id`, then shows known subtotals for whole segments and their provider/model contributions. Provider and model come from actual usage records, not the last model on the completion event. Resumes have separate run IDs.
 
 Mean, median, and p90 use samples with at least one priced request and can represent partial costs. Coverage columns identify samples whose observed requests are all priced, unpriced requests, and samples with no prices; an entirely unpriced group has no cost value. Subtotals include only observed requests in the selected date range. A segment spanning its boundaries can have incomplete costs even when every observed request has a price. Segments without model records and maintenance or unclassified work without a run ID are absent from this table, not free; total model-spend and pricing-coverage charts retain unscoped usage. Neither table exposes private task or turn IDs.
 
