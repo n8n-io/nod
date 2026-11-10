@@ -354,6 +354,7 @@ export async function createChannelSettings(
   const exclusive = createLock();
   const pairingExclusive = createLock();
   let key: Promise<Buffer> | undefined;
+  let statusObservationSequence = 0;
   function encryptionKey() {
     if (!options.keyStore.configured) throw new Error('The secure key store is not configured.');
     key ??= options.keyStore.getKey().catch((error) => {
@@ -380,6 +381,7 @@ export async function createChannelSettings(
     return result;
   }
   async function status() {
+    const sequence = ++statusObservationSequence;
     let observed: ((channels: ChannelConnectionObservation[]) => void) | undefined;
     try {
       observed = options.observed?.();
@@ -424,9 +426,11 @@ export async function createChannelSettings(
         }),
       ),
     };
-    try {
-      observed?.(channelConnectionObservations(result.channels, managed));
-    } catch {}
+    if (sequence === statusObservationSequence) {
+      try {
+        observed?.(channelConnectionObservations(result.channels, managed));
+      } catch {}
+    }
     return result;
   }
   async function activate(provider: ChannelProvider, configuration: ChannelSetupConfiguration) {

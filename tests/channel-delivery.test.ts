@@ -101,6 +101,72 @@ test('managed connection observations require usable channel configuration', () 
   );
 });
 
+test('a newer unchanged channel status suppresses an older observation that finishes later', async () => {
+  const pool = {
+    async query(statement: string) {
+      assert.match(
+        statement,
+        /^(CREATE TABLE IF NOT EXISTS channel_settings|SELECT \* FROM channel_settings)/,
+      );
+      return { rows: [] };
+    },
+  } as unknown as pg.Pool;
+  let linkState: 'connected' | 'disconnected' = 'connected';
+  let holdNext = false;
+  let release: () => void = () => {};
+  let reached: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  const observations: ChannelConnectionObservation[][] = [];
+  let lastSignature: string | undefined;
+  const settings = await createChannelSettings(pool, {
+    ownerId: 'synthetic-owner',
+    keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32) },
+    verifier: createChatSdkSetupVerifier({
+      fetch: async () => {
+        throw new Error('Channel verification was not expected.');
+      },
+    }),
+    managed: managedChannelEnvironment({
+      WHATSAPP_ENABLED: 'true',
+      WHATSAPP_MODE: 'self-chat',
+      WHATSAPP_POLICY_CONFIRMED: 'true',
+    }),
+    apply: async () => {},
+    linkStatus: async () => {
+      const state = linkState;
+      if (holdNext) {
+        holdNext = false;
+        reached();
+        await held;
+      }
+      return { state };
+    },
+    observed: () => (states) => {
+      const signature = JSON.stringify(states);
+      if (signature === lastSignature) return;
+      lastSignature = signature;
+      observations.push(states);
+    },
+  });
+  await settings.status();
+  assert.deepEqual(observations[0]?.[1], { channel: 'whatsapp', state: 'connected' });
+  linkState = 'disconnected';
+  holdNext = true;
+  const stale = settings.status();
+  await waiting;
+  linkState = 'connected';
+  await settings.status();
+  assert.equal(observations.length, 1);
+  release();
+  assert.equal((await stale).channels[0]?.connectionState, 'disconnected');
+  assert.equal(observations.length, 1);
+});
+
 test(
   'managed channels shadow saved credentials, refuse changes and restore saved configuration when removed',
   { skip: !process.env.TEST_DATABASE_URL },
