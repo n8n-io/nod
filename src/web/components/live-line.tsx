@@ -76,13 +76,13 @@ function useIdleWord(enabled: boolean) {
   return order[index]!;
 }
 
-export function LiveLine({ item, quiet = true }: { item: Activity; quiet?: boolean }) {
-  const step = item.step?.trim();
-  const site = item.doing === 'tool' ? item.site : null;
+export function LiveLine({ item, quiet = true }: { item?: Activity; quiet?: boolean }) {
+  const step = item?.step?.trim();
+  const site = item?.doing === 'tool' ? item.site : null;
   const described = step || site;
-  const queued = item.doing === 'queued';
+  const queued = item?.doing === 'queued';
   const word = useIdleWord(!described && !queued);
-  const minutes = useQuietMinutes(item.quietSince, quiet);
+  const minutes = useQuietMinutes(item?.quietSince ?? '', quiet && Boolean(item));
   const meta = [step ? site : null, minutes ? `${minutes} min` : null].filter(Boolean).join(' · ');
   return (
     <span>

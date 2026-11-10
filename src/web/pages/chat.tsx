@@ -120,28 +120,30 @@ function Working({
   items = [],
   label,
   sending = false,
+  writing = false,
   quiet = true,
 }: {
   items?: Activity[];
   label?: string;
   sending?: boolean;
+  writing?: boolean;
   quiet?: boolean;
 }) {
-  const chat = items.find((item) => !item.background && !item.taskId);
-  const receipt = sending
-    ? 'Sending…'
-    : items.some((item) => !item.background && item.received)
-      ? 'Got your message. I’ll read it after this step.'
-      : null;
-  if (!chat && !label && !receipt) return null;
+  const found = writing ? undefined : items.find((item) => !item.background && !item.taskId);
+  const chat = found?.doing === 'queued' ? undefined : found;
+  const thinking = Boolean(found) || (sending && !writing);
+  const receipt = items.some((item) => !item.background && item.received)
+    ? 'Got your message. I’ll read it after this step.'
+    : null;
+  if (!thinking && !label && !receipt) return null;
   return (
     <div className="thinking" role="status">
       <NodGlyph size={28} mode="thinking" />
       <div className="working-details">
         <span className="working-text">
-          {chat ? <LiveLine item={chat} quiet={quiet} /> : (label ?? receipt)}
+          {thinking ? <LiveLine item={chat} quiet={quiet} /> : (label ?? receipt)}
         </span>
-        {chat && receipt && <span className="working-receipt">{receipt}</span>}
+        {thinking && receipt && <span className="working-receipt">{receipt}</span>}
       </div>
     </div>
   );
@@ -692,6 +694,35 @@ export function Chat({
   ];
   const live = state.activity ?? [];
   const working = live.some((item) => !item.background);
+  const chatWork = connected ? live.find((item) => !item.background && !item.taskId) : undefined;
+  const lastChatWork = useRef<{ threadId: string; item: Activity } | null>(null);
+  if (chatWork) lastChatWork.current = { threadId, item: chatWork };
+  const finishing = lastChatWork.current?.threadId === threadId ? lastChatWork.current.item : null;
+  const finishingTurn = finishing && state.turns.find((turn) => turn.id === finishing.turnId);
+  const [expiredTurn, setExpiredTurn] = useState<string | null>(null);
+  const holding = Boolean(
+    connected &&
+    !stopping &&
+    !chatWork &&
+    finishing &&
+    expiredTurn !== finishing.turnId &&
+    (finishingTurn?.status === 'queued' || finishingTurn?.status === 'running') &&
+    !allMessages.some(
+      (message) =>
+        message.role === 'assistant' &&
+        message.turnId === finishing.turnId &&
+        Date.parse(message.createdAt) >= Date.parse(finishing.quietSince),
+    ),
+  );
+  useLayoutEffect(() => {
+    if (!chatWork && !holding) lastChatWork.current = null;
+  });
+  useEffect(() => {
+    if (!holding || !finishing) return;
+    const turnId = finishing.turnId;
+    const timer = window.setTimeout(() => setExpiredTurn(turnId), 6000);
+    return () => window.clearTimeout(timer);
+  }, [holding, finishing?.turnId]);
   const [welcoming, setWelcoming] = useState(
     () => allMessages.length === 0 && !working && state.configuration.llmReady,
   );
@@ -711,6 +742,20 @@ export function Chat({
     ([id, value]) => value && !persistedStreams.has(id),
   );
   const streamIds = new Set(streamEntries.map(([id]) => id));
+  const arrivals = useRef({ threadId, keys: new Set<string>() });
+  if (arrivals.current.threadId !== threadId) arrivals.current = { threadId, keys: new Set() };
+  const arriving = (message: Message) => {
+    const key = message.streamId ?? message.id;
+    if (
+      message.role === 'assistant' &&
+      (streamIds.has(key) ||
+        (finishing &&
+          message.turnId === finishing.turnId &&
+          Date.parse(message.createdAt) >= Date.parse(finishing.since)))
+    )
+      arrivals.current.keys.add(key);
+    return arrivals.current.keys.has(key);
+  };
   for (const id of streamTimes.current.keys())
     if (!streamIds.has(id)) streamTimes.current.delete(id);
   const displayMessages: Message[] = [
@@ -823,6 +868,7 @@ export function Chat({
   }, [
     state.messages,
     state.activity,
+    holding,
     streams,
     sending,
     optimistic,
@@ -2186,6 +2232,7 @@ export function Chat({
                       handoffPaused={spendingPaused}
                       connectedAppIds={connectedAppIds}
                       streaming={streamIds.has(message.streamId ?? '')}
+                      arriving={arriving(message)}
                       grouped={
                         message.id !== unreadBoundary &&
                         messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)
@@ -2233,8 +2280,9 @@ export function Chat({
                 />
               ) : (
                 <Working
-                  items={connected ? live : []}
+                  items={connected ? (holding && finishing ? [finishing, ...live] : live) : []}
                   sending={sending}
+                  writing={Boolean(streamEntries.length) && finishing?.doing !== 'tool'}
                   quiet={!streamEntries.length}
                 />
               )}

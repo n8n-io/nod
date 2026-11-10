@@ -7050,12 +7050,12 @@ test('chat shows pending sends and active work before a model step', async () =>
         await render({ requestedMessage: { id: 'synthetic-send', text: 'Synthetic request' },
           refresh: () => new Promise(resolve => { releaseRefresh = resolve; }) });
         await settle(() => messageRequest && document.querySelector('.message-user'));
-        assert.equal(document.querySelector('.thinking')?.textContent, 'Sending…');
+        assert.equal(document.querySelector('.thinking .sr-only')?.textContent, 'Working…');
         await act(async () => releaseMessage(Response.json({
           messageId: messageRequest.clientMessageId, turnId: activity.turnId,
         })));
         await settle(() => releaseRefresh);
-        assert.equal(document.querySelector('.thinking')?.textContent, 'Sending…');
+        assert.equal(document.querySelector('.thinking .sr-only')?.textContent, 'Working…');
         state = { ...state, activity: [activity] };
         await act(async () => releaseRefresh());
         await render();
@@ -7094,11 +7094,13 @@ test('chat shows pending sends and active work before a model step', async () =>
         assert.equal(Boolean(document.querySelector('.thinking')), false);
         assert.equal(Boolean(document.querySelector('[aria-label="Stop all work"]')), false);
         state = { ...state, activity: [{ ...activity, step: 'Comparing **flight prices**' }, task] };
-        await render({ streams: { 'synthetic-stream': 'Synthetic partial result' } });
+        await render();
         assert.equal(document.querySelectorAll('.thinking .working-text').length, 1);
         assert.match(document.querySelector('.thinking').textContent, /Comparing flight prices/);
         assert.ok(!document.querySelector('.thinking').textContent.includes('**'));
         assert.ok(!document.querySelector('.thinking').textContent.includes('hotel'));
+        await render({ streams: { 'synthetic-stream': 'Synthetic partial result' } });
+        assert.equal(Boolean(document.querySelector('.thinking')), false);
         state = { ...state, activity: [{ ...activity, step: 'Checking the return journey' }] };
         await render();
         assert.equal(document.querySelector('.thinking').textContent, 'Checking the return journey');

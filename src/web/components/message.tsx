@@ -288,6 +288,7 @@ export function MessageBubble({
   connectedAppIds,
   grouped = false,
   streaming = false,
+  arriving = false,
   onReply,
   onAnswer,
   onWriteAnswer,
@@ -300,6 +301,7 @@ export function MessageBubble({
   connectedAppIds?: ReadonlySet<string>;
   grouped?: boolean;
   streaming?: boolean;
+  arriving?: boolean;
   onReply?(quote?: string): void;
   onAnswer?: AnswerChoicesProps['onAnswer'];
   onWriteAnswer?(text: string): void;
@@ -614,7 +616,7 @@ export function MessageBubble({
   return (
     <article
       ref={articleElement}
-      className={`message message-${message.role}${grouped ? ' message-grouped' : ''}${panel ? ' message-panel-open' : ''}`}
+      className={`message message-${message.role}${grouped ? ' message-grouped' : ''}${arriving ? ' message-arriving' : ''}${panel ? ' message-panel-open' : ''}`}
       aria-label={streaming ? 'Nod is responding' : message.role === 'user' ? 'You' : 'Nod'}
       data-message-id={streaming ? undefined : message.id}
       onMouseUp={selectQuote}
