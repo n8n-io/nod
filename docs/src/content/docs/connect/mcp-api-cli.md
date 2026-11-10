@@ -11,6 +11,8 @@ Besides [Composio apps](/connect/apps/), Nod connects to Notion, Linear and n8n 
 
 Notion and Linear connect through their own hosted MCP servers, the same way as any [other MCP server](#connect-another-service). Open **Apps**, select **Connect** and sign in.
 
+If an older **Notion MCP** account appears in **Apps** but cannot read pages, connect **Notion** again. After the new connection works, disconnect the old **Notion MCP** account. Its earlier sign-in does not transfer to the direct connection.
+
 If you ask Nod in chat, it sends a link to a private setup page in Nod, and you start the sign-in there. The service's sign-in link never appears in the chat, so the model and chat apps never see it.
 
 If sign-in is cancelled or fails, select **Try again** in the connection dialog. Select **Start again** if you closed the sign-in window. Finish in the newest window, then dismiss the confirmed connection with **Done**.

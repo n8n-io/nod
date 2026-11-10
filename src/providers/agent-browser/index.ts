@@ -1998,13 +1998,25 @@ export function createAgentBrowserComputer(options: {
     return buffer;
   }
 
-  async function control(id: string, input: BrowserHandoffInput, signal?: AbortSignal) {
+  async function control(
+    id: string,
+    input: BrowserHandoffInput,
+    signal?: AbortSignal,
+  ): Promise<string | void> {
     const state = await recoverBrowser(id);
     if (!state?.started) throw new Error('Open a page in this task browser first.');
     if (state.injecting) throw new BrowserLockedError();
-    await serialize(state, async () => {
+    return serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
       if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
+      if (input.type === 'copy') {
+        const devtools = await inspector(state, signal);
+        try {
+          return await devtools.copySelection();
+        } finally {
+          devtools.close();
+        }
+      }
       const socket = await daemonSocket(state, signal);
       if (input.type === 'mouse') {
         const [width, height] = (state.pageSize ??= z

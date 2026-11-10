@@ -1,4 +1,5 @@
 import { SessionManager, type FileEntry } from '@earendil-works/pi-coding-agent';
+import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { existsSync, statSync } from 'node:fs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -14,6 +15,40 @@ const failure = () =>
   new Error(
     'The assistant session could not be saved. Stop and restore storage before continuing.',
   );
+
+export function completeAssistantMessage(message: AssistantMessage): AssistantMessage {
+  if (!Array.isArray(message.content)) return { ...message, content: [] };
+  let changed = false;
+  const content = message.content.flatMap((part) => {
+    if (!part || typeof part !== 'object') {
+      changed = true;
+      return [];
+    }
+    if (part.type === 'text' && typeof part.text !== 'string') {
+      changed = true;
+      return [{ ...part, text: '' }];
+    }
+    if (part.type === 'thinking' && typeof part.thinking !== 'string') {
+      changed = true;
+      return part.redacted && typeof part.thinkingSignature === 'string' && part.thinkingSignature
+        ? [{ ...part, thinking: '[Reasoning redacted]' }]
+        : [];
+    }
+    return [part];
+  });
+  return changed ? { ...message, content } : message;
+}
+
+function repairAssistantMessages(manager: SessionManager) {
+  for (const entry of manager.buildSessionProjection().entries) {
+    if (entry.sourceEntry.type !== 'message') continue;
+    const message = entry.messages.find((item) => item.role === 'assistant');
+    if (message?.role !== 'assistant') continue;
+    const complete = completeAssistantMessage(message);
+    if (complete !== message)
+      manager.appendContextEdit(entry.sourceEntry.id, { content: complete.content });
+  }
+}
 
 function entries(bytes: Uint8Array): FileEntry[] {
   try {
@@ -75,8 +110,12 @@ export async function readPiSessionEntries(options: { threadId: string; sessionR
 export function openLocalSession(directory: string) {
   const manager = SessionManager.continueRecent(directory, directory);
   const file = manager.getSessionFile();
-  if (!file || !existsSync(file) || statSync(file).size <= rebaseAt) return manager;
-  return rebaseSession(manager, SessionManager.create(directory, directory));
+  const session =
+    file && existsSync(file) && statSync(file).size > rebaseAt
+      ? rebaseSession(manager, SessionManager.create(directory, directory))
+      : manager;
+  repairAssistantMessages(session);
+  return session;
 }
 
 function rebaseSession(source: SessionManager, next: SessionManager) {
@@ -113,11 +152,11 @@ function rebaseSession(source: SessionManager, next: SessionManager) {
     } else if (entry.type === 'message') {
       const message = entry.message;
       next.appendMessage(
-        ('content' in message && typeof message.content !== 'string'
+        ('content' in message && Array.isArray(message.content)
           ? {
               ...message,
               content: message.content.map((part) =>
-                part.type === 'image' && message.role === 'toolResult' && images-- > keptImages
+                part?.type === 'image' && message.role === 'toolResult' && images-- > keptImages
                   ? { type: 'text' as const, text: removedImage }
                   : part,
               ),

@@ -596,6 +596,140 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
   };
 
   return {
+    async copySelection(): Promise<string | undefined> {
+      const { browserContextId } = (await send('Target.createBrowserContext', {
+        disposeOnDetach: true,
+      })) as { browserContextId: string };
+      try {
+        const { targetId: trustedTarget } = (await send('Target.createTarget', {
+          url: 'chrome://newtab/',
+          browserContextId,
+          background: true,
+        })) as { targetId: string };
+        const { sessionId: trusted } = (await send('Target.attachToTarget', {
+          targetId: trustedTarget,
+          flatten: true,
+        })) as { sessionId: string };
+        await send('Emulation.setFocusEmulationEnabled', { enabled: true }, trusted);
+        const trustedEvaluate = async (expression: string, cleanup = false) => {
+          const { result, exceptionDetails } = (await send(
+            'Runtime.evaluate',
+            { expression, awaitPromise: true, returnByValue: true },
+            trusted,
+            cleanup,
+          )) as { result?: { value?: unknown }; exceptionDetails?: unknown };
+          if (exceptionDetails) throw new Error('The browser clipboard is unavailable.');
+          return result?.value;
+        };
+        const origin = await trustedEvaluate('location.origin');
+        if (origin !== 'chrome://newtab' && origin !== 'chrome://new-tab-page')
+          throw new Error('The browser clipboard is unavailable.');
+        await send('Browser.grantPermissions', {
+          browserContextId,
+          origin,
+          permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'],
+        });
+        const modifier =
+          (await trustedEvaluate("navigator.platform.startsWith('Mac')")) === true ? 4 : 2;
+        const prepared = await trustedEvaluate(`(async () => {
+          let previousItems;
+          try {
+            previousItems = await Promise.all((await navigator.clipboard.read()).map(async item => {
+              if (!item.types.every(type => ClipboardItem.supports(type))) throw new Error('Unsupported clipboard data');
+              const entries = await Promise.all(item.types.map(async type => [type, await item.getType(type)]));
+              return new ClipboardItem(Object.fromEntries(entries));
+            }));
+          } catch {}
+          let previousText;
+          try {
+            previousText = await navigator.clipboard.readText();
+          } catch (error) {
+            if (error?.name !== 'NotFoundError') throw error;
+            previousText = '';
+          }
+          const restorable = Boolean(previousItems?.length) &&
+            (!previousText || previousItems.some(item => item.types.includes('text/plain')));
+          if (previousText && !restorable) throw new Error('Clipboard snapshot unavailable');
+          const marker = restorable ? crypto.randomUUID() : null;
+          globalThis.__nodClipboard = { previousText, previousItems, marker };
+          return { mark: Boolean(marker), restorable };
+        })()`);
+        if (
+          !prepared ||
+          typeof prepared !== 'object' ||
+          !('mark' in prepared) ||
+          typeof prepared.mark !== 'boolean' ||
+          !('restorable' in prepared) ||
+          typeof prepared.restorable !== 'boolean'
+        )
+          throw new Error('The browser clipboard is unavailable.');
+        let restore = prepared.restorable;
+        try {
+          if (prepared.mark) {
+            if (
+              (await trustedEvaluate(
+                'navigator.clipboard.writeText(globalThis.__nodClipboard.marker).then(() => true)',
+              )) !== true
+            )
+              throw new Error('The browser clipboard is unavailable.');
+          }
+          const key = {
+            key: 'c',
+            code: 'KeyC',
+            windowsVirtualKeyCode: 67,
+            modifiers: modifier,
+          };
+          try {
+            await send(
+              'Input.dispatchKeyEvent',
+              { ...key, type: 'keyDown', commands: ['copy'] },
+              page,
+            );
+          } finally {
+            await send('Input.dispatchKeyEvent', { ...key, type: 'keyUp' }, page, true);
+          }
+          const outcome = await trustedEvaluate(`(async () => {
+            let text;
+            try {
+              text = await navigator.clipboard.readText();
+            } catch (error) {
+              if (error?.name !== 'NotFoundError') throw error;
+              text = '';
+            }
+            const { previousText, marker } = globalThis.__nodClipboard;
+            if (!text || (marker ? text === marker : text === previousText)) return { status: 'unchanged' };
+            if (text.length > 262144) return { status: 'too_large' };
+            return { status: 'copied', text };
+          })()`);
+          if (!outcome || typeof outcome !== 'object' || !('status' in outcome))
+            throw new Error('The browser clipboard is unavailable.');
+          if (outcome.status === 'too_large') throw new Error('The copied text is too long.');
+          if (outcome.status === 'unchanged') {
+            if (!prepared.mark) restore = false;
+            return undefined;
+          }
+          if (
+            outcome.status !== 'copied' ||
+            !('text' in outcome) ||
+            typeof outcome.text !== 'string'
+          )
+            throw new Error('The browser clipboard is unavailable.');
+          signal?.throwIfAborted();
+          return outcome.text;
+        } finally {
+          if (
+            restore &&
+            (await trustedEvaluate(
+              'navigator.clipboard.write(globalThis.__nodClipboard.previousItems).then(() => true)',
+              true,
+            )) !== true
+          )
+            throw new Error('The browser clipboard could not be restored.');
+        }
+      } finally {
+        await send('Target.disposeBrowserContext', { browserContextId }, undefined, true);
+      }
+    },
     async readOnly(expression: string) {
       const { result, exceptionDetails } = (await send(
         'Runtime.evaluate',

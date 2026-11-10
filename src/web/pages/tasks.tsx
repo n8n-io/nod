@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import {
   CalendarClock,
@@ -108,6 +108,27 @@ export function TaskCard({
   useEffect(() => {
     if (stuck) setExpanded(true);
   }, [stuck]);
+  const card = useRef<HTMLElement>(null);
+  const inChat = Boolean(onReply);
+  useEffect(() => {
+    if (!inChat) return;
+    const open = (event: Event) => {
+      const element = card.current;
+      if (
+        (event as CustomEvent<{ taskId?: unknown }>).detail?.taskId !== task.id ||
+        !element?.getClientRects().length
+      )
+        return;
+      event.preventDefault();
+      setExpanded(true);
+      element.focus({ preventScroll: true });
+      element.classList.remove('task-preview-pulse');
+      void element.offsetWidth;
+      element.classList.add('task-preview-pulse');
+    };
+    window.addEventListener('nod:open-task', open);
+    return () => window.removeEventListener('nod:open-task', open);
+  }, [inChat, task.id]);
   const [showActivity, setShowActivity] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState('');
@@ -125,7 +146,7 @@ export function TaskCard({
         : 'todo';
   const chevron = <ChevronDown size={16} aria-hidden="true" className="task-preview-chevron" />;
   const handoffMessage = task.browserHandoff ? task.questionMessageId : null;
-  const startMessage = task.messageId;
+  const startMessage = task.questionMessageId ?? task.messageId;
   const line =
     !onReply && expanded && task.status === 'needs_you'
       ? task.now || 'Waiting for your answer'
@@ -133,8 +154,14 @@ export function TaskCard({
   const showLive = live && (task.status === 'working' || task.status === 'queued') ? live : null;
   return (
     <article
+      ref={card}
       className="task-preview"
       data-status={task.status}
+      data-task-id={task.id}
+      onAnimationEnd={(event) => {
+        if (event.animationName === 'task-preview-pulse')
+          event.currentTarget.classList.remove('task-preview-pulse');
+      }}
       aria-labelledby={headingId}
       tabIndex={-1}
       data-message-id={onReply ? task.messageId : undefined}
@@ -392,11 +419,12 @@ export function Scheduled({
       <PlanToast />
       <header className="page-heading secondary-heading">
         <PageTitle path="/tasks" />
-        {!empty && (
-          <div className="secondary-heading-actions">
-            <NewPlan onAsk={onAsk} />
-          </div>
-        )}
+        <div className="secondary-heading-actions">
+          <Button variant="ghost" size="sm" onClick={() => onAsk('Show my rules')}>
+            Rules
+          </Button>
+          {!empty && <NewPlan onAsk={onAsk} />}
+        </div>
       </header>
       {schedules.error && (
         <LoadError what="schedules" refreshing={schedules.refreshing} retry={schedules.refresh} />

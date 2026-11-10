@@ -666,6 +666,39 @@ test('trust decisions select only owner evidence and keep reply evidence separat
   await assert.rejects(trust.answer('Yes'));
 });
 
+test('retired confirmation replies require high confidence to start a new request', async () => {
+  let output: unknown;
+  const reply = 'Yes, move the reminder to tomorrow.';
+  const expiredConfirmation = 'Cancel the reminder?';
+  const trust = createTrust({
+    pool: {} as never,
+    ownerId: 'synthetic-owner',
+    review: async (_instructions, input, _signal, question) => {
+      assert.deepEqual(input, { reply, expiredConfirmation });
+      assert.equal(question?.name, 'retiredReply');
+      assert.deepEqual(
+        question?.choices.map(({ value }) => value),
+        ['new', 'stale'],
+      );
+      return output;
+    },
+  });
+  for (const [answer, expected] of [
+    [{ retiredReply: 'new', probability: 0.98 }, 'uncertain'],
+    [{ retiredReply: 'new', probability: '0.995' }, 'uncertain'],
+    [{ retiredReply: 'new', probability: Number.NaN }, 'uncertain'],
+    [{ retiredReply: 'new', probability: 1.1 }, 'uncertain'],
+    [{ retiredReply: 'new' }, 'uncertain'],
+    [{ retiredReply: 'new', probability: 0.995 }, 'new'],
+    [{ retiredReply: 'stale', probability: 0.8 }, 'uncertain'],
+    [{ retiredReply: 'stale' }, 'uncertain'],
+    [{ retiredReply: 'stale', probability: 0.995 }, 'stale'],
+  ] as const) {
+    output = answer;
+    assert.equal(await trust.classifyRetiredReply(reply, expiredConfirmation), expected);
+  }
+});
+
 test('native decision probabilities validate the wire type and retain refusal and cache costs', async (t) => {
   for (const provider of ['openai', 'typesafe', 'openrouter'] as const)
     await t.test(provider, async () => {

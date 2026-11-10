@@ -25,13 +25,25 @@ export function messagesAreGrouped(
   );
 }
 
-export function mergeMessages(known: Message[], incoming: Message[]) {
+export function mergeMessages(
+  known: Message[],
+  incoming: Message[],
+  hiddenIds?: ReadonlySet<string>,
+) {
   const byId = new Map(known.map((message) => [message.id, message]));
   for (const message of incoming) byId.set(message.id, message);
-  return [...byId.values()].sort(
-    (a, b) =>
-      Date.parse(a.createdAt) - Date.parse(b.createdAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
-  );
+  return [...byId.values()]
+    .filter((message) => !hiddenIds?.has(message.id))
+    .map((message) =>
+      message.replyTo && hiddenIds?.has(message.replyTo.id)
+        ? { ...message, replyTo: undefined }
+        : message,
+    )
+    .sort(
+      (a, b) =>
+        Date.parse(a.createdAt) - Date.parse(b.createdAt) ||
+        (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    );
 }
 
 export function collapseScreenshotMessages(messages: Message[]) {

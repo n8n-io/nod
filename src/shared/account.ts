@@ -21,7 +21,7 @@ export interface SessionResponse {
   analytics?: AnalyticsConfiguration;
   user: AccountUser | null;
   settings: AccountSettings | null;
-  capabilities: { developer: boolean; traces: boolean; researchContact: boolean };
+  capabilities: { developer: boolean; traces: boolean; updatesEmail: boolean };
 }
 
 export interface AccountUpdate {

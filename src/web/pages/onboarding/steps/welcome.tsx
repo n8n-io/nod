@@ -1,4 +1,5 @@
 import { useEffect, type CSSProperties } from 'react';
+import { DataSharing } from '../../../components/data-sharing';
 import { LockKeyhole, MousePointerClick, ShieldCheck, Sparkles } from '../../../components/icons';
 import { NodGlyph } from '../../../components/motion';
 import { Button } from '../../../components/ui';
@@ -32,6 +33,8 @@ function differentiators(local: boolean) {
 
 export function Welcome({
   onNext,
+  usageShared,
+  traces,
   actionLabel = 'Get started',
   local = desktopRuntimeAvailable() ||
     ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname),
@@ -72,6 +75,13 @@ export function Welcome({
             </li>
           ))}
         </ul>
+        {usageShared && (
+          <p className="ob-welcome-usage">
+            Please keep usage data on so the Nod team can see where I get stuck.
+            <br />
+            <DataSharing className="ob-link" usage traces={traces?.enabled} />
+          </p>
+        )}
         <Button onClick={onNext}>{actionLabel}</Button>
       </div>
       <p className="ob-welcome-note">This is a preview version of Nod, developed by n8n</p>

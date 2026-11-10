@@ -314,10 +314,15 @@ async function insertEvent(
   );
 }
 
-async function assertReplyTarget(client: PoolClient, threadId: string, messageId?: string) {
+async function assertReplyTarget(
+  client: PoolClient,
+  threadId: string,
+  messageId?: string,
+  lock = false,
+) {
   if (!messageId) return;
   const target = await client.query(
-    'SELECT 1 FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3',
+    `SELECT 1 FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND hidden_at IS NULL${lock ? ' FOR SHARE' : ''}`,
     [messageId, ownerId, threadId],
   );
   if (!target.rowCount) throw httpError('The reply is unavailable in this conversation.', 404);
@@ -646,6 +651,7 @@ export async function submitUserMessage(
           threadId: thread.id,
           answer,
         });
+    await assertReplyTarget(client, thread.id, options.replyToMessageId, true);
     if (confirmed && 'turnId' in confirmed) return confirmed;
     await localArtifacts.retainArtifacts(
       attachments.map((attachment) => attachment.id),
@@ -825,7 +831,7 @@ export async function reactToAssistantMessage(
     const message = (
       await client.query(
         `SELECT m.id,m.text,m.reaction,m.reaction_revision,COALESCE(u.channel,'web') AS channel FROM messages m LEFT JOIN turns u ON u.id=m.turn_id
-         WHERE m.id=$1 AND m.owner_id=$2 AND m.role='assistant' AND m.thread_id=$3 FOR UPDATE OF m`,
+         WHERE m.id=$1 AND m.owner_id=$2 AND m.role='assistant' AND m.thread_id=$3 AND m.hidden_at IS NULL FOR UPDATE OF m`,
         [messageId, ownerId, thread.id],
       )
     ).rows[0];
@@ -1214,7 +1220,7 @@ async function loadMessage(messageId: string | null) {
              SELECT 1 FROM messages earlier WHERE earlier.owner_id=s.owner_id AND earlier.thread_id=s.thread_id
                AND earlier.role='user' AND (earlier.created_at,earlier.id)<(s.created_at,s.id)
            ) AS first_conversation_turn
-           FROM messages s LEFT JOIN messages r ON r.id=s.reply_to_message_id AND r.owner_id=s.owner_id AND r.thread_id=s.thread_id
+           FROM messages s LEFT JOIN messages r ON r.id=s.reply_to_message_id AND r.owner_id=s.owner_id AND r.thread_id=s.thread_id AND r.hidden_at IS NULL
            WHERE s.id=$1 AND s.owner_id=$2`,
           [messageId, ownerId],
         )
@@ -1274,7 +1280,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
        COALESCE(u.background AND m.created_at > COALESCE(seen.at,'-infinity'),false) AS unseen
        FROM messages m CROSS JOIN seen CROSS JOIN boundary
        LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
-       WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.id IS DISTINCT FROM $3::uuid
+       WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.hidden_at IS NULL AND m.id IS DISTINCT FROM $3::uuid
        AND (NOT $5::boolean OR (m.created_at<=boundary.at AND
          (u.id IS NULL OR u.session_id=$6
           OR (u.status IN ('succeeded','failed','cancelled') AND u.finished_at<=boundary.at))))

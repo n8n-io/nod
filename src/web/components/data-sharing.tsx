@@ -69,9 +69,9 @@ export function DataSharing({
         <ul>
           {usage !== undefined && (
             <Item icon={ChartColumn} title="Usage data" state={state(usage)}>
-              Which screens and features you use, your fixed About you choices, the kinds of tasks
-              you ask for, and what fails. Never your messages. Your email is added only if you
-              agree separately.
+              Which screens and features you use, the kinds of tasks you ask for, what fails, your
+              onboarding and survey answers, and your email (if you provide it). Never your
+              messages.
             </Item>
           )}
           {traces !== undefined && (
