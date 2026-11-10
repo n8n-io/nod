@@ -10,6 +10,7 @@ import briefCollage from '../assets/landing/brief-collage.png';
 import replyCollage from '../assets/landing/reply-collage.png';
 import watchCollage from '../assets/landing/watch-collage.png';
 import socialImage from '../assets/landing/og.png';
+import { gtmSnippet } from '../gtm.mjs';
 
 const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 const github = 'https://github.com/n8n-io/nod';
@@ -29,6 +30,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <script is:inline set:html={gtmSnippet} />
     <title>{title}</title>
     <meta name="description" content={description} />
     <link rel="canonical" href={url} />
