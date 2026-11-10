@@ -40,11 +40,15 @@ test(
       throw new Error('Schedule worker was not registered.');
     };
     let failAfterTask = false;
+    const watched = new Map<string, string>();
     const personal = createPersonalService({
       pool: db.pool,
       ownerId: 'local-development',
       scheduler: thread.boss,
       now: () => clock,
+      watchable: async (ids) => ids.every((id) => watched.has(id)),
+      watchState: async (ids) =>
+        ids.every((id) => watched.has(id)) ? ids.map((id) => watched.get(id)).join() : null,
       enqueueTurn: async (...args) => {
         assert.ok(args[1]?.client);
         const id = await thread.enqueueTurn(...args);
@@ -693,6 +697,49 @@ test(
         },
       );
       await t.test(
+        'a watch schedule skips a fire only while its accounts are unchanged since a finished run',
+        async () => {
+          const before = clock;
+          const account = randomUUID();
+          const body = {
+            title: 'Fixture watch',
+            prompt: 'Return a synthetic result only.',
+            timeZone: 'Europe/Lisbon',
+            cron: '*/15 * * * *',
+            watch: [account],
+          };
+          assert.equal((await request('POST', '/api/schedules', body)).statusCode, 400);
+          watched.set(account, 'v1');
+          const schedule = await create({ cron: '*/15 * * * *', watch: [account] });
+          const fire = async () => {
+            const job = await jobFor(schedule.id);
+            clock = new Date(job.data.scheduledFor);
+            await deliver([job]);
+            return (await runs(schedule.id)).map((run) => run.turnId);
+          };
+          const finish = async (status = 'succeeded') =>
+            db.pool.query('UPDATE turns SET status=$2 WHERE id=ANY($1::uuid[])', [
+              (await runs(schedule.id)).map((run) => run.turnId),
+              status,
+            ]);
+          const [first] = await fire();
+          await finish();
+          assert.deepEqual(await fire(), [first]);
+          await finish('failed');
+          assert.equal((await fire()).length, 2);
+          await finish();
+          assert.equal((await fire()).length, 2);
+          watched.set(account, 'v2');
+          assert.equal((await fire()).length, 3);
+          await finish();
+          await personal.manage('schedule_update', { id: schedule.id, watch: null });
+          assert.equal((await fire()).length, 4);
+          await finish();
+          await request('DELETE', `/api/schedules/${schedule.id}`);
+          clock = before;
+        },
+      );
+      await t.test(
         'a baseline added to an existing watch is what its next run compares with',
         async () => {
           const before = clock;
@@ -889,6 +936,7 @@ test('scheduled controls reconcile pause and delete after a client timeout', asy
     nextRun: null,
     lastRun: null,
     baselineObservation: null,
+    watch: null,
     monthlyUsd: null,
   };
   let current: Schedule | null = schedule;

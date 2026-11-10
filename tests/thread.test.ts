@@ -1820,6 +1820,35 @@ test(
         const resumed = (await check())!;
         assert.equal(resumed.parent_turn_id, turnId);
         await waitFor(settled(resumed.id));
+        const started = randomUUID();
+        const startedTurn = randomUUID();
+        await db.pool.query(
+          "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,background) VALUES($1,$2,$3,$4,'event','Synthetic prepared follow-up','succeeded',true)",
+          [startedTurn, ownerId, threadId, started],
+        );
+        await db.pool.query(
+          "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text,applied_revision,activity_key,next_check) VALUES($1,$2,$3,$1,'Synthetic prepared follow-up','Synthetic reply arrived','Waiting',1,$4,date_trunc('milliseconds',now())-interval '1 minute')",
+          [started, ownerId, startedTurn, `${threadId}:synthetic`],
+        );
+        t.after(() => db.pool.query('DELETE FROM tasks WHERE id=$1', [started]));
+        await db.pool.query(
+          'INSERT INTO preferences(owner_id,proactive_paused) VALUES($1,true) ON CONFLICT(owner_id) DO UPDATE SET proactive_paused=true',
+          [ownerId],
+        );
+        const followUps = async () =>
+          (
+            await db.pool.query(
+              "SELECT count(*)::int AS n FROM turns WHERE session_id=$1 AND source='resume'",
+              [started],
+            )
+          ).rows[0].n;
+        await tasks.resumeDue(threadId);
+        assert.equal(await followUps(), 0);
+        await db.pool.query('UPDATE preferences SET proactive_paused=false WHERE owner_id=$1', [
+          ownerId,
+        ]);
+        await tasks.resumeDue(threadId);
+        await waitFor(async () => (await followUps()) === 1, 20_000);
       });
 
       await t.test('consecutive messages run as turns on the same thread', async (t) => {
@@ -6540,10 +6569,11 @@ test(
               }
             });
             await t.test(
-              'screening ends a quiet batch, and an escalated batch goes back unread to the full check',
+              'screening ends a quiet batch and hands an escalated batch with its reads to the full check unless a read failed',
               async () => {
                 await reset();
                 let verdict = false;
+                let urgent = true;
                 let tools = false;
                 let sourceRevision: string | undefined;
                 let checks = 0;
@@ -6553,9 +6583,22 @@ test(
                 let rotateSource = false;
                 let allowed = true;
                 let stopAfterCheck = false;
+                let failRecord = false;
                 const notificationRule = (await preferences.get()).notificationRule;
                 const screening = createProactivity({
                   ...options,
+                  read: async (turn: unknown, input: Record<string, unknown>) => {
+                    const result = await options.read(turn, input);
+                    return failRecord
+                      ? {
+                          ...result,
+                          records: result.records.map((record) => ({
+                            ...record,
+                            error: 'unavailable' as const,
+                          })),
+                        }
+                      : result;
+                  },
                   sources: async () => {
                     const result = (await options.sources()).map((source) => ({
                       ...source,
@@ -6573,11 +6616,11 @@ test(
                       return curatorId;
                     },
                     configured: true,
-                    curate: async () => {
+                    curate: async ({ input }) => {
                       checks++;
                       if (fail) throw new Error('Synthetic failed check');
                       if (stopAfterCheck) allowed = false;
-                      return { attention: verdict };
+                      return 'quietEnd' in (input as object) ? { urgent } : { attention: verdict };
                     },
                   },
                 });
@@ -6605,24 +6648,33 @@ test(
                     );
                   const context = (await screening.context(checkTurn))!;
                   rotateSource = rotate;
-                  const quiet = await context.screen!(
+                  const result = await context.screen!(
                     owner,
                     new AbortController().signal,
                     () => allowed,
                   );
+                  const quiet = Array.isArray(result) ? 'handed' : result;
+                  if (Array.isArray(result))
+                    assert.ok(
+                      (result as Array<{ result: { records: Array<{ id: string }> } }>).every(
+                        ({ result }) => result.records.map(({ id }) => id).join() === 'thread1',
+                      ),
+                    );
                   const { dirty } = (
                     await db.pool.query(
                       'SELECT signal_version>inspected_signal AS dirty FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
                       [ownerId, sourceId],
                     )
                   ).rows[0];
-                  let status = fullStatus ?? (quiet ? 'succeeded' : 'failed');
+                  let status = fullStatus ?? (quiet === true ? 'succeeded' : 'failed');
                   try {
-                    if (fullStatus)
-                      await context.read(
+                    if (fullStatus) {
+                      const full = (await context.read(
                         { sourceId, ...(tools ? { tool: 'fixture_read', args: {} } : {}) },
                         new AbortController().signal,
-                      );
+                      )) as { remainingReads: number };
+                      assert.equal(full.remainingReads, 11);
+                    }
                     if (fullStatus && saveMode) {
                       const draft = proposal({ matterKey: 'screened-native-cache' });
                       if (saveMode === 'changed') {
@@ -6661,19 +6713,19 @@ test(
                 await preferences.update({
                   notificationRule: 'Prepare current synthetic commitments.',
                 });
-                assert.deepEqual(await screen(false), [false, true]);
+                assert.deepEqual(await screen(false), ['handed', false]);
                 assert.equal(checks, firstChecks + 1);
                 verdict = false;
                 assert.deepEqual(await screen(false), [true, false]);
                 assert.equal(checks, firstChecks + 2);
                 owner = { memory: 'The owner needs a synthetic draft for each current item.' };
                 verdict = true;
-                assert.deepEqual(await screen(false), [false, true]);
+                assert.deepEqual(await screen(false), ['handed', false]);
                 verdict = false;
                 assert.deepEqual(await screen(false), [true, false]);
                 curatorId = 'fixture-replaced';
                 verdict = true;
-                assert.deepEqual(await screen(false), [false, true]);
+                assert.deepEqual(await screen(false), ['handed', false]);
                 verdict = false;
                 assert.deepEqual(await screen(false), [true, false]);
                 const beforeRace = checks;
@@ -6686,23 +6738,27 @@ test(
                 fail = false;
                 assert.deepEqual(await screen(false), [true, false]);
                 assert.equal(checks, beforeRetry + 1);
+                failRecord = true;
+                assert.deepEqual(await screen(false), [false, true]);
+                failRecord = false;
+                assert.deepEqual(await screen(false), [true, false]);
                 verdict = true;
-                assert.deepEqual(await screen(true, false, 'succeeded'), [false, true]);
+                assert.deepEqual(await screen(true, false, 'succeeded'), ['handed', false]);
                 const afterFull = checks;
                 assert.deepEqual(await screen(false), [true, false]);
                 assert.equal(checks, afterFull);
                 saveMode = 'same';
-                assert.deepEqual(await screen(true, false, 'succeeded'), [false, true]);
+                assert.deepEqual(await screen(true, false, 'succeeded'), ['handed', false]);
                 assert.deepEqual(await screen(false), [true, false]);
                 await db.pool.query('DELETE FROM proactive_issues WHERE owner_id=$1', [ownerId]);
                 saveMode = 'changed';
-                assert.deepEqual(await screen(true, false, 'succeeded'), [false, true]);
-                assert.deepEqual(await screen(false), [false, true]);
+                assert.deepEqual(await screen(true, false, 'succeeded'), ['handed', false]);
+                assert.deepEqual(await screen(false), ['handed', false]);
                 saveMode = undefined;
                 for (const status of ['failed', 'cancelled'] as const) {
-                  assert.deepEqual(await screen(true, false, status), [false, true]);
+                  assert.deepEqual(await screen(true, false, status), ['handed', false]);
                   const afterFailure = checks;
-                  assert.deepEqual(await screen(false), [false, true]);
+                  assert.deepEqual(await screen(false), ['handed', false]);
                   assert.equal(checks, afterFailure + 1);
                 }
                 verdict = false;
@@ -6714,14 +6770,14 @@ test(
                   );
                   verdict = true;
                   const beforeRecovery = checks;
-                  assert.deepEqual(await screen(false), [false, true]);
+                  assert.deepEqual(await screen(false), ['handed', false]);
                   assert.equal(checks, beforeRecovery + 1);
                   verdict = false;
                   assert.deepEqual(await screen(false), [true, false]);
                 }
                 sourceRevision = 'screening-new-revision';
                 verdict = true;
-                assert.deepEqual(await screen(false), [false, true]);
+                assert.deepEqual(await screen(false), ['handed', false]);
                 sourceRevision = undefined;
                 await preferences.update({ notificationRule });
                 verdict = false;
@@ -6737,7 +6793,7 @@ test(
                 stopAfterCheck = false;
                 assert.deepEqual(await screen(), [true, false]);
                 verdict = true;
-                assert.deepEqual(await screen(), [false, true]);
+                assert.deepEqual(await screen(), ['handed', false]);
                 tools = true;
                 await db.pool.query(
                   'UPDATE proactive_sources SET reads=$3::jsonb WHERE owner_id=$1 AND source_id=$2',
@@ -6746,14 +6802,34 @@ test(
                 verdict = false;
                 assert.deepEqual(await screen(), [true, false]);
                 verdict = true;
-                assert.deepEqual(await screen(), [false, true]);
+                assert.deepEqual(await screen(), ['handed', false]);
                 verdict = false;
                 await save({ matterKey: 'screened-matter' });
-                assert.deepEqual(await screen(), [false, true]);
-                assert.deepEqual(await screen(false, false, 'succeeded'), [false, true]);
+                assert.deepEqual(await screen(), ['handed', false]);
+                assert.deepEqual(await screen(false, false, 'succeeded'), ['handed', false]);
                 assert.deepEqual(await screen(false), [true, false]);
                 issueDue = true;
                 assert.deepEqual(await screen(false), [false, true]);
+                issueDue = false;
+                const clock = (at: number) => new Date(at).toISOString().slice(11, 16);
+                await preferences.update({
+                  timeZone: null,
+                  quietHoursEnabled: true,
+                  quietStart: clock(Date.now() - 60_000),
+                  quietEnd: clock(Date.now() + 2 * 3_600_000),
+                });
+                urgent = false;
+                assert.deepEqual(await screen(), [true, true]);
+                const held = (
+                  await db.pool.query(
+                    'SELECT next_poll FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                    [ownerId, sourceId],
+                  )
+                ).rows[0].next_poll as Date;
+                assert.ok(held.getTime() > Date.now() + 3_600_000);
+                urgent = true;
+                assert.deepEqual(await screen(), ['handed', false]);
+                await preferences.update({ quietHoursEnabled: false });
                 screening.release(turnId);
               },
             );
@@ -8616,7 +8692,7 @@ test(
     const { buildFeedbackReport } = await import('../src/server/bug-report.ts');
     await f.pool.query(`
       CREATE TABLE messages(id uuid,owner_id text,turn_id uuid,role text,text text,attachments jsonb DEFAULT '[]',reply_to_message_id uuid,created_at timestamptz DEFAULT now());
-      CREATE TABLE turns(id uuid,owner_id text,parent_turn_id uuid,session_id uuid,source text,channel text,status text,error text,background boolean,waiting_reason text,created_at timestamptz DEFAULT now(),started_at timestamptz,finished_at timestamptz);
+      CREATE TABLE turns(id uuid,owner_id text,parent_turn_id uuid,session_id uuid,source text,channel text,status text,error text,background boolean,waiting_reason text,created_at timestamptz DEFAULT now(),started_at timestamptz,finished_at timestamptz,proactive boolean);
       CREATE TABLE turn_events(id uuid,turn_id uuid,run_id uuid,parent_run_id uuid,session_id uuid,call_id uuid,type text,summary text,created_at timestamptz DEFAULT now());
       CREATE TABLE model_usage(id text,owner_id text,turn_id uuid,session_id uuid,run_id uuid,parent_run_id uuid,cost_usd double precision,details jsonb,created_at timestamptz DEFAULT now());
       CREATE TABLE tasks(id uuid,owner_id text,turn_id uuid,session_id uuid,state text,step_index integer,steps jsonb,revision integer,applied_revision integer,updated_at timestamptz DEFAULT now());
@@ -8706,6 +8782,7 @@ test(
       [childRun, mainRun, 'tool_complete', 'web search'],
       [childRun, mainRun, 'tool_failed', privateText],
       [childRun, mainRun, 'agent_failed', privateText],
+      [mainRun, null, 'source_screened', ''],
     ])
       await f.pool.query(
         'INSERT INTO turn_events(id,turn_id,session_id,run_id,parent_run_id,call_id,type,summary) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
@@ -8941,7 +9018,8 @@ test(
     assert.equal(shortTurn.queueMs, 60_000);
     assert.equal(shortTurn.durationMs, 60_000);
     assert.equal(shortTurn.errorPresent, true);
-    assert.equal(report.execution.length, 7);
+    assert.equal(shortTurn.screened, true);
+    assert.equal(report.execution.length, 8);
     assert.ok(report.execution.some((row: any) => row.tool === 'sign_in'));
     assert.ok(report.execution.some((row: any) => row.tool === 'web'));
     const child = report.execution.find(

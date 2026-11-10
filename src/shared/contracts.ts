@@ -314,6 +314,7 @@ export interface Schedule {
   nextRun: string | null;
   lastRun: ScheduleRun | null;
   baselineObservation: ScheduleObservation | null;
+  watch: string[] | null;
   monthlyUsd: number | null;
 }
 export type ScheduleObservation = {

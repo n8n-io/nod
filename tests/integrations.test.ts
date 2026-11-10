@@ -2680,6 +2680,7 @@ async function appsFixture(
       | 'removeActivity'
       | 'admission'
       | 'analytics'
+      | 'paused'
     >
   > = {},
 ) {
@@ -5468,7 +5469,8 @@ test(
   async (t) => {
     const admission = createWorkAdmission();
     admission.pause();
-    const f = await appsFixture(t, {}, { admission });
+    let paused = false;
+    const f = await appsFixture(t, {}, { admission, paused: async () => paused });
     const selected = await f.connect('gmail');
     const metadata = {
       subject: 'Question about the upcoming planning review '.repeat(10),
@@ -5563,6 +5565,36 @@ test(
     await send('667788990011');
     await f.service.drain();
     assert.deepEqual([f.wakes.length, f.settles()], [6, settled + 1]);
+    const count = async () =>
+      (await f.pool.query('SELECT count(*)::int AS n FROM integration_events')).rows[0].n;
+    const received = await count();
+    paused = true;
+    f.provider.pollInbox = async () => ({
+      cursor: 'after-pause',
+      hasMore: false,
+      messages: [message('778899001122')],
+    });
+    await f.pool.query('UPDATE app_connections SET inbox_poll_at=NULL WHERE id=$1', [
+      selected.connectionId,
+    ]);
+    await f.service.pollInboxes();
+    assert.equal(await count(), received);
+    await send('889900112233');
+    const quiet = (
+      await f.pool.query('SELECT summary FROM integration_events ORDER BY created_at DESC LIMIT 1')
+    ).rows[0];
+    assert.doesNotMatch(quiet.summary, /planning review|sender@example/);
+    const watched = await f.service.watchState([selected.connectionId!]);
+    assert.ok(watched);
+    assert.equal(await count(), received + 2);
+    assert.equal(await f.service.watchState([selected.connectionId!]), watched);
+    f.provider.pollInbox = async () => ({
+      cursor: 'later',
+      hasMore: false,
+      messages: [message('990011223344')],
+    });
+    assert.notEqual(await f.service.watchState([selected.connectionId!]), watched);
+    assert.equal(await f.service.watchState([randomUUID()]), null);
   },
 );
 
@@ -8939,6 +8971,7 @@ test(
         CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,thread_id uuid,created_at timestamptz DEFAULT now(),hidden_at timestamptz);
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);
         CREATE TABLE schedules(id uuid,owner_id text,title text);
+        CREATE TABLE tasks(id uuid,owner_id text,session_id uuid,title text,activity_key text);
         CREATE TABLE app_actions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),owner_id text NOT NULL,
           turn_id uuid NOT NULL REFERENCES turns(id) ON DELETE CASCADE,action text NOT NULL,
           created_at timestamptz NOT NULL DEFAULT now())`);
@@ -9193,10 +9226,24 @@ test(
         "INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES('extra','owner',NULL,0.5)",
       );
       assert.equal(await ledger.limitReached(), true);
-      assert.deepEqual((await app.inject('/api/trust')).json().limit, {
-        monthlyUsd: 1,
-        reached: true,
-      });
+      const limited = (await app.inject('/api/trust')).json();
+      assert.deepEqual(limited.limit, { monthlyUsd: 1, reached: true });
+      assert.equal(Math.round(limited.month.backgroundUsd * 100) / 100, 0.6);
+      const reply = randomUUID();
+      await pool.query(
+        "INSERT INTO turns(id,owner_id,source,prompt,thread_id,session_id) VALUES($1,'owner','user','Owner reply',$2,$3)",
+        [reply, conversation, scheduled],
+      );
+      await pool.query(
+        "INSERT INTO model_usage(id,owner_id,turn_id,cost_usd) VALUES('reply','owner',$1,0.2)",
+        [reply],
+      );
+      assert.equal(
+        Math.round((await app.inject('/api/trust')).json().month.backgroundUsd * 100) / 100,
+        0.6,
+      );
+      await pool.query("DELETE FROM model_usage WHERE id='reply'");
+      assert.deepEqual(limited.month.outside, [{ kind: 'other', costUsd: 0.5 }]);
       assert.equal(await limit(null), null);
       assert.equal(await ledger.limitReached(), false);
       await limit(1.16);

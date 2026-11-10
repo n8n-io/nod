@@ -30,6 +30,7 @@ import {
   compactOwnerContext,
   compactSystemPrompt,
   firstInstruction,
+  observerInstruction,
   ownerContext,
   steeredInstruction,
   systemPrompt,
@@ -703,16 +704,20 @@ export function createAgentRuntime(dependencies: {
           signal,
           () => !overBudget(),
         );
-      if (
-        await untilAborted(
-          Promise.resolve(
-            dependencies.withExecution
-              ? dependencies.withExecution({ ...execution, onEvent: countUsage }, screenSources)
-              : screenSources(),
-          ),
-          signal,
-        )
-      ) {
+      const screening = await untilAborted(
+        Promise.resolve(
+          dependencies.withExecution
+            ? dependencies.withExecution({ ...execution, onEvent: countUsage }, screenSources)
+            : screenSources(),
+        ),
+        signal,
+      );
+      const sourceReads = Array.isArray(screening)
+        ? delimit('read_source', textResult(screening), context.timeZone)
+            .content.map((part) => (part.type === 'text' ? part.text : ''))
+            .join('\n')
+        : undefined;
+      if (screening === true) {
         await context.emit('source_screened', '', { execution });
         completed = screened = true;
         return { status };
@@ -1209,9 +1214,17 @@ export function createAgentRuntime(dependencies: {
             tasks: [],
           }
         : context;
-      const fallback = instruct(
-        firstInstruction(requestContext, resumed && !compact, omitted, analysis),
-      );
+      const observer = context.proactivity
+        ? observerInstruction(
+            requestContext,
+            resumed && !compact,
+            currentUserTime(context.timeZone),
+            sourceReads,
+          )
+        : undefined;
+      const fallback =
+        observer?.text ??
+        instruct(firstInstruction(requestContext, resumed && !compact, omitted, analysis));
       const audio = nativeAudio(context.attachments, fallback);
       const nativeContext = audio
         ? {
@@ -1225,6 +1238,7 @@ export function createAgentRuntime(dependencies: {
           : fallback,
         images,
         audio,
+        observer?.stable,
       );
       await pendingReplies;
       signal.throwIfAborted();

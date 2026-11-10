@@ -9,7 +9,7 @@ import type { ProviderUsageEvent, UsageTelemetry } from '../ports/provider-usage
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { DecisionModel } from '../ports/decisions.ts';
 import type { SpeechProvider } from '../ports/speech.ts';
-import type { TrustAction, TrustEntry, TrustView } from '../shared/trust.ts';
+import type { TrustAction, TrustEntry, TrustOutside, TrustView } from '../shared/trust.ts';
 import { becauseOf, type TrustBasis } from './trust-basis.ts';
 import { actionTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
@@ -46,20 +46,32 @@ const cost = (value: number | null | undefined) =>
 function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'> {
   const id: string = row.source_id ?? '';
   const first = (text: string | null) => text?.trim().split('\n')[0]?.slice(0, 120);
+  const task = row.task as { title: string; started: boolean } | null;
   if (row.source === 'user') return { source: 'chat', title: first(row.text) || 'Your message' };
   if (row.source === 'task') return { source: 'task', title: first(row.text) || 'Task work' };
   if (row.source === 'schedule')
     return { source: 'schedule', title: first(row.schedule) || 'Scheduled task' };
+  if (id.startsWith('task-check:'))
+    return {
+      source: task?.started ? 'started' : 'task',
+      title: task ? `Checked on ${task.title}` : 'Checked on a task',
+    };
   if (row.source === 'resume')
     return {
       source: 'resume',
       title: id.startsWith('confirmation:') ? 'Ran an action you approved' : 'Continued a task',
     };
   if (id.startsWith('proactivity:'))
-    return { source: 'check', title: 'Checked sources and prepared work' };
+    return {
+      source: 'check',
+      title: row.screened
+        ? 'Checked sources, nothing new to prepare'
+        : 'Checked sources and prepared work',
+    };
   if (id.startsWith('activity-check:'))
     return { source: 'check', title: 'Checked a connected app' };
   if (id.startsWith('reaction:')) return { source: 'chat', title: 'Your reaction' };
+  if (task?.started) return { source: 'started', title: task.title };
   return { source: 'event', title: 'Woke for an email or app event' };
 }
 
@@ -438,6 +450,19 @@ export function createLedger({
     return Object.fromEntries(rows.map(({ sessionId, costUsd }) => [sessionId, costUsd]));
   }
 
+  async function recentTurnCost(turnId?: string) {
+    const { rows } = await pool.query<{ cost: number | null }>(
+      `SELECT COALESCE((SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY cost) FROM (
+         SELECT sum(m.cost_usd) AS cost FROM model_usage m JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
+         WHERE m.owner_id=$1 AND u.status='succeeded' GROUP BY m.turn_id
+         HAVING count(m.cost_usd)=count(*) AND sum(m.cost_usd)>0 ORDER BY max(m.created_at) DESC LIMIT 20) recent),
+         (SELECT sum(cost_usd) FROM model_usage WHERE owner_id=$1 AND turn_id=$2::uuid
+           HAVING count(cost_usd)=count(*) AND sum(cost_usd)>0))::float8 AS cost`,
+      [ownerId, turnId ?? null],
+    );
+    return rows[0]?.cost ?? null;
+  }
+
   async function entries(before?: { at: string; id: string }, session?: string) {
     const { rows } = await pool.query(
       `SELECT u.id,u.source,u.source_id,u.channel,u.status,u.error,u.created_at,
@@ -447,6 +472,9 @@ export function createLedger({
            ORDER BY (m.turn_id=u.id AND m.role='assistant') DESC NULLS LAST,m.created_at DESC,m.id DESC LIMIT 1) AS message_id,
          left(COALESCE((SELECT text FROM messages WHERE id=u.message_id AND owner_id=$1),u.prompt),400) AS text,c.cost,c.models,c.plan,c.unpriced,
          (SELECT title FROM schedules WHERE owner_id=$1 AND id::text=split_part(u.source_id,':',2)) AS schedule,
+         (SELECT json_build_object('title',t.title,'started',t.activity_key IS NOT NULL) FROM tasks t
+           WHERE t.owner_id=$1 AND t.session_id=u.session_id LIMIT 1) AS task,
+         EXISTS(SELECT 1 FROM turn_events e WHERE e.turn_id=u.id AND e.type='source_screened') AS screened,
          (SELECT json_agg(json_build_object('action',a.action,'basis',a.basis,'said',m.id IS NOT NULL) ORDER BY a.created_at)
            FROM app_actions a LEFT JOIN messages m ON a.basis->>'kind'='message'
              AND m.owner_id=$1 AND m.id=(a.basis->>'messageId')::uuid
@@ -502,7 +530,7 @@ export function createLedger({
   }
 
   async function read(): Promise<TrustView> {
-    const [summary, daily, page, current] = await Promise.all([
+    const [summary, daily, background, page, current] = await Promise.all([
       pool.query(
         `SELECT
            (SELECT count(*) FROM turn_events e JOIN turns u ON u.id=e.turn_id
@@ -529,6 +557,26 @@ export function createLedger({
          FROM model_usage WHERE owner_id=$1 AND created_at>=${monthStart} GROUP BY 1`,
         [ownerId],
       ),
+      pool.query<{
+        outside: boolean;
+        category: string | null;
+        operation: string | null;
+        cost: number;
+      }>(
+        `WITH spent AS (
+           SELECT m.cost_usd,m.turn_id,m.details,u.session_id,u.thread_id,u.source FROM model_usage m
+           LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
+           WHERE m.owner_id=$1 AND m.created_at>=${monthStart} AND m.cost_usd>0),
+         origin AS (
+           SELECT DISTINCT ON (f.session_id) f.session_id,f.source FROM turns f
+           WHERE f.owner_id=$1 AND f.session_id IN (SELECT session_id FROM spent) ORDER BY f.session_id,f.created_at,f.id)
+         SELECT s.turn_id IS NULL AS outside,CASE WHEN s.turn_id IS NULL THEN s.details->>'category' END AS category,
+           CASE WHEN s.turn_id IS NULL THEN s.details->>'operation' END AS operation,sum(s.cost_usd)::float8 AS cost
+         FROM spent s LEFT JOIN origin o ON o.session_id=s.session_id
+         WHERE s.turn_id IS NULL OR (s.session_id<>s.thread_id AND s.source<>'user' AND o.source NOT IN ('user','task'))
+         GROUP BY 1,2,3`,
+        [ownerId],
+      ),
       entries(),
       limits(),
     ]);
@@ -537,6 +585,21 @@ export function createLedger({
     const days: number[] = Array.from({ length: Math.ceil(elapsed) || 1 }, () => 0);
     for (const { day, cost } of daily.rows) if (day <= days.length) days[day - 1] = cost ?? 0;
     const spent = days.reduce((sum, value) => sum + value, 0);
+    const outside = new Map<TrustOutside['kind'], number>();
+    for (const { outside: turnless, category, operation, cost } of background.rows)
+      if (turnless) {
+        const kind: TrustOutside['kind'] =
+          category === 'review' && operation === 'access'
+            ? 'email'
+            : category === 'memory'
+              ? operation === 'style'
+                ? 'style'
+                : 'memory'
+              : category === 'tasks'
+                ? 'ideas'
+                : 'other';
+        outside.set(kind, (outside.get(kind) ?? 0) + cost);
+      }
     return {
       week: {
         things: row.things,
@@ -554,6 +617,8 @@ export function createLedger({
         daily: days,
         unpriced: row.unpriced,
         planUsage: row.plan_usage,
+        backgroundUsd: background.rows.reduce((sum, item) => sum + item.cost, 0),
+        outside: [...outside].map(([kind, costUsd]) => ({ kind, costUsd })),
       },
       ...current,
       ...page,
@@ -667,6 +732,7 @@ export function createLedger({
     limits,
     setLimits,
     sessionCosts,
+    recentTurnCost,
     withTurn: <T>(turnId: string, run: () => T) => activeTurn.run(turnId, run),
     withExecution: <T>(
       execution: ExecutionScope & Pick<AgentSessionOptions, 'onEvent'>,
