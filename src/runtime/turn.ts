@@ -6,7 +6,7 @@ import type { ExecutionScope } from '../shared/execution.ts';
 
 export interface ReplyDelivery {
   delivered: boolean;
-  presentation: 'none' | 'original' | 'corrected' | 'omitted';
+  presentation: 'none' | 'original';
 }
 
 export interface Turn {

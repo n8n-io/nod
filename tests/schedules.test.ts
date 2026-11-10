@@ -828,6 +828,26 @@ test(
             authority_instruction: 'Remind me in a minute.',
             authority_source_message_id: origin.sourceMessageId,
           });
+          const sameThread = await receive('Remind me in a minute again.');
+          const otherThread = await receive('Remind me in a minute.', 'other-thread');
+          for (const [route, timing, reused] of [
+            [provenance, {}, true],
+            [provenance, { prompt: 'Send the reworded synthetic reminder.' }, true],
+            [provenance, { title: 'Reworded synthetic reminder' }, true],
+            [sameThread, {}, true],
+            [otherThread, {}, false],
+            [
+              provenance,
+              { title: 'Another synthetic reminder', prompt: 'Send another synthetic reminder.' },
+              false,
+            ],
+          ] as const) {
+            const created = (await createRouted(route, timing)) as Schedule & {
+              existing?: boolean;
+            };
+            assert.equal(created.id === schedule.id, reused);
+            assert.equal(created.existing === true, reused);
+          }
           for (const sourceOwner of [ownerId, 'foreign-source']) {
             const sourceThread = randomUUID();
             const sourceTurn = randomUUID();

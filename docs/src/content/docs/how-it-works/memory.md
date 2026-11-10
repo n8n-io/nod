@@ -61,9 +61,7 @@ flowchart TD
   request[Your request]:::accent --> select[Select facts and expand searches]
   select --> search[Search the active conversation]
   search --> rank[Rank facts and source messages]
-  rank --> answer[Pi prepares an answer]
-  answer --> check[Check personal claims]
-  check --> reply[Deliver the checked text]:::go
+  rank --> answer[Pi answers, streaming as it writes]:::go
 ```
 
 The memory model selects existing notes. It can connect an indirect question to a preference or possession. It expands search terms with related concepts and source names, then ranks the returned messages. The server accepts only note paths and message IDs from the supplied records. Model-written facts do not enter this evidence packet or memory.
@@ -80,22 +78,10 @@ Counts need all relevant searches, event dates, duplicate removal and the reques
 `complete` covers one search's matches, not every real event or change. Partial or unknown coverage cannot establish an exhaustive total or that nothing exists or changed outside the searched scope.
 :::
 
-### Check the answer
-
-The memory model can check replies based on memory and conversation history before delivery. This requires selected evidence, a configured memory model and spending capacity. After an app action, web read, workspace operation or other outside work in a turn, later replies bypass this memory review. The visual corrections and follow-up checks below apply only while the reply remains eligible.
-
-The check can revise personal claims or make advice use a relevant fact. It sees the current request, the proposed answer, all current saved facts, the selected evidence and later memory or history reads. These records remain untrusted data. Missing evidence in the selection does not make a saved fact unknown. Supporting reads are bounded at 80,000 characters; the packet marks omitted reads. A new memory or history read causes an unchanged answer to be checked again.
-
-For an eligible visual presentation, the check receives its structured fields, full text form and accompanying message. It judges the prose and structured claims separately, so correcting prose can preserve a supported visual. When structured details need correction, the check prefers a supported repair of the same type. It can omit unsupported optional fields while retaining the supported core and meaningful uncertainty. Optional roles and details need primary-source or owner evidence that establishes the exact claim. A source naming an entity does not establish its role. The check omits optional claims based only on earlier assistant wording or an ambiguous source. Missing evidence from a selected or truncated packet alone does not make a claim unsupported. Nod uses a repair only when the reviewer explicitly affirms its claims and it passes the normal presentation, link and private-data checks. Referenced images still have to belong to the conversation. A missing, rejected or invalid repair leaves the complete corrected plain-text answer as the fallback. The delivery receipt tells the agent whether the visual was included, corrected or omitted.
-
-For an eligible follow-up after successful delivery, the check also receives the last text and visual text form actually published in that turn, separately from factual evidence. This record is limited to 20,000 characters, with known secrets removed, unsafe text withheld and incomplete content marked. It proves delivery, not the truth of the delivered claims or completion of any other action. Failed, cancelled and duplicate replies do not replace it. With a complete record, the same check can omit a recap only when it affirms both factual support and redundancy. A dedicated check reviews only the current follow-up. When a follow-up mixes repeated details with useful new content, it removes the repeated clauses and returns only the useful addition. It keeps caveats, questions, errors and necessary corrections without answering the original request again, adding unrelated claims or narrating the review. A discovered factual error in already-published output still needs a concise correction, even if the follow-up omits it. Missing or partial delivery context and inconsistent reviewer verdicts cannot authorize silence. The record stays within the turn and is cleared with the selected evidence when new owner instructions arrive.
-
-The check must keep plans separate from completed events and possessions separate from purchases. Earlier assistant messages establish what was said, not whether it was true. The check cannot use them alone to add a factual detail. It cannot run tools, authorize an action or save a note. The normal trust check still decides actions from the owner's words.
-
-Selection uses up to two model calls with a shared one-second deadline. When that deadline expires, Nod uses word matches and any evidence already found. An eligible reply can add one check with a 20-second deadline. The runtime reuses the result while the draft and review context are unchanged. These calls count in **Usage** and the session's spending check-in. Stop ends waiting at once, including when a provider ignores cancellation. A new owner message during the turn clears the old selection and reply-check cache.
+Selection uses up to two model calls with a shared one-second deadline. When that deadline expires, Nod uses word matches and any evidence already found. These calls count in **Usage** and the session's spending check-in. Stop ends waiting at once, including when a provider ignores cancellation. A new owner message during the turn clears the old selection.
 
 :::caution[Model limits]
-Selection and reply checks can make mistakes. If a call fails or returns invalid data, Nod keeps its word-search fallback or original answer; it does not claim that the answer passed a check.
+Selection can make mistakes. If a call fails or returns invalid data, Nod keeps its word-search fallback.
 :::
 
 ## How the model saves memory

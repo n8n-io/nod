@@ -10,7 +10,6 @@ export interface MemoryCurator {
         | 'reflect'
         | 'remember'
         | 'recall'
-        | 'memory_check'
         | 'review'
         | 'access'
         | 'style'
