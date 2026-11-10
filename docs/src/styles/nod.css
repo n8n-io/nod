@@ -171,39 +171,49 @@ body.lp {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 180px;
   width: round(down, min(996px, 100%), 12px);
-  padding: 9px;
+  padding: 36px 9px;
 }
 .lp-hero-headline {
   display: flex;
-  align-items: center;
-  font-size: 56px;
-  font-weight: 500;
-  letter-spacing: -0.02em;
-  line-height: 1.05;
-  white-space: nowrap;
-  padding: 20px 36px;
-  border-radius: 18px;
-}
-.lp-hero-lines {
-  display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 16px;
+  margin: 0;
+  font-weight: 500;
+  letter-spacing: -0.02em;
   text-align: center;
-  margin-right: 0.2em;
 }
-.lp-hero-line1 {
-  display: inline-flex;
-  align-items: center;
+.lp-hero-name {
+  font-size: 104px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.lp-wordmark {
+  white-space: nowrap;
 }
 .lp-hero-glyph {
-  flex: none;
-  width: 48px;
-  height: 48px;
-  margin-right: 16px;
+  display: inline-block;
+  width: 0.6em;
+  height: 0.6em;
+  margin: 0 -0.025em 0 0.01em;
   overflow: visible;
-  transform: translateY(-4.5px);
+  vertical-align: baseline;
+}
+.lp-hero-tagline {
+  font-size: 40px;
+  line-height: 1.1;
+}
+.lp-hero-tagline > span {
+  display: block;
+}
+.lp-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .lp-hero-glyph svg {
   width: 100%;
@@ -348,17 +358,17 @@ body.lp {
 .lp-video-unmute {
   position: absolute;
   z-index: 2;
-  top: 50%;
+  top: 16px;
   left: 50%;
-  transform: translate(-50%, -50%);
+  transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 10px 16px;
   border: none;
   border-radius: var(--radius-full);
-  background: var(--white);
-  color: var(--black);
+  background: rgba(25, 25, 25, 0.8);
+  color: var(--white);
   font-family: inherit;
   font-size: 14px;
   letter-spacing: 0.02em;
@@ -415,6 +425,22 @@ body.lp {
   font-weight: 500;
   margin: 0;
   color: var(--black);
+}
+.lp-stat-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--gray-50);
+  text-underline-offset: 3px;
+}
+.lp-stat-link:hover {
+  text-decoration-color: currentColor;
+}
+.lp-stat-link svg {
+  width: 12px;
+  height: 12px;
 }
 .lp-trust-stat-desc {
   font-size: 16px;
@@ -986,13 +1012,22 @@ body.lp {
 }
 .lp-circle-pink,
 .lp-circle-grey {
-  display: block;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
-  width: 30px;
-  height: 30px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
-  background: var(--gray-50);
-  transform: translateY(-2px);
+  background: var(--gray-20);
+  color: var(--black);
+}
+.lp-circle-pink svg,
+.lp-circle-grey svg {
+  width: 20px;
+  height: 20px;
 }
 .lp-circle-pink {
   background: var(--pink);
@@ -1650,15 +1685,11 @@ body.lp {
   .lp-hard-ones-frame h2 {
     font-size: min(64px, 6.2vw);
   }
-  .lp-hero-headline {
-    font-size: min(56px, 5.6vw);
-    padding: 20px 24px;
+  .lp-hero-name {
+    font-size: min(104px, 9vw);
   }
-  .lp-hero-glyph {
-    width: 0.86em;
-    height: 0.86em;
-    margin-right: 0.3em;
-    transform: translateY(-0.08em);
+  .lp-hero-tagline {
+    font-size: min(40px, 4vw);
   }
 }
 
@@ -1693,28 +1724,20 @@ body.lp {
     gap: 40px;
   }
   .lp-hero-headline-frame {
-    height: auto;
-    min-height: 156px;
     padding: 24px 9px;
   }
   .lp-hero-headline {
-    display: block;
-    margin: 0;
-    white-space: normal;
-    font-size: clamp(28px, 8vw, 44px);
-    line-height: 1.1;
-    padding: 0;
+    gap: 12px;
   }
-  .lp-hero-lines,
-  .lp-hero-line1,
-  .lp-hero-lines > span {
-    display: block;
-    margin-right: 0;
+  .lp-hero-name {
+    font-size: clamp(52px, 17vw, 80px);
+  }
+  .lp-hero-tagline {
+    font-size: clamp(24px, 7vw, 34px);
     text-wrap: balance;
   }
-  .lp-hero-glyph {
-    display: inline-block;
-    vertical-align: middle;
+  .lp-hero-tagline > span {
+    display: inline;
   }
   .lp-platforms {
     white-space: normal;

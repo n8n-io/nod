@@ -23,19 +23,22 @@ export function startHeroVideo() {
       videoId: VIDEO_ID,
       playerVars: {
         mute: 1,
-        controls: 0,
+        controls: 1,
         rel: 0,
         playsinline: 1,
         loop: 1,
         playlist: VIDEO_ID,
         iv_load_policy: 3,
-        fs: 0,
-        disablekb: 1,
       },
       events: {
         onReady: () => {
           ready = true;
           play();
+          const watch = setInterval(() => {
+            if (player.isMuted()) return;
+            clearInterval(watch);
+            unmute.classList.add('hidden');
+          }, 1000);
         },
       },
     });

@@ -4,6 +4,8 @@ const MAX_ROTATION = 1;
 const ROTATION_EASE = 0.35;
 const FRICTION = 0.95;
 const MAX_VERTICAL_OFFSET = 10;
+const MIN_SPEED = 0.02;
+const AUTO_DELAY = 3000;
 
 export function startCarousel() {
   const carousel = document.getElementById('hardOnesCarousel');
@@ -32,6 +34,10 @@ export function startCarousel() {
   let lastX = 0;
   let lastTime = 0;
   let frame = null;
+  let timer = null;
+  let hovering = false;
+  let visible = false;
+  const still = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   const measure = () => {
     setWidth = track.scrollWidth / 3;
@@ -69,7 +75,7 @@ export function startCarousel() {
   const tick = () => {
     if (!dragging) {
       velocity *= FRICTION;
-      if (Math.abs(velocity) > 0.02) {
+      if (Math.abs(velocity) > MIN_SPEED) {
         position += velocity * 16;
         wrap();
       } else {
@@ -83,6 +89,7 @@ export function startCarousel() {
       rotation = 0;
       render();
       frame = null;
+      schedule();
       return;
     }
     frame = requestAnimationFrame(tick);
@@ -90,6 +97,18 @@ export function startCarousel() {
 
   const run = () => {
     if (!frame) frame = requestAnimationFrame(tick);
+  };
+
+  const advance = () => {
+    if (dragging || hovering || !visible || document.hidden || still.matches) return;
+    const step = cards[1].offsetLeft - cards[0].offsetLeft;
+    velocity = -((step * (1 - FRICTION)) / 16 + MIN_SPEED) / FRICTION;
+    run();
+  };
+
+  const schedule = () => {
+    clearTimeout(timer);
+    timer = setTimeout(advance, AUTO_DELAY);
   };
 
   carousel.addEventListener('pointerdown', (event) => {
@@ -100,6 +119,7 @@ export function startCarousel() {
     startPosition = position;
     lastTime = performance.now();
     velocity = 0;
+    clearTimeout(timer);
     carousel.setPointerCapture(event.pointerId);
     run();
   });
@@ -123,6 +143,20 @@ export function startCarousel() {
   };
   window.addEventListener('pointerup', end);
   window.addEventListener('pointercancel', end);
+
+  carousel.addEventListener('pointerenter', (event) => {
+    if (event.pointerType === 'mouse') hovering = true;
+  });
+  carousel.addEventListener('pointerleave', (event) => {
+    if (event.pointerType !== 'mouse') return;
+    hovering = false;
+    schedule();
+  });
+  document.addEventListener('visibilitychange', schedule);
+  new IntersectionObserver((entries) => {
+    visible = entries.some((entry) => entry.isIntersecting);
+    if (visible) schedule();
+  }).observe(carousel);
 
   onWidthChange(reset);
   document.fonts?.ready.then(reset);
