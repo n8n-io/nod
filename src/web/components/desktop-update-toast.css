@@ -1,0 +1,56 @@
+.desktop-update-toast {
+  position: fixed;
+  z-index: 40;
+  right: 24px;
+  bottom: 24px;
+  display: flex;
+  gap: 12px;
+  width: min(360px, calc(100vw - 32px));
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  background: var(--surface-overlay);
+  color: var(--foreground);
+  box-shadow: var(--shadow-menu);
+  font-size: var(--text-control);
+}
+.desktop-update-toast-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  color: var(--accent);
+}
+.desktop-update-toast-content {
+  min-width: 0;
+}
+.desktop-update-toast-content strong {
+  display: block;
+  font-weight: 600;
+}
+.desktop-update-toast-content p {
+  margin: 4px 0 0;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+.desktop-update-toast-content p[role='alert'] {
+  color: var(--error);
+}
+.desktop-update-toast-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+body:has(.feedback-toast) .desktop-update-toast {
+  bottom: 92px;
+}
+@media (max-width: 480px) {
+  .desktop-update-toast {
+    right: 16px;
+    bottom: 16px;
+  }
+}

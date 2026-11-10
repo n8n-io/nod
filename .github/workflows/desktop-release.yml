@@ -89,6 +89,26 @@ jobs:
           APPLE_CONFIGURED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && vars.APPLE_SIGNING_IDENTITY != '' && vars.APPLE_CERTIFICATE_SHA256 != '' && ((vars.NOD_SIGNING_MODE || 'self-signed') == 'self-signed' || (secrets.APPLE_API_KEY != '' && vars.APPLE_API_KEY_ID != '' && vars.APPLE_API_ISSUER != '' && vars.APPLE_TEAM_ID != '')) }}
           NOD_AUTOMATIC_RELEASE: ${{ inputs.automatic || false }}
         run: node .github/scripts/desktop-release.mjs plan
+      - name: Save original release context
+        if: steps.plan.outputs.release_needed == 'true'
+        env:
+          NOD_CONTEXT_SOURCE: ${{ steps.plan.outputs.source }}
+          NOD_CONTEXT_VERSION: ${{ steps.plan.outputs.version }}
+          NOD_CONTEXT_RUNTIME_REFRESH: ${{ steps.plan.outputs.runtime_refresh }}
+          NOD_CONTEXT_MAC_MATRIX: ${{ steps.plan.outputs.mac_matrix }}
+          NOD_CONTEXT_PLAN_SHA256: ${{ steps.plan.outputs.metadata_sha256 }}
+          NOD_CONTEXT_UPDATE_SOURCE_URL: ${{ github.event.repository.private && vars.NOD_DESKTOP_UPDATE_SOURCE_URL || '' }}
+          NOD_CONTEXT_PRIVATE: ${{ github.event.repository.private && 'true' || 'false' }}
+        run: node .github/scripts/desktop-release-recovery.mjs create
+      - name: Save original context for release recovery
+        if: steps.plan.outputs.release_needed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: desktop-release-context
+          path: .local/desktop-release-context.json
+          include-hidden-files: true
+          retention-days: 3
+          if-no-files-found: error
       - name: Save source-bound release metadata
         if: steps.plan.outputs.metadata_sha256 != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -193,7 +213,7 @@ jobs:
       NOD_SIGNING_MODE: ${{ vars.NOD_SIGNING_MODE || 'self-signed' }}
       NOD_DESKTOP_VERSION: ${{ needs.plan.outputs.version }}
       NOD_RELEASE_BUILD: 'true'
-      NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.NOD_DESKTOP_UPDATE_SOURCE_URL }}
+      NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ github.event.repository.private && vars.NOD_DESKTOP_UPDATE_SOURCE_URL || '' }}
       NOD_EXPECTED_RUNTIME_FINGERPRINT: ${{ matrix.runtime_fingerprint }}
       NOD_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
       NOD_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
@@ -260,7 +280,7 @@ jobs:
       NOD_SIGNING_MODE: ${{ vars.NOD_SIGNING_MODE || 'self-signed' }}
       NOD_DESKTOP_VERSION: ${{ needs.plan.outputs.version }}
       NOD_RELEASE_BUILD: 'true'
-      NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.NOD_DESKTOP_UPDATE_SOURCE_URL }}
+      NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ github.event.repository.private && vars.NOD_DESKTOP_UPDATE_SOURCE_URL || '' }}
       NOD_EXPECTED_RUNTIME_FINGERPRINT: ${{ matrix.runtime_fingerprint }}
       NOD_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
       NOD_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
@@ -348,7 +368,7 @@ jobs:
           path: .local/desktop-runtime-release/*.tar.gz
           include-hidden-files: true
           compression-level: 0
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
       - name: Download the reused runtime descriptors
         if: matrix.runtime_reused == 'true'
@@ -493,7 +513,7 @@ jobs:
     env:
       NOD_DESKTOP_VERSION: ${{ needs.plan.outputs.version }}
       NOD_RELEASE_BUILD: 'true'
-      NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.NOD_DESKTOP_UPDATE_SOURCE_URL }}
+      NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ github.event.repository.private && vars.NOD_DESKTOP_UPDATE_SOURCE_URL || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -545,7 +565,7 @@ jobs:
     env:
       NOD_DESKTOP_VERSION: ${{ needs.plan.outputs.version }}
       NOD_RELEASE_BUILD: 'true'
-      NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.NOD_DESKTOP_UPDATE_SOURCE_URL }}
+      NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ github.event.repository.private && vars.NOD_DESKTOP_UPDATE_SOURCE_URL || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -616,7 +636,7 @@ jobs:
       NOD_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
       NOD_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
       NOD_EXPECTED_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.runtime_fingerprint }}
-      NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.NOD_DESKTOP_UPDATE_SOURCE_URL }}
+      NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ github.event.repository.private && vars.NOD_DESKTOP_UPDATE_SOURCE_URL || '' }}
       NOD_RELEASE_PLAN: ${{ needs.plan.outputs.metadata_sha256 && '.local/desktop-release-plan.json' || '' }}
       NOD_RELEASE_PLAN_SHA256: ${{ needs.plan.outputs.metadata_sha256 }}
       NOD_RUNTIME_REFRESH: ${{ needs.plan.outputs.runtime_refresh }}

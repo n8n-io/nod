@@ -138,14 +138,20 @@ There's no supported backup, restore or downgrade. Don't delete the profile, VM 
 
 ## Updates
 
-Nod checks for updates when it starts, every six hours while open, and after your computer wakes if a check is due. Checks continue while a downloaded update waits for restart. **Check for Updates…** stays available in the Nod menu, menu bar, or tray alongside **Restart to update**.
+Nod checks for updates when it starts, every six hours while open, and after your computer wakes if a check is due. Checks continue while a downloaded update waits for restart. Public builds read published releases and download assets from GitHub. Older builds keep their embedded n8n update source until they are replaced. **Check for Updates…** stays available in the Nod menu, menu bar, or tray alongside **Restart to update**.
 
 ```mermaid
 flowchart TD
   check[Check]:::muted --> ready[Update ready]
-  ready -- Later --> menu[Restart to update<br/>stays in the menu]
-  ready -- Restart --> busy{{Work running?}}
-  menu --> busy
+  ready --> menu[Restart to update<br/>in the menu]
+  ready -- Build supports notice --> notice[In-app update notice]:::accent
+  ready -. Background check,<br/>notifications allowed .-> system[System notification]
+  system -- Click --> confirm[Restart or Later dialog]:::accent
+  confirm -- Later --> menu
+  confirm -- Restart --> busy{{Work running?}}
+  notice -- Later --> menu
+  notice -- Restart --> confirm
+  menu -- Select --> confirm
   busy -- no --> restart[Restart]:::go
   busy -- yes --> ask[Ask you first]:::accent
   ask -- Restart now --> restart
@@ -153,7 +159,9 @@ flowchart TD
 
 Restarting stops a running reply, scheduled task or background check, and you can ask Nod to continue afterwards. Queued messages, schedules and app checks resume. Nod reopens with the same window size and place, the same page, such as Chat or Usage, and any unsent text in the message box. If that place is no longer on a connected display, the window opens at its default size instead.
 
-Nod downloads the new app or installer and, when it changed, the new runtime pack in the background before it offers the restart. While the runtime pack or Windows installer downloads, the update item in the menu shows how far it has got. On a Mac, it also loads the new container images into the running computer, so Nod is ready soon after the restart. An update found by an automatic check shows a notification when notifications are on and quiet hours allow it. The menu offers **Restart to update**, and background checks never open a dialog. On a Mac, an update must be signed by n8n, and Nod refuses one with a lower version number, so an update feed can't roll Nod back to an older build. On Windows, the restart runs the installer in the background and opens Nod again. While Nod shuts down to install the update, its window stays open and shows **Updating Nod…** until it quits to install. If the window was closed, Nod opens it.
+Nod downloads the update ZIP on a Mac or the installer on Windows, plus any changed local runtime pack, before it offers the restart. The Mac DMG is for installation, not in-app updates. While the runtime pack or Windows installer downloads, the update item in the menu shows progress. If the Mac's local computer is running, Nod tries to load the new container images before restart. Windows still runs the installer and applies a changed WSL runtime after restart. Starting the local computer, database and browser also takes time, so a ready notice means the downloads are complete, not that launch will be instant.
+
+Newer builds show an in-app notice when the update is ready, with its version and **Restart to update** and **Later** actions. Later dismisses the notice for that version during the current app session; the menu still offers **Restart to update**. Older builds may show only the menu action. An automatic check also announces a ready update with a system notification when Nod is in the background, notifications are on and quiet hours allow it. Background checks never open a dialog. On a Mac, an update must be signed by n8n, and Nod refuses one with a lower version number, so an update feed can't roll Nod back to an older build. On Windows, the restart runs the installer in the background and opens Nod again. While Nod shuts down to install the update, its window stays open and shows **Updating Nod…** until it quits to install. If the window was closed, Nod opens it.
 
 When a newer release appears, Nod prepares it before offering restart. It reuses an already downloaded version when a check finds nothing newer. A failed release lookup keeps the downloaded update available. Once replacement staging begins, restart is available only after the new installer or app is verified. Checks and restarts cannot run together.
 
