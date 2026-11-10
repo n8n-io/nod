@@ -7,6 +7,7 @@ import { initializeFocusVisibility } from './lib/focus';
 import { configureAnalytics } from './lib/analytics-client';
 import { claimAccess, sessionStore } from './lib/session';
 import { recordFeedbackError } from './lib/feedback-errors';
+import './components/dialog.css';
 import './styles.css';
 import './components/tabs.css';
 import './components/message-actions.css';

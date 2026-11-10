@@ -24,7 +24,7 @@ import {
   type FeedbackReceipt,
   type FeedbackSubmission,
 } from '../src/shared/feedback.ts';
-import type { RuntimeContext, RuntimeResult } from '../src/ports/agent.ts';
+import { ModelRequestError, type RuntimeContext, type RuntimeResult } from '../src/ports/agent.ts';
 import type { ConnectedApp } from '../src/ports/integrations.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../src/ports/object-storage.ts';
@@ -426,6 +426,7 @@ test(
 
     let limitReached = false;
     const interruptedText = 'Synthetic interrupted turn.';
+    const modelErrors = new Map<string, string>();
     let beforeRuntimeFailure = async (_context: RuntimeContext) => {};
     let presentInterruption: NonNullable<ThreadDependencies['present']> = async () =>
       interruptedText;
@@ -629,6 +630,8 @@ test(
         if (context.attachments.length)
           stagedReads.set(context.prompt, await readFile(context.attachments[0].path, 'utf8'));
         workspaceListings.set(context.prompt, await readdir(context.workspacePath));
+        const modelError = modelErrors.get(context.prompt);
+        if (modelError) throw new ModelRequestError(modelError);
         if (context.prompt === 'runtime-failure') {
           await beforeRuntimeFailure(context);
           throw Object.assign(new Error('Synthetic runtime failure for private-fixture'), {
@@ -1274,6 +1277,64 @@ test(
           ).rowCount,
           1,
         );
+      });
+
+      await t.test('a reply retired during approval handling creates no turn', async () => {
+        const targetId = randomUUID();
+        const sourceId = `channel:telegram:fixture:${randomUUID()}`;
+        await db.pool.query(
+          "INSERT INTO messages(id,owner_id,thread_id,role,text) VALUES($1,$2,$3,'assistant','Cancel the scheduled task?')",
+          [targetId, ownerId, (await thread.activeThread()).id],
+        );
+        let enter!: () => void;
+        const entered = new Promise<void>((resolve) => {
+          enter = resolve;
+        });
+        let release!: () => void;
+        const proceed = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const submission = thread.submitUserMessage(
+          'Yes',
+          [],
+          { channel: 'telegram:fixture', sourceId, replyToMessageId: targetId },
+          {
+            answer: async () => undefined,
+            accept: async () => {
+              enter();
+              await proceed;
+              return undefined;
+            },
+          },
+        );
+        try {
+          await entered;
+          await db.pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1 AND owner_id=$2', [
+            targetId,
+            ownerId,
+          ]);
+          release();
+          await assert.rejects(
+            submission,
+            (cause: unknown) => (cause as { statusCode?: number }).statusCode === 404,
+          );
+          assert.equal(
+            (
+              await db.pool.query('SELECT 1 FROM turns WHERE owner_id=$1 AND source_id=$2', [
+                ownerId,
+                sourceId,
+              ])
+            ).rowCount,
+            0,
+          );
+        } finally {
+          release();
+          await Promise.allSettled([submission]);
+          await db.pool.query('DELETE FROM messages WHERE id=$1 AND owner_id=$2', [
+            targetId,
+            ownerId,
+          ]);
+        }
       });
 
       await t.test(
@@ -5390,6 +5451,16 @@ test(
           assert.equal((await react(message, '❤️')).statusCode, 200);
           for (const id of [foreign, archived.id])
             assert.equal((await react(id, '❤️')).statusCode, 404);
+          const retiredReaction = randomUUID();
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,role,text,thread_id,hidden_at) VALUES($1,$2,'assistant','Retired reaction target',$3,now())",
+            [retiredReaction, ownerId, freshThread],
+          );
+          try {
+            assert.equal((await react(retiredReaction, '❤️')).statusCode, 404);
+          } finally {
+            await db.pool.query('DELETE FROM messages WHERE id=$1', [retiredReaction]);
+          }
         },
       );
       await t.test(
@@ -7482,6 +7553,211 @@ test(
           }
         },
       );
+
+      await t.test('retired confirmations stay out of later agent context', async () => {
+        const activeId = (await thread.activeThread(db.pool)).id;
+        const visibleId = randomUUID();
+        const retiredId = randomUUID();
+        const visibleText = `Visible context ${randomUUID()}`;
+        const retiredText = `Retired confirmation ${randomUUID()}`;
+        const holdPrompt = `Hold context ${randomUUID()}`;
+        block(holdPrompt);
+        let follow: Awaited<ReturnType<typeof thread.submitUserMessage>> | undefined;
+        try {
+          const held = await thread.submitUserMessage(holdPrompt);
+          await waitFor(() => Boolean(ran(held.turnId)));
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,role,text,thread_id) VALUES($1,$2,'assistant',$3,$5),($4,$2,'assistant',$6,$5)",
+            [visibleId, ownerId, visibleText, retiredId, activeId, retiredText],
+          );
+          follow = await thread.submitUserMessage('Check the synthetic follow-up', [], {
+            replyToMessageId: retiredId,
+          });
+          assert.equal(await turnStatus(follow.turnId), 'queued');
+          await db.pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [retiredId]);
+          release(holdPrompt);
+          await waitFor(settled(follow.turnId));
+          const context = ran(follow.turnId)!;
+          assert.equal(context.replyTo, undefined);
+          assert.equal(
+            context.history.some((message) => message.text === retiredText),
+            false,
+          );
+          assert.equal(
+            context.history.some((message) => message.text === visibleText),
+            true,
+          );
+        } finally {
+          release(holdPrompt);
+          if (follow) {
+            await waitFor(settled(follow.turnId));
+            await db.pool.query('UPDATE messages SET reply_to_message_id=NULL WHERE id=$1', [
+              follow.messageId,
+            ]);
+          }
+          await db.pool.query('DELETE FROM messages WHERE id=ANY($1::uuid[])', [
+            [visibleId, retiredId],
+          ]);
+        }
+      });
+
+      await t.test(
+        'model provider limits show concise recovery guidance in failed turns',
+        async () => {
+          const previousPresenter = presentInterruption;
+          presentInterruption = async () => '';
+          const nestedQuota =
+            'The model request failed: ' +
+            JSON.stringify({
+              error: {
+                code: 429,
+                status: 'Too Many Requests',
+                message: {
+                  error: {
+                    code: 429,
+                    status: 'RESOURCE_EXHAUSTED',
+                    message: 'You exceeded your current quota. Please retry in 14s.',
+                    details: [
+                      {
+                        quotaMetric:
+                          'generativelanguage.googleapis.com/generate_content_free_tier_input_token_count',
+                        quotaId: 'GenerateContentInputTokensPerModelPerMinute-FreeTier',
+                        detail: 'synthetic-private-provider-detail',
+                      },
+                    ],
+                  },
+                },
+              },
+            });
+          const usageCap = (error: Record<string, unknown>) =>
+            'The model request failed: 429 Too Many Requests: ' +
+            JSON.stringify({ error: { ...error, detail: 'synthetic-private-provider-detail' } });
+          const cases: Array<{
+            prompt: string;
+            error: string;
+            guidance?: RegExp;
+            terminal?: 'account' | 'workplace';
+          }> = [
+            { prompt: 'model-gemini-quota-fixture', error: nestedQuota, guidance: /quota/i },
+            {
+              prompt: 'model-plain-rate-limit-fixture',
+              error: 'The model request failed: 429 Too Many Requests',
+              guidance: /rate limit/i,
+            },
+            {
+              prompt: 'model-rate-limit-code-fixture',
+              error: 'The model request failed: rate_limit_error',
+              guidance: /rate limit/i,
+            },
+            {
+              prompt: 'model-go-usage-cap-fixture',
+              error: usageCap({
+                type: 'GoUsageLimitError',
+                message: 'Monthly usage limit reached',
+              }),
+              guidance: /quota/i,
+              terminal: 'account',
+            },
+            {
+              prompt: 'model-free-usage-cap-fixture',
+              error: usageCap({
+                type: 'FreeUsageLimitError',
+                message: 'Free usage allowance exhausted',
+              }),
+              guidance: /quota/i,
+              terminal: 'account',
+            },
+            {
+              prompt: 'model-subscription-usage-cap-fixture',
+              error: usageCap({
+                code: 'subscription_sharing_usage_limit_exceeded',
+                message: 'Shared subscription allowance exhausted',
+              }),
+              guidance: /quota/i,
+              terminal: 'account',
+            },
+            {
+              prompt: 'model-workplace-usage-cap-fixture',
+              error: usageCap({
+                code: 'subscription_sharing_workplace_individual_usage_limit_exceeded',
+                message: 'Workspace allowance exhausted',
+              }),
+              guidance: /usage limit/i,
+              terminal: 'workplace',
+            },
+            {
+              prompt: 'model-zai-usage-cap-fixture',
+              error: usageCap({ code: 1308, message: 'Plan allowance exhausted' }),
+              guidance: /quota/i,
+              terminal: 'account',
+            },
+            {
+              prompt: 'model-unavailable-fixture',
+              error: 'The model request failed: 503 Service Unavailable',
+              guidance: undefined,
+            },
+          ];
+          try {
+            for (const item of cases) modelErrors.set(item.prompt, item.error);
+            for (const item of cases) {
+              const submitted = await thread.submitUserMessage(item.prompt);
+              await waitFor(settled(submitted.turnId));
+              await waitFor(async () =>
+                Boolean(
+                  (
+                    await db.pool.query(
+                      "SELECT 1 FROM messages WHERE turn_id=$1 AND role='assistant' AND stream_id=$2",
+                      [submitted.turnId, `failure:${submitted.turnId}`],
+                    )
+                  ).rowCount,
+                ),
+              );
+              const turn = (
+                await db.pool.query('SELECT status,error FROM turns WHERE id=$1', [
+                  submitted.turnId,
+                ])
+              ).rows[0] as { status: string; error: string };
+              const shown = (
+                await db.pool.query(
+                  "SELECT text FROM messages WHERE turn_id=$1 AND role='assistant' AND stream_id=$2",
+                  [submitted.turnId, `failure:${submitted.turnId}`],
+                )
+              ).rows[0].text as string;
+              assert.equal(turn.status, 'failed');
+              assert.ok(shown.endsWith(turn.error));
+              if (item.guidance) {
+                assert.ok(turn.error.length < 240);
+                assert.match(turn.error, item.guidance);
+                if (item.prompt === 'model-gemini-quota-fixture') {
+                  assert.match(turn.error, /HTTP 429/);
+                  assert.match(turn.error, /14 seconds/);
+                }
+                if (item.terminal) {
+                  assert.match(turn.error, /HTTP 429/);
+                  assert.doesNotMatch(
+                    turn.error,
+                    /try again shortly|try again in about \d+ seconds/i,
+                  );
+                  if (item.terminal === 'workplace') {
+                    assert.match(turn.error, /admin/i);
+                    assert.doesNotMatch(turn.error, /billing/i);
+                  } else assert.match(turn.error, /check|reset|billing|upgrade|enable/i);
+                } else assert.match(turn.error, /wait|retry|try again/i);
+                for (const text of [turn.error, shown])
+                  assert.doesNotMatch(
+                    text,
+                    /RESOURCE_EXHAUSTED|quotaMetric|synthetic-private-provider-detail/,
+                  );
+              } else {
+                assert.equal(turn.error, item.error);
+              }
+            }
+          } finally {
+            for (const item of cases) modelErrors.delete(item.prompt);
+            presentInterruption = previousPresenter;
+          }
+        },
+      );
     } finally {
       for (const resolve of gates.values()) resolve();
       events.off('event', onEvent);
@@ -7979,7 +8255,8 @@ async function feedbackFixture(t: TestContext) {
   const state = {
     content: JSON.stringify({ messages: ['Synthetic reviewed conversation'] }),
     envelopes: [] as FeedbackEnvelope[],
-    statusRequests: [] as Array<{ action: 'status'; submissionId: string }>,
+    statusRequests: [] as Array<{ action: 'status'; submissionId: string; payloadHash: string }>,
+    receiptStatus: 'submitted' as FeedbackReceipt['status'],
     beforeDeliver: undefined as (() => Promise<void>) | undefined,
   };
   const delivery = createN8nFeedback({
@@ -7992,10 +8269,12 @@ async function feedbackFixture(t: TestContext) {
       await state.beforeDeliver?.();
       const receipt: FeedbackReceipt = {
         submissionId: input.submissionId,
-        status: 'submitted',
-        issueUrl: 'https://linear.app/n8n/issue/LAB-1000/synthetic-feedback',
+        status: state.receiptStatus,
+        ...(state.receiptStatus === 'submitted' || state.receiptStatus === 'partial'
+          ? { issueUrl: 'https://linear.app/n8n/issue/LAB-1000/synthetic-feedback' }
+          : {}),
       };
-      return Response.json(receipt);
+      return Response.json(receipt, { status: state.receiptStatus === 'rejected' ? 400 : 200 });
     },
   });
   const context = {
@@ -8189,6 +8468,147 @@ test(
 );
 
 test(
+  'feedback status recovers a lost receipt without resubmitting',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    const { app, ownerId } = await f.open();
+    const input = f.submission();
+    f.state.beforeDeliver = async () => {
+      throw new Error('Synthetic receipt lost after dispatch');
+    };
+
+    const first = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
+    assert.deepEqual(first.json<FeedbackReceipt>(), {
+      submissionId: input.submissionId,
+      status: 'unknown',
+    });
+    assert.equal(f.state.envelopes.length, 1);
+    f.state.beforeDeliver = undefined;
+
+    const waiting = await app.inject({ url: `/api/feedback/${input.submissionId}` });
+    assert.equal(waiting.json<FeedbackReceipt>().status, 'unknown');
+    assert.equal(f.state.statusRequests.length, 0);
+    assert.equal(
+      (
+        await app.inject({ method: 'POST', url: '/api/feedback', payload: input })
+      ).json<FeedbackReceipt>().status,
+      'unknown',
+    );
+    assert.equal(f.state.envelopes.length, 1);
+
+    await f.pool.query(
+      "UPDATE feedback_submissions SET created_at=now()-interval '6 minutes' WHERE owner_id=$1 AND id=$2",
+      [ownerId, input.submissionId],
+    );
+    const recovered = await app.inject({ url: `/api/feedback/${input.submissionId}` });
+    assert.equal(recovered.json<FeedbackReceipt>().status, 'submitted');
+    assert.equal(f.state.statusRequests.length, 1);
+    assert.equal(f.state.statusRequests[0].submissionId, input.submissionId);
+    assert.equal(f.state.envelopes.length, 1);
+    const stored = await f.pool.query(
+      'SELECT payload_hash,status FROM feedback_submissions WHERE owner_id=$1 AND id=$2',
+      [ownerId, input.submissionId],
+    );
+    assert.equal(f.state.statusRequests[0].payloadHash, stored.rows[0].payload_hash);
+    assert.equal(stored.rows[0].status, 'submitted');
+  },
+);
+
+test(
+  'feedback status confirms non-delivery without resubmitting',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    const { app, ownerId } = await f.open();
+    const input = f.submission();
+    f.state.beforeDeliver = async () => {
+      throw new Error('Synthetic collector request interrupted before acceptance');
+    };
+    const first = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
+    assert.equal(first.json<FeedbackReceipt>().status, 'unknown');
+    f.state.beforeDeliver = undefined;
+    f.state.receiptStatus = 'rejected';
+
+    await f.pool.query(
+      "UPDATE feedback_submissions SET created_at=now()-interval '6 minutes' WHERE owner_id=$1 AND id=$2",
+      [ownerId, input.submissionId],
+    );
+    const checked = await app.inject({ url: `/api/feedback/${input.submissionId}` });
+    assert.deepEqual(checked.json<FeedbackReceipt>(), {
+      submissionId: input.submissionId,
+      status: 'rejected',
+    });
+    assert.equal(f.state.statusRequests.length, 1);
+    assert.equal(f.state.envelopes.length, 1);
+    const stored = await f.pool.query(
+      'SELECT status FROM feedback_submissions WHERE owner_id=$1 AND id=$2',
+      [ownerId, input.submissionId],
+    );
+    assert.equal(stored.rows[0].status, 'rejected');
+    assert.equal(
+      (
+        await app.inject({ method: 'POST', url: '/api/feedback', payload: input })
+      ).json<FeedbackReceipt>().status,
+      'rejected',
+    );
+    assert.equal(f.state.envelopes.length, 1);
+  },
+);
+
+test(
+  'feedback status recovers partial delivery and repairs the original submission',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    const { app, ownerId } = await f.open();
+    const input = f.submission({
+      attachments: [
+        {
+          name: 'synthetic.txt',
+          mimeType: 'text/plain',
+          data: Buffer.from('Synthetic attachment').toString('base64'),
+        },
+      ],
+    });
+    f.state.beforeDeliver = async () => {
+      throw new Error('Synthetic receipt lost after dispatch');
+    };
+    const first = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
+    assert.equal(first.json<FeedbackReceipt>().status, 'unknown');
+    assert.equal(f.state.envelopes.length, 1);
+    f.state.beforeDeliver = undefined;
+    f.state.receiptStatus = 'partial';
+
+    await f.pool.query(
+      "UPDATE feedback_submissions SET created_at=now()-interval '6 minutes' WHERE owner_id=$1 AND id=$2",
+      [ownerId, input.submissionId],
+    );
+    const recovered = await app.inject({ url: `/api/feedback/${input.submissionId}` });
+    assert.deepEqual(recovered.json<FeedbackReceipt>(), {
+      submissionId: input.submissionId,
+      status: 'partial',
+      issueUrl: 'https://linear.app/n8n/issue/LAB-1000/synthetic-feedback',
+      canRetryAttachments: true,
+    });
+    assert.equal(f.state.envelopes.length, 1);
+
+    f.state.receiptStatus = 'submitted';
+    const repaired = await app.inject({
+      method: 'POST',
+      url: `/api/feedback/${input.submissionId}/retry`,
+      payload: {},
+    });
+    assert.equal(repaired.json<FeedbackReceipt>().status, 'submitted');
+    assert.equal(f.state.envelopes.length, 2);
+    assert.equal(f.state.envelopes[1].action, 'repair');
+    assert.equal(f.state.envelopes[1].submissionId, input.submissionId);
+    assert.equal(f.state.envelopes[1].payloadHash, f.state.envelopes[0].payloadHash);
+    assert.deepEqual(f.state.envelopes[1].attachments, f.state.envelopes[0].attachments);
+  },
+);
+
+test(
   'feedback diagnostics retain redacted content and operational evidence without owner identifiers',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
@@ -8213,12 +8633,16 @@ test(
     const ownerId = randomUUID();
     const otherOwner = randomUUID();
     const turnId = randomUUID();
+    const nullTurnId = randomUUID();
+    const oversizedTurnId = randomUUID();
     const foreignTurn = randomUUID();
     const sessionId = randomUUID();
     const mainRun = randomUUID();
     const childRun = randomUUID();
     const callId = randomUUID();
     const messageId = randomUUID();
+    const nullMessageId = randomUUID();
+    const oversizedMessageId = randomUUID();
     const scheduleId = randomUUID();
     const privateValues = [
       'Marta Vidal',
@@ -8239,10 +8663,17 @@ test(
       path: privateValues[6],
       message: 'Gmail fetch failed with HTTP 503 after 4321 ms.',
     });
+    const oversizedText = 'x'.repeat(65_537);
     await f.pool.query(
       `INSERT INTO turns VALUES($1,$2,NULL,$3,'task','web','failed',$4,true,'approval',now()-interval '5 minutes',now()-interval '4 minutes',now()-interval '3 minutes'),
        ($5,$6,NULL,$7,'user','telegram','succeeded',$4,false,NULL,now(),now(),now())`,
       [turnId, ownerId, sessionId, privateText, foreignTurn, otherOwner, randomUUID()],
+    );
+    await f.pool.query(
+      `INSERT INTO turns(id,owner_id,session_id,source,channel,status,error,background)
+       VALUES($1,$2,$3,'user','web','succeeded',NULL,false),
+       ($4,$2,$3,'task','web','failed',$5,false)`,
+      [nullTurnId, ownerId, sessionId, oversizedTurnId, oversizedText],
     );
     await f.pool.query(
       `INSERT INTO messages(id,owner_id,turn_id,role,text,attachments) VALUES($1,$2,$3,'assistant',$4,$5),($6,$7,$8,'user','foreign-owner', '[]');
@@ -8257,6 +8688,11 @@ test(
         otherOwner,
         foreignTurn,
       ],
+    );
+    await f.pool.query(
+      `INSERT INTO messages(id,owner_id,turn_id,role,text)
+       VALUES($1,$2,$3,'user',NULL),($4,$2,$5,'assistant',$6)`,
+      [nullMessageId, ownerId, nullTurnId, oversizedMessageId, oversizedTurnId, oversizedText],
     );
     await f.pool.query(
       `INSERT INTO messages(id,owner_id,role,text,created_at) VALUES($1,$2,'user','old-message',now()-interval '2 days'),($3,$2,'user','future-message',now()+interval '1 day')`,
@@ -8444,12 +8880,16 @@ test(
       ownerId,
       otherOwner,
       turnId,
+      nullTurnId,
+      oversizedTurnId,
       foreignTurn,
       sessionId,
       mainRun,
       childRun,
       callId,
       messageId,
+      nullMessageId,
+      oversizedMessageId,
       scheduleId,
       'foreign-owner',
       'foreign-event',
@@ -8462,22 +8902,45 @@ test(
     assert.equal(report.format, 'nod-feedback-report-v3');
     assert.equal(report.coverage.contentIncluded, true);
     assert.equal(report.coverage.redaction, 'best-effort');
-    assert.match(report.messages[0].text, /Gmail fetch failed with HTTP 503/);
-    assert.match(report.turns[0].error, /Gmail fetch failed with HTTP 503/);
+    const shortMessage = report.messages.find((row: any) => row.characters === privateText.length);
+    const nullMessage = report.messages.find((row: any) => row.characters === null);
+    const oversizedMessage = report.messages.find(
+      (row: any) => row.characters === oversizedText.length,
+    );
+    const shortTurn = report.turns.find((row: any) => row.background);
+    const nullTurn = report.turns.find((row: any) => row.status === 'succeeded');
+    const oversizedTurn = report.turns.find(
+      (row: any) => row.status === 'failed' && !row.background,
+    );
+    assert.ok(shortMessage);
+    assert.ok(nullMessage);
+    assert.ok(oversizedMessage);
+    assert.ok(shortTurn);
+    assert.ok(nullTurn);
+    assert.ok(oversizedTurn);
+    assert.match(shortMessage.text, /Gmail fetch failed with HTTP 503/);
+    assert.match(shortTurn.error, /Gmail fetch failed with HTTP 503/);
+    assert.equal('text' in nullMessage, false);
+    assert.equal('error' in nullTurn, false);
+    assert.equal(nullTurn.errorPresent, false);
+    assert.equal(oversizedMessage.text, '[message omitted: content limit]');
+    assert.equal(oversizedTurn.error, '[error omitted: content limit]');
+    assert.equal(oversizedTurn.errorPresent, true);
     assert.ok(
       Object.values(report.coverage.sections).every(
         (section: any) => section.status === 'collected',
       ),
     );
-    assert.equal(report.messages.length, 1);
-    assert.equal(report.messages[0].characters, privateText.length);
-    assert.equal(report.messages[0].attachmentCount, 1);
-    assert.equal(report.turns.length, 1);
-    assert.equal(report.messages[0].turnId, report.turns[0].id);
-    assert.equal(report.turns[0].status, 'failed');
-    assert.equal(report.turns[0].queueMs, 60_000);
-    assert.equal(report.turns[0].durationMs, 60_000);
-    assert.equal(report.turns[0].errorPresent, true);
+    assert.equal(report.messages.length, 3);
+    assert.equal(shortMessage.attachmentCount, 1);
+    assert.equal(report.turns.length, 3);
+    assert.equal(shortMessage.turnId, shortTurn.id);
+    assert.equal(nullMessage.turnId, nullTurn.id);
+    assert.equal(oversizedMessage.turnId, oversizedTurn.id);
+    assert.equal(shortTurn.status, 'failed');
+    assert.equal(shortTurn.queueMs, 60_000);
+    assert.equal(shortTurn.durationMs, 60_000);
+    assert.equal(shortTurn.errorPresent, true);
     assert.equal(report.execution.length, 7);
     assert.ok(report.execution.some((row: any) => row.tool === 'sign_in'));
     assert.ok(report.execution.some((row: any) => row.tool === 'web'));
@@ -8601,14 +9064,14 @@ test(
       assert.deepEqual(fallback.logs, []);
       assert.ok(fallback.messages.every((row: any) => !('text' in row)));
       assert.ok(fallback.turns.every((row: any) => !('error' in row)));
-      assert.equal(fallback.turns[0].status, 'failed');
+      assert.equal(fallback.turns.find((row: any) => row.background)?.status, 'failed');
       assert.equal(fallback.modelUsage[0].inputTokens, 123);
     }
     await f.pool.query('DROP TABLE model_usage');
     const unavailable = JSON.parse(await buildFeedbackReport(options));
     assert.equal(unavailable.coverage.sections.modelUsage.status, 'unavailable');
     assert.deepEqual(unavailable.modelUsage, []);
-    assert.equal(unavailable.turns[0].status, 'failed');
+    assert.equal(unavailable.turns.find((row: any) => row.background)?.status, 'failed');
     assert.equal(unavailable.messages.length, 200);
     const runtime = await f.open(ownerId, () => buildFeedbackReport(options));
     const prepared = await runtime.app.inject({ method: 'POST', url: '/api/feedback/report' });

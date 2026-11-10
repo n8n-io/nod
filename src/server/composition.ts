@@ -889,10 +889,10 @@ async function initializeApplication(
           submit: (profile) => analytics.setOnboardingProfileAnswers(ownerId, profile),
         }
       : undefined,
-    researchContact: analytics.personProfileAvailable
+    updatesEmail: analytics.personProfileAvailable
       ? {
           enabled: () => analytics.consent(ownerId).enabled,
-          submit: (email) => analytics.setResearchContactEmail(ownerId, email),
+          submit: (email) => analytics.setUpdatesEmail(ownerId, email),
         }
       : undefined,
   });
@@ -926,6 +926,9 @@ async function initializeApplication(
     redact: createErrorRedactor(secrets),
     analytics: captureAnalytics,
   });
+  let retireScheduleConfirmations:
+    | ((client: import('pg').PoolClient, id: string, waitForSend: boolean) => Promise<void>)
+    | undefined;
   const personal = createPersonalService({
     analytics: captureAnalytics,
     pool,
@@ -933,6 +936,10 @@ async function initializeApplication(
     scheduler: boss,
     enqueueTurn,
     refresh,
+    retireScheduleConfirmations: (client, id, waitForSend) => {
+      if (!retireScheduleConfirmations) throw new Error('Approvals are not ready.');
+      return retireScheduleConfirmations(client, id, waitForSend);
+    },
     memory,
     learnedSkills,
     models: adapters.models,
@@ -1292,6 +1299,7 @@ async function initializeApplication(
     communication.describe,
     captureAnalytics,
   );
+  retireScheduleConfirmations = approvals.retireScheduleConfirmations;
   let channels: Awaited<ReturnType<typeof createChannels>> | undefined;
   const reactions = createAgentReactionService({
     pool,
@@ -1524,8 +1532,13 @@ async function initializeApplication(
     pool,
     ownerId,
     review: async (instructions, input, signal, question) => {
-      if (question)
-        instructions += `\nReply with only JSON with one property, ${JSON.stringify(question.name)}. Its value must be one of: ${question.choices.map(({ value }) => JSON.stringify(value)).join(', ')}.`;
+      if (question) {
+        const values = question.choices.map(({ value }) => JSON.stringify(value)).join(', ');
+        instructions +=
+          question.name === 'retiredReply'
+            ? `\nReply with only JSON containing exactly two properties: ${JSON.stringify(question.name)} set to one of ${values}, and "probability" set to a number from 0 to 1 expressing confidence in that label.`
+            : `\nReply with only JSON with one property, ${JSON.stringify(question.name)}. Its value must be one of: ${values}.`;
+      }
       return trustCurator.configured
         ? trustCurator.curate({ task: 'review', instructions, input }, signal)
         : undefined;
@@ -2156,7 +2169,7 @@ async function initializeApplication(
     onboardingMissing: async () => (adapters.model.configured ? null : 'brain'),
     traces: adapters.traces?.available ?? false,
     onTraces: (enabled) => adapters.traces?.configure({ enabled }),
-    researchContact: onboardingProfile.available,
+    updatesEmail: onboardingProfile.available,
   }).register(app);
   ledger.registerRoutes(app);
   registerSpeechSettings(app, {
@@ -2220,6 +2233,8 @@ async function initializeApplication(
       attributeMediaUsage: ledger.attributeMediaUsage,
       ...(channelSettings ? { pair: channelSettings.pair } : {}),
       transport: messaging,
+      isRetirableScheduleConfirmation: approvals.isRetirableScheduleConfirmation,
+      classifyRetiredReply: trust.classifyRetiredReply,
       acceptVerification: (text, input) => chatVerification.accept(text, input),
       reacted: (messageId, reaction) =>
         reactToAssistantMessage(messageId, reaction, adapters.model.configured),

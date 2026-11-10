@@ -61,9 +61,12 @@ interface ComposerProps {
   privateReply?: boolean;
   restoreReply?(reply: Message['replyTo']): void;
   ready: boolean;
+  busy?: boolean;
   text: string;
   setText(value: string): void;
   replyTo: Message['replyTo'];
+  replyPreviewPending?: boolean;
+  retryReplyPreview?(): void;
   clearReply(): void;
   onSend(text: string, attachments: Artifact[], recording?: File): Promise<ComposerSendResult>;
   onStop?(): void;
@@ -74,6 +77,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   {
     active = true,
     ready,
+    busy = false,
     text,
     setText,
     replyTo,
@@ -83,6 +87,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     stopping = false,
     draftKey,
     restoreReply,
+    replyPreviewPending = false,
+    retryReplyPreview,
     privateReply = false,
   },
   ref,
@@ -146,11 +152,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     submit: () => {},
     upload: (_files: File[], _method: 'paste') => {},
   });
+  const placeholder = busy ? 'Send another message to Nod…' : 'Message Nod…';
+  const currentPlaceholder = useRef(placeholder);
+  currentPlaceholder.current = placeholder;
   const extensions = useMemo(
     () =>
       createComposerExtensions({
         submit: () => actions.current.submit(),
         upload: (files) => actions.current.upload(files, 'paste'),
+        placeholder: () => currentPlaceholder.current,
       }),
     [],
   );
@@ -173,6 +183,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       setText(value);
     },
   });
+  useEffect(() => {
+    if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr);
+  }, [editor, placeholder]);
   function focus() {
     if (editor && !editor.isDestroyed) editor.commands.focus(undefined, { scrollIntoView: false });
   }
@@ -811,7 +824,24 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       {replyTo && (
         <div className="reply-context composer-reply">
           <CornerUpLeft size={16} />
-          <MessageQuote message={replyTo} composing />
+          {replyPreviewPending ? (
+            <span role="status">Checking reply availability…</span>
+          ) : retryReplyPreview ? (
+            <>
+              <span role="status">Couldn’t check this reply.</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={retryReplyPreview}
+                aria-label="Retry reply availability"
+              >
+                Try again
+              </Button>
+            </>
+          ) : (
+            <MessageQuote message={replyTo} composing />
+          )}
           <Button
             type="button"
             variant="ghost"

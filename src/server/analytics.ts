@@ -275,12 +275,12 @@ export async function createAnalytics(options: {
       legacyOnboardingChoiceProperties,
     );
   }
-  function setResearchContactEmail(owner: string, email: string) {
+  function setUpdatesEmail(owner: string, email: string) {
     return setOwnerPersonProperties(owner, {
       email,
-      nod_research_contact_consent: true,
-      nod_research_contact_consent_at: new Date().toISOString(),
-      nod_research_contact_consent_version: 1,
+      nod_updates_email_consent: true,
+      nod_updates_email_consent_at: new Date().toISOString(),
+      nod_updates_email_consent_version: 1,
     });
   }
   function setUsageData(owner: string, enabled: boolean, revision = state(owner).revision) {
@@ -301,7 +301,7 @@ export async function createAnalytics(options: {
     consent,
     personProfileAvailable,
     setOnboardingProfileAnswers,
-    setResearchContactEmail,
+    setUpdatesEmail,
     withRun<T>(owner: string, operation: () => T): T {
       return runs.run({ owner, id: randomUUID(), consent: consent(owner) }, operation);
     },

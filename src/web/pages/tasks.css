@@ -149,6 +149,26 @@
   background: var(--surface);
   overflow: hidden;
 }
+.task-preview-pulse {
+  animation: task-preview-pulse 1.2s ease-out;
+}
+@keyframes task-preview-pulse {
+  0%,
+  20% {
+    border-color: var(--task-tone);
+    background-color: color-mix(in srgb, var(--surface), var(--task-tone) 8%);
+  }
+  100% {
+    border-color: var(--border);
+    background-color: var(--surface);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-preview-pulse {
+    animation-duration: 0.6s;
+    animation-timing-function: step-end;
+  }
+}
 .task-preview[data-status='working'] {
   --task-tone: var(--info);
 }

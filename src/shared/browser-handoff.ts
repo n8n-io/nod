@@ -20,6 +20,7 @@ export const browserHandoffInput = z.discriminatedUnion('type', [
     })
     .strict(),
   z.object({ type: z.literal('text'), text: z.string().min(1) }).strict(),
+  z.object({ type: z.literal('copy') }).strict(),
   z
     .object({
       type: z.literal('key'),

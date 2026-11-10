@@ -241,6 +241,8 @@ export interface AppState {
   tasks?: Task[];
   threadId: string;
   hasEarlierMessages?: boolean;
+  hiddenMessageCount?: number;
+  hiddenMessageIds?: string[];
   pendingAnswerChoiceMessageIds?: string[];
   verificationRequests?: VerificationRequest[];
   planningTasks?: boolean;

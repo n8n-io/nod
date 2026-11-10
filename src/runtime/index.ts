@@ -1128,9 +1128,16 @@ export function createAgentRuntime(dependencies: {
           countUsage(event);
           if (
             finalDelivered &&
-            ['message_start', 'text_delta', 'message_end', 'final'].includes(event.type)
+            ['message_start', 'text_delta', 'thinking', 'message_end', 'final'].includes(event.type)
           )
             return;
+          if (event.type === 'thinking' && !stopped) {
+            const thought = (dependencies.redactError ?? String)(event.title).replace(/\s+/g, ' ');
+            pendingReplies = pendingReplies.then(() =>
+              context.emit('thought', thought, { execution }).catch(() => {}),
+            );
+            void pendingReplies.catch(() => {});
+          }
           if (event.type === 'message_start') {
             completeStream();
             streamId = randomUUID();

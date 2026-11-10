@@ -108,6 +108,7 @@ function FeedbackDraftDialog({
     pendingId ? { submissionId: pendingId, status: 'unknown' } : null,
   );
   const [busy, setBusy] = useState<'sending' | 'checking' | 'repairing' | null>(null);
+  const [statusCheckVersion, setStatusCheckVersion] = useState(0);
   const [error, setError] = useState('');
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copying' | 'copied'>('idle');
   const [toast, setToast] = useState(false);
@@ -120,6 +121,7 @@ function FeedbackDraftDialog({
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const active = useRef(true);
+  const discardingRef = useRef(false);
   const allowSave = useRef(false);
   const storageVersion = useRef(0);
   const restoreVersion = useRef(0);
@@ -135,8 +137,10 @@ function FeedbackDraftDialog({
     promise: Promise<FeedbackReport | null>;
   } | null>(null);
   const sendRequest = useRef<AbortController | null>(null);
+  const statusRequest = useRef<AbortController | null>(null);
   const copyRequest = useRef<AbortController | null>(null);
   const reportRef = useRef<FeedbackReport | null>(null);
+  const statusPoll = useRef<{ id: string; attempts: number } | null>(null);
   const frozen = !!busy || !!pendingId || !hydrated || discarding;
   const valid = !!feedback.trim() && feedback.length <= feedbackLimits.text;
   const draft = useMemo<FeedbackDraft>(
@@ -409,8 +413,21 @@ function FeedbackDraftDialog({
     setConfirmDiscard(false);
   }
 
+  function stopStatusCheck() {
+    statusPoll.current = null;
+    const controller = statusRequest.current;
+    if (!controller) return;
+    controller.abort();
+    statusRequest.current = null;
+    if (sendRequest.current === controller) sendRequest.current = null;
+    setBusy(null);
+  }
+
   async function clearDraft(accepted: boolean) {
-    if (discarding) return;
+    if (discardingRef.current || (!accepted && sendRequest.current && !statusRequest.current))
+      return;
+    discardingRef.current = true;
+    if (!accepted) stopStatusCheck();
     ++storageVersion.current;
     setDiscarding(true);
     setSavingDraft(false);
@@ -429,7 +446,11 @@ function FeedbackDraftDialog({
           : 'Couldn’t discard the saved draft. Your feedback is still here. Try again.',
       );
     } finally {
-      if (active.current) setDiscarding(false);
+      discardingRef.current = false;
+      if (active.current) {
+        setBusy(null);
+        setDiscarding(false);
+      }
     }
   }
 
@@ -535,24 +556,66 @@ function FeedbackDraftDialog({
   }
 
   async function checkStatus() {
-    if (!pendingId || busy || sendRequest.current) return;
+    if (!pendingId || busy || sendRequest.current || discardingRef.current) return;
     const controller = new AbortController();
     sendRequest.current = controller;
+    statusRequest.current = controller;
     setBusy('checking');
     setError('');
     try {
       const result = await api<FeedbackReceipt>(`/api/feedback/${pendingId}`, {
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(90_000)]),
       });
-      if (!controller.signal.aborted) applyReceipt(result);
+      if (!controller.signal.aborted && !discardingRef.current) applyReceipt(result);
     } catch {
       if (!controller.signal.aborted)
         setError('Couldn’t check the result. Try again when you’re connected.');
     } finally {
       if (sendRequest.current === controller) sendRequest.current = null;
-      if (!controller.signal.aborted) setBusy(null);
+      if (statusRequest.current === controller) statusRequest.current = null;
+      if (!controller.signal.aborted) {
+        setBusy(null);
+        setStatusCheckVersion((value) => value + 1);
+      }
     }
   }
+
+  useEffect(() => {
+    if (!open) {
+      statusPoll.current = null;
+      return;
+    }
+    if (
+      !hydrated ||
+      !pendingId ||
+      receipt?.status !== 'unknown' ||
+      busy ||
+      discarding ||
+      confirmDiscard
+    )
+      return;
+    if (statusPoll.current?.id !== pendingId) statusPoll.current = { id: pendingId, attempts: 0 };
+    if (statusPoll.current.attempts >= 15) return;
+    const delay = statusPoll.current.attempts
+      ? Math.min(10_000 * 2 ** (statusPoll.current.attempts - 1), 60_000)
+      : 2_000;
+    const timer = setTimeout(() => {
+      if (discardingRef.current || sendRequest.current || statusPoll.current?.id !== pendingId)
+        return;
+      statusPoll.current.attempts++;
+      void checkStatus();
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [
+    open,
+    hydrated,
+    pendingId,
+    receipt?.status,
+    busy,
+    discarding,
+    confirmDiscard,
+    statusCheckVersion,
+  ]);
 
   async function retryAttachments() {
     if (!pendingId || busy || sendRequest.current || !receipt?.canRetryAttachments) return;
@@ -678,7 +741,8 @@ function FeedbackDraftDialog({
       <Dialog
         open={open}
         onOpenChange={(value) => {
-          if (busy || discarding) return;
+          if ((busy && busy !== 'checking') || discarding) return;
+          if (!value) stopStatusCheck();
           if (!value && dirty.current && !restoreFailed && receipt?.status !== 'submitted')
             void persistDraft(currentDraft.current);
           onOpenChange(value);
@@ -687,7 +751,7 @@ function FeedbackDraftDialog({
         <DialogContent
           className="feedback-dialog"
           aria-describedby={undefined}
-          data-busy={!!busy || discarding}
+          data-busy={(!!busy && busy !== 'checking') || discarding}
           onOpenAutoFocus={(event) => {
             if (detailsInput.current) {
               event.preventDefault();
@@ -861,7 +925,11 @@ function FeedbackDraftDialog({
             {confirmDiscard && (
               <div className="feedback-send-notice" role="alert">
                 <strong>Discard this feedback draft?</strong>
-                <span>This removes the text and attachments saved on this device.</span>
+                <span>
+                  {pendingId
+                    ? 'This removes the draft from this device. Any feedback already received remains, and sending it again could create a duplicate.'
+                    : 'This removes the text and attachments saved on this device.'}
+                </span>
                 <div className="feedback-draft-actions">
                   <Button
                     type="button"
@@ -875,7 +943,7 @@ function FeedbackDraftDialog({
                   <Button
                     type="button"
                     size="sm"
-                    disabled={discarding}
+                    disabled={discarding || (!!busy && busy !== 'checking')}
                     onClick={() => void clearDraft(false)}
                   >
                     {discarding ? 'Discarding…' : 'Discard draft'}
@@ -970,7 +1038,7 @@ function FeedbackDraftDialog({
                     type="button"
                     variant="ghost"
                     size="sm"
-                    disabled={!!busy || discarding}
+                    disabled={(!!busy && busy !== 'checking') || discarding}
                     onClick={() => setConfirmDiscard(true)}
                   >
                     Discard draft

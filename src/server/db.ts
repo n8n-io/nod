@@ -106,7 +106,8 @@ export async function initializeDatabase() {
       thread_id uuid REFERENCES threads(id), turn_id uuid REFERENCES turns(id),
       attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now(),
       stream_id text, reaction text, assistant_reaction text, assistant_reacted_at timestamptz,
-      reaction_revision integer NOT NULL DEFAULT 0, reply_to_message_id uuid REFERENCES messages(id)
+      reaction_revision integer NOT NULL DEFAULT 0, reply_to_message_id uuid REFERENCES messages(id),
+      hidden_at timestamptz
     );
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_quote text;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS audio_caption text;
@@ -115,7 +116,10 @@ export async function initializeDatabase() {
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS answer_choices jsonb;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS question_answer jsonb;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_channel text;
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS hidden_at timestamptz;
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS handoff_browser_id text;
+    DROP INDEX IF EXISTS messages_hidden_thread;
+    CREATE INDEX IF NOT EXISTS messages_hidden_thread_recent ON messages(owner_id,thread_id,hidden_at DESC,id DESC) WHERE hidden_at IS NOT NULL;
     CREATE INDEX IF NOT EXISTS messages_owner_agent_reaction_time ON messages(owner_id,assistant_reacted_at DESC) WHERE assistant_reacted_at IS NOT NULL;
     CREATE TABLE IF NOT EXISTS artifacts (
       id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid REFERENCES threads(id), name text NOT NULL,

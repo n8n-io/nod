@@ -34,6 +34,8 @@ export function useAppState(accountId?: string) {
             ...current,
             threadId: next,
             messages: [],
+            hiddenMessageCount: 0,
+            hiddenMessageIds: [],
             turns: [],
             activity: [],
           }

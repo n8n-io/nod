@@ -14,8 +14,14 @@ import {
 } from './ui';
 import { SearchPicker, type PickerOption } from './search-picker';
 import { TimeZonePicker } from './time-zone-picker';
-import { api, ApiError, errorMessage } from '../lib/api';
+import { api, ApiError, errorMessage, requestAccountVersion } from '../lib/api';
 import { pageDataCache } from '../lib/page-data-cache';
+import {
+  reconcileSchedule,
+  scheduleMatchesPatch,
+  schedulesPath,
+  uncertainScheduleMutation,
+} from '../lib/schedule-reconciliation';
 import { formatDateTime, useDateFormat } from '../lib/date-format';
 import {
   readSchedule,
@@ -27,21 +33,20 @@ import {
 } from '../lib/schedules';
 
 async function patchSchedule(id: string, body: Record<string, unknown>) {
-  const path = '/api/schedules';
-  const saved = await api<Schedule>(`${path}/${encodeURIComponent(id)}`, {
+  const saved = await api<Schedule>(`${schedulesPath}/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(45_000),
   });
-  pageDataCache.update<Schedule[]>(path, (items) =>
+  pageDataCache.update<Schedule[]>(schedulesPath, (items) =>
     items ? items.map((entry) => (entry.id === id ? { ...entry, ...saved } : entry)) : items,
   );
-  void pageDataCache.refresh(path, true);
+  void pageDataCache.refresh(schedulesPath, true);
   return saved;
 }
 
-type Toast = { id: number; text: string; failed?: boolean; undo?(): void };
+type Toast = { id: number; text: string; kind?: 'info' | 'error'; undo?(): void };
 let toast: Toast | null = null;
 const toastListeners = new Set<() => void>();
 function showToast(value: Toast | null) {
@@ -84,7 +89,7 @@ export function PlanToast() {
       }}
     >
       {value && (
-        <Notice kind={value.failed ? 'error' : 'success'}>
+        <Notice kind={value.kind ?? 'success'}>
           <span>{value.text}</span>
           {value.undo && (
             <Button
@@ -106,37 +111,116 @@ export function PlanToast() {
 
 export function useDirectChange(id: string) {
   const [busy, setBusy] = useState(false);
+  const [uncertain, setUncertain] = useState(false);
+  const [retryable, setRetryable] = useState(false);
+  const working = useRef(false);
+  const pending = useRef<{
+    body: Record<string, unknown>;
+    note: string;
+    undo?: Record<string, unknown>;
+    accountVersion: number;
+  } | null>(null);
+  const unknownText =
+    'The change may still finish. Check schedule status before changing it again.';
+  const retryText =
+    'The change may still finish. The schedule is unchanged. Check again or try again.';
+  function complete(saved: Schedule, note: string, undo?: Record<string, unknown>) {
+    pending.current = null;
+    setUncertain(false);
+    setRetryable(false);
+    showToast({
+      id: Date.now(),
+      text: note,
+      ...(undo
+        ? {
+            undo: () =>
+              void apply(
+                { ...undo, expectedRevision: saved.revision },
+                `Undid the change to ${saved.title}.`,
+              ),
+          }
+        : {}),
+    });
+  }
+  async function settle(change: NonNullable<typeof pending.current>, checked = false) {
+    const result = await reconcileSchedule(
+      id,
+      (schedule) => scheduleMatchesPatch(schedule, change.body),
+      change.accountVersion,
+    );
+    if (result.status === 'aborted') return 'The schedule status could not be checked.';
+    if (result.schedules) pageDataCache.update<Schedule[]>(schedulesPath, () => result.schedules!);
+    if (result.status === 'confirmed') {
+      const saved = result.schedules.find((schedule) => schedule.id === id)!;
+      complete(saved, change.note, change.undo);
+      void pageDataCache.refresh(schedulesPath, true);
+      return;
+    }
+    const current = result.schedules?.find((schedule) => schedule.id === id);
+    const expectedRevision = change.body.expectedRevision;
+    if (current && typeof expectedRevision === 'number' && current.revision > expectedRevision) {
+      const conflict = 'The schedule changed. Review its current settings before trying again.';
+      pending.current = null;
+      setUncertain(false);
+      setRetryable(false);
+      showToast({ id: Date.now(), text: conflict, kind: 'info' });
+      return conflict;
+    }
+    const canRetry = checked && current?.revision === expectedRevision;
+    pending.current = change;
+    setUncertain(true);
+    setRetryable(canRetry);
+    showToast({ id: Date.now(), text: canRetry ? retryText : unknownText, kind: 'info' });
+    return canRetry ? retryText : unknownText;
+  }
   async function apply(
     body: Record<string, unknown>,
     note: string,
     undo?: Record<string, unknown>,
+    reconcileConflict = false,
   ) {
+    if (working.current || pending.current) return unknownText;
+    working.current = true;
     setBusy(true);
+    const change = { body, note, undo, accountVersion: requestAccountVersion() };
     try {
       const saved = await patchSchedule(id, body);
-      showToast({
-        id: Date.now(),
-        text: note,
-        ...(undo
-          ? {
-              undo: () =>
-                void patchSchedule(id, { ...undo, expectedRevision: saved.revision }).catch(
-                  (cause) => showToast({ id: Date.now(), text: errorMessage(cause), failed: true }),
-                ),
-            }
-          : {}),
-      });
+      complete(saved, note, undo);
     } catch (cause) {
+      if (uncertainScheduleMutation(cause)) return await settle(change);
+      if (cause instanceof ApiError && cause.status === 409 && reconcileConflict)
+        return await settle(change);
       if (cause instanceof ApiError && cause.status === 409)
-        void pageDataCache.refresh('/api/schedules', true);
+        void pageDataCache.refresh(schedulesPath, true);
       const error = errorMessage(cause);
-      showToast({ id: Date.now(), text: error, failed: true });
+      showToast({ id: Date.now(), text: error, kind: 'error' });
       return error;
     } finally {
+      working.current = false;
       setBusy(false);
     }
   }
-  return { busy, apply };
+  async function check() {
+    const change = pending.current;
+    if (!change || working.current) return;
+    working.current = true;
+    setBusy(true);
+    try {
+      return await settle(change, true);
+    } finally {
+      working.current = false;
+      setBusy(false);
+    }
+  }
+  async function retry() {
+    const change = pending.current;
+    if (!change || !retryable || working.current) return unknownText;
+    pending.current = null;
+    setUncertain(false);
+    setRetryable(false);
+    return apply(change.body, change.note, change.undo, true);
+  }
+  return { busy, uncertain, retryable, apply, check, retry };
 }
 
 type ScheduleChange = ReturnType<typeof useDirectChange>;
@@ -191,13 +275,35 @@ export function PauseSwitch({ schedule, change }: { schedule: Schedule; change: 
   return (
     <>
       {change.busy && <LoaderCircle size={16} className="spin" aria-label="Saving" />}
+      {change.uncertain && (
+        <>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={change.busy}
+            onClick={() => void change.check()}
+          >
+            Check status
+          </Button>
+          {change.retryable && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={change.busy}
+              onClick={() => void change.retry()}
+            >
+              Try again
+            </Button>
+          )}
+        </>
+      )}
       <Switch
         checked={schedule.enabled}
         aria-label={`${schedule.title} active`}
-        disabled={change.busy}
+        disabled={change.busy || change.uncertain}
         onCheckedChange={() =>
           void change.apply(
-            { enabled: !schedule.enabled },
+            { enabled: !schedule.enabled, expectedRevision: schedule.revision },
             pauseNote(schedule.enabled, schedule.title),
             { enabled: schedule.enabled },
           )
@@ -281,6 +387,7 @@ function ScheduleEditorForm({
     draft.timeZone !== initial.timeZone;
   const dirty =
     timingDirty || draft.title.trim() !== schedule.title || draft.prompt.trim() !== schedule.prompt;
+  const locked = change.busy || change.uncertain;
   const timing = () => ({
     timeZone: draft.timeZone,
     ...(schedule.kind === 'once'
@@ -346,7 +453,7 @@ function ScheduleEditorForm({
       aria-label={`Edit ${schedule.title}`}
       onSubmit={(event) => {
         event.preventDefault();
-        if (!dirty || change.busy || !draft.title.trim() || !draft.prompt.trim()) return;
+        if (!dirty || locked || !draft.title.trim() || !draft.prompt.trim()) return;
         try {
           const values = {
             title: draft.title.trim(),
@@ -383,7 +490,7 @@ function ScheduleEditorForm({
             value={draft.title}
             maxLength={160}
             required
-            disabled={change.busy}
+            disabled={locked}
             onChange={(event) => update({ title: event.target.value })}
           />
         </Field>
@@ -393,7 +500,7 @@ function ScheduleEditorForm({
             rows={4}
             value={draft.prompt}
             required
-            disabled={change.busy}
+            disabled={locked}
             onChange={(event) => update({ prompt: event.target.value })}
           />
         </Field>
@@ -415,7 +522,7 @@ function ScheduleEditorForm({
                   type="date"
                   value={draft.date}
                   required
-                  disabled={change.busy}
+                  disabled={locked}
                   onChange={(event) => update({ date: event.target.value })}
                 />
               </Field>
@@ -428,7 +535,7 @@ function ScheduleEditorForm({
                     ? [...frequencies, { value: 'custom', label: 'Custom schedule' }]
                     : frequencies
                 }
-                disabled={change.busy}
+                disabled={locked}
                 onChange={(frequency) =>
                   update({
                     frequency: frequency as ScheduleFrequency,
@@ -445,7 +552,7 @@ function ScheduleEditorForm({
                   value: String(day),
                   label: scheduleWeekDays[day],
                 }))}
-                disabled={change.busy}
+                disabled={locked}
                 onChange={(day) => update({ day })}
               />
             )}
@@ -457,7 +564,7 @@ function ScheduleEditorForm({
                   value: String(index + 1),
                   label: String(index + 1),
                 }))}
-                disabled={change.busy}
+                disabled={locked}
                 onChange={(day) => update({ day })}
               />
             )}
@@ -467,7 +574,7 @@ function ScheduleEditorForm({
                   type="time"
                   value={draft.time}
                   required
-                  disabled={change.busy}
+                  disabled={locked}
                   onChange={(event) => update({ time: event.target.value })}
                 />
               </Field>
@@ -479,7 +586,7 @@ function ScheduleEditorForm({
               <TimeZonePicker
                 value={draft.timeZone}
                 zones={zones}
-                disabled={change.busy}
+                disabled={locked}
                 labelledBy={timeZoneLabel}
                 onChange={(timeZone) => update({ timeZone })}
               />
@@ -515,7 +622,45 @@ function ScheduleEditorForm({
               ) : null)}
           </div>
         </div>
-        {error && <Notice>{error}</Notice>}
+        {(error || change.uncertain) && (
+          <Notice>
+            {error || 'The schedule status is still unconfirmed.'}
+            {change.uncertain && (
+              <>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={change.busy}
+                  onClick={() =>
+                    void change.check().then((result) => {
+                      if (result) setError(result);
+                      else onClose();
+                    })
+                  }
+                >
+                  Check status
+                </Button>
+                {change.retryable && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={change.busy}
+                    onClick={() =>
+                      void change.retry().then((result) => {
+                        if (result) setError(result);
+                        else onClose();
+                      })
+                    }
+                  >
+                    Try again
+                  </Button>
+                )}
+              </>
+            )}
+          </Notice>
+        )}
       </div>
       <div className="schedule-timing-actions">
         <Button type="button" variant="ghost" disabled={change.busy} onClick={onClose}>
@@ -523,7 +668,7 @@ function ScheduleEditorForm({
         </Button>
         <Button
           type="submit"
-          disabled={!dirty || change.busy || !draft.title.trim() || !draft.prompt.trim()}
+          disabled={!dirty || locked || !draft.title.trim() || !draft.prompt.trim()}
         >
           {change.busy ? 'Saving…' : 'Save changes'}
         </Button>

@@ -58,6 +58,7 @@ export function AppAccountManager({
     group?.accounts.find(
       (account) => account.slug === group.service.slug && account.status !== 'not_configured',
     ) ??
+    (group?.service.direct ? group.service : undefined) ??
     group?.accounts.find((account) => account.status !== 'not_configured') ??
     group?.service;
 

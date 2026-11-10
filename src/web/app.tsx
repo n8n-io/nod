@@ -559,7 +559,7 @@ function AuthenticatedApp({
           user={session.user!}
           onFeedback={openFeedback}
           usageShared={Boolean(session.analytics?.enabled)}
-          researchContact={session.capabilities.researchContact}
+          updatesEmail={session.capabilities.updatesEmail}
           traces={account.traces}
           onTraces={account.onTraces}
           onComplete={async () => {

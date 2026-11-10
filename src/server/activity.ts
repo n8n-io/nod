@@ -23,7 +23,7 @@ const query = `SELECT DISTINCT ON (u.session_id) u.id,u.channel,u.status,COALESC
   JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id AND th.archived_at IS NULL
   LEFT JOIN LATERAL (SELECT id,title,now_text,message_id FROM tasks WHERE owner_id=u.owner_id AND session_id=u.session_id
     ORDER BY created_at DESC LIMIT 1) t ON true
-  LEFT JOIN LATERAL (SELECT summary,created_at FROM turn_events WHERE turn_id=u.id AND type='step'
+  LEFT JOIN LATERAL (SELECT summary,created_at FROM turn_events WHERE turn_id=u.id AND type IN ('step','thought')
     ORDER BY created_at DESC,id DESC LIMIT 1) s ON true
   LEFT JOIN LATERAL (SELECT true AS calling FROM turn_events e WHERE e.turn_id=u.id AND e.type='tool_start'
     AND e.call_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM turn_events c WHERE c.turn_id=e.turn_id
@@ -34,7 +34,7 @@ const query = `SELECT DISTINCT ON (u.session_id) u.id,u.channel,u.status,COALESC
     (SELECT max(created_at) FROM turn_events WHERE turn_id=u.id) AS last,
     (SELECT max(created_at) FROM turn_events WHERE turn_id=u.id AND type='steered') AS steered,
     (SELECT max(created_at) FROM turn_events WHERE turn_id=u.id
-       AND type IN ('started','steered','step','tool_start','tool_complete','tool_failed','agent_start')) AS worked,
+       AND type IN ('started','steered','step','thought','tool_start','tool_complete','tool_failed','agent_start')) AS worked,
     (SELECT max(created_at) FROM turn_events WHERE turn_id=u.id AND type='final') AS finished) w
   WHERE u.owner_id=$1 AND u.status IN ('queued','running') AND (${ownerStarted()} OR t.id IS NOT NULL)
     AND (w.finished IS NULL OR w.worked>w.finished)

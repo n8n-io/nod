@@ -213,7 +213,7 @@ test('About you keeps event choices independent and groups person answers by que
   }
 });
 
-test('onboarding answers and research contact update one profile only while usage sharing is enabled', async () => {
+test('onboarding answers and updates email update one profile only while usage sharing is enabled', async () => {
   const profiles: Array<{
     distinctId: string;
     properties: Record<string, string | number | boolean | string[]>;
@@ -251,7 +251,7 @@ test('onboarding answers and research contact update one profile only while usag
     };
     assert.equal(analytics.personProfileAvailable, true);
     assert.equal(await analytics.setOnboardingProfileAnswers(owner, full), false);
-    assert.equal(await analytics.setResearchContactEmail(owner, 'owner@example.test'), false);
+    assert.equal(await analytics.setUpdatesEmail(owner, 'owner@example.test'), false);
     assert.equal(profiles.length, 0);
     analytics.setUsageData(owner, true);
     assert.equal(await analytics.setOnboardingProfileAnswers(owner, full), true);
@@ -265,17 +265,17 @@ test('onboarding answers and research contact update one profile only while usag
     assert.equal(profiles[0]?.properties.onboarding_company_size, '2_10');
     assert.deepEqual(profiles[0]?.properties.onboarding_jobs, ['email', 'meetings', 'other']);
     assert.equal(profiles[0]?.properties.email, undefined);
-    assert.equal(profiles[0]?.properties.nod_research_contact_consent, undefined);
+    assert.equal(profiles[0]?.properties.nod_updates_email_consent, undefined);
     assert.ok(!JSON.stringify(profiles[0]).includes('SYNTHETIC_PRIVATE'));
-    assert.equal(await analytics.setResearchContactEmail(owner, 'owner@example.test'), true);
+    assert.equal(await analytics.setUpdatesEmail(owner, 'owner@example.test'), true);
     assert.equal(profiles.length, 2);
     assert.equal(profiles[1]?.distinctId, 'local:' + installationId);
     assert.equal(profiles[1]?.unset, undefined);
     assert.equal(profiles[1]?.properties.email, 'owner@example.test');
-    assert.equal(profiles[1]?.properties.nod_research_contact_consent, true);
-    assert.equal(profiles[1]?.properties.nod_research_contact_consent_version, 1);
+    assert.equal(profiles[1]?.properties.nod_updates_email_consent, true);
+    assert.equal(profiles[1]?.properties.nod_updates_email_consent_version, 1);
     assert.ok(
-      !Number.isNaN(Date.parse(String(profiles[1]?.properties.nod_research_contact_consent_at))),
+      !Number.isNaN(Date.parse(String(profiles[1]?.properties.nod_updates_email_consent_at))),
     );
     assert.equal(
       await analytics.setOnboardingProfileAnswers(owner, {
@@ -297,10 +297,7 @@ test('onboarding answers and research contact update one profile only while usag
     assert.equal(profiles[3]?.properties.onboarding_who_for, 'not_asked');
     assert.equal(profiles[3]?.properties.onboarding_company_size, 'skipped');
     assert.deepEqual(profiles[3]?.properties.onboarding_jobs, ['skipped']);
-    assert.equal(
-      await analytics.setResearchContactEmail('another-owner', 'other@example.test'),
-      false,
-    );
+    assert.equal(await analytics.setUpdatesEmail('another-owner', 'other@example.test'), false);
     assert.equal(await analytics.setOnboardingProfileAnswers('another-owner', full), false);
     assert.equal(profiles.length, 4);
     waitForOptOut = true;
@@ -308,7 +305,7 @@ test('onboarding answers and research contact update one profile only while usag
     analytics.setUsageData(owner, false);
     assert.equal(await pending, false);
     assert.equal(await analytics.setOnboardingProfileAnswers(owner, full), false);
-    assert.equal(await analytics.setResearchContactEmail(owner, 'owner@example.test'), false);
+    assert.equal(await analytics.setUpdatesEmail(owner, 'owner@example.test'), false);
     assert.equal(profiles.length, 5);
   } finally {
     await analytics.shutdown();
@@ -381,8 +378,8 @@ try{
     ...fullAnswers,email:'private@example.test',roleText:'SYNTHETIC_PRIVATE_ROLE',
     jobsText:'SYNTHETIC_PRIVATE_JOB',
   });
-  assert.equal(await withEmail.setResearchContactEmail(owners[0],'researcher-a@example.test'),true);
-  captureAnalytics('onboarding_research_contact_submitted');
+  assert.equal(await withEmail.setUpdatesEmail(owners[0],'researcher-a@example.test'),true);
+  captureAnalytics('onboarding_updates_email_submitted');
 
   configureAnalytics(withoutEmail.configuration(owners[1]),'web');
   assert.equal(await withoutEmail.setOnboardingProfileAnswers(owners[1],noEmailProfile),true);
@@ -394,7 +391,7 @@ try{
   configureAnalytics(optedOut.configuration(owners[2]),'web');
   captureAnalytics('onboarding_profile_answered',fullAnswers);
   assert.equal(await optedOut.setOnboardingProfileAnswers(owners[2],fullProfile),false);
-  assert.equal(await optedOut.setResearchContactEmail(owners[2],'researcher-c@example.test'),false);
+  assert.equal(await optedOut.setUpdatesEmail(owners[2],'researcher-c@example.test'),false);
 
   const eventsById=Map.groupBy(captured,event=>event.properties.distinct_id);
   const [firstId,secondId,thirdId]=ids.map(id=>'local:'+id);
@@ -402,7 +399,7 @@ try{
   const first=eventsById.get(firstId);
   const second=eventsById.get(secondId);
   assert.deepEqual(first.map(event=>event.event),[
-    'onboarding_profile_answered','onboarding_research_contact_submitted',
+    'onboarding_profile_answered','onboarding_updates_email_submitted',
   ]);
   assert.deepEqual(second.map(event=>event.event),['onboarding_profile_answered']);
   for(const [key,value] of Object.entries(fullAnswers))
@@ -427,9 +424,9 @@ try{
   assert.deepEqual(personRequests[0].properties.$set.onboarding_jobs,['email','calendar','meetings','research','other']);
   assert.deepEqual(personRequests[0].properties.$unset,legacyOnboardingChoiceProperties);
   assert.equal(personRequests[0].properties.$set.email,undefined);
-  assert.equal(personRequests[0].properties.$set.nod_research_contact_consent,undefined);
+  assert.equal(personRequests[0].properties.$set.nod_updates_email_consent,undefined);
   assert.equal(personRequests[1].properties.$set.email,'researcher-a@example.test');
-  assert.equal(personRequests[1].properties.$set.nod_research_contact_consent,true);
+  assert.equal(personRequests[1].properties.$set.nod_updates_email_consent,true);
   assert.equal(personRequests[1].properties.$unset,undefined);
   assert.equal(personRequests[2].properties.$set.onboarding_scope,'work');
   assert.deepEqual(personRequests[2].properties.$set.onboarding_roles,['agency','engineering']);
@@ -438,7 +435,7 @@ try{
   assert.deepEqual(personRequests[2].properties.$set.onboarding_jobs,['email','meetings','research','routines']);
   assert.deepEqual(personRequests[2].properties.$unset,legacyOnboardingChoiceProperties);
   assert.equal(personRequests[2].properties.$set.email,undefined);
-  assert.equal(personRequests[2].properties.$set.nod_research_contact_consent,undefined);
+  assert.equal(personRequests[2].properties.$set.nod_updates_email_consent,undefined);
   assert.equal(JSON.stringify(captured).includes('example.test'),false);
   assert.equal(JSON.stringify(captured).includes('SYNTHETIC_PRIVATE'),false);
   assert.equal(JSON.stringify(personRequests).includes('SYNTHETIC_PRIVATE'),false);

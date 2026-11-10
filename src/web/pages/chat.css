@@ -474,9 +474,6 @@
   -webkit-text-fill-color: transparent;
   animation: working-shine 2.4s linear infinite;
 }
-.chat-page .working-text strong {
-  font-weight: 400;
-}
 .chat-page .working-receipt {
   color: var(--muted-foreground);
   font-size: var(--text-control);
@@ -500,6 +497,76 @@
     animation: none;
     background: none;
     -webkit-text-fill-color: currentColor;
+  }
+}
+.task-pips {
+  position: absolute;
+  inset-inline: 0;
+  top: 16px;
+  z-index: 3;
+  display: flex;
+  justify-content: flex-end;
+  padding-inline: inherit;
+  translate: 0 -100%;
+  pointer-events: none;
+}
+.task-pip {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: var(--chat-action-size, 32px);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.task-pip:last-child {
+  margin-inline-end: 12px;
+}
+.task-pip::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--info);
+  animation: task-pip-pulse 2s ease-out infinite;
+  animation-delay: var(--dot-delay, 0s);
+  transition: scale 120ms ease;
+}
+.task-pip:is(:hover, :focus-visible)::before {
+  scale: 1.4;
+  animation: none;
+}
+.task-pip[data-status='needs_you']::before {
+  content: '?';
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  color: var(--background);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  animation: none;
+}
+.task-pip[data-status='needs_you']:is(:hover, :focus-visible)::before {
+  scale: 1.2;
+}
+@keyframes task-pip-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--info) 50%, transparent);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--info) 0%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-pip::before {
+    animation: none;
+    transition: none;
   }
 }
 

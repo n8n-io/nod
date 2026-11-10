@@ -27,6 +27,8 @@ Open **Scheduled** to review open tasks and upcoming schedules. Open tasks appea
 
 ![The Scheduled page with a working task and a task that needs you above two recurring schedules.](../../../assets/screens/scheduled-open-tasks.png)
 
+Select **Rules** to ask Nod in chat to show the rules that apply to every task. Tell Nod in chat what to change.
+
 ## What a card shows
 
 | Part           | What it tells you                                                                 |
@@ -38,7 +40,7 @@ Open **Scheduled** to review open tasks and upcoming schedules. Open tasks appea
 | **Next check** | When Nod will look again                                                          |
 | **Done when**  | What finished looks like                                                          |
 
-A compact task preview appears in chat with its title, status and current activity. While a task works, its line is the chat's live line: the current step, the website or app it's working in, and how long it has been quiet.
+A compact task preview appears in chat with its title, status and current activity. While a task works, its card has its own live line: the current step, the website or app it's working in, and how long it has been quiet. The chat's status line stays with your messages. While it works, a pulsing dot just above the top-right corner of the message box stands for it, and a pink dot with a question mark shows when it needs you. Hover over or focus the dot to see the task's title, or select it to open the card.
 
 Select the preview to see its controls and, when it has planned steps, its plan as a checklist; select it again to close it. Inside, **Show activity** lists Nod's steps and messages with its tool steps in between, never private model reasoning.
 
@@ -72,7 +74,7 @@ In chat, open a task preview and select **Show activity**. The details show plan
 
 ## Read task results
 
-A task delivers its result where you asked for it. When you ask for something a connected app holds, such as a sheet, a document or email drafts, Nod creates it in that app even if you don't name it. Other complete reports can be Markdown documents. Nod sends the file and a short result to the conversation. A follow-up, such as completing a sign-in, continues the same saved session.
+A task delivers its result where you asked for it. When you ask for something a connected app holds, such as a sheet, a document or email drafts, Nod creates it in that app even if you don't name it. Research, guides, plans and other long reports come as a Markdown document with a short message giving the main finding, and long answers outside a task come the same way. If you ask for the result in the chat itself, Nod writes it there in full. With the WhatsApp Cloud API, open Nod to read the document. A follow-up, such as completing a sign-in, continues the same saved session.
 
 ![A completed task with a Markdown document result in chat.](../../../assets/screens/task-sessions-result.png)
 
@@ -137,6 +139,8 @@ stateDiagram-v2
 ```
 
 A question stays **Needs you** until you reply to it or continue its session. An unrelated chat message does not answer it. A failed task opens its card, so **Reply** and **Stop** are in view. A task that stops without a plan or a result shows **Needs you** with a note to reply to continue. A task that fails, including one Nod started on its own, says so in chat with the task's name and what stopped it. When a task reaches its spending check-in, it shows **Needs you** with the check-in question. A stopped task shows **Stopped**. Reply to the task to continue the same saved session. While a task works on your reply, the chat shows that Nod is working.
+
+If you pause or delete a schedule directly while a task is waiting for approval to change that schedule, the old confirmation expires. The task stays open and shows a new message you can reply to if it has more work to do.
 
 ## Task status and permission
 

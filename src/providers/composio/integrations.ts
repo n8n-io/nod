@@ -281,6 +281,7 @@ export function createComposioProvider(options: {
           if (!parsed.success) continue;
           const item = parsed.data;
           if (
+            item.slug === 'notion_mcp' ||
             item.no_auth ||
             (item.auth_schemes?.length &&
               item.auth_schemes.every((scheme) => scheme.toUpperCase() === 'NO_AUTH'))
@@ -516,8 +517,18 @@ export function createComposioProvider(options: {
           const tools = Object.fromEntries(
             entries.map(([slug, { schemaRef: _, ...tool }]) => [slug, tool]),
           );
-          for (let start = 0; start < missing.length; start += 20) {
-            const batch = missing.slice(start, start + 20);
+          const requested = new Set(query.toLowerCase().split(/[\s,]+/));
+          const exact = entries.filter(([slug]) => requested.has(slug.toLowerCase()));
+          const exactMatch = exact.length === requested.size;
+          const visible = exactMatch ? exact : entries;
+          const full = !exactMatch && visible.length > 6 ? visible.slice(0, 3) : visible;
+          const fullNames = new Set(full.map(([slug]) => slug));
+          const hydrate =
+            enabled.size > 0 && [...enabled].every((slug) => toolkits.includes(slug))
+              ? missing.filter(([slug]) => fullNames.has(slug))
+              : missing;
+          for (let start = 0; start < hydrate.length; start += 20) {
+            const batch = hydrate.slice(start, start + 20);
             const operation = signal
               ? AbortSignal.any([signal, AbortSignal.timeout(15_000)])
               : AbortSignal.timeout(15_000);
@@ -898,15 +909,16 @@ export function createComposioProvider(options: {
       signal.throwIfAborted();
       const connectedAccounts = Object.fromEntries(
         Object.entries(accounts).filter(
-          (entry): entry is [string, string | string[]] => entry[1] !== undefined,
+          (entry): entry is [string, string | string[]] =>
+            entry[1] !== undefined && entry[0] !== 'notion_mcp',
         ),
       );
-      const selectedToolkits = [
-        ...new Set([
-          ...(await sessionServices(signal)),
-          ...Object.keys(connectedAccounts).map((slug) => schemaToolkit.parse(slug)),
-        ]),
+      const accountToolkits = [
+        ...new Set(Object.keys(connectedAccounts).map((slug) => schemaToolkit.parse(slug))),
       ];
+      const selectedToolkits = accountToolkits.length
+        ? accountToolkits
+        : await sessionServices(signal);
       signal?.throwIfAborted();
       const requestOptions = { signal, maxRetries: 0 };
       const value = await client.sessions
