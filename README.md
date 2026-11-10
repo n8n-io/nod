@@ -227,7 +227,7 @@ pnpm run eval:capability longmemeval --data longmemeval_s_cleaned.json
 pnpm run eval:capability whisperbench --data MemGhost-WhisperBench
 
 # Trust checkers side by side: chat models against decision models
-pnpm run eval:capability decisions --model openai/gpt-6.1-sol --baseline origin/main --repeat 3 --label decision-checks
+pnpm run eval:capability decisions --model openai/gpt-6.1-sol --baseline origin/main
 ```
 
 <sub>Errands ran on 17 October 2026, memory on 19 October, website steps on 18 October, checker models on 23 October, and decision models on 4 November, with GPT-6.1 Sol unless named, on earlier builds. Details are in [#304](https://github.com/n8n-io/nod/pull/304), [#308](https://github.com/n8n-io/nod/pull/308), [#310](https://github.com/n8n-io/nod/pull/310), [#431](https://github.com/n8n-io/nod/pull/431), [#601](https://github.com/n8n-io/nod/pull/601), and [Capability evals](https://nod.n8n.io/docs/contribute/evals/). These are dated test results, not a guarantee. The trust check is a model's judgement and can make mistakes, and Nod is a research preview.</sub>
@@ -283,25 +283,18 @@ pnpm run eval:capability decisions --model openai/gpt-6.1-sol --baseline origin/
   </picture>
 </p>
 
-<p align="center">One Node process and a few Docker containers, on the machine that runs your assistant.</p>
+<p align="center">One Node process and a few Docker containers, all on the machine that runs your assistant.</p>
 
 ```mermaid
 flowchart TB
-  you(["You · in the app, Telegram, or WhatsApp"]):::pink
-  subgraph host ["Your computer or server"]
-    server["Nod server<br/>Pi agent runtime<br/>trust check · Vault<br/>memory · schedules"]:::pink
-    workspace["Linux workspace<br/>locked-down container"]
-    browser["Chromium<br/>browser container"]
-    db[("PostgreSQL")]
-  end
-  model["The model you choose"]
-  apps["Your apps<br/>Gmail · Calendar · Slack · Notion · MCP"]
+  you(["You<br/>app · Telegram · WhatsApp"]):::pink
+  server["Nod server<br/>Pi runtime · trust check<br/>Vault · memory · schedules"]:::pink
   you --> server
-  server --> workspace
-  server --> browser
-  server --> db
-  server -- "your key" --> model
-  server --> apps
+  server --> workspace["Linux workspace<br/>sandbox container"]
+  server --> browser["Chromium<br/>browser container"]
+  server --> db[("PostgreSQL")]
+  server -- "your key" --> model["Your model<br/>provider"]
+  server --> apps["Your apps<br/>Gmail · Slack · MCP"]
   classDef pink fill:#ff91ac,stroke:#191919,color:#191919
 ```
 
