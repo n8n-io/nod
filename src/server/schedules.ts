@@ -777,14 +777,19 @@ export function createSchedules(dependencies: ScheduleDependencies) {
   async function duplicate(
     client: PoolClient,
     input: ReturnType<typeof validateCreate>,
-    channel: string | null,
+    route: { channel: string; sourceId: string | null },
   ) {
     await lockKey(client, `schedules:${ownerId}`);
     return (
       await client.query<ScheduleRow>(
         `SELECT ${columns} FROM schedules WHERE owner_id=$1 AND enabled AND kind=$2
            AND cron IS NOT DISTINCT FROM $3 AND run_at IS NOT DISTINCT FROM $4::timestamptz AND time_zone=$5
-           AND delivery_channel IS NOT DISTINCT FROM $8
+           AND delivery_channel=$8 AND ${
+             route.sourceId
+               ? `channel_source_id IN (SELECT source_id FROM channel_inbox WHERE owner_id=$1
+                    AND thread_id=(SELECT thread_id FROM channel_inbox WHERE source_id=$9 AND owner_id=$1))`
+               : 'channel_source_id IS NULL'
+           }
            AND (lower(btrim(title))=lower(btrim($6)) OR prompt=$7) ORDER BY created_at LIMIT 1`,
         [
           ownerId,
@@ -794,7 +799,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           input.timeZone,
           input.title,
           input.prompt,
-          channel,
+          route.channel,
+          ...(route.sourceId ? [route.sourceId] : []),
         ],
       )
     ).rows[0];
@@ -807,7 +813,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       const source = await sourceProvenance(client, provenance);
       const route = await deliveryRoute(client, source);
       const authorized = await authority(client, input.prompt, source);
-      const existing = provenance && (await duplicate(client, input, route.channel));
+      const existing = provenance && (await duplicate(client, input, route));
       if (existing) return { row: existing, existing: true };
       const saved = (
         await client.query<ScheduleRow>(

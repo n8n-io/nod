@@ -1752,24 +1752,31 @@ test('a slow memory selection is copied once and the first answer wins', async (
     curator: {
       id: 'fixture',
       configured: true,
-      curate: (_request, signal) => {
+      curate: ({ input }, signal) => {
         signals.push(signal!);
-        return signals.length === 1
-          ? new Promise((_, reject) =>
-              signal!.addEventListener('abort', () => reject(signal!.reason), { once: true }),
-            )
-          : Promise.resolve({ mode: 'none', paths: [], queries: [] });
+        if (signals.length === 1)
+          return new Promise((_, reject) =>
+            signal!.addEventListener('abort', () => reject(signal!.reason), { once: true }),
+          );
+        return Promise.resolve(
+          'mode' in input
+            ? { paths: ['about/tea'], messages: [] }
+            : { mode: 'personalize', paths: ['about/tea'], queries: [] },
+        );
       },
     },
   });
   const started = performance.now();
   const brief = await recall.prepare({
-    prompt: 'Hello',
+    prompt: 'What should I drink this afternoon?',
     history: [],
     signal: new AbortController().signal,
   } as never);
-  assert.equal(brief, undefined);
-  assert.equal(signals.length, 2);
+  assert.deepEqual(
+    brief?.facts.map((fact) => fact.path),
+    ['about/tea'],
+  );
+  assert.equal(signals.length, 3);
   assert.ok(signals[0].aborted);
   assert.ok(performance.now() - started < 5_000);
 });
