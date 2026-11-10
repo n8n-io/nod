@@ -109,17 +109,16 @@ The current contract is `v4`. It starts fresh. There is no historical migration 
 
 ## Read the dashboards
 
-The team maintains seven analytics dashboards:
+The team maintains six analytics dashboards:
 
-| Dashboard                  | Questions                                                                                                                       |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Setup and first use        | First-observed analytics IDs, setup completion, optional setup paths, and successful app connection transitions.                |
-| Early use and retention    | Historical web UI activity, selected models, and accepted-message use and return after that event ships.                        |
-| Product health             | Active analytics IDs, owner-requested work, execution outcomes, and return cohorts.                                             |
-| Activation and connections | Existing setup progress and skips, first successful execution, app/model connections, and connection entry.                     |
-| Reliability and cost       | Queue/execution latency, model cost and pricing coverage, integration/tool failures, UI errors, and uncertain confirmations.    |
-| Outputs and interaction    | Committed and shown output kinds, artifact actions, answer-choice use, explicit interaction reach, schedules, and source reads. |
-| Navigation and controls    | Page and tab reach, committed settings, local choices, and memory/Vault changes.                                                |
+| Dashboard               | Questions                                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Setup and first use     | First-observed analytics IDs, setup completion, optional setup paths, observed connected apps, and new connection transitions.  |
+| Early use and retention | Historical web UI activity, selected models, and accepted-message use and return after that event ships.                        |
+| Product health          | Active analytics IDs, owner-requested work, execution outcomes, and return cohorts.                                             |
+| Reliability and cost    | Queue/execution latency, model cost and pricing coverage, integration/tool failures, UI errors, and uncertain confirmations.    |
+| Outputs and interaction | Committed and shown output kinds, artifact actions, answer-choice use, explicit interaction reach, schedules, and source reads. |
+| Navigation and controls | Page and tab reach, committed settings, local choices, and memory/Vault changes.                                                |
 
 Task-category views answer five further questions: which purposes appear, how their execution duration and outcomes compare, what their known model costs are, how much classification coverage is missing or unavailable, and what the classifier itself costs. Keep purpose, execution mode, and outcome as separate dimensions.
 
