@@ -42,7 +42,7 @@ The title matters beyond the check. Desktop release notes group merged changes b
 - **Keep secrets out.** No keys, credentials, real accounts or private content in code, tests, logs or screenshots.
 - **Follow the existing style.** Nod's code has no comments or JSDoc, and its docs use short, plain sentences.
 
-The template's checklist asks you to confirm you've seen the code, run it and take responsibility for it. That applies whether you or a coding agent wrote it. See [Checks and tests](/contribute/checks-and-tests/) for what to run first.
+The template's checklist asks you to review the change, take responsibility for it, and list the checks that apply. That applies whether you or a coding agent wrote it. Documentation and media changes do not need application tests or builds. See [Checks and tests](/contribute/checks-and-tests/) to choose the checks.
 
 ## Review and merge
 
