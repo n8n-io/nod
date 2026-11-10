@@ -278,7 +278,7 @@ test('onboarding answers and updates email update one profile only while usage s
     assert.equal(profiles[1]?.unset, undefined);
     assert.equal(profiles[1]?.properties.email, 'owner@example.test');
     assert.equal(profiles[1]?.properties.nod_updates_email_consent, true);
-    assert.equal(profiles[1]?.properties.nod_updates_email_consent_version, 1);
+    assert.equal(profiles[1]?.properties.nod_updates_email_consent_version, 2);
     assert.equal(profiles[1]?.properties.nod_updates_email_consent_text, updatesEmailConsent.text);
     assert.equal(
       profiles[1]?.properties.nod_updates_email_consent_privacy_url,
