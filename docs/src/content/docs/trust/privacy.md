@@ -147,3 +147,5 @@ You can't clear only your chat history yet. **Remove all data** deletes it along
 - [Conversation traces](/trust/conversation-traces/)
 - [Security review guide](/trust/security-review/)
 - [Security model and limits](/trust/security-model/)
+- [n8n privacy policy](https://n8n.io/legal/privacy/)
+- [Nod Terms of Use](https://n8n.io/legal/nod-terms-of-use/)
