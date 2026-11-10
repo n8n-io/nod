@@ -205,7 +205,6 @@ export async function createApp(dependencies: AppDependencies = {}) {
   });
   await app.register(rateLimit, {
     global: false,
-    hook: 'preHandler',
     keyGenerator: () => ownerId,
   });
   await app.register(multipart, { limits: { fileSize: fileBytes, files: 1, fields: 5 } });

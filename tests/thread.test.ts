@@ -756,6 +756,17 @@ test(
           const textExceeded = await textAttempt();
           assert.equal(textExceeded.statusCode, 429);
           assert.ok(Number(textExceeded.headers['retry-after']) > 0);
+          assert.equal(
+            (
+              await isolated.inject({
+                method: 'POST',
+                url: '/api/messages',
+                headers: { ...headers, 'content-type': 'application/json' },
+                payload: 'x'.repeat(8 * 1024 * 1024 + 1),
+              })
+            ).statusCode,
+            429,
+          );
           for (let attempt = 0; attempt < 120; attempt++)
             assert.equal((await audioAttempt()).statusCode, 406);
           assert.equal((await audioAttempt()).statusCode, 429);
