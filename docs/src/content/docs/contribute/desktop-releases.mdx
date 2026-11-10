@@ -1,13 +1,13 @@
 ---
 title: Desktop releases
-description: Publish a new version of the Nod desktop app, recover a failed build, and help private-alpha testers install and recover.
+description: Publish Nod desktop releases, recover failed builds, and help users install the app.
 sidebar:
   order: 5
 ---
 
 import { Steps } from '@astrojs/starlight/components';
 
-This page is for maintainers who publish the Nod desktop app, and for anyone helping private-alpha testers install it.
+This page is for maintainers who publish the Nod desktop app, and for anyone helping users install it.
 
 The short version: run **Release desktop**, review and merge the version pull request, and CI publishes one GitHub release with all three installers.
 
@@ -31,7 +31,7 @@ Each release is named **Nod v0.x.x** and links these installers:
 | Mac Intel         | `nod-x64.dmg`       | Automatic |
 | Windows x64       | `nod-Setup-x64.exe` | Automatic |
 
-Mac ZIP files, runtime packs, checksums, the public certificate and update metadata stay on the same release as supporting assets.
+Mac ZIP files, runtime packs, checksums, the public certificate, update metadata and the Terminal and PowerShell install scripts stay on the same release as supporting assets.
 
 Desktop builds include the server source, built web files, production dependencies, required runtime files, and licenses. The server runs TypeScript through `tsx`.
 
@@ -47,7 +47,7 @@ Overrides also select patched versions of Glob, Minimatch, Hono's Node server, q
 
 ## Verify release provenance
 
-Public releases include `nod-release.sigstore.json`. The release workflow checks the final files, signs their hashes with GitHub build provenance, and verifies each file before upload. Verification requires the Nod repository, the original build workflow on `main`, and the build's exact source commit. A failed or missing check prevents public release.
+Releases built from the public repository include `nod-release.sigstore.json`. The release workflow checks the final files, signs their hashes with GitHub build provenance, and verifies each file before upload. Verification requires the Nod repository, the original build workflow on `main`, and the build's exact source commit. A failed or missing check prevents a new public release.
 
 Download an asset and its bundle from the same release. Get the full build commit from the release notes and check it against the approved release. Replace the placeholder, then verify:
 
@@ -58,30 +58,27 @@ gh attestation verify nod-arm64.dmg --repo n8n-io/nod --bundle nod-release.sigst
   --source-ref refs/heads/main --source-digest "$BUILD_COMMIT"
 ```
 
-The build workflow saves the original signature bundle before upload. Recovery uses that bundle and the original source commit. It cannot create replacement provenance. A public release without the original bundle requires a new build. Platform signing and notarization checks still run.
-
-Provenance runs automatically after the repository becomes public. Private repositories need GitHub Enterprise Cloud for this feature. If that feature is available, set `NOD_PRIVATE_ATTESTATIONS` to `true` to enable it before publication. With this setting, both release and recovery uploads require the original bundle. A missing bundle requires a new build. Existing releases do not gain provenance from this change.
+The build workflow saves the original signature bundle before upload. Recovery uses that bundle and the original source commit; it cannot create replacement provenance. Older releases built while the repository was private do not gain provenance retroactively. A release built from the public repository without its original bundle requires a new build. Platform signing and notarization checks still run.
 
 ## Configure the repository once
 
 CI signs Mac builds with n8n's Apple Developer ID and has Apple notarize them, on Blacksmith's Mac runners, so these credentials reach those runners. Create a GitHub environment named `release` with these values. Never commit certificate keys or passwords.
 
-| Kind              | Name                            | Value                                                                                   |
-| ----------------- | ------------------------------- | --------------------------------------------------------------------------------------- |
-| Secret            | `APPLE_CERTIFICATE`             | Base64-encoded PKCS#12 with the certificate, its private key and Apple's G2 certificate |
-| Secret            | `APPLE_CERTIFICATE_PASSWORD`    | The PKCS#12 export password                                                             |
-| Secret            | `APPLE_API_KEY`                 | The App Store Connect team API key (`.p8`) that notarizes builds                        |
-| Variable          | `APPLE_API_KEY_ID`              | That key's ID                                                                           |
-| Variable          | `APPLE_API_ISSUER`              | The issuer ID shown above the team keys                                                 |
-| Variable          | `APPLE_TEAM_ID`                 | The 10-character Apple team ID                                                          |
-| Variable          | `APPLE_SIGNING_IDENTITY`        | The exact certificate name, `Developer ID Application: n8n GmbH (<team ID>)`            |
-| Variable          | `APPLE_CERTIFICATE_SHA256`      | Lowercase SHA-256 of the certificate, from `shasum -a 256 developerID_application.cer`  |
-| Variable          | `NOD_SIGNING_MODE`              | `developer-id`                                                                          |
-| Optional variable | `NOD_DESKTOP_UPDATE_SOURCE_URL` | Base URL of the private update service. Leave it unset to use the public GitHub API.    |
+| Kind     | Name                         | Value                                                                                   |
+| -------- | ---------------------------- | --------------------------------------------------------------------------------------- |
+| Secret   | `APPLE_CERTIFICATE`          | Base64-encoded PKCS#12 with the certificate, its private key and Apple's G2 certificate |
+| Secret   | `APPLE_CERTIFICATE_PASSWORD` | The PKCS#12 export password                                                             |
+| Secret   | `APPLE_API_KEY`              | The App Store Connect team API key (`.p8`) that notarizes builds                        |
+| Variable | `APPLE_API_KEY_ID`           | That key's ID                                                                           |
+| Variable | `APPLE_API_ISSUER`           | The issuer ID shown above the team keys                                                 |
+| Variable | `APPLE_TEAM_ID`              | The 10-character Apple team ID                                                          |
+| Variable | `APPLE_SIGNING_IDENTITY`     | The exact certificate name, `Developer ID Application: n8n GmbH (<team ID>)`            |
+| Variable | `APPLE_CERTIFICATE_SHA256`   | Lowercase SHA-256 of the certificate, from `shasum -a 256 developerID_application.cer`  |
+| Variable | `NOD_SIGNING_MODE`           | `developer-id`                                                                          |
 
 - In the repository's Actions settings, allow GitHub Actions to create pull requests.
-- The default mode, `self-signed`, signs with an internal certificate and skips notarization. It needs only the certificate rows and a private repository.
-- The Terminal installer pins the certificate's SHA-256 in `deployment/n8n/install.sh`. After the first release signed with a new certificate, update it there and republish the **Nod Install** workflow.
+- Public releases require `NOD_SIGNING_MODE=developer-id`; the default `self-signed` mode is for private development builds only.
+- The Terminal installer pins the certificate's SHA-256 in `deployment/n8n/install.sh`. After the first release signed with a new certificate, update it there.
 
 ### Windows signing
 
@@ -133,7 +130,7 @@ Developer ID certificates expire. Apps signed before then keep opening, but rele
 
 </Steps>
 
-Private releases use the configured n8n download service for first-run downloads and updates. Its GitHub credential stays in n8n, and no token enters the app.
+Desktop binaries built from this code use public GitHub assets for installs and updates, without a bundled token. Builds made while the repository was private retain their embedded n8n download source, which keeps its GitHub credential in n8n. Keep its endpoints working while those users upgrade.
 
 ## Release a version
 
@@ -145,11 +142,11 @@ Private releases use the configured n8n download service for first-run downloads
 
 3. Merge after review and CI. If `main` changes before you merge, run **Release desktop** again to update the source and notes.
 
-4. Wait for CI on the merge commit, then **Build desktop release**. The release workflow builds all three installers and signs the Mac and Windows apps. It checks Mac updates, signature rejection and profile preservation on both Mac architectures. It also checks signing, runtime hashes, Windows workspace paths, installation, startup, updates and downloaded installer bytes. On Windows, every `.exe`, `.dll` and `.node` file in the installed app, `Uninstall.exe` and the installer itself must carry a valid, timestamped n8n GmbH signature. Files identical to ones Windows ships, such as `d3dcompiler_47.dll`, are signed too, but Windows reports its own catalog signature for them, so the check accepts that instead when Microsoft signed it. It publishes one release only if every build and check passes. When the n8n download service is configured, it fetches each installer, runtime pack and update through that service. This check uses the app's own update code for both Macs and Windows. If any download is unavailable, the release goes back to draft.
+4. Wait for CI on the merge commit, then **Build desktop release**. The release workflow builds all three installers and signs the Mac and Windows apps. It checks Mac updates, signature rejection and profile preservation on both Mac architectures. It also checks signing, runtime hashes, Windows workspace paths, installation, startup, updates and downloaded installer bytes. On Windows, every `.exe`, `.dll` and `.node` file in the installed app, `Uninstall.exe` and the installer itself must carry a valid, timestamped n8n GmbH signature. Files identical to ones Windows ships, such as `d3dcompiler_47.dll`, are signed too, but Windows reports its own catalog signature for them, so the check accepts that instead when Microsoft signed it. The workflow verifies uploaded hashes, publishes the release, then uses the app's own update code to check all three platforms. Private builds also check delivery through the n8n service; public builds check direct GitHub downloads for every release asset. If delivery fails, the release goes back to draft.
 
 </Steps>
 
-Nod releases are tagged `nod-v*`, and the n8n download service at `webhook/nod/desktop` serves only those.
+Nod releases are tagged `nod-v*`. Releases built from this code download metadata and assets from GitHub without an account or bundled credential. The install guide loads its scripts from the public repository. New releases include versioned `nod-install.sh` and `nod-install.ps1` assets; earlier releases do not gain them retroactively. The n8n download service at `webhook/nod/desktop` remains for installed private builds.
 
 There's no daily release. Only a merged release pull request, which changes `desktop/release.json`, starts **Build desktop release**; other merges to `main` don't run it. The [capability evals](/contribute/evals/) don't gate publication.
 
@@ -168,7 +165,7 @@ The **Build desktop release** workflow runs on `main` by hand for a draft or a r
 
 Release builds run one at a time, and up to 100 runs can wait in the queue. A failed build can reuse its matching draft. Published assets are never replaced.
 
-If only the final publisher fails, fix the publisher, then run **Recover desktop release** on `main` with the failed run ID. It requires all platform builds and checks, and CI on their exact source, to have passed. It uses the current publisher with the original signed files and release plan, checks their source and hashes, then publishes. It does not rebuild the apps.
+If only the final publisher fails, fix the publisher, then run **Recover desktop release** on `main` with the failed run ID within three days, while its artifacts are retained. It requires all platform builds and checks, and CI on their exact source, to have passed. It uses the current publisher with the original signed files and saved release context, plus the release plan for automatic releases. It verifies their source and hashes, then publishes without rebuilding the apps. If repository visibility changed since the build, start a new release build instead.
 
 The container images, Windows runtime, Mac signing, Mac update checks, and publishing steps run on Blacksmith runners. Both Mac apps build on Apple silicon. The Intel app uses x64 Node under Rosetta. Windows jobs use GitHub's Windows runners because the installer check needs WSL 2.
 
@@ -186,10 +183,10 @@ Drafts are never offered to the installer or the updater.
 
 - Every app checks at startup, even when its runtime fails to start, every six hours while it's open, and after waking if a check is due. **Check for Updates…** checks right away.
 - After a failed automatic check, Nod retries after 15 minutes, doubling up to six hours, and the menu shows **Update Failed. Try Again…**.
-- When the newest release is incomplete for a platform, Nod tries up to three newer releases and offers the first that validates.
+- Existing private-service builds try up to three newer releases and offer the first complete one. Public GitHub builds use the latest regular release and fail closed if its platform files are incomplete. The publisher checks all three bundles before publication and returns a release to draft if public asset delivery fails.
 - A Mac app outside Applications offers to move itself there at startup, because it can update itself only from Applications.
-- Updates download in the background. While a runtime pack or Windows installer downloads, the update menu item shows its percentage. On a Mac, Nod also loads the new runtime's images into the running VM, so the restart skips that step.
-- An automatic check announces a ready update with a notification when notifications are on and quiet hours allow it. Background checks never open a dialog. The menu offers **Restart to update** until you restart.
+- Updates download in the background. While a runtime pack or Windows installer downloads, the update menu item shows its percentage. On a Mac with a running local VM, Nod tries to load the new runtime's images before restart; a deferred or failed preload leaves that work for startup. Windows applies a changed WSL runtime after restart.
+- Newer builds show a ready update in the app with its version and **Restart to update** and **Later** actions. Older builds may show only the menu action. Later dismisses the notice for that version during the current app session; the menu still offers **Restart to update**. An automatic check also announces it with a system notification when Nod is in the background, notifications are on and quiet hours allow it. Background checks never open a dialog.
 - If a reply, schedule or background check is running, or Nod can't tell, it asks before restarting. While Nod shuts down to install, its window shows **Updating Nod…**, and an unsent feedback draft or unsaved setting can't hold the install back.
 - If the runtime hasn't changed, Nod reuses it and downloads only the app or installer.
 - A Mac runtime is rebuilt when one of its inputs changes, or by the first release built in a new week (below). Its inputs are the browser worker and its imports, the root lockfile's entries for the packages the browser image bundles or builds with (the worker's imports, agent-browser and esbuild) and their dependencies, the pnpm version, `pnpm-workspace.yaml`, the desktop lockfile, scripts the images copy, Dockerfiles, pinned downloads, and runtime build scripts. Other root dependency changes, workflow changes and edits to the fingerprint script alone do not rebuild it. Other app changes reuse the published runtime. A test fails when a runtime build script or Dockerfile reads a repository file the fingerprint does not cover, or when the browser bundle includes a package whose lockfile entry it does not cover.
@@ -198,11 +195,11 @@ Drafts are never offered to the installer or the updater.
 - A Windows app refuses a downloaded installer unless n8n GmbH signed it with the `nod-windows` profile.
 - On Windows, the restart runs the verified installer silently over the current install, then opens Nod again. The profile is kept.
 
-## Help private-alpha testers
+## Help with desktop installation
 
-Mac testers need an Intel or Apple silicon Mac, and a supported provider API key or a ChatGPT Plus or Pro plan. They copy Nod to Applications, or run the [Terminal installer](/get-started/install-desktop/), and approve the Keychain prompt if macOS shows it. Managed Macs may need IT approval. The first start downloads the runtime, so it needs an internet connection.
+Mac users need an Intel or Apple silicon Mac, and a supported provider API key or a ChatGPT Plus or Pro plan. They copy Nod to Applications, or run the [Terminal installer](/get-started/install-desktop/), and approve the Keychain prompt if macOS shows it. Managed Macs may need IT approval. The first start downloads the runtime, so it needs an internet connection.
 
-On Windows, testers run `irm https://internal.users.n8n.cloud/webhook/nod/install-windows | iex` in PowerShell, or download and run `nod-Setup-x64.exe`. The first start downloads the runtime, unless `nod-Runtime-win32-x64.tar.gz` sits next to the installer. After that, Nod updates itself.
+Windows users can run the [PowerShell installer](/get-started/install-desktop/) or download and run `nod-Setup-x64.exe` from the latest release. The first start downloads the runtime, unless `nod-Runtime-win32-x64.tar.gz` sits next to the installer. After that, Nod updates itself.
 
 | Situation             | What to know                                                                                                                                                                                                                                                        |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

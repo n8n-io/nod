@@ -47,11 +47,19 @@ contextBridge.exposeInMainWorld('nodDesktop', {
   fileMenu: (id, image) => invoke('nod:file:menu', id, image),
   ready: () => invoke('nod:renderer-ready'),
   status: () => invoke('nod:status'),
+  updateStatus: () => invoke('nod:updates:status'),
+  dismissUpdate: (version) => invoke('nod:updates:dismiss', version),
+  restartUpdate: () => invoke('nod:updates:restart'),
   prepare: (options) => invoke('nod:prepare', options),
   onStatus: (listener) => {
     const receive = (_event, value) => listener(value);
     ipcRenderer.on('nod:status', receive);
     return () => ipcRenderer.removeListener('nod:status', receive);
+  },
+  onUpdateStatus: (listener) => {
+    const receive = (_event, value) => listener(value);
+    ipcRenderer.on('nod:updates:status', receive);
+    return () => ipcRenderer.removeListener('nod:updates:status', receive);
   },
   openSettings: (section = 'general') => invoke('nod:settings:open', section),
   onNavigate: (listener) => {

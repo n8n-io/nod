@@ -3335,6 +3335,9 @@ test(
           const contexts: RuntimeContext[] = [];
           const created: string[] = [];
           const laterMessages = Array.from({ length: 160 }, () => randomUUID());
+          const absorbedIds: string[] = [];
+          let absorbedGate: Promise<void> | undefined;
+          let releaseAbsorbed: (() => void) | undefined;
           let verificationCalls = 0;
           const choices = (multiple = false): AnswerChoices => ({
             multiple,
@@ -3346,6 +3349,10 @@ test(
           const spokenChoices = choices();
           dependencies.runTurn = async (context) => {
             contexts.push(context);
+            if (context.prompt === 'answer-choice-absorbed') {
+              await absorbedGate;
+              absorbedIds.push(...(await context.takeMessages!()).map(({ id }) => id));
+            }
             if (context.prompt.startsWith('answer-choice-')) {
               const kind = context.prompt.slice('answer-choice-'.length);
               return {
@@ -3397,7 +3404,87 @@ test(
             text: choiceAnswerText([question.answerChoices.options[0]!]),
             questionAnswer: { choiceIds: [question.answerChoices.options[0]!.id] },
           });
+          const askWithAbsorbedFollowUp = async () => {
+            const previousAbsorbed = absorbedIds.length;
+            absorbedGate = new Promise<void>((resolve) => {
+              releaseAbsorbed = resolve;
+            });
+            const running = await thread.submitUserMessage('answer-choice-absorbed');
+            created.push(running.turnId);
+            await waitFor(() => contexts.some((context) => context.turnId === running.turnId));
+            const followUp = await thread.submitUserMessage('Additional synthetic context');
+            created.push(followUp.turnId);
+            assert.equal(await turnStatus(followUp.turnId), 'queued');
+            releaseAbsorbed!();
+            await waitFor(settled(running.turnId));
+            await waitFor(settled(followUp.turnId));
+            assert.equal(await turnStatus(running.turnId), 'waiting');
+            assert.deepEqual(absorbedIds.slice(previousAbsorbed), [followUp.messageId]);
+            assert.ok(!contexts.some((context) => context.turnId === followUp.turnId));
+            const absorbed = (
+              await db.pool.query(
+                `SELECT u.status,u.started_at,m.turn_id AS message_turn_id FROM turns u
+                 JOIN messages m ON m.id=u.message_id AND m.owner_id=u.owner_id
+                 WHERE u.id=$1 AND u.owner_id=$2`,
+                [followUp.turnId, ownerId],
+              )
+            ).rows[0]!;
+            assert.equal(absorbed.status, 'succeeded');
+            assert.equal(absorbed.started_at, null);
+            assert.equal(absorbed.message_turn_id, running.turnId);
+            const asked = (
+              await db.pool.query<{ id: string }>(
+                'SELECT id FROM messages WHERE owner_id=$1 AND turn_id=$2 AND answer_choices IS NOT NULL',
+                [ownerId, running.turnId],
+              )
+            ).rows[0]!;
+            const state = (await request('GET', '/api/state')).json();
+            const visible = state.messages.find(
+              (message: { id: string }) => message.id === asked.id,
+            );
+            assert.deepEqual(visible.answerChoices, spokenChoices);
+            assert.equal(visible.answerChoicesPending, true);
+            assert.ok(state.pendingAnswerChoiceMessageIds.includes(asked.id));
+            return { running, asked };
+          };
           try {
+            const { asked } = await askWithAbsorbedFollowUp();
+            const selectedChoice = spokenChoices.options[0]!;
+            const selectedAnswer = await sendJson({
+              threadId,
+              replyToMessageId: asked.id,
+              clientMessageId: randomUUID(),
+              text: choiceAnswerText([selectedChoice]),
+              questionAnswer: { choiceIds: [selectedChoice.id] },
+            });
+            assert.equal(selectedAnswer.statusCode, 200);
+            created.push(selectedAnswer.json().turnId);
+            await waitFor(settled(selectedAnswer.json().turnId));
+            assert.ok(
+              !(await request('GET', '/api/state'))
+                .json()
+                .pendingAnswerChoiceMessageIds.includes(asked.id),
+            );
+            const freeformQuestion = await askWithAbsorbedFollowUp();
+            const freeformAnswer = await thread.submitUserMessage(
+              'Use the shared mailbox, but only for drafts.',
+              [],
+              { replyToMessageId: freeformQuestion.asked.id },
+            );
+            created.push(freeformAnswer.turnId);
+            await waitFor(settled(freeformAnswer.turnId));
+            const routing = (
+              await db.pool.query(
+                'SELECT session_id,parent_turn_id FROM turns WHERE id=$1 AND owner_id=$2',
+                [freeformAnswer.turnId, ownerId],
+              )
+            ).rows[0]!;
+            assert.equal(routing.session_id, threadId);
+            assert.equal(routing.parent_turn_id, freeformQuestion.running.turnId);
+            assert.equal(
+              contexts.find((context) => context.turnId === freeformAnswer.turnId)?.resumed,
+              true,
+            );
             const first = await addQuestion();
             const independent = await addQuestion();
             for (const path of [
@@ -3804,6 +3891,7 @@ test(
               assert.equal(spoken.length, spokenBefore + 1);
             }
           } finally {
+            releaseAbsorbed?.();
             audioReplyMode = 'never';
             dependencies.runTurn = runTurn;
             verification.accept = acceptVerification;

@@ -35,7 +35,7 @@ You need macOS 14 or later, on Apple silicon or Intel. For a local assistant, th
 
 <Steps>
 
-1. Open the [releases page](https://github.com/n8n-io/nod/releases) and find the newest **Nod** release. Download `nod-arm64.dmg` for Apple silicon or `nod-x64.dmg` for Intel.
+1. In **Apple menu → About This Mac**, check whether your Mac has a **Chip** (Apple silicon) or **Processor** (Intel). Download the latest [Apple silicon DMG](https://github.com/n8n-io/nod/releases/latest/download/nod-arm64.dmg) or [Intel DMG](https://github.com/n8n-io/nod/releases/latest/download/nod-x64.dmg) from GitHub.
 
 2. Open the DMG, drag **Nod** to **Applications** and open it from there.
 
@@ -56,11 +56,11 @@ You can install the latest release on Apple silicon or Intel with one command. Q
 (
   installer="$(mktemp)" || exit
   trap 'rm -f "$installer"' EXIT
-  curl -q --proto '=https' --tlsv1.2 -fsSL https://internal.users.n8n.cloud/webhook/nod/install -o "$installer" && /bin/sh "$installer"
+  curl -q --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/n8n-io/nod/main/deployment/n8n/install.sh -o "$installer" && /bin/sh "$installer"
 )
 ```
 
-Run it as your normal user, without `sudo`. It verifies the download, installs to `/Applications/Nod.app`, and opens Nod. An existing installation keeps its current path. Your existing data stays in place. You don't need a GitHub account.
+Run it as your normal user, without `sudo`. It finds the latest published GitHub release, verifies the downloaded app, installs it to `/Applications/Nod.app`, and opens Nod. An existing installation keeps its current path. Your existing data stays in place. You don't need a GitHub account.
 
 Before it replaces Nod, the installer stops any old ShipIt update job and removes its cache. If it cannot stop the job, it keeps your app. If the new app cannot open, it keeps the previous copy and shows its location.
 
@@ -75,7 +75,7 @@ You need Windows 11 x64. A local assistant also needs WSL
 
 <Steps>
 
-1. Open the [releases page](https://github.com/n8n-io/nod/releases) and find the newest **Nod** release. Download `nod-Setup-x64.exe`.
+1. Download the latest [Windows x64 installer](https://github.com/n8n-io/nod/releases/latest/download/nod-Setup-x64.exe) from GitHub.
 
 2. Run `nod-Setup-x64.exe`. Windows shows n8n GmbH as the publisher, though SmartScreen can still warn about a new release. The installer adds Nod to the Start menu.
 
@@ -93,10 +93,10 @@ You need Windows 11 x64. A local assistant also needs WSL
 Quit Nod first, then paste this into PowerShell:
 
 ```powershell title="PowerShell"
-irm https://internal.users.n8n.cloud/webhook/nod/install-windows | iex
+irm https://raw.githubusercontent.com/n8n-io/nod/main/deployment/n8n/install.ps1 | iex
 ```
 
-Use a normal PowerShell window, not **Run as administrator**. It verifies the installer and runtime file, installs Nod, and opens it. An existing installation keeps its current path. Your existing data stays in place. You don't need a GitHub account.
+Use a normal PowerShell window, not **Run as administrator**. It finds the latest published GitHub release, verifies the installer and runtime file, installs Nod, and opens it. An existing installation keeps its current path. Your existing data stays in place. You don't need a GitHub account.
 
 </details>
 
@@ -122,7 +122,7 @@ Nod checks for updates after it starts, every six hours while it's open, and aft
 
 To check now, select **Check for Updates…** in the **Nod** menu on a Mac, or from the menu bar or tray icon. This stays available alongside **Restart to update** when an update is ready. While a check or download runs, its menu item shows progress and restart waits until it finishes.
 
-When an update is ready, choose **Restart** to install it or **Later** to keep working. If Nod is in the middle of a task, it asks before restarting, and you can ask it to continue afterwards. While it shuts down to install, Nod shows **Updating Nod…**, then opens again where you left it, with any unsent message still in the box. Nod keeps your profile, keys and data. A completed installation does not repeat onboarding after an update.
+Newer Nod builds show an in-app notice when an update finishes downloading. It names the new version and offers **Restart to update** or **Later**. **Later** hides the notice for that version during the current app session; **Restart to update** stays in the menu. Older builds may show only the menu action, so use **Check for Updates…** there to check immediately. If Nod is in the middle of a task, it asks before restarting, and you can ask it to continue afterwards. While it shuts down to install, Nod shows **Updating Nod…**, then opens again where you left it, with any unsent message still in the box. Nod keeps your profile, keys and data. A completed installation does not repeat onboarding after an update.
 
 On Windows, the restart runs the new installer in the background and opens Nod again when it's done.
 

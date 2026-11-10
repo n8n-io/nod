@@ -31,8 +31,6 @@ jobs:
       NOD_SIGNING_MODE: ${{ vars.NOD_SIGNING_MODE || 'self-signed' }}
       NOD_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
       NOD_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
-      NOD_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.NOD_DESKTOP_UPDATE_SOURCE_URL }}
-      NOD_RELEASE_PLAN: .local/desktop-release-plan.json
       NOD_PUBLISH_RELEASE: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -61,13 +59,12 @@ jobs:
           assert.equal(run.head_repository.full_name, repository);
           assert.equal(run.status, 'completed');
           assert(/^[a-f0-9]{40}$/.test(run.head_sha));
-          const jobs = api(`actions/runs/${id}/jobs?per_page=100`).jobs;
-          assert(jobs.some((job) => job.name === 'Verify uploaded assets and prepare the release' && job.conclusion === 'failure'));
-          assert(jobs.length >= 11);
-          assert(jobs.every((job) => job.name === 'Verify uploaded assets and prepare the release' || job.conclusion === 'success'));
+          assert(Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0);
           const ci = api(`actions/workflows/ci.yml/runs?head_sha=${run.head_sha}&per_page=20`).workflow_runs;
           assert(ci.some((entry) => entry.head_sha === run.head_sha && entry.head_branch === 'main' && entry.head_repository.full_name === repository && entry.conclusion === 'success'));
-          appendFileSync(process.env.GITHUB_OUTPUT, `source=${run.head_sha}\n`);
+          const current = JSON.parse(execFileSync('gh', ['api', `repos/${repository}`], { encoding: 'utf8' }));
+          assert.equal(typeof current.private, 'boolean');
+          appendFileSync(process.env.GITHUB_OUTPUT, `source=${run.head_sha}\nattempt=${run.run_attempt}\nprivate=${current.private}\n`);
           JS
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -80,12 +77,15 @@ jobs:
         with:
           run-id: ${{ inputs.run_id }}
           github-token: ${{ github.token }}
-          pattern: desktop-@(macos-*|runtime-pack-*|windows-x64|release-plan|release-provenance)
+          pattern: desktop-@(macos-*|runtime-pack-*|windows-x64|release-plan|release-context|release-provenance)
           path: release/.local/desktop-release-artifacts
       - name: Place and bind the release files
         working-directory: release
         env:
           NOD_RELEASE_SOURCE: ${{ steps.source.outputs.source }}
+          RELEASE_RUN_ID: ${{ inputs.run_id }}
+          RELEASE_RUN_ATTEMPT: ${{ steps.source.outputs.attempt }}
+          CURRENT_REPOSITORY_PRIVATE: ${{ steps.source.outputs.private }}
         run: |
           mkdir -p dist/desktop .local/desktop-runtime-release
           mv .local/desktop-release-artifacts/desktop-macos-arm64 dist/desktop/arm64
@@ -96,19 +96,7 @@ jobs:
               mv ".local/desktop-release-artifacts/desktop-runtime-pack-$arch" ".local/desktop-runtime-release/$arch"
             fi
           done
-          mv .local/desktop-release-artifacts/desktop-release-plan/desktop-release-plan.json .local/desktop-release-plan.json
-          node --input-type=module <<'JS'
-          import assert from 'node:assert/strict';
-          import { createHash } from 'node:crypto';
-          import { appendFileSync, readFileSync } from 'node:fs';
-          const bytes = readFileSync('.local/desktop-release-plan.json');
-          const plan = JSON.parse(bytes);
-          assert.equal(plan.source, process.env.NOD_RELEASE_SOURCE);
-          const date = new Date(`${plan.date}T00:00:00Z`);
-          assert(Number.isFinite(date.getTime()));
-          date.setUTCDate(date.getUTCDate() - (date.getUTCDay() + 6) % 7);
-          appendFileSync(process.env.GITHUB_ENV, `NOD_RELEASE_SOURCE=${plan.source}\nNOD_RELEASE_PLAN_SHA256=${createHash('sha256').update(bytes).digest('hex')}\nNOD_RUNTIME_REFRESH=${date.toISOString().slice(0, 10)}\n`);
-          JS
+          node ../publisher/.github/scripts/desktop-release-recovery.mjs bind
       - name: Select the original build provenance
         id: provenance
         run: |

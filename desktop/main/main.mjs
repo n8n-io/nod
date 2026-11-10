@@ -143,6 +143,7 @@ let updateRequestedManually = false;
 let updatePhase = 'idle';
 let updateProgress;
 let updateFailed = false;
+let dismissedUpdateVersion;
 let pendingPreload;
 let stopUpdateChecks;
 let disposeArtifactFiles;
@@ -280,6 +281,10 @@ function foregroundWindow() {
   return [setupWindow, ...engineWindows].some(
     (window) => window && !window.isDestroyed() && window.isFocused(),
   );
+}
+
+function focusedEngineWindow() {
+  return [...engineWindows].some((window) => !window.isDestroyed() && window.isFocused());
 }
 
 function updateReadinessNotice() {
@@ -1370,6 +1375,22 @@ async function finishEnginePreparation(pending = false) {
   return status;
 }
 
+function publicUpdateStatus() {
+  return {
+    phase: updatePhase,
+    checking: Boolean(checkingUpdates),
+    ...(updateProgress === undefined ? {} : { progress: updateProgress }),
+    ...(updates?.ready ? { readyVersion: updates.ready.version } : {}),
+    ...(dismissedUpdateVersion ? { dismissedVersion: dismissedUpdateVersion } : {}),
+  };
+}
+
+function publishUpdateStatus() {
+  const value = publicUpdateStatus();
+  for (const window of engineWindows)
+    if (!window.isDestroyed()) window.webContents.send('nod:updates:status', value);
+}
+
 function refreshUpdateMenu() {
   if (quitting) return;
   const label =
@@ -1415,6 +1436,7 @@ function refreshUpdateMenu() {
         { label: 'Quit Nod', click: () => app.quit() },
       ]),
     );
+  publishUpdateStatus();
 }
 
 async function checkForUpdates(manual = true, restartReady = false) {
@@ -1485,8 +1507,20 @@ async function checkForUpdates(manual = true, restartReady = false) {
 }
 
 async function notifyUpdate(candidate) {
-  if (!preferences.notifications || !Notification.isSupported()) return false;
-  if (isQuietTime((await appPreferences.get()).preferences)) return true;
+  if (
+    !preferences.notifications ||
+    !Notification.isSupported() ||
+    quitting ||
+    focusedEngineWindow()
+  )
+    return false;
+  if (
+    isQuietTime((await appPreferences.get()).preferences) ||
+    !preferences.notifications ||
+    quitting ||
+    focusedEngineWindow()
+  )
+    return true;
   const notification = new Notification({
     title: `Nod ${candidate.version} is ready`,
     icon: notificationIcon,
@@ -1494,7 +1528,12 @@ async function notifyUpdate(candidate) {
   });
   displayedNotifications.add(notification);
   notification.on('show', () => {
-    if (!displayedNotifications.has(notification) || !preferences.notifications || quitting)
+    if (
+      !displayedNotifications.has(notification) ||
+      !preferences.notifications ||
+      quitting ||
+      focusedEngineWindow()
+    )
       notification.close();
   });
   notification.on('click', () => {
@@ -2171,6 +2210,22 @@ else {
       ipcMain.handle('nod:status', (event) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         return status;
+      });
+      ipcMain.handle('nod:updates:status', (event) => {
+        if (!isEngine(event)) throw new Error('This action is unavailable.');
+        return publicUpdateStatus();
+      });
+      ipcMain.handle('nod:updates:dismiss', (event, version) => {
+        if (!isEngine(event)) throw new Error('This action is unavailable.');
+        if (typeof version !== 'string' || updates?.ready?.version !== version) return;
+        dismissedUpdateVersion = version;
+        publishUpdateStatus();
+      });
+      ipcMain.handle('nod:updates:restart', async (event) => {
+        if (!isEngine(event)) throw new Error('This action is unavailable.');
+        if ((!updates?.ready && !checkingUpdates) || quitting)
+          throw new Error('No desktop update is ready.');
+        await checkForUpdates(true, true);
       });
       ipcMain.handle('nod:settings:get', (event) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
