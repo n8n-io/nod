@@ -1,4 +1,5 @@
 const VIDEO_ID = 'cjEK7V9GucQ';
+const UNMUTE_VISIBLE_MS = 5000;
 
 export function startHeroVideo() {
   const frame = document.getElementById('heroVideoFrame');
@@ -10,6 +11,8 @@ export function startHeroVideo() {
   let ready = false;
   let inView = false;
   let started = false;
+
+  const hideUnmute = () => unmute.classList.add('hidden');
 
   const play = () => {
     if (started || !ready || !inView) return;
@@ -37,8 +40,11 @@ export function startHeroVideo() {
           const watch = setInterval(() => {
             if (player.isMuted()) return;
             clearInterval(watch);
-            unmute.classList.add('hidden');
+            hideUnmute();
           }, 1000);
+        },
+        onStateChange: ({ data }) => {
+          if (data === window.YT.PlayerState.PLAYING) setTimeout(hideUnmute, UNMUTE_VISIBLE_MS);
         },
       },
     });
@@ -73,6 +79,6 @@ export function startHeroVideo() {
     player.seekTo(0, true);
     player.unMute();
     player.playVideo();
-    unmute.classList.add('hidden');
+    hideUnmute();
   });
 }

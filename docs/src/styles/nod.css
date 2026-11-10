@@ -80,6 +80,67 @@ body.lp {
   align-items: center;
   gap: 20px;
 }
+.lp-crumb {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+.lp-crumb-dim {
+  color: var(--text-secondary);
+}
+.lp-crumb-slash {
+  color: var(--gray-50);
+}
+.lp-crumb-badge {
+  margin-left: 0.3em;
+  padding: 0.25em 0.7em;
+  border: 1px solid var(--gray-30);
+  border-radius: var(--radius-full);
+  font-size: 0.8em;
+  color: var(--text-secondary);
+}
+.lp-star {
+  gap: 0.5em;
+  text-decoration: none;
+  transition: background 0.15s ease;
+}
+.lp-star:hover {
+  background: var(--gray-30);
+}
+.lp-star svg {
+  width: 1.25em;
+  height: 1.25em;
+}
+.lp-star-count {
+  padding-left: 0.6em;
+  border-left: 1px solid var(--gray-50);
+  font-variant-numeric: tabular-nums;
+}
+.lp-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 0.8em;
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.lp-eyebrow::before,
+.lp-eyebrow::after {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--pink);
+}
 .lp-logo {
   display: flex;
   flex-direction: column;
@@ -1632,6 +1693,13 @@ body.lp {
   margin: 0;
   white-space: nowrap;
 }
+.lp-logo-tag a {
+  color: inherit;
+  text-underline-offset: 0.15em;
+}
+.lp-logo-tag a:hover {
+  color: var(--black);
+}
 .lp-logo-tag img.glyph {
   width: 16px;
   height: 16px;
@@ -1711,13 +1779,18 @@ body.lp {
   .lp-logo img.lockup {
     height: 28px;
   }
-  .lp-header .lp-capsule {
-    font-size: clamp(10.5px, 3.2vw, 16px);
-    padding: 0.625em 0.9375em;
+  .lp-header-right {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px 20px;
   }
-  .lp-header .lp-capsule svg {
-    width: 1.25em;
-    height: 1.25em;
+  .lp-header .lp-capsule,
+  .lp-crumb,
+  .lp-eyebrow {
+    font-size: clamp(10.5px, 3.2vw, 16px);
+  }
+  .lp-header .lp-capsule {
+    padding: 0.625em 0.9375em;
   }
   .lp-hero {
     padding: 40px 0;
