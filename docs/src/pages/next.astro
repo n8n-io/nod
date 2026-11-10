@@ -13,7 +13,7 @@ import socialImage from '../assets/landing/og.png';
 
 const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 const github = 'https://github.com/n8n-io/nod';
-const download = 'https://internal.users.n8n.cloud/webhook/nod/download';
+const installGuide = `${base}get-started/install-desktop/`;
 const fonts = 'https://n8n.io/assets/fonts/baumer/variable';
 const title = 'Nod · Your personal agent';
 const description =
@@ -108,7 +108,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
           <div class="lp-hero-cta">
             <div class="lp-hero-buttons">
               <div class="lp-cta-frame">
-                <a class="lp-download-btn mono" href={`${download}/mac`} data-download="label">Download for Mac</a>
+                <a class="lp-download-btn mono" href={installGuide} data-download="label">Choose installer</a>
                 <img class="lp-crosshair tl" src={crosshair} alt="" />
                 <img class="lp-crosshair tr" src={crosshair} alt="" />
                 <img class="lp-crosshair bl" src={crosshair} alt="" />
@@ -632,7 +632,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
 
       <section class="lp-final-cta">
         <div class="lp-cta-frame">
-          <a class="lp-download-btn lp-final-cta-btn mono" href={`${download}/mac`} data-download>Start building</a>
+          <a class="lp-download-btn lp-final-cta-btn mono" href={installGuide} data-download>Start building</a>
           <img class="lp-crosshair tl" src={crosshair} alt="" />
           <img class="lp-crosshair tr" src={crosshair} alt="" />
           <img class="lp-crosshair bl" src={crosshair} alt="" />
