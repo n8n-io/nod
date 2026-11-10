@@ -52,7 +52,9 @@ Setup, use and how the system works are in the docs site, whose pages live in `d
 
 ## Validation
 
-Run focused tests while editing, then `pnpm run check`, `pnpm run test:integration` and `pnpm run build`. For capability eval changes also run `pnpm --dir evals run check` and `pnpm --dir evals test`. The evals themselves call live models, so run them manually (see [evals](docs/src/content/docs/contribute/evals.mdx)). For docs changes run `pnpm --dir docs build`, which fails on a broken link. Report fixtures, UI checks and live checks separately.
+Run only the checks needed for the files and behavior changed. Documentation and media changes need formatting, link, and visual checks. Do not run application lint, tests, integration tests, or builds for these changes. Build the docs site when its pages, configuration, or code change.
+
+For application changes, start with focused tests. Run broader checks only when the change affects shared behavior or the focused checks cannot verify it. For capability eval changes, run `pnpm --dir evals run check` and `pnpm --dir evals test`. The evals themselves call live models, so run them manually (see [evals](docs/src/content/docs/contribute/evals.mdx)). Report fixtures, UI checks, and live checks separately.
 
 ## Tests
 

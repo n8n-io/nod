@@ -140,6 +140,20 @@
 .chat-page .thinking > .ob-glyph {
   flex: none;
 }
+.chat-page .message-arriving {
+  animation: chat-message-arrive 260ms ease-out;
+}
+@keyframes chat-message-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-page .message-arriving {
+    animation: none;
+  }
+}
 .composer-editor {
   min-height: 40px;
   max-height: 240px;

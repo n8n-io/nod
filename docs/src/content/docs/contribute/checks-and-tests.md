@@ -1,28 +1,46 @@
 ---
 title: Checks and tests
-description: The commands to run before a pull request, the Git hooks, which tests to write and which checks CI runs for each change.
+description: Choose checks for your change, use the Git hooks, and understand which tests and CI checks apply.
 sidebar:
   order: 2
 ---
 
-This page lists the checks to run before you open a pull request, the tests worth writing and what CI checks for each change.
+Choose checks that match the files and behavior you change. This page explains the available commands, Git hooks, test policy, and CI checks.
 
-## Run the checks
+## Choose the checks
 
-Run these four commands before you open a pull request:
+Start with focused checks. Run broader checks only when the change affects shared behavior or the focused checks cannot verify it.
+
+| If you change                              | Check                                                                                                                                   |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| README, contributor instructions, or media | Format the changed text files, check links, and review the rendered text and media. Application lint, tests, and builds are not needed. |
+| Docs site pages, configuration, or code    | Run `pnpm --dir docs build` and review the affected pages.                                                                              |
+| Application code                           | Run focused tests and the type, import, formatting, or build checks needed for the affected behavior.                                   |
+
+For example, check README formatting with:
 
 ```sh title="Terminal"
-pnpm run check             # types, import boundaries, formatting
-pnpm test                  # deterministic tests; database cases skip without TEST_DATABASE_URL
-pnpm run test:integration  # every test in Linux with a disposable PostgreSQL and Chromium
-pnpm run build             # types and web bundle
+pnpm exec prettier --check README.md
 ```
 
-`pnpm run format` fixes formatting. To run one test file while you work:
+To run one test file while you work:
 
 ```sh title="Terminal"
 pnpm exec tsx --test tests/approvals.test.ts
 ```
+
+## Available application checks
+
+Use these commands when needed to verify an application change. They are not a condition for opening every pull request.
+
+```sh title="Terminal"
+pnpm run check
+pnpm test
+pnpm run test:integration
+pnpm run build
+```
+
+`pnpm run check` checks types, import boundaries, and formatting. `pnpm test` runs deterministic tests and skips database cases without `TEST_DATABASE_URL`. The integration command runs every test in Linux with disposable PostgreSQL and Chromium fixtures. The build command checks types and builds the app.
 
 ## Git hooks
 
@@ -35,14 +53,14 @@ pnpm exec tsx --test tests/approvals.test.ts
 
 Secret scanning skips its generic keyword check in tests and fixtures. Known key formats fail everywhere, so keep test values synthetic.
 
-## Extra checks for some areas
+## Checks for affected areas
 
-| If you change           | Also run                                                                                                                                      |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `desktop/`              | `pnpm run desktop:test`                                                                                                                       |
-| `deployment/self-host/` | The server and standalone bundle checks in [Self-host bundle](https://github.com/n8n-io/nod/blob/main/.github/workflows/self-host-bundle.yml) |
-| `evals/`                | `pnpm --dir evals run check` and `pnpm --dir evals test`                                                                                      |
-| `docs/`                 | `pnpm --dir docs build`                                                                                                                       |
+| If you change                           | Also run                                                                                                                                      |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `desktop/`                              | `pnpm run desktop:test`                                                                                                                       |
+| `deployment/self-host/`                 | The server and standalone bundle checks in [Self-host bundle](https://github.com/n8n-io/nod/blob/main/.github/workflows/self-host-bundle.yml) |
+| `evals/`                                | `pnpm --dir evals run check` and `pnpm --dir evals test`                                                                                      |
+| Docs site pages, configuration, or code | `pnpm --dir docs build`                                                                                                                       |
 
 The [capability evals](/contribute/evals/) call live models, so they aren't part of these checks. They run nightly and on request.
 

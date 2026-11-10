@@ -13,8 +13,8 @@
 ## Checklist
 
 - [ ] The PR title uses `type: description` or `type(scope): description`, such as `fix(backend): handle a missing session`. The scope is optional. Add `!` before the colon for a breaking change.
-- [ ] I have seen this code, I have run this code, and I take responsibility for this code.
-- [ ] `pnpm run check`, `pnpm run test:integration` and `pnpm run build` pass, plus any area checks from [CONTRIBUTING](https://github.com/n8n-io/nod/blob/main/CONTRIBUTING.md#checks).
+- [ ] I reviewed this change and take responsibility for it.
+- [ ] I ran checks that match the changed files and behavior, and listed the results above. Documentation and media changes do not need application tests or builds.
 - [ ] New tests would catch a real regression ([test policy](https://github.com/n8n-io/nod/blob/main/AGENTS.md#tests)), or none are needed.
 - [ ] No keys, credentials, real accounts, private conversations or other people's data in code, tests, fixtures, logs or screenshots.
 - [ ] Docs are updated where setup or behaviour changed.
