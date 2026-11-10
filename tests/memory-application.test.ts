@@ -2008,6 +2008,7 @@ test('onboarding answers update memory and profile analytics while the updates e
     store: memoryObjectStore(),
   });
   const sent: string[] = [];
+  const sentProfiles: (OnboardingProfile | undefined)[] = [];
   const profiles: OnboardingProfile[] = [];
   let profileAnalyticsFail = false;
   let profileAnalyticsReturnFalse = false;
@@ -2017,8 +2018,9 @@ test('onboarding answers update memory and profile analytics while the updates e
   let disableProfileDuringSubmit = false;
   const updatesEmail = {
     enabled: () => enabled,
-    submit: async (email: string) => {
+    submit: async (email: string, profile?: OnboardingProfile) => {
       sent.push(email);
+      sentProfiles.push(profile);
       if (disableDuringSubmit) enabled = false;
       return accepted;
     },
@@ -2223,6 +2225,7 @@ test('onboarding answers update memory and profile analytics while the updates e
     { email: 'owner@example.test' },
     { email: 'owner@example.test', consent: false },
     { email: 'owner@example.test', consent: true, extra: 'ignored' },
+    { email: 'owner@example.test', consent: true, profile: { roles: ['invalid'], jobs: [] } },
   ]) {
     const rejected = await app.inject({
       method: 'POST',
@@ -2244,10 +2247,27 @@ test('onboarding answers update memory and profile analytics while the updates e
   const subscribed = await app.inject({
     method: 'POST',
     url: '/api/onboarding/updates-email',
-    payload: { email: 'owner@example.test', consent: true },
+    payload: {
+      email: 'owner@example.test',
+      consent: true,
+      profile: {
+        scope: 'work',
+        roles: ['agency', 'engineering'],
+        whoFor: 'clients',
+        companySize: '2_10',
+        jobs: ['email', 'meetings'],
+      },
+    },
   });
   assert.equal(subscribed.statusCode, 200);
   assert.deepEqual(sent, ['owner@example.test']);
+  assert.deepEqual(sentProfiles[0], {
+    scope: 'work',
+    roles: ['agency', 'engineering'],
+    whoFor: 'clients',
+    companySize: '2_10',
+    jobs: ['email', 'meetings'],
+  });
   assert.equal(JSON.stringify(await memory.load()), remembered);
   disableDuringSubmit = true;
   const revokedDuringSubmit = await app.inject({

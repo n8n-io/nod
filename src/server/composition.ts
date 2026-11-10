@@ -19,6 +19,8 @@ import {
 } from '../shared/models.ts';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
+import type { OnboardingEmailDelivery } from '../ports/onboarding-email.ts';
+import { createN8nOnboardingEmail } from '../providers/n8n/onboarding-email.ts';
 import {
   analyticsEnabled,
   analyticsEnvironment,
@@ -190,6 +192,7 @@ import { BrowserConnectionError, createBrowserConnections } from './browser-conn
 import { cachedIcons, registerLinkOpened } from './link-previews.ts';
 export interface ApplicationAdapters {
   analytics?: ProductAnalytics;
+  onboardingEmail?: OnboardingEmailDelivery;
   initialize?(): Promise<void>;
   observe?(turnId: string, event: RuntimeObservation): void;
   models?: ReturnType<typeof createModelService>;
@@ -613,6 +616,11 @@ export function createDefaultAdapters(
       },
     },
     linkPreviews: createPublicLinkPreviewProvider(),
+    onboardingEmail: createN8nOnboardingEmail({
+      url:
+        env.NOD_ONBOARDING_EMAIL_URL ??
+        'https://internal.users.n8n.cloud/webhook/nod/onboarding-updates',
+    }),
     feedback: createN8nFeedback({
       enabled: feedbackEnabled,
       url: feedbackUrl,
@@ -889,12 +897,20 @@ async function initializeApplication(
           submit: (profile) => analytics.setOnboardingProfileAnswers(ownerId, profile),
         }
       : undefined,
-    updatesEmail: analytics.personProfileAvailable
-      ? {
-          enabled: () => analytics.consent(ownerId).enabled,
-          submit: (email) => analytics.setUpdatesEmail(ownerId, email),
-        }
-      : undefined,
+    updatesEmail:
+      analytics.personProfileAvailable && adapters.onboardingEmail?.configured
+        ? {
+            enabled: () => analytics.consent(ownerId).enabled,
+            submit: async (email, profile) => {
+              const consent = analytics.consent(ownerId);
+              if (!consent.enabled) return false;
+              const consentAt = new Date().toISOString();
+              const saved = await analytics.setUpdatesEmail(ownerId, email, consentAt);
+              if (!saved || consent.signal.aborted) return false;
+              return adapters.onboardingEmail!.submit({ email, profile }, consent.signal);
+            },
+          }
+        : undefined,
   });
   const memoryRecall = createMemoryRecall({ pool, ownerId, memory, curator });
   const writingStyle = createWritingStyleLearning({ memory, curator });

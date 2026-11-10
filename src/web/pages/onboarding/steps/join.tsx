@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { regexes } from 'zod';
-import { communityLinks } from '../../../../shared/onboarding';
+import { communityLinks, type OnboardingProfile } from '../../../../shared/onboarding';
 import { ArrowUpRight } from '../../../components/icons';
 import { ServiceLogo } from '../../../components/service-logo';
 import { Input } from '../../../components/ui';
@@ -8,6 +8,7 @@ import { api, errorMessage } from '../../../lib/api';
 import { analyticsForCurrentSession, captureAnalytics } from '../../../lib/analytics';
 import type { StepProps } from '..';
 import { Bubble, Footer, Messages } from '../motion';
+import { readStored } from '../storage';
 
 const privacyUrl = 'https://n8n.io/legal/privacy/';
 
@@ -39,9 +40,17 @@ export function Join({ onNext, onBack, nextLabel, updatesEmail, usageShared }: S
     setError(null);
     const capture = analyticsForCurrentSession();
     try {
+      const currentProfile = readStored<{ profile?: OnboardingProfile }>('about')?.profile;
+      const sharedProfile = readStored<OnboardingProfile>('about-shared');
+      const profile =
+        currentProfile &&
+        sharedProfile &&
+        JSON.stringify(currentProfile) === JSON.stringify(sharedProfile)
+          ? currentProfile
+          : undefined;
       await api('/api/onboarding/updates-email', {
         method: 'POST',
-        body: JSON.stringify({ email: address, consent: true }),
+        body: JSON.stringify({ email: address, consent: true, ...(profile ? { profile } : {}) }),
       });
       capture('onboarding_updates_email_submitted');
       onNext();

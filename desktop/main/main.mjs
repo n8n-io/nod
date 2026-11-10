@@ -994,6 +994,7 @@ function baseEnvironment() {
       'NOD_FEEDBACK_RECEIPT_URL_PREFIX',
       'NOD_TRACES_URL',
       'NOD_TRACES_TOKEN',
+      'NOD_ONBOARDING_EMAIL_URL',
       'OTEL_EXPORTER_OTLP_ENDPOINT',
     ]
       .filter((key) => typeof process.env[key] === 'string')

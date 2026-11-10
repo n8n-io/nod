@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { build } from 'esbuild';
 import { runProcess } from '../src/providers/process.ts';
+import { createN8nOnboardingEmail } from '../src/providers/n8n/onboarding-email.ts';
 import {
   analyticsModel,
   createAnalytics,
@@ -16,6 +17,79 @@ import {
   onboardingPersonProperties,
   onboardingProfileAnswers,
 } from '../src/shared/onboarding-analytics.ts';
+
+test('onboarding email delivery sends consent and fixed answers without typed answers', async () => {
+  const requests: { url: string; headers: Headers; body: string }[] = [];
+  let accepted = true;
+  const delivery = createN8nOnboardingEmail({
+    url: 'https://internal.example.test/webhook/nod/onboarding-updates',
+    request: async (url, init) => {
+      requests.push({
+        url: String(url),
+        headers: new Headers(init?.headers),
+        body: String(init?.body),
+      });
+      return Response.json({ ok: accepted }, { status: accepted ? 200 : 503 });
+    },
+  });
+  assert.equal(delivery.configured, true);
+  const signal = new AbortController().signal;
+  const saved = await delivery.submit(
+    {
+      email: 'owner@example.test',
+      profile: {
+        scope: 'work',
+        roles: ['agency', 'engineering'],
+        roleText: 'Private synthetic role',
+        whoFor: 'clients',
+        companySize: '2_10',
+        jobs: ['email', 'meetings'],
+        jobsText: 'Private synthetic task',
+      },
+    },
+    signal,
+  );
+  assert.equal(saved, true);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.url, 'https://internal.example.test/webhook/nod/onboarding-updates');
+  assert.equal(requests[0]?.headers.get('content-type'), 'application/json');
+  assert.deepEqual(JSON.parse(requests[0]!.body), {
+    version: 1,
+    email: 'owner@example.test',
+    consent: true,
+    consent_version: 1,
+    profile: {
+      onboarding_profile_completed: true,
+      onboarding_scope: 'work',
+      onboarding_roles: ['agency', 'engineering', 'other'],
+      onboarding_who_for: 'clients',
+      onboarding_company_size: '2_10',
+      onboarding_jobs: ['email', 'meetings', 'other'],
+    },
+  });
+  assert.equal(requests[0]!.body.includes('Private synthetic'), false);
+  accepted = false;
+  assert.equal(await delivery.submit({ email: 'owner@example.test' }, signal), false);
+  const aborted = new AbortController();
+  aborted.abort();
+  assert.equal(await delivery.submit({ email: 'owner@example.test' }, aborted.signal), false);
+  assert.equal(requests.length, 2);
+  assert.equal(createN8nOnboardingEmail({}).configured, false);
+  assert.throws(() =>
+    createN8nOnboardingEmail({
+      url: 'http://internal.example.test/webhook/nod/onboarding-updates',
+    }),
+  );
+});
+
+test('onboarding email defaults to the Nod intake and an empty URL disables it', async () => {
+  const { createDefaultAdapters } = await import('../src/server/composition.ts');
+  assert.equal(createDefaultAdapters({}).onboardingEmail?.configured, true);
+  assert.equal(
+    createDefaultAdapters({ NOD_ONBOARDING_EMAIL_URL: '' }).onboardingEmail?.configured,
+    false,
+  );
+});
 
 test('usage sharing captures bounded events without recording screens or reviving old consent', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {

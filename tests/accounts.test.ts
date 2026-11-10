@@ -102,6 +102,177 @@ test('decision selection uses the LLM only when no decision connection is availa
   assert.equal(llm, 1);
 });
 
+test('About marks only successfully shared answers for the updates signup', async (t) => {
+  const { JSDOM } = await import('jsdom');
+  const { act, createElement } = await import('react');
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    url: 'https://nod.example.test/onboarding',
+  });
+  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    Element: dom.window.Element,
+    Node: dom.window.Node,
+    Event: dom.window.Event,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const originals = new Map(
+    Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const { createRoot } = await import('react-dom/client');
+  const root = createRoot(dom.window.document.getElementById('root')!);
+  t.after(async () => {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, value] of originals)
+      if (value) Object.defineProperty(globalThis, key, value);
+      else Reflect.deleteProperty(globalThis, key);
+  });
+  const { About } = await import('../src/web/pages/onboarding/steps/about.tsx');
+  const { readStored, writeStored } = await import('../src/web/pages/onboarding/storage.ts');
+  const profile = {
+    scope: 'work',
+    roles: ['engineering'],
+    companySize: '11_100',
+    jobs: ['research'],
+  };
+  writeStored('about', {
+    current: 'done',
+    seen: ['scope', 'roles', 'size', 'jobs'],
+    profile,
+    editing: null,
+  });
+  let status = 200;
+  t.mock.method(globalThis, 'fetch', async (path: RequestInfo | URL) => {
+    assert.equal(String(path), '/api/onboarding/profile');
+    return Response.json(
+      status === 200 ? { ok: true } : { error: 'Could not share your choices.' },
+      { status },
+    );
+  });
+  let completed = 0;
+  await act(async () =>
+    root.render(
+      createElement(About, {
+        arrived: 'back',
+        quiet: true,
+        onNext: () => completed++,
+        onBack() {},
+        usageShared: true,
+      }),
+    ),
+  );
+  const next = dom.window.document.querySelector<HTMLButtonElement>('.ob-next');
+  assert.ok(next);
+  await act(async () => next.click());
+  assert.deepEqual(readStored('about-shared'), profile);
+  assert.equal(completed, 1);
+  status = 502;
+  await act(async () => next.click());
+  assert.equal(readStored('about-shared'), null);
+  const continueAnyway = dom.window.document.querySelector<HTMLButtonElement>(
+    '.ob-footer-end button:not(.ob-next)',
+  );
+  assert.ok(continueAnyway);
+  await act(async () => continueAnyway.click());
+  assert.equal(completed, 2);
+});
+
+test('Join sends only About answers successfully shared in this onboarding', async (t) => {
+  const { JSDOM } = await import('jsdom');
+  const { act, createElement } = await import('react');
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    url: 'https://nod.example.test/onboarding',
+  });
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    HTMLInputElement: dom.window.HTMLInputElement,
+    Element: dom.window.Element,
+    Node: dom.window.Node,
+    Event: dom.window.Event,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const originals = new Map(
+    Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const { createRoot } = await import('react-dom/client');
+  const root = createRoot(dom.window.document.getElementById('root')!);
+  t.after(async () => {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, value] of originals)
+      if (value) Object.defineProperty(globalThis, key, value);
+      else Reflect.deleteProperty(globalThis, key);
+  });
+  const { Join } = await import('../src/web/pages/onboarding/steps/join.tsx');
+  const { writeStored } = await import('../src/web/pages/onboarding/storage.ts');
+  const profile = {
+    scope: 'work',
+    roles: ['engineering'],
+    companySize: '11_100',
+    jobs: ['research'],
+  };
+  writeStored('about', { profile });
+  const posted: unknown[] = [];
+  t.mock.method(globalThis, 'fetch', async (path: RequestInfo | URL, options?: RequestInit) => {
+    assert.equal(String(path), '/api/onboarding/updates-email');
+    assert.equal(options?.method, 'POST');
+    posted.push(JSON.parse(String(options?.body)));
+    return Response.json({ ok: true });
+  });
+  let completed = 0;
+  const render = (usageShared: boolean) =>
+    act(async () =>
+      root.render(
+        createElement(Join, {
+          arrived: 'forward',
+          onNext: () => completed++,
+          onBack() {},
+          updatesEmail: true,
+          usageShared,
+        }),
+      ),
+    );
+  await render(false);
+  assert.equal(dom.window.document.querySelector('#ob-join-email'), null);
+  await render(true);
+  const email = dom.window.document.querySelector<HTMLInputElement>('#ob-join-email');
+  const consent = dom.window.document.querySelector<HTMLInputElement>('.ob-join-consent input');
+  const next = dom.window.document.querySelector<HTMLButtonElement>('.ob-next');
+  assert.ok(email);
+  assert.ok(consent);
+  assert.ok(next);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value')!.set!.call(
+      email,
+      'owner@example.test',
+    );
+    email.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  });
+  await act(async () => next.click());
+  assert.deepEqual(posted, []);
+  assert.equal(completed, 0);
+  await act(async () => consent.click());
+  await act(async () => next.click());
+  assert.deepEqual(posted, [{ email: 'owner@example.test', consent: true }]);
+  assert.equal(completed, 1);
+  writeStored('about-shared', profile);
+  await act(async () => next.click());
+  assert.deepEqual(posted[1], { email: 'owner@example.test', consent: true, profile });
+  writeStored('about', { profile: { ...profile, jobs: ['email'] } });
+  await act(async () => next.click());
+  assert.deepEqual(posted[2], { email: 'owner@example.test', consent: true });
+  assert.equal(completed, 3);
+});
+
 test('decision catalog filters native text decisions, expires and refuses failed lookups', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 1_000 });
   let calls = 0;

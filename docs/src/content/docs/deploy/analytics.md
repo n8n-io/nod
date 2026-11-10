@@ -9,7 +9,7 @@ Nod shares bounded product events so the team can understand usage, reliability,
 
 Usage sharing is on for new owners. It sends bounded product data to the Nod team at n8n through its EU-hosted PostHog project, including from independent source installations. The public ingestion identifier is fixed; there is no runtime override for another project.
 
-Messages, generated content, connected-app results, and credentials are excluded from analytics events. About you sends only fixed choices and stores them on an installation profile so the team can filter usage by those answers. Answers you choose to submit in an in-app [survey](#surveys), including typed text, are the content exception. If you enter an email address for updates about Nod and other n8n products and tick its consent checkbox in onboarding, Nod also stores that address on the same PostHog profile. While sharing is on, a separate model request assigns a fixed [task category](#task-categories); its input goes to your selected model connection, not PostHog.
+Messages, generated content, connected-app results, and credentials are excluded from analytics events. About you sends only fixed choices and stores them on an installation profile so the team can filter usage by those answers. Answers you choose to submit in an in-app [survey](#surveys), including typed text, are the content exception. If you enter an email address for updates about Nod and other n8n products and tick its consent checkbox in onboarding, Nod also stores that address on the same PostHog profile and sends it to n8n's Customer.io Labs workspace. Fixed About you choices accompany it only if you shared them successfully. While sharing is on, a separate model request assigns a fixed [task category](#task-categories); its input goes to your selected model connection, not PostHog.
 
 ## Turn usage sharing on or off
 
@@ -36,7 +36,7 @@ Opt-out drops unsent events. Turning sharing back on doesn't revive events from 
 
 ### Stop sharing or delete past data
 
-Turning sharing off stops new analytics events and person-profile updates. It doesn't delete past PostHog data, including About you answers and an email address already stored on a profile. An email submission already in flight may still reach PostHog when sharing is turned off. Use **Send feedback** to request deletion from the Nod team.
+Turning sharing off stops new analytics events and person-profile updates. It doesn't delete past PostHog or Customer.io data, including About you answers and an email address already stored on a profile. An email submission already in flight may still reach either service when sharing is turned off. Use **Send feedback** or privacy@n8n.io to request deletion from the Nod team.
 
 ## Identity and environments
 
@@ -57,7 +57,7 @@ The owner's sharing choice still applies. Nod disables IP geolocation. Ordinary 
 | `onboarding_company_size` | Fixed choice, `skipped`, or `not_asked`                              |
 | `onboarding_jobs`         | Array of fixed choices, `other` for a typed answer, or `['skipped']` |
 
-The typed **Something else** text stays out of PostHog. The `onboarding_profile_answered` event keeps per-option booleans for event-time analysis. A new About submission removes any old per-option person properties; existing profiles keep them until resubmitted. Separate consent lets Nod add `email` and the consent flag, time, and version to the same profile.
+The typed **Something else** text stays out of PostHog and Customer.io. The `onboarding_profile_answered` event keeps per-option booleans for event-time analysis. A new About submission removes any old per-option person properties; existing profiles keep them until resubmitted. Separate consent lets Nod add `email` and the consent flag, time, and version to the same PostHog profile. The fixed choices accompany the Customer.io signup only after they were shared successfully.
 
 Packaged release builds with a plain `x.y.z` version report `production`. Local and prerelease desktop builds report `development`. Source installs report `production` when `NODE_ENV=production` and `NOD_APP_VERSION` isn't a prerelease, unless overridden. Dashboards filter to production and include both staff and external installations. Internal/test exclusions are off; separating internal use into another project is deferred.
 
@@ -104,7 +104,7 @@ Model events use one `provider` property. Onboarding completion and execution st
 | `onboarding_step_skipped`                         | Skipped `email` step.                                                                                                                               |
 | `onboarding_profile_answered`                     | Finished About you: scope, one true/false per role and task, conditional who-for answer, company size, and fixed skip/other markers. No typed text. |
 | `onboarding_community_opened`                     | Discord or forum opened from Join us.                                                                                                               |
-| `onboarding_updates_email_submitted`              | Updates email accepted by PostHog after its consent box was ticked, without the address in this event.                                              |
+| `onboarding_updates_email_submitted`              | Updates email accepted by PostHog and the contact workflow after its consent box was ticked, without the address in this event.                     |
 | `onboarding_completed`                            | First saved completion and selected model provider, when available.                                                                                 |
 | `settings_viewed`, `tab_viewed`                   | Fixed settings section or Apps page tab.                                                                                                            |
 | `local_setting_changed`                           | Changed, persisted local theme, launch-at-login, or notification choice with a fixed value.                                                         |
@@ -123,7 +123,7 @@ Model events use one `provider` property. Onboarding completion and execution st
 
 Settings sections are `general`, `notifications`, `models`, `voice`, `memory`, and `privacy`. A section view means it was reached by navigation or scrolling, not that a setting changed. Settings paths normalize to `/settings`. Apps tabs are `all` and `connected`; `/tasks` is the Scheduled page and has no tab events.
 
-Connecting email is optional. About you answers are counted as fixed choices in an event and stored on the installation's PostHog person profile, even if you don't provide an email. The team can filter linked events by the profile's **current** choices. Ordinary events don't carry event-time person-property snapshots, including those captured after About you, so PostHog's event-time person-property filter does not match them. Earlier events can be included by current-person filtering and reflect later edits to the answers. Words typed under **Something else** stay in the owner's memory note. Entering an address for updates in the final step does not send it until its consent checkbox is ticked and setup is finished. The address is added to the same profile. Submission sends no email immediately. Model setup can be bypassed when already configured. The setup funnel measures observed step visits, not connection success. Sharing must be enabled when a step appears to observe it; native Welcome is outside this sample.
+Connecting email is optional. About you answers are counted as fixed choices in an event and stored on the installation's PostHog person profile, even if you don't provide an email. The team can filter linked events by the profile's **current** choices. Ordinary events don't carry event-time person-property snapshots, including those captured after About you, so PostHog's event-time person-property filter does not match them. Earlier events can be included by current-person filtering and reflect later edits to the answers. Words typed under **Something else** stay in the owner's memory note. Entering an address for updates in the final step does not send it until its consent checkbox is ticked and setup is finished. The address is added to the PostHog profile and sent to Customer.io through the internal workflow, with fixed About choices only after they were shared successfully. Submission creates an unverified profile and sends no email immediately. Model setup can be bypassed when already configured. The setup funnel measures observed step visits, not connection success. Sharing must be enabled when a step appears to observe it; native Welcome is outside this sample.
 
 ### Runs, models, and connected services
 

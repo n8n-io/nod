@@ -49,7 +49,11 @@ const profileInput = z
       });
   });
 const updatesEmailInput = z
-  .object({ email: z.email().trim().max(254), consent: z.literal(true) })
+  .object({
+    email: z.email().trim().max(254),
+    consent: z.literal(true),
+    profile: profileInput.optional(),
+  })
   .strict();
 
 function label(list: readonly { id: string; label: string }[], id?: string) {
@@ -83,7 +87,10 @@ export function profileNote(profile: OnboardingProfile) {
 export function createOnboardingProfile(options: {
   memory: Pick<MemoryService, 'edit' | 'enabled' | 'restate'>;
   profileAnalytics?: { enabled(): boolean; submit(profile: OnboardingProfile): Promise<boolean> };
-  updatesEmail?: { enabled(): boolean; submit(email: string): Promise<boolean> };
+  updatesEmail?: {
+    enabled(): boolean;
+    submit(email: string, profile?: OnboardingProfile): Promise<boolean>;
+  };
 }) {
   function registerRoutes(app: FastifyInstance) {
     app.post('/api/onboarding/profile', async (request, response) => {
@@ -109,7 +116,7 @@ export function createOnboardingProfile(options: {
       return { ok: true };
     });
     app.post('/api/onboarding/updates-email', async (request, response) => {
-      const { email } = updatesEmailInput.parse(request.body);
+      const { email, profile } = updatesEmailInput.parse(request.body);
       response.header('cache-control', 'no-store');
       if (!options.updatesEmail)
         return response
@@ -119,16 +126,17 @@ export function createOnboardingProfile(options: {
         return response
           .code(403)
           .send({ error: 'Turn on Share usage data before signing up for updates.' });
-      const saved = await options.updatesEmail.submit(email).catch(() => false);
+      const saved = await options.updatesEmail.submit(email, profile).catch(() => false);
       if (!options.updatesEmail.enabled())
         return response.code(409).send({
           error:
             'Sharing was turned off while submitting. Your email may already have been saved. Use Send feedback to request deletion.',
         });
       if (!saved)
-        return response
-          .code(502)
-          .send({ error: 'Nod couldn’t sign you up for updates. Try again later.' });
+        return response.code(502).send({
+          error:
+            'Nod couldn’t finish signing you up. Your email may already be saved. Try again, or use Send feedback to request deletion.',
+        });
       return { ok: true };
     });
   }

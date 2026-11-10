@@ -275,11 +275,11 @@ export async function createAnalytics(options: {
       legacyOnboardingChoiceProperties,
     );
   }
-  function setUpdatesEmail(owner: string, email: string) {
+  function setUpdatesEmail(owner: string, email: string, consentAt = new Date().toISOString()) {
     return setOwnerPersonProperties(owner, {
       email,
       nod_updates_email_consent: true,
-      nod_updates_email_consent_at: new Date().toISOString(),
+      nod_updates_email_consent_at: consentAt,
       nod_updates_email_consent_version: 1,
     });
   }
