@@ -67,7 +67,11 @@ If the person update fails while sharing is still enabled, return a retryable er
 
 Only after the owner enters an email address and ticks the consent checkbox for updates about Nod and other n8n products may Nod set its PostHog `email` person property. Store the `nod_updates_email_consent` flag, time, version, exact checkbox wording, and privacy policy link with it. Keep the wording and link in `updatesEmailConsent` in `src/shared/onboarding.ts`, which both the checkbox and saved record use. Raise the version whenever either changes.
 
-Require the deployment gate, configured contact workflow, and **Share usage data** at submission time. Don't send an address when any gate is off. The consented address joins the existing PostHog onboarding profile under the same installation ID. The internal n8n workflow upserts an unverified Customer.io Labs profile by email with the consent flag, receipt time, version, exact checkbox wording, privacy policy link, and only the fixed About you choices that were shared successfully. It stamps its own receipt time, never sends typed **Something else** text, and never changes an existing unsubscribe state. Submission sends no email immediately. Do not send updates until a double opt-in flow confirms the address. Opt-out stops later data sends; deleting an address or answers already stored in PostHog or Customer.io requires a request to the Nod team.
+Require the deployment gate, configured contact workflow, and **Share usage data** at submission time. Don't send an address when any gate is off. The address joins the existing PostHog onboarding profile under the same installation ID.
+
+The public n8n webhook cannot verify control of an email address. It upserts an unverified Customer.io Labs profile by email with the checkbox claim, receipt time, version, exact wording, privacy policy link, and only the fixed About you choices shared successfully. It stamps its own receipt time, never sends typed **Something else** text, and never changes an existing unsubscribe state.
+
+Submission sends no email. Do not send updates until a double opt-in flow confirms the address. Opt-out stops later data sends. Deleting an address or answers already stored in PostHog or Customer.io requires a request to the Nod team.
 
 ### Outputs
 

@@ -892,6 +892,7 @@ async function initializeApplication(
     profileAnalytics: analytics.personProfileAvailable
       ? {
           enabled: () => analytics.consent(ownerId).enabled,
+          version: () => analytics.consent(ownerId).version,
           submit: (profile) => analytics.setOnboardingProfileAnswers(ownerId, profile),
         }
       : undefined,
@@ -902,10 +903,31 @@ async function initializeApplication(
             submit: async (email, profile) => {
               const consent = analytics.consent(ownerId);
               if (!consent.enabled) return false;
+              const currentConsent = () => {
+                const current = analytics.consent(ownerId);
+                return (
+                  current.enabled &&
+                  !consent.signal.aborted &&
+                  current.signal === consent.signal &&
+                  current.version === consent.version &&
+                  current.revision === consent.revision
+                );
+              };
+              if (profile) {
+                const shared = await analytics.setOnboardingProfileProperties(
+                  ownerId,
+                  profile,
+                  consent,
+                );
+                if (!shared || !currentConsent()) return false;
+              }
               const consentAt = new Date().toISOString();
-              const saved = await analytics.setUpdatesEmail(ownerId, email, consentAt);
-              if (!saved || consent.signal.aborted) return false;
-              return adapters.onboardingEmail!.submit({ email, profile }, consent.signal);
+              const saved = await analytics.setUpdatesEmail(ownerId, email, consentAt, consent);
+              if (!saved || !currentConsent()) return false;
+              return adapters.onboardingEmail!.submit(
+                { email, ...(profile ? { profile } : {}) },
+                consent.signal,
+              );
             },
           }
         : undefined,

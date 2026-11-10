@@ -5,6 +5,7 @@ import {
   updatesEmailConsent,
   type OnboardingProfile,
 } from '../../../../shared/onboarding';
+import { onboardingPersonProperties } from '../../../../shared/onboarding-analytics';
 import { ArrowUpRight } from '../../../components/icons';
 import { ServiceLogo } from '../../../components/service-logo';
 import { Input } from '../../../components/ui';
@@ -42,8 +43,15 @@ export function Join({ onNext, onBack, nextLabel, updatesEmail, usageShared }: S
     setError(null);
     const capture = analyticsForCurrentSession();
     try {
-      const currentProfile = readStored<{ profile?: OnboardingProfile }>('about')?.profile;
-      const sharedProfile = readStored<OnboardingProfile>('about-shared');
+      const about = readStored<{ current?: string; profile?: OnboardingProfile }>('about');
+      const currentProfile =
+        about?.current === 'done' &&
+        Array.isArray(about.profile?.roles) &&
+        Array.isArray(about.profile?.jobs)
+          ? onboardingPersonProperties(about.profile)
+          : undefined;
+      const sharedProfile =
+        readStored<ReturnType<typeof onboardingPersonProperties>>('about-shared');
       const profile =
         currentProfile &&
         sharedProfile &&

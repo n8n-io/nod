@@ -102,7 +102,7 @@ test('decision selection uses the LLM only when no decision connection is availa
   assert.equal(llm, 1);
 });
 
-test('About marks only successfully shared answers for the updates signup', async (t) => {
+test('About records only confirmed shared choices and clears them on failure', async (t) => {
   const { JSDOM } = await import('jsdom');
   const { act, createElement } = await import('react');
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -147,10 +147,11 @@ test('About marks only successfully shared answers for the updates signup', asyn
     editing: null,
   });
   let status = 200;
+  let shared = true;
   t.mock.method(globalThis, 'fetch', async (path: RequestInfo | URL) => {
     assert.equal(String(path), '/api/onboarding/profile');
     return Response.json(
-      status === 200 ? { ok: true } : { error: 'Could not share your choices.' },
+      status === 200 ? { ok: true, shared } : { error: 'Could not share your choices.' },
       { status },
     );
   });
@@ -169,8 +170,19 @@ test('About marks only successfully shared answers for the updates signup', asyn
   const next = dom.window.document.querySelector<HTMLButtonElement>('.ob-next');
   assert.ok(next);
   await act(async () => next.click());
-  assert.deepEqual(readStored('about-shared'), profile);
   assert.equal(completed, 1);
+  assert.deepEqual(readStored('about-shared'), {
+    onboarding_profile_completed: true,
+    onboarding_scope: 'work',
+    onboarding_roles: ['engineering'],
+    onboarding_who_for: 'not_asked',
+    onboarding_company_size: '11_100',
+    onboarding_jobs: ['research'],
+  });
+  shared = false;
+  await act(async () => next.click());
+  assert.equal(readStored('about-shared'), null);
+  assert.equal(completed, 2);
   status = 502;
   await act(async () => next.click());
   assert.equal(readStored('about-shared'), null);
@@ -179,10 +191,11 @@ test('About marks only successfully shared answers for the updates signup', asyn
   );
   assert.ok(continueAnyway);
   await act(async () => continueAnyway.click());
-  assert.equal(completed, 2);
+  assert.equal(readStored('about-shared'), null);
+  assert.equal(completed, 3);
 });
 
-test('Join sends only About answers successfully shared in this onboarding', async (t) => {
+test('Join sends fixed answers only with a matching confirmed share', async (t) => {
   const { JSDOM } = await import('jsdom');
   const { act, createElement } = await import('react');
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -217,10 +230,20 @@ test('Join sends only About answers successfully shared in this onboarding', asy
   const profile = {
     scope: 'work',
     roles: ['engineering'],
+    roleText: 'Private synthetic role',
     companySize: '11_100',
     jobs: ['research'],
+    jobsText: 'Private synthetic task',
   };
-  writeStored('about', { profile });
+  writeStored('about', { current: 'done', profile });
+  const fixed = {
+    onboarding_profile_completed: true,
+    onboarding_scope: 'work',
+    onboarding_roles: ['engineering', 'other'],
+    onboarding_who_for: 'not_asked',
+    onboarding_company_size: '11_100',
+    onboarding_jobs: ['research', 'other'],
+  };
   const posted: unknown[] = [];
   t.mock.method(globalThis, 'fetch', async (path: RequestInfo | URL, options?: RequestInit) => {
     assert.equal(String(path), '/api/onboarding/updates-email');
@@ -262,15 +285,19 @@ test('Join sends only About answers successfully shared in this onboarding', asy
   assert.equal(completed, 0);
   await act(async () => consent.click());
   await act(async () => next.click());
-  assert.deepEqual(posted, [{ email: 'owner@example.test', consent: true }]);
-  assert.equal(completed, 1);
-  writeStored('about-shared', profile);
+  assert.deepEqual(posted[0], { email: 'owner@example.test', consent: true });
+  writeStored('about-shared', fixed);
   await act(async () => next.click());
-  assert.deepEqual(posted[1], { email: 'owner@example.test', consent: true, profile });
-  writeStored('about', { profile: { ...profile, jobs: ['email'] } });
+  assert.deepEqual(posted[1], { email: 'owner@example.test', consent: true, profile: fixed });
+  assert.equal(JSON.stringify(posted).includes('Private synthetic'), false);
+  assert.equal(completed, 2);
+  writeStored('about', { current: 'roles', profile });
   await act(async () => next.click());
   assert.deepEqual(posted[2], { email: 'owner@example.test', consent: true });
-  assert.equal(completed, 3);
+  writeStored('about', { current: 'done', profile: { ...profile, jobs: ['email'] } });
+  await act(async () => next.click());
+  assert.deepEqual(posted[3], { email: 'owner@example.test', consent: true });
+  assert.equal(completed, 4);
 });
 
 test('decision catalog filters native text decisions, expires and refuses failed lookups', async (t) => {

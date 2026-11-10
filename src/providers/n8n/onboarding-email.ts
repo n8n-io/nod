@@ -2,7 +2,6 @@ import type {
   OnboardingEmailDelivery,
   OnboardingEmailSubmission,
 } from '../../ports/onboarding-email.ts';
-import { onboardingPersonProperties } from '../../shared/onboarding-analytics.ts';
 import { updatesEmailConsent } from '../../shared/onboarding.ts';
 
 export function createN8nOnboardingEmail(options: {
@@ -38,7 +37,18 @@ export function createN8nOnboardingEmail(options: {
             consent_version: updatesEmailConsent.version,
             consent_text: updatesEmailConsent.text,
             consent_privacy_url: updatesEmailConsent.privacyUrl,
-            ...(input.profile ? { profile: onboardingPersonProperties(input.profile) } : {}),
+            ...(input.profile
+              ? {
+                  profile: {
+                    onboarding_profile_completed: input.profile.onboarding_profile_completed,
+                    onboarding_scope: input.profile.onboarding_scope,
+                    onboarding_roles: input.profile.onboarding_roles,
+                    onboarding_who_for: input.profile.onboarding_who_for,
+                    onboarding_company_size: input.profile.onboarding_company_size,
+                    onboarding_jobs: input.profile.onboarding_jobs,
+                  },
+                }
+              : {}),
           }),
           signal: AbortSignal.any([signal, AbortSignal.timeout(35_000)]),
         });

@@ -42,15 +42,18 @@ test('onboarding email delivery sends consent and fixed answers without typed an
   const saved = await delivery.submit(
     {
       email: 'owner@example.test',
-      profile: {
-        scope: 'work',
-        roles: ['agency', 'engineering'],
-        roleText: 'Private synthetic role',
-        whoFor: 'clients',
-        companySize: '2_10',
-        jobs: ['email', 'meetings'],
-        jobsText: 'Private synthetic task',
-      },
+      profile: Object.assign(
+        onboardingPersonProperties({
+          scope: 'work',
+          roles: ['agency', 'engineering'],
+          roleText: 'Private synthetic role',
+          whoFor: 'clients',
+          companySize: '2_10',
+          jobs: ['email', 'meetings'],
+          jobsText: 'Private synthetic task',
+        }),
+        { roleText: 'Private synthetic role', jobsText: 'Private synthetic task' },
+      ),
     },
     signal,
   );
@@ -86,15 +89,6 @@ test('onboarding email delivery sends consent and fixed answers without typed an
     createN8nOnboardingEmail({
       url: 'http://internal.example.test/webhook/nod/onboarding-updates',
     }),
-  );
-});
-
-test('onboarding email defaults to the Nod intake and an empty URL disables it', async () => {
-  const { createDefaultAdapters } = await import('../src/server/composition.ts');
-  assert.equal(createDefaultAdapters({}).onboardingEmail?.configured, true);
-  assert.equal(
-    createDefaultAdapters({ NOD_ONBOARDING_EMAIL_URL: '' }).onboardingEmail?.configured,
-    false,
   );
 });
 
@@ -393,6 +387,36 @@ test('onboarding answers and updates email update one profile only while usage s
     assert.equal(await analytics.setOnboardingProfileAnswers(owner, full), false);
     assert.equal(await analytics.setUpdatesEmail(owner, 'owner@example.test'), false);
     assert.equal(profiles.length, 5);
+
+    waitForOptOut = false;
+    analytics.setUsageData(owner, true);
+    const consent = analytics.consent(owner);
+    const fixed = onboardingPersonProperties(full);
+    assert.equal(await analytics.setOnboardingProfileProperties(owner, fixed, consent), true);
+    assert.deepEqual(profiles[5]?.properties, fixed);
+    assert.equal(
+      await analytics.setUpdatesEmail(
+        owner,
+        'owner@example.test',
+        '2026-11-10T10:00:00.000Z',
+        consent,
+      ),
+      true,
+    );
+    assert.equal(profiles.length, 7);
+    analytics.setUsageData(owner, false);
+    analytics.setUsageData(owner, true);
+    assert.equal(await analytics.setOnboardingProfileProperties(owner, fixed, consent), false);
+    assert.equal(
+      await analytics.setUpdatesEmail(
+        owner,
+        'owner@example.test',
+        '2026-11-10T10:01:00.000Z',
+        consent,
+      ),
+      false,
+    );
+    assert.equal(profiles.length, 7);
   } finally {
     await analytics.shutdown();
   }

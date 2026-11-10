@@ -254,10 +254,21 @@ export async function createAnalytics(options: {
     owner: string,
     properties: Record<string, string | number | boolean | string[]>,
     unset?: readonly string[],
+    expected?: ReturnType<typeof consent>,
   ) {
     const current = consent(owner);
     const distinctId = configuration(owner).distinctId;
-    if (!personProfileAvailable || !current.enabled || !distinctId) return false;
+    if (
+      !personProfileAvailable ||
+      !current.enabled ||
+      !distinctId ||
+      (expected &&
+        (expected.signal.aborted ||
+          current.signal !== expected.signal ||
+          current.version !== expected.version ||
+          current.revision !== expected.revision))
+    )
+      return false;
     try {
       const sent = await options.provider?.setPersonProperties?.(
         { distinctId, properties, ...(unset?.length ? { unset } : {}) },
@@ -269,21 +280,34 @@ export async function createAnalytics(options: {
     }
   }
   function setOnboardingProfileAnswers(owner: string, profile: OnboardingProfile) {
+    return setOnboardingProfileProperties(owner, onboardingPersonProperties(profile));
+  }
+  function setOnboardingProfileProperties(
+    owner: string,
+    properties: ReturnType<typeof onboardingPersonProperties>,
+    expected?: ReturnType<typeof consent>,
+  ) {
+    return setOwnerPersonProperties(owner, properties, legacyOnboardingChoiceProperties, expected);
+  }
+  function setUpdatesEmail(
+    owner: string,
+    email: string,
+    consentAt = new Date().toISOString(),
+    expected?: ReturnType<typeof consent>,
+  ) {
     return setOwnerPersonProperties(
       owner,
-      onboardingPersonProperties(profile),
-      legacyOnboardingChoiceProperties,
+      {
+        email,
+        nod_updates_email_consent: true,
+        nod_updates_email_consent_at: consentAt,
+        nod_updates_email_consent_version: updatesEmailConsent.version,
+        nod_updates_email_consent_text: updatesEmailConsent.text,
+        nod_updates_email_consent_privacy_url: updatesEmailConsent.privacyUrl,
+      },
+      undefined,
+      expected,
     );
-  }
-  function setUpdatesEmail(owner: string, email: string, consentAt = new Date().toISOString()) {
-    return setOwnerPersonProperties(owner, {
-      email,
-      nod_updates_email_consent: true,
-      nod_updates_email_consent_at: consentAt,
-      nod_updates_email_consent_version: updatesEmailConsent.version,
-      nod_updates_email_consent_text: updatesEmailConsent.text,
-      nod_updates_email_consent_privacy_url: updatesEmailConsent.privacyUrl,
-    });
   }
   function setUsageData(owner: string, enabled: boolean, revision = state(owner).revision) {
     const current = state(owner);
@@ -303,6 +327,7 @@ export async function createAnalytics(options: {
     consent,
     personProfileAvailable,
     setOnboardingProfileAnswers,
+    setOnboardingProfileProperties,
     setUpdatesEmail,
     withRun<T>(owner: string, operation: () => T): T {
       return runs.run({ owner, id: randomUUID(), consent: consent(owner) }, operation);

@@ -104,7 +104,7 @@ For what Nod stores and for how long, see the [Security review guide](/trust/sec
 | Exa                                 | Web searches. With a ChatGPT plan, OpenAI searches instead.                                                                                                                                                                                                  |
 | Your voice service                  | [Voice messages](/use/channels/#files-and-voice-messages) you send, and the text of voice replies                                                                                                                                                            |
 | n8n                                 | Desktop update checks, which show your IP address, app version, and platform. Usage data, traces, and feedback, if you allow them. A consented onboarding email and fixed About you choices pass through an internal n8n workflow while usage sharing is on. |
-| Customer.io                         | A consented onboarding email, its consent time and version, and fixed About you choices. n8n uses its Labs workspace in the US. Typed **Something else** answers do not go there.                                                                            |
+| Customer.io                         | An unverified onboarding email signup, the checkbox claim and receipt time, and fixed About you choices. n8n uses its Labs workspace in the US. Typed **Something else** answers do not go there.                                                            |
 
 Your model keys stay encrypted on your installation. They never enter a prompt, Nod's workspace, or its browser.
 

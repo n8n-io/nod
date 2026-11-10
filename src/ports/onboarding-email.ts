@@ -1,8 +1,10 @@
-import type { OnboardingProfile } from '../shared/onboarding.ts';
+import type { onboardingPersonProperties } from '../shared/onboarding-analytics.ts';
+
+export type OnboardingEmailProfile = ReturnType<typeof onboardingPersonProperties>;
 
 export type OnboardingEmailSubmission = {
   email: string;
-  profile?: OnboardingProfile;
+  profile?: OnboardingEmailProfile;
 };
 
 export interface OnboardingEmailDelivery {
