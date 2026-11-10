@@ -9,16 +9,17 @@ import heroCollage from '../assets/landing/hero-collage.png';
 import briefCollage from '../assets/landing/brief-collage.png';
 import replyCollage from '../assets/landing/reply-collage.png';
 import watchCollage from '../assets/landing/watch-collage.png';
+import socialImage from '../assets/landing/og.png';
 
 const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 const github = 'https://github.com/n8n-io/nod';
-const download = 'https://internal.users.n8n.cloud/webhook/nod/download/mac';
+const download = 'https://internal.users.n8n.cloud/webhook/nod/download';
 const fonts = 'https://n8n.io/assets/fonts/baumer/variable';
 const title = 'Nod · Your personal agent';
 const description =
   'Nod is a personal agent that gets real-world jobs done. Open source, runs on your Mac, Windows PC or your own server, with the model provider you choose.';
 const url = 'https://nod.n8n.io/';
-const image = new URL(`${base}nod-og.png`, Astro.site);
+const image = new URL(socialImage.src, Astro.site);
 const photo = { formats: ['avif', 'webp'], fallbackFormat: 'jpg', quality: 80, alt: '', class: 'bg' } as const;
 const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
 ---
@@ -39,7 +40,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
     <meta property="og:image" content={image} />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="nod to get the job done. A personal agent that gets real-world jobs done." />
+    <meta property="og:image:alt" content="Nod by n8n labs. Open source personal agent with its own computer." />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
@@ -107,7 +108,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
           <div class="lp-hero-cta">
             <div class="lp-hero-buttons">
               <div class="lp-cta-frame">
-                <a class="lp-download-btn mono" href={download}>Download for Mac</a>
+                <a class="lp-download-btn mono" href={`${download}/mac`} data-download="label">Download for Mac</a>
                 <img class="lp-crosshair tl" src={crosshair} alt="" />
                 <img class="lp-crosshair tr" src={crosshair} alt="" />
                 <img class="lp-crosshair bl" src={crosshair} alt="" />
@@ -474,10 +475,6 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
           </li>
           <li>
             <span class="lp-number-badge"><span class="lp-circle-grey"></span></span>
-            <p><b>Logins from 1Password.</b> Pick a login when Nod signs in, no vault export.</p>
-          </li>
-          <li>
-            <span class="lp-number-badge"><span class="lp-circle-grey"></span></span>
             <p><b>One Nod for your team.</b> Today one owner per Nod. Next, a few people sharing one.</p>
           </li>
           <li>
@@ -559,7 +556,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
         </details>
         <details class="lp-faq">
           <summary>Can I run it in the cloud?</summary>
-          <p>Not yet. A hosted, always-on Nod is coming soon. Join the waitlist and we will tell you when it is ready.</p>
+          <p>Not yet. A hosted, always-on Nod is coming soon.</p>
         </details>
         <details class="lp-faq">
           <summary>Can it make mistakes?</summary>
@@ -635,7 +632,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
 
       <section class="lp-final-cta">
         <div class="lp-cta-frame">
-          <a class="lp-download-btn lp-final-cta-btn mono" href={download}>Start building</a>
+          <a class="lp-download-btn lp-final-cta-btn mono" href={`${download}/mac`} data-download>Start building</a>
           <img class="lp-crosshair tl" src={crosshair} alt="" />
           <img class="lp-crosshair tr" src={crosshair} alt="" />
           <img class="lp-crosshair bl" src={crosshair} alt="" />
@@ -657,6 +654,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
     <script>
       import { startCarousel } from '../scripts/carousel.js';
       import { startCountUp } from '../scripts/count-up.js';
+      import { startDownload } from '../scripts/download.js';
       import { startEqualPanels } from '../scripts/equal-panels.js';
       import { startHeroGlyph } from '../scripts/hero-glyph.js';
       import { startHeroVideo } from '../scripts/hero-video.js';
@@ -664,6 +662,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
 
       startCarousel();
       startCountUp();
+      startDownload();
       startEqualPanels();
       startRoadmapLine();
       startHeroGlyph();
