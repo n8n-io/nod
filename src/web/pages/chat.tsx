@@ -1546,7 +1546,11 @@ export function Chat({
         .filter((item) => item.result && !item.result.sent && item.result.restoreText)
         .map((item) => item.text);
       requestedSends.current = [];
-      if (unsent.length) setText((current) => [...unsent, current].filter(Boolean).join('\n\n'));
+      if (unsent.length) {
+        const restored = unsent.join('\n\n');
+        if (!composer.current?.prependText(restored))
+          setText((current) => [restored, current].filter(Boolean).join('\n\n'));
+      }
       composer.current?.focus();
     });
   }, [requestedMessage, state.configuration.llmReady, welcoming]);

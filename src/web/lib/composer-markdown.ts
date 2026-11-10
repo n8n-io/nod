@@ -201,9 +201,19 @@ function tableInline(nodes: PhrasingContent[]): PhrasingContent[] {
   return nodes.map((node) =>
     node.type === 'break'
       ? { type: 'html', value: '<br>' }
-      : 'children' in node
-        ? { ...node, children: tableInline(node.children) }
-        : node,
+      : node.type === 'html'
+        ? {
+            ...node,
+            value: node.value
+              .replace(
+                /(\\*)\|/g,
+                (_, slashes: string) => `${'\\'.repeat(slashes.length * 2 + 1)}|`,
+              )
+              .replaceAll('\n', '<br>'),
+          }
+        : 'children' in node
+          ? { ...node, children: tableInline(node.children) }
+          : node,
   );
 }
 

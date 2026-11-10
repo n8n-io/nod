@@ -54,6 +54,7 @@ interface DraftAttachment {
 export interface ComposerHandle {
   focus(): void;
   hasDraft(): boolean;
+  prependText(value: string): boolean;
   upload(files: File[]): void;
 }
 
@@ -218,6 +219,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           pendingSends.current ||
           unsent.current.length,
         ),
+      prependText: (value) => {
+        if (!editor || editor.isDestroyed) return false;
+        const content = [
+          ...(parseComposerMarkdown(value).content ?? []),
+          ...(composerMarkdown(editor.state.doc) ? (editor.state.doc.toJSON().content ?? []) : []),
+        ];
+        return editor.commands.setContent({ type: 'doc', content });
+      },
       upload: (files) => upload(files, 'drop'),
     }),
     [editor, recorder.phase, recorder.recording],
