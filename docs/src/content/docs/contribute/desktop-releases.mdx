@@ -1,13 +1,13 @@
 ---
 title: Desktop releases
-description: Publish a new version of the Nod desktop app, recover a failed build, and help private-alpha testers install and recover.
+description: Publish Nod desktop releases, recover failed builds, and help users install the app.
 sidebar:
   order: 5
 ---
 
 import { Steps } from '@astrojs/starlight/components';
 
-This page is for maintainers who publish the Nod desktop app, and for anyone helping private-alpha testers install it.
+This page is for maintainers who publish the Nod desktop app, and for anyone helping users install it.
 
 The short version: run **Release desktop**, review and merge the version pull request, and CI publishes one GitHub release with all three installers.
 
@@ -47,7 +47,7 @@ Overrides also select patched versions of Glob, Minimatch, Hono's Node server, q
 
 ## Verify release provenance
 
-Public releases include `nod-release.sigstore.json`. The release workflow checks the final files, signs their hashes with GitHub build provenance, and verifies each file before upload. Verification requires the Nod repository, the original build workflow on `main`, and the build's exact source commit. A failed or missing check prevents public release.
+Releases built from the public repository include `nod-release.sigstore.json`. The release workflow checks the final files, signs their hashes with GitHub build provenance, and verifies each file before upload. Verification requires the Nod repository, the original build workflow on `main`, and the build's exact source commit. A failed or missing check prevents a new public release.
 
 Download an asset and its bundle from the same release. Get the full build commit from the release notes and check it against the approved release. Replace the placeholder, then verify:
 
@@ -58,30 +58,27 @@ gh attestation verify nod-arm64.dmg --repo n8n-io/nod --bundle nod-release.sigst
   --source-ref refs/heads/main --source-digest "$BUILD_COMMIT"
 ```
 
-The build workflow saves the original signature bundle before upload. Recovery uses that bundle and the original source commit. It cannot create replacement provenance. A public release without the original bundle requires a new build. Platform signing and notarization checks still run.
-
-Provenance runs automatically after the repository becomes public. Private repositories need GitHub Enterprise Cloud for this feature. If that feature is available, set `NOD_PRIVATE_ATTESTATIONS` to `true` to enable it before publication. With this setting, both release and recovery uploads require the original bundle. A missing bundle requires a new build. Existing releases do not gain provenance from this change.
+The build workflow saves the original signature bundle before upload. Recovery uses that bundle and the original source commit; it cannot create replacement provenance. Older releases built while the repository was private do not gain provenance retroactively. A release built from the public repository without its original bundle requires a new build. Platform signing and notarization checks still run.
 
 ## Configure the repository once
 
 CI signs Mac builds with n8n's Apple Developer ID and has Apple notarize them, on Blacksmith's Mac runners, so these credentials reach those runners. Create a GitHub environment named `release` with these values. Never commit certificate keys or passwords.
 
-| Kind             | Name                            | Value                                                                                                    |
-| ---------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Secret           | `APPLE_CERTIFICATE`             | Base64-encoded PKCS#12 with the certificate, its private key and Apple's G2 certificate                  |
-| Secret           | `APPLE_CERTIFICATE_PASSWORD`    | The PKCS#12 export password                                                                              |
-| Secret           | `APPLE_API_KEY`                 | The App Store Connect team API key (`.p8`) that notarizes builds                                         |
-| Variable         | `APPLE_API_KEY_ID`              | That key's ID                                                                                            |
-| Variable         | `APPLE_API_ISSUER`              | The issuer ID shown above the team keys                                                                  |
-| Variable         | `APPLE_TEAM_ID`                 | The 10-character Apple team ID                                                                           |
-| Variable         | `APPLE_SIGNING_IDENTITY`        | The exact certificate name, `Developer ID Application: n8n GmbH (<team ID>)`                             |
-| Variable         | `APPLE_CERTIFICATE_SHA256`      | Lowercase SHA-256 of the certificate, from `shasum -a 256 developerID_application.cer`                   |
-| Variable         | `NOD_SIGNING_MODE`              | `developer-id`                                                                                           |
-| Private variable | `NOD_DESKTOP_UPDATE_SOURCE_URL` | Required base URL of the private update service. Release builds ignore it once the repository is public. |
+| Kind     | Name                         | Value                                                                                   |
+| -------- | ---------------------------- | --------------------------------------------------------------------------------------- |
+| Secret   | `APPLE_CERTIFICATE`          | Base64-encoded PKCS#12 with the certificate, its private key and Apple's G2 certificate |
+| Secret   | `APPLE_CERTIFICATE_PASSWORD` | The PKCS#12 export password                                                             |
+| Secret   | `APPLE_API_KEY`              | The App Store Connect team API key (`.p8`) that notarizes builds                        |
+| Variable | `APPLE_API_KEY_ID`           | That key's ID                                                                           |
+| Variable | `APPLE_API_ISSUER`           | The issuer ID shown above the team keys                                                 |
+| Variable | `APPLE_TEAM_ID`              | The 10-character Apple team ID                                                          |
+| Variable | `APPLE_SIGNING_IDENTITY`     | The exact certificate name, `Developer ID Application: n8n GmbH (<team ID>)`            |
+| Variable | `APPLE_CERTIFICATE_SHA256`   | Lowercase SHA-256 of the certificate, from `shasum -a 256 developerID_application.cer`  |
+| Variable | `NOD_SIGNING_MODE`           | `developer-id`                                                                          |
 
 - In the repository's Actions settings, allow GitHub Actions to create pull requests.
-- The default mode, `self-signed`, signs with an internal certificate and skips notarization. It needs only the certificate rows and a private repository.
-- The Terminal installer pins the certificate's SHA-256 in `deployment/n8n/install.sh`. After the first release signed with a new certificate, update it there. While private distribution is active, republish the **Nod Install** workflow too.
+- Public releases require `NOD_SIGNING_MODE=developer-id`; the default `self-signed` mode is for private development builds only.
+- The Terminal installer pins the certificate's SHA-256 in `deployment/n8n/install.sh`. After the first release signed with a new certificate, update it there.
 
 ### Windows signing
 
@@ -133,7 +130,7 @@ Developer ID certificates expire. Apps signed before then keep opening, but rele
 
 </Steps>
 
-Private releases use the configured n8n download service for first-run downloads and updates. Its GitHub credential stays in n8n, and no token enters the app. When the repository is public, the release workflow builds new apps against public GitHub releases even if the private service variable is still configured. Installed private builds keep their embedded n8n source, so keep its endpoints working while those users upgrade.
+Desktop binaries built from this code use public GitHub assets for installs and updates, without a bundled token. Builds made while the repository was private retain their embedded n8n download source, which keeps its GitHub credential in n8n. Keep its endpoints working while those users upgrade.
 
 ## Release a version
 
@@ -149,7 +146,7 @@ Private releases use the configured n8n download service for first-run downloads
 
 </Steps>
 
-Nod releases are tagged `nod-v*`. The n8n download service at `webhook/nod/desktop` serves only those releases for installed private builds. New public builds download release metadata and assets from GitHub without an account or bundled credential. The install guide loads its scripts from the public repository, so it works as soon as the repository and code are public; each subsequent desktop release also includes versioned `nod-install.sh` and `nod-install.ps1` assets.
+Nod releases are tagged `nod-v*`. Releases built from this code download metadata and assets from GitHub without an account or bundled credential. The install guide loads its scripts from the public repository. New releases include versioned `nod-install.sh` and `nod-install.ps1` assets; earlier releases do not gain them retroactively. The n8n download service at `webhook/nod/desktop` remains for installed private builds.
 
 There's no daily release. Only a merged release pull request, which changes `desktop/release.json`, starts **Build desktop release**; other merges to `main` don't run it. The [capability evals](/contribute/evals/) don't gate publication.
 
@@ -198,11 +195,11 @@ Drafts are never offered to the installer or the updater.
 - A Windows app refuses a downloaded installer unless n8n GmbH signed it with the `nod-windows` profile.
 - On Windows, the restart runs the verified installer silently over the current install, then opens Nod again. The profile is kept.
 
-## Help private-alpha testers
+## Help with desktop installation
 
-Mac testers need an Intel or Apple silicon Mac, and a supported provider API key or a ChatGPT Plus or Pro plan. They copy Nod to Applications, or run the [Terminal installer](/get-started/install-desktop/), and approve the Keychain prompt if macOS shows it. Managed Macs may need IT approval. The first start downloads the runtime, so it needs an internet connection.
+Mac users need an Intel or Apple silicon Mac, and a supported provider API key or a ChatGPT Plus or Pro plan. They copy Nod to Applications, or run the [Terminal installer](/get-started/install-desktop/), and approve the Keychain prompt if macOS shows it. Managed Macs may need IT approval. The first start downloads the runtime, so it needs an internet connection.
 
-Before the repository is public, Windows testers run `irm https://internal.users.n8n.cloud/webhook/nod/install-windows | iex` in PowerShell, or download and run `nod-Setup-x64.exe`. After publication, use the GitHub command in the [install guide](/get-started/install-desktop/). The first start downloads the runtime, unless `nod-Runtime-win32-x64.tar.gz` sits next to the installer. After that, Nod updates itself.
+Windows users can run the [PowerShell installer](/get-started/install-desktop/) or download and run `nod-Setup-x64.exe` from the latest release. The first start downloads the runtime, unless `nod-Runtime-win32-x64.tar.gz` sits next to the installer. After that, Nod updates itself.
 
 | Situation             | What to know                                                                                                                                                                                                                                                        |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
