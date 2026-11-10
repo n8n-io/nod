@@ -5,6 +5,7 @@ import starlight from '@astrojs/starlight';
 import mermaid from 'astro-mermaid';
 import starlightLinksValidator from 'starlight-links-validator';
 import starlightLlmsTxt from 'starlight-llms-txt';
+import { gtmSnippet } from './src/gtm.mjs';
 
 const site = 'https://nod.n8n.io';
 const base = '/docs/';
@@ -92,6 +93,7 @@ export default defineConfig({
         'Nod is a personal assistant with its own computer. Learn how to install it, use it, and how it keeps your accounts and actions under your control.',
       logo: { light: './src/assets/nod-light.svg', dark: './src/assets/nod-dark.svg' },
       favicon: '/favicon.svg',
+      head: [{ tag: 'script', content: gtmSnippet }],
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/n8n-io/nod' }],
       editLink: { baseUrl: 'https://github.com/n8n-io/nod/edit/main/docs/' },
       lastUpdated: true,

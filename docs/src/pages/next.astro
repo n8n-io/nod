@@ -10,6 +10,7 @@ import briefCollage from '../assets/landing/brief-collage.png';
 import replyCollage from '../assets/landing/reply-collage.png';
 import watchCollage from '../assets/landing/watch-collage.png';
 import socialImage from '../assets/landing/og.png';
+import { gtmSnippet } from '../gtm.mjs';
 
 const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 const github = 'https://github.com/n8n-io/nod';
@@ -29,6 +30,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <script is:inline set:html={gtmSnippet} />
     <title>{title}</title>
     <meta name="description" content={description} />
     <link rel="canonical" href={url} />
@@ -40,7 +42,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
     <meta property="og:image" content={image} />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Nod by n8n labs. Open source personal agent with its own computer." />
+    <meta property="og:image:alt" content="n8n logo above Nod, the open source personal agent with its own computer." />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />

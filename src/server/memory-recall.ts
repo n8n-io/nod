@@ -76,10 +76,11 @@ export function createMemoryRecall(options: {
     instructions: string,
     input: object,
     signal: AbortSignal,
+    timeout = AbortSignal.timeout(20_000),
   ) {
     signal.throwIfAborted();
-    if (JSON.stringify(input).length > 256_000) return undefined;
-    const deadline = AbortSignal.any([signal, AbortSignal.timeout(20_000)]);
+    if (timeout.aborted || JSON.stringify(input).length > 256_000) return undefined;
+    const deadline = AbortSignal.any([signal, timeout]);
     let abort: () => void = () => {};
     try {
       return await Promise.race([
@@ -118,6 +119,7 @@ export function createMemoryRecall(options: {
       .slice(-6);
     if (!notes.length && !recent.length && !context.relatedConversation?.length) return;
     const fallback = await options.memory.find({ query: context.prompt });
+    const selectionDeadline = AbortSignal.timeout(1_000);
     const parsed = planSchema.safeParse(
       options.curator.configured && canContinue()
         ? await ask(
@@ -131,6 +133,7 @@ export function createMemoryRecall(options: {
               notes: notes.map(({ path, text, status, fact }) => ({ path, text, status, fact })),
             },
             signal,
+            selectionDeadline,
           )
         : undefined,
     );
@@ -197,6 +200,7 @@ export function createMemoryRecall(options: {
             rankInstructions,
             { request: context.prompt, mode: plan.mode, notes: facts, messages: candidates },
             signal,
+            selectionDeadline,
           )
         : undefined,
     );
