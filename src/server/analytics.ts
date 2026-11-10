@@ -11,7 +11,7 @@ import {
   legacyOnboardingChoiceProperties,
   onboardingPersonProperties,
 } from '../shared/onboarding-analytics.ts';
-import type { OnboardingProfile } from '../shared/onboarding.ts';
+import { updatesEmailConsent, type OnboardingProfile } from '../shared/onboarding.ts';
 
 import {
   analyticsEvent,
@@ -280,7 +280,9 @@ export async function createAnalytics(options: {
       email,
       nod_updates_email_consent: true,
       nod_updates_email_consent_at: new Date().toISOString(),
-      nod_updates_email_consent_version: 1,
+      nod_updates_email_consent_version: updatesEmailConsent.version,
+      nod_updates_email_consent_text: updatesEmailConsent.text,
+      nod_updates_email_consent_privacy_url: updatesEmailConsent.privacyUrl,
     });
   }
   function setUsageData(owner: string, enabled: boolean, revision = state(owner).revision) {

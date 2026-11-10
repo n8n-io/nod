@@ -62,6 +62,15 @@ export const communityLinks = {
   discord: 'https://discord.gg/n8n',
   forum: 'https://community.n8n.io/c/n8n-labs/48',
 } as const;
+export const legalLinks = {
+  terms: 'https://n8n.io/legal/nod-terms-of-use/',
+  privacy: 'https://n8n.io/legal/privacy/',
+} as const;
+export const updatesEmailConsent = {
+  version: 1,
+  text: 'I agree that n8n GmbH links my email to my Nod usage data and sends me updates about Nod and other n8n products.',
+  privacyUrl: legalLinks.privacy,
+} as const;
 export function connectedGmail(connection: Connection) {
   return (
     connection.slug === 'gmail' &&

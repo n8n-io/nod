@@ -115,7 +115,7 @@ See [Report contents and limits](/deploy/troubleshooting/#report-contents-and-li
 
 ## Email updates
 
-The last onboarding step lets you leave your email address for updates about Nod and other n8n products. Its consent checkbox starts unchecked. Ticking it means you agree that n8n GmbH links your email to your Nod usage data and sends you those updates. Nod sends the address only when you enter it, tick that box, and select **Start chatting**, or **Continue** in the desktop app, while **Share usage data** is on. It stores the address as the `email` property on this installation's PostHog person profile, with a consent flag, time, and version. This checkbox controls the email, not the fixed About you answers. Ordinary events do not carry the address. If you leave the address blank or sharing is off, Nod does not send it.
+The last onboarding step lets you leave your email address for updates about Nod and other n8n products. Its consent checkbox starts unchecked. Ticking it means you agree that n8n GmbH links your email to your Nod usage data and sends you those updates. Nod sends the address only when you enter it, tick that box, and select **Start chatting**, or **Continue** in the desktop app, while **Share usage data** is on. It stores the address as the `email` property on this installation's PostHog person profile, with a consent flag, time and version, and the exact checkbox wording and privacy policy link you agreed to. This checkbox controls the email, not the fixed About you answers. Ordinary events do not carry the address. If you leave the address blank or sharing is off, Nod does not send it.
 
 Submitting the form sends no email immediately. You can withdraw your consent at any time, with effect for the future, through the unsubscribe link in every email or at privacy@n8n.io. Turning off **Share usage data** stops new analytics and profile updates; it does not delete data already in PostHog. To remove stored answers or contact data, request deletion through **Send feedback** or at privacy@n8n.io. See n8n's [privacy policy](https://n8n.io/legal/privacy/).
 
@@ -147,3 +147,5 @@ You can't clear only your chat history yet. **Remove all data** deletes it along
 - [Conversation traces](/trust/conversation-traces/)
 - [Security review guide](/trust/security-review/)
 - [Security model and limits](/trust/security-model/)
+- [n8n privacy policy](https://n8n.io/legal/privacy/)
+- [Nod Terms of Use](https://n8n.io/legal/nod-terms-of-use/)
