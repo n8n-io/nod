@@ -90,7 +90,7 @@ export default defineConfig({
     starlight({
       title: 'Nod',
       description:
-        'Nod is a personal assistant with its own computer. Learn how to install it, use it, and how it keeps your accounts and actions under your control.',
+        'Nod is an open source personal agent with its own computer. Learn how to install it, use it, and how it keeps your accounts and actions under your control.',
       logo: { light: './src/assets/nod-light.svg', dark: './src/assets/nod-dark.svg' },
       favicon: '/favicon.svg',
       head: [{ tag: 'script', content: gtmSnippet }],
@@ -113,7 +113,7 @@ export default defineConfig({
         starlightLlmsTxt({
           projectName: 'Nod',
           description:
-            'Nod is a personal assistant you use through one chat. It has its own Linux workspace and browser, uses your connected apps, and keeps your accounts and actions under your control.',
+            'Nod is an open source personal agent you use through one chat. It has its own Linux workspace and browser, uses your connected apps, and keeps your accounts and actions under your control.',
         }),
       ],
     }),

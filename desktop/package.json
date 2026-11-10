@@ -6,7 +6,7 @@
   "private": true,
   "type": "module",
   "main": "main/main.mjs",
-  "description": "Nod local desktop experiment",
+  "description": "Nod, the open source personal agent from n8n",
   "scripts": {
     "postinstall": "node scripts/patch-osx-sign.mjs",
     "start": "electron .",
