@@ -217,7 +217,9 @@ app.whenReady().then(async () => {
       stopping = true;
       const update = (await readFile(join(root, 'stop'), 'utf8')).replace(/^stop$/, '');
       await rm(join(root, 'stop'));
-      if (update) await startWindowsInstall({ directory: update, appPath: process.execPath, pid: process.pid, systemRoot: process.env.SYSTEMROOT });
+      if (update)
+        try { await startWindowsInstall({ directory: update, appPath: process.execPath, pid: process.pid, systemRoot: process.env.SYSTEMROOT }); }
+        catch (error) { await record('error', { message: error.message }); app.exit(1); return; }
       await record('stopped');
       app.exit(0);
     }, 100);

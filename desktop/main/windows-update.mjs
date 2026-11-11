@@ -36,7 +36,7 @@ export function startWindowsInstall(options) {
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        'Start-Process -FilePath $env:NOD_UPDATE_POWERSHELL -WindowStyle Hidden -ArgumentList $env:NOD_UPDATE_ARGUMENTS',
+        "$ErrorActionPreference = 'Stop'; Start-Process -FilePath $env:NOD_UPDATE_POWERSHELL -WindowStyle Hidden -ArgumentList $env:NOD_UPDATE_ARGUMENTS",
       ],
       {
         stdio: 'ignore',
