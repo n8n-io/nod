@@ -8,7 +8,7 @@ export type TrustBasis =
   | { kind: 'approved' };
 
 export interface TrustWords {
-  userMessages?: Array<{ at: string; text: string }>;
+  userMessages?: Array<{ at: string; text: string; canAuthorize?: boolean }>;
   assistantMessageBeforeLatestUserMessage?: string;
   scheduledTaskInstruction?: string;
   scheduledFor?: string;
@@ -19,7 +19,9 @@ export interface TrustWords {
 
 export function trustDecision(words: TrustWords) {
   const sources = new Map<string, string>();
-  words.userMessages?.forEach(({ text }, index) => sources.set(`message:${index}`, text));
+  words.userMessages?.forEach(({ text, canAuthorize }, index) => {
+    if (canAuthorize !== false) sources.set(`message:${index}`, text);
+  });
   if (words.scheduledTaskInstruction) sources.set('schedule', words.scheduledTaskInstruction);
   if (words.standingInstruction) sources.set('standing', words.standingInstruction);
   if (words.userRules) sources.set('rules', words.userRules);
@@ -138,7 +140,9 @@ export function trustBasis(
     const match = typeof source === 'string' && /^message:(0|[1-9]\d*)$/.exec(source);
     if (match) {
       const index = Number(match[1]);
-      return messageIds[index] && said(words.userMessages?.[index]?.text)
+      return messageIds[index] &&
+        words.userMessages?.[index]?.canAuthorize !== false &&
+        said(words.userMessages?.[index]?.text)
         ? { kind: 'message', messageId: messageIds[index], quote: kept }
         : undefined;
     }
@@ -150,7 +154,10 @@ export function trustBasis(
       return { kind: 'rule', quote: kept };
     return undefined;
   }
-  const index = words.userMessages?.findIndex((message) => said(message.text)) ?? -1;
+  const index =
+    words.userMessages?.findIndex(
+      (message) => message.canAuthorize !== false && said(message.text),
+    ) ?? -1;
   if (index >= 0)
     return messageIds[index]
       ? { kind: 'message', messageId: messageIds[index], quote: kept }

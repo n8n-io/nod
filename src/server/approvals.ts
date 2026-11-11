@@ -6,6 +6,7 @@ import { refresh } from './events.ts';
 import {
   abortTurns,
   enqueueTurn,
+  lockThread,
   withTurnLock,
   type SubmitUserMessageResult,
   type TurnRef,
@@ -15,7 +16,7 @@ import { appConfirmation } from '../ports/agent.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { localTimestamp } from '../shared/date-locale.ts';
 import { lockKey, locksTable } from './locks.ts';
-import { afterCommit } from './transaction.ts';
+import { afterCommit, transaction } from './transaction.ts';
 import type { CaptureAnalytics } from './analytics.ts';
 
 export interface ApprovalExecutionContext {
@@ -312,6 +313,7 @@ export async function createApprovals(
       admit?: (asks: boolean) => Promise<void>;
       validate?: (client: PoolClient) => Promise<void>;
       expectedRevision?: number;
+      expectedChatRevision?: string;
     } = {},
   ) {
     const encoded = JSON.stringify(args);
@@ -457,7 +459,27 @@ export async function createApprovals(
       if (typeof question !== 'string' || !question.trim())
         throw new Error('The confirmation model did not produce a valid question.');
     }
-    const proposal = await withTurnLock(turn.turnId, async (client) => {
+    const saveProposal = async (client: PoolClient) => {
+      if (options.expectedChatRevision !== undefined) {
+        const latest = (
+          await client.query<{ id: string }>(
+            `SELECT m.id FROM messages m WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.role='user' AND m.hidden_at IS NULL
+               AND EXISTS (SELECT 1 FROM turns s WHERE s.owner_id=$1 AND s.thread_id=m.thread_id AND s.source='user'
+                 AND (s.message_id=m.id OR s.id=m.turn_id))
+               AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=$1 AND (u.message_id=m.id OR u.id=m.turn_id)
+                 AND to_jsonb(u)->>'task_id' IS NOT NULL)
+               ORDER BY m.created_at DESC,m.id DESC LIMIT 1`,
+            [ownerId, turn.threadId],
+          )
+        ).rows[0]?.id;
+        if (latest !== options.expectedChatRevision)
+          throw Object.assign(
+            conflict(
+              'The chat changed while this action was being checked. This action did not run. Please ask again.',
+            ),
+            { notRun: true },
+          );
+      }
       const inspected = await inspect(client);
       if ('cached' in inspected) return inspected;
       await options.validate?.(client);
@@ -487,7 +509,19 @@ export async function createApprovals(
       ).rows[0];
       options.signal?.throwIfAborted();
       return { cached: false as const, approval, question, source: inspected.source };
-    });
+    };
+    const proposal =
+      options.expectedChatRevision !== undefined
+        ? await transaction(
+            async (client) => {
+              if ((await lockThread(client)).id !== turn.threadId)
+                throw conflict('This conversation is no longer active.');
+              return withTurnLock(turn.turnId, saveProposal, client);
+            },
+            pool,
+            options.signal,
+          )
+        : await withTurnLock(turn.turnId, saveProposal);
     if (proposal.cached) return proposal.result;
     if ('question' in proposal) {
       if ('source' in proposal && proposal.source) changed('asked', action, proposal.source);

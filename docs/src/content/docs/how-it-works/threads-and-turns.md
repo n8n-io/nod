@@ -19,13 +19,13 @@ The code lives in [`src/server/thread.ts`](https://github.com/n8n-io/nod/blob/ma
 
 A turn is one run of the agent. Each turn is a row in the `turns` table with a `source` and a `session_id`, and it records its reply channel, so a Telegram message gets its answer on Telegram.
 
-| `source`   | Created by                                                                                 | Session                                      |
-| ---------- | ------------------------------------------------------------------------------------------ | -------------------------------------------- |
-| `user`     | A message or reaction from you                                                             | The chat, or the session selected by a reply |
-| `task`     | Chat dispatch or an addressed owner update                                                 | The saved task session                       |
-| `schedule` | A schedule firing                                                                          | A new session                                |
-| `event`    | A source batch or observer task                                                            | The observer or the task                     |
-| `resume`   | A completed secure form, payment approval, app connection or your answer to a confirmation | The session that asked                       |
+| `source`   | Created by                                                                                                             | Session                                      |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `user`     | A message from you, or a reaction that starts ordinary chat work                                                       | The chat, or the session selected by a reply |
+| `task`     | Chat dispatch or an addressed owner update                                                                             | The saved task session                       |
+| `schedule` | A schedule firing                                                                                                      | A new session                                |
+| `event`    | A source batch or observer task                                                                                        | The observer or the task                     |
+| `resume`   | A completed secure form, payment approval, app connection, or your reply or reaction confirming or declining an action | The session that asked                       |
 
 A recurring schedule skips a firing while an earlier run of it is still queued, running or waiting on you, and a schedule run can't create schedules.
 
