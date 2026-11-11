@@ -1919,8 +1919,8 @@ fetch('/v2/connect/verify',{method:'POST',headers:{'Content-Type':'application/j
       ]);
     } finally {
       if (timer) clearTimeout(timer);
+      if (brokerFailure !== undefined) throw brokerFailure;
     }
-    assert.equal(brokerFailure, undefined);
     assert.equal(verified, 1);
     assert.equal(callbacks, 1);
     assert.equal(browser.owns(bridgeUrl), false);
