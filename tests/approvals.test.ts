@@ -512,6 +512,7 @@ test(
       const reviews: Array<Record<string, any>> = [];
       const prompts: string[] = [];
       let duringReview: () => Promise<void> = async () => {};
+      let duringReply: () => Promise<void> = async () => {};
       let aligned:
         boolean | string | ((input: Record<string, any>) => boolean | Record<string, unknown>) =
         false;
@@ -541,6 +542,7 @@ test(
         review: async (instructions, input) => {
           if ('reply' in input) {
             replies.push(input);
+            await duringReply();
             const reply = String(input.reply)
               .replace(/[.!]+$/, '')
               .toLowerCase();
@@ -2074,7 +2076,7 @@ test(
             db.pool,
           );
           assert.equal(forged, undefined);
-          assert.equal((await stored(first.id)).status, 'expired');
+          assert.equal((await stored(first.id)).status, 'pending');
           const second = await ask();
           await transaction(
             async (client) =>
@@ -2085,6 +2087,34 @@ test(
             db.pool,
           );
           assert.equal((await stored(second.id)).status, 'confirmed');
+          const channel = 'telegram:fixture-reply-race';
+          const asked = await begin('Synthetic chat-app request', { channel });
+          const seen = await propose(asked, 'NOD_notification_preferences_update', {
+            notificationRule: 'Seen before the reply',
+          });
+          await finish(asked.turnId);
+          const reading = deferred();
+          const held = deferred();
+          duringReply = async () => {
+            reading.resolve();
+            await held.promise;
+          };
+          const submitted = messages.submit(reply, [], { channel });
+          await reading.promise;
+          duringReply = async () => {};
+          const later = await running(
+            await thread.enqueueTurn('Synthetic background check', { source: 'event', channel }),
+          );
+          const unseen = await propose(later, 'NOD_notification_preferences_update', {
+            notificationRule: 'Asked while the reply was read',
+          });
+          await finish(later.turnId);
+          held.resolve();
+          const answered = await submitted;
+          assert.equal((await stored(unseen)).status, 'pending');
+          assert.equal(await turnStatus(later.turnId), 'waiting');
+          assert.equal((await stored(seen)).status, 'confirmed');
+          assert.equal((await stored(seen)).execution_turn_id, answered.turnId);
           delete replyAnswers[reply];
           await thread.stopThread();
         },

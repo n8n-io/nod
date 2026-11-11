@@ -495,9 +495,10 @@ export async function createApprovals(
   async function confirmationFor(
     database: Pick<PoolClient, 'query'>,
     input: ChatConfirmationInput,
-    lock: boolean,
+    approvalId?: string,
   ) {
     const target =
+      approvalId ??
       input.replyToMessageId ??
       (
         await database.query(
@@ -511,18 +512,21 @@ export async function createApprovals(
         )
       ).rows[0]?.id;
     if (!target) return undefined;
+    const match = approvalId
+      ? 'a.id=$1'
+      : `a.confirmation_message_id=COALESCE((SELECT m.reply_to_message_id FROM messages m
+         WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3 AND m.role='assistant' AND m.turn_id IS NULL AND m.hidden_at IS NULL),$1)`;
     return (
       await database.query(
         `SELECT a.*,u.source AS turn_source,u.status AS turn_status,u.background AS turn_background,u.session_id AS turn_session_id,u.prompt AS turn_prompt
        FROM approvals a JOIN turns u ON u.id=a.turn_id
-       WHERE a.confirmation_message_id=COALESCE((SELECT m.reply_to_message_id FROM messages m
-         WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3 AND m.role='assistant' AND m.turn_id IS NULL AND m.hidden_at IS NULL),$1)
+       WHERE ${match}
          AND a.owner_id=$2 AND u.owner_id=$2 AND a.thread_id=$3 AND u.thread_id=$3 AND u.channel=$4
          AND EXISTS (SELECT 1 FROM messages c WHERE c.id=a.confirmation_message_id AND c.owner_id=a.owner_id AND c.hidden_at IS NULL)
          AND (to_jsonb(u)->>'task_id' IS NULL OR NOT EXISTS (
            SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id AND n.id<>u.id
              AND n.source IN ('user','task') AND n.message_id IS NOT NULL AND n.status IN ('queued','running')))
-       ${lock ? ' FOR UPDATE OF a' : ''}`,
+       ${approvalId ? ' FOR UPDATE OF a' : ''}`,
         [target, ownerId, input.threadId, input.channel],
       )
     ).rows[0];
@@ -530,7 +534,7 @@ export async function createApprovals(
 
   async function answerChat(input: ChatConfirmationInput) {
     if (!interpret) return undefined;
-    const approval = await confirmationFor(pool, input, false);
+    const approval = await confirmationFor(pool, input);
     if (!approval) return undefined;
     const approvalId = approval.id as string;
     if (input.hasAttachments) return { approvalId };
@@ -547,9 +551,10 @@ export async function createApprovals(
     input: ChatConfirmationInput,
     onInserted?: () => void,
   ): Promise<ChatConfirmationResult> {
-    const approval = await confirmationFor(client, input, true);
-    if (!approval || !input.answer || approval.status !== 'pending') return undefined;
-    const approved = input.answer.approvalId === approval.id ? input.answer.approved : undefined;
+    if (!input.answer) return undefined;
+    const approval = await confirmationFor(client, input, input.answer.approvalId);
+    if (approval?.status !== 'pending') return undefined;
+    const { approved } = input.answer;
     const active = ['running', 'waiting'].includes(approval.turn_status);
     if (approved === undefined) {
       await client.query("UPDATE approvals SET status='expired' WHERE id=$1 AND owner_id=$2", [
