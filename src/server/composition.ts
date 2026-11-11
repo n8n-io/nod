@@ -181,6 +181,7 @@ import {
   resumeAfterPayment,
   retryCredentials,
   startThreadWorkers,
+  stopSignal,
   stopThreadWorkers,
   withTurnLock,
   type TurnRef,
@@ -2422,6 +2423,7 @@ async function initializeApplication(
         replyToMessageId,
         attachments,
         onInserted,
+        stopSignal,
       ) =>
         (
           await userMessages.submit(text, attachments, {
@@ -2432,8 +2434,10 @@ async function initializeApplication(
             replyToMessageId,
             answer,
             onInserted,
+            stopSignal,
           })
         ).turnId,
+      stopSignal,
       messageAccepted: ownerMessageAccepted,
       answer: (text, channel, replyToMessageId) =>
         userMessages.answer(text, { channel, replyToMessageId }),

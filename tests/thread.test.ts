@@ -2756,6 +2756,69 @@ test(
       );
 
       await t.test(
+        'a message still being read when Stop lands starts no work and answers no later confirmation',
+        async () => {
+          await waitFor(settledThread);
+          let reviewing = false;
+          let releaseReview!: () => void;
+          const review = new Promise<void>((resolve) => {
+            releaseReview = resolve;
+          });
+          const held = await createApprovals(
+            async () => ({}),
+            undefined,
+            async () => {
+              reviewing = true;
+              await review;
+              return true;
+            },
+            async () => 'Delete the synthetic email?',
+          );
+          const previousObserver = inspectObserver;
+          inspectObserver = async (context) => {
+            if (context.prompt !== 'stop-race-delete') return;
+            await held.request(
+              { turnId: context.turnId, threadId: context.threadId },
+              'GMAIL_DELETE_MESSAGE',
+              { message_id: 'synthetic-message' },
+            );
+            return { status: 'waiting_user', waitingFor: 'approval' };
+          };
+          let late: Promise<SubmitMessageResponse> | undefined;
+          try {
+            const asked = await thread.submitUserMessage('stop-race-delete');
+            await waitFor(settled(asked.turnId));
+            late = thread
+              .createUserMessageService({ confirmAction: held.chat })
+              .submit('yes', [], { clientMessageId: randomUUID() });
+            await waitFor(() => reviewing);
+            assert.equal((await request('POST', '/api/thread/stop')).statusCode, 200);
+            const later = await thread.submitUserMessage('stop-race-delete');
+            await waitFor(settled(later.turnId));
+            releaseReview();
+            const answered = await late;
+            assert.equal(await turnStatus(answered.turnId), 'cancelled');
+            assert.equal(
+              (await db.pool.query('SELECT text FROM messages WHERE id=$1', [answered.messageId]))
+                .rows[0]?.text,
+              'yes',
+            );
+            assert.equal(await turnStatus(later.turnId), 'waiting');
+            assert.equal(
+              (await db.pool.query('SELECT status FROM approvals WHERE turn_id=$1', [later.turnId]))
+                .rows[0]?.status,
+              'pending',
+            );
+          } finally {
+            releaseReview();
+            await late?.catch(() => {});
+            inspectObserver = previousObserver;
+            await thread.stopThread();
+          }
+        },
+      );
+
+      await t.test(
         'audio admission stays closed while stop or reset waits for the thread lock',
         async () => {
           for (const operation of ['stop', 'reset']) {

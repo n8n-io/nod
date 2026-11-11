@@ -78,6 +78,8 @@ export const boss = new PgBoss({
 const running = new Map<string, AbortController>();
 const inflight = new Set<Promise<void>>();
 let stopping = false;
+let nextStop = new AbortController();
+export const stopSignal = () => nextStop.signal;
 
 export type TurnSource = 'user' | 'schedule' | 'event' | 'resume' | 'task';
 export const ownerStarted = (turn = 'u') => `${turn}.source IN ('user','task','resume')`;
@@ -116,6 +118,7 @@ interface SubmitUserMessageOptions {
   prepareAttachments?: (client: PoolClient, threadId: string) => Promise<Artifact[]>;
   persistSubmission?: (client: PoolClient, result: SubmitUserMessageResult) => Promise<void>;
   onInserted?: () => void;
+  stopSignal?: AbortSignal;
 }
 export interface SubmitUserMessageResult {
   threadId: string;
@@ -568,6 +571,7 @@ export async function submitUserMessage(
   taskReply?: TaskReply,
   onAccepted?: (channel: string) => void,
 ): Promise<SubmitUserMessageResult> {
+  const stop = options.stopSignal ?? stopSignal();
   validateSource(options.sourceId, options.channel);
   const channel = options.channel ?? 'web';
   const confirmation = {
@@ -670,17 +674,19 @@ export async function submitUserMessage(
       (!options.replyToMessageId || !options.replyQuote.trim() || options.replyQuote.length > 4000)
     )
       throw httpError('Select a passage of 4,000 characters or fewer.');
-    const confirmed = options.questionAnswer
-      ? undefined
-      : await confirmAction?.accept(
-          client,
-          {
-            ...confirmation,
-            threadId: thread.id,
-            answer,
-          },
-          markInserted,
-        );
+    const live = !stop.aborted;
+    const confirmed =
+      options.questionAnswer || !live
+        ? undefined
+        : await confirmAction?.accept(
+            client,
+            {
+              ...confirmation,
+              threadId: thread.id,
+              answer,
+            },
+            markInserted,
+          );
     await assertReplyTarget(client, thread.id, options.replyToMessageId, true);
     if (confirmed && 'turnId' in confirmed) return confirmed;
     await localArtifacts.retainArtifacts(
@@ -690,25 +696,28 @@ export async function submitUserMessage(
     const messageId = options.clientMessageId ?? randomUUID();
     const turnId = randomUUID();
     const taskTarget =
-      options.replyToMessageId && (await taskReply?.(client, thread.id, options.replyToMessageId));
-    const question =
-      taskTarget ||
-      choiceQuestion ||
-      confirmed?.waiting ||
-      (
-        await client.query(
-          `SELECT u.id,u.session_id,u.background FROM turns u JOIN messages m ON m.turn_id=u.id AND m.owner_id=u.owner_id
+      live &&
+      options.replyToMessageId &&
+      (await taskReply?.(client, thread.id, options.replyToMessageId));
+    const question = live
+      ? taskTarget ||
+        choiceQuestion ||
+        confirmed?.waiting ||
+        (
+          await client.query(
+            `SELECT u.id,u.session_id,u.background FROM turns u JOIN messages m ON m.turn_id=u.id AND m.owner_id=u.owner_id
        WHERE u.owner_id=$1 AND u.thread_id=$2 AND (u.channel=$3 OR $4::uuid IS NOT NULL) AND u.status='waiting' AND u.waiting_reason='question'
          AND m.role='assistant' AND (($4::uuid IS NOT NULL AND m.id=$4) OR ($4::uuid IS NULL AND u.session_id=$2))
          AND m.id=(SELECT q.id FROM messages q WHERE q.turn_id=u.id AND q.owner_id=u.owner_id AND q.role='assistant' ORDER BY q.created_at DESC,q.id DESC LIMIT 1)
          AND NOT ${laterSupersedingTurnSql}
        ORDER BY m.created_at DESC,m.id DESC LIMIT 1`,
-          [ownerId, thread.id, channel, options.replyToMessageId ?? null],
-        )
-      ).rows[0];
+            [ownerId, thread.id, channel, options.replyToMessageId ?? null],
+          )
+        ).rows[0]
+      : undefined;
     await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel,session_id,background,parent_turn_id)
-       VALUES($1,$2,$3,'user',$4,$5,$6,$7,$8,$9,$10)`,
+      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel,session_id,background,parent_turn_id,status,finished_at)
+       VALUES($1,$2,$3,'user',$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $11='cancelled' THEN now() END)`,
       [
         turnId,
         ownerId,
@@ -720,6 +729,7 @@ export async function submitUserMessage(
         question?.session_id ?? thread.id,
         question?.background ?? false,
         question?.id ?? null,
+        live ? 'queued' : 'cancelled',
       ],
     );
     if (taskTarget) await taskTarget.record(turnId);
@@ -740,7 +750,7 @@ export async function submitUserMessage(
         options.questionAnswer ? JSON.stringify(options.questionAnswer) : null,
       ],
     );
-    await sendDrain(client, thread.id);
+    if (live) await sendDrain(client, thread.id);
     markInserted();
     return { threadId: thread.id, turnId, messageId };
   };
@@ -775,6 +785,10 @@ export async function cancelTurns(
   actor: 'owner' | 'agent' = 'owner',
 ) {
   const capture = snapshotAnalytics(analytics);
+  if (!scope.sessionId && !scope.background) {
+    nextStop.abort();
+    nextStop = new AbortController();
+  }
   const values = [threadId, ownerId, scope.sessionId ?? null, scope.background ?? false];
   const candidates = await client.query<{ id: string }>(
     "SELECT id FROM turns WHERE thread_id=$1 AND owner_id=$2 AND ($3::uuid IS NULL OR session_id=$3) AND (NOT $4 OR session_id<>$1) AND status IN ('queued','running','waiting')",

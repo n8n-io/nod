@@ -29,6 +29,7 @@ import {
   reactToAssistantMessage,
   resetThread,
   resumeAfterHandoff,
+  stopSignal,
   stopThread,
   submitUserMessage,
 } from './thread.ts';
@@ -408,6 +409,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     }, threadId);
   });
   app.post('/api/messages', textMessageOptions, async (request) => {
+    const arrival = stopSignal();
     const input = messageInput
       .refine((value) => value.text.length > 0 || value.attachmentIds.length > 0)
       .refine(
@@ -455,6 +457,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
         threadId: input.threadId,
         clientMessageId,
         questionAnswer: input.questionAnswer,
+        stopSignal: arrival,
       },
     );
     return {

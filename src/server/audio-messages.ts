@@ -6,7 +6,7 @@ import type { AppDependencies } from './app.ts';
 import { pool } from './db.ts';
 import { ownerId, configuration } from './config.ts';
 import { artifactView, localArtifacts } from './artifacts.ts';
-import { lockThread, submitUserMessage } from './thread.ts';
+import { lockThread, stopSignal, submitUserMessage } from './thread.ts';
 import { transaction } from './transaction.ts';
 import { refresh } from './events.ts';
 import { SpeechSetupError } from './speech.ts';
@@ -71,6 +71,7 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
   app.post('/api/messages/audio', audioMessageOptions, async (request, reply) => {
     if (suspensions)
       throw privateConflict('Work is stopping. Send the recording again when it finishes.');
+    const arrival = stopSignal();
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(120_000)]);
     active.set(controller, undefined);
@@ -251,6 +252,7 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
           displayText,
           audioCaption: input.text,
           channel: 'web',
+          stopSignal: arrival,
           prepareAttachments: async (client, threadId) => {
             signal.throwIfAborted();
             const clip = await artifacts.storeArtifact(

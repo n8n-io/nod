@@ -141,7 +141,7 @@ A session opens its browser on its first browser call, so a session that never b
 
 ## Stop and failures
 
-The main **Stop** control aborts running turns, cancels queued and waiting turns in every session, and closes all open task records. A workspace command also ends the processes it detached, when the command itself ends, so work it left behind never outlives it. Stop ends that tree the same way, and escalates to `SIGKILL` for a process that ignores the first signal. A task's **Stop** control affects only that session and its helpers. When the owner asks in chat, `task stop` without an ID does what the main control does for every session except the main chat, so the chat turn can report what it stopped. Stop ends a turn at once, even when a tool call is stuck: Nod stops waiting for it, and nothing it returns later reaches the turn. Stop can't undo an external action that already started. Ordinary turns have no time limit, but every browser command does (see [Sandbox and browser](/how-it-works/sandbox-and-browser/)).
+The main **Stop** control aborts running turns, cancels queued and waiting turns in every session, and closes all open task records. Stop, and `/stop` without a reply in Telegram or WhatsApp, also catch messages Nod is still handling. Such a message starts no work, even when Nod was still reading it, for example to check whether it answers a confirmation. It's saved with its turn already cancelled and answers no confirmation, question or task. A chat-app message counts from when Nod starts reading it, so one still queued behind another counts as sent after Stop. The Stop control refuses a recording that is still being transcribed, so you can send it again. A workspace command also ends the processes it detached, when the command itself ends, so work it left behind never outlives it. Stop ends that tree the same way, and escalates to `SIGKILL` for a process that ignores the first signal. A task's **Stop** control affects only that session and its helpers. When the owner asks in chat, `task stop` without an ID does what the main control does for every session except the main chat, so the chat turn can report what it stopped. Stop ends a turn at once, even when a tool call is stuck: Nod stops waiting for it, and nothing it returns later reaches the turn. Stop can't undo an external action that already started. Ordinary turns have no time limit, but every browser command does (see [Sandbox and browser](/how-it-works/sandbox-and-browser/)).
 
 An aborted database transaction stops waiting for a free connection at once. If the pool supplies a connection later, Nod closes it without running the transaction.
 
@@ -159,7 +159,7 @@ Reset is available through the development API at `POST /api/conversation/reset`
 | ---------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------- |
 | The thread with its messages, turns and task history | The old browser's throwaway profile, downloads and screens | Accounts, Vault, schedules, saved browser sessions and memory |
 
-The web client sends its `threadId` with each message, so a late message from before the reset is refused.
+The web client sends its `threadId` with each message, so a late message from before the reset is refused. A chat-app message Nod was still reading is saved in the new thread with its turn already cancelled.
 
 ## Related resources
 

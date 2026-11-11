@@ -87,7 +87,9 @@ interface ChannelOptions {
     replyToMessageId?: string,
     attachments?: Artifact[],
     onInserted?: () => void,
+    stopSignal?: AbortSignal,
   ) => Promise<string>;
+  stopSignal?: () => AbortSignal;
   messageAccepted?: () => (channel: string) => void;
   answer?: (
     text: string,
@@ -940,6 +942,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
 
   async function inboxStep() {
     if (closed || replacing) return false;
+    const stopSignal = options.stopSignal?.();
     const pending = (
       await pool.query<InboxRow>(
         "SELECT * FROM channel_inbox WHERE state='pending' AND owner_id=$1 ORDER BY created_at LIMIT 1",
@@ -1070,6 +1073,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         () => {
           inserted = true;
         },
+        stopSignal,
       );
       await options.attributeMediaUsage?.(client, row.media_usage_ids ?? [], turnId);
       await client.query(
