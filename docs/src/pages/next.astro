@@ -219,13 +219,16 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
             <div class="lp-panel">
               <div class="nod-screen nod-brief-screen">
                 <div class="nod-chat">
-                  <div class="nod-msg">
+                  <div class="nod-msg" data-at="0">
                     <div class="nod-bubble">
                       <div class="nod-text"><p>Your brief for Brightline is ready.</p></div>
-                      <div class="nod-attachment">
+                      <div class="nod-attachment" data-at="1150" data-until="1800">
                         <svg width="24" height="24" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"
                           ><path d="M14.75 15.25H1.25V.75h13.5zm-12-1.5h10.5V2.25H2.75zm8-3.25h-5.5V9h5.5zm0-3.5h-5.5V5.5h5.5z"
                           ></path></svg
+                        >
+                        <svg class="nod-cursor" data-at="400" viewBox="0 0 24 24" aria-hidden="true"
+                          ><path d="M5 2.5v17l4.4-4.1 2.9 6.3 2.7-1.2-2.9-6.2 6-.3z"></path></svg
                         >
                         <span class="nod-attachment-text"
                           ><span class="nod-attachment-name">Brightline Studio – call brief.pdf</span><span
@@ -236,7 +239,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
                     </div>
                   </div>
                 </div>
-                <article class="brief">
+                <article class="brief" data-at="1400">
                   <div class="brief-kicker">Call brief</div>
                   <h1>Brightline Studio</h1>
                   <div class="brief-meta">Tuesday, 27 October 2026 · 11:00–11:30 · Sara Kim, producer</div>
@@ -293,15 +296,16 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
               <div class="nod-screen nod-slack-screen">
                 <div class="nod-chat">
                   <div class="nod-msg">
-                    <div class="nod-bubble">
+                    <div class="nod-bubble" data-at="0">
                       <div class="nod-text">
                         <p>
-                          Also: Sara asked in Slack last week, “What would pricing look like for 3 videos?” and it was never
-                          answered. I pulled your pricing sheet from Notion and drafted a reply:
+                          Also: Sara asked in Slack last week, <mark class="nod-mark" data-at="600" data-until="2500"
+                            ><strong>“What would pricing look like for 3 videos?”</strong></mark
+                          > and it was never answered. I pulled your pricing sheet from Notion and drafted a reply:
                         </p>
                         <blockquote>
                           <p>
-                            Hi Sara! For three launch videos it’s $3,600 ($1,200 each), first cuts in 10 working days. Happy
+                            Hi Sara! For three launch videos it’s <strong>$3,600</strong> ($1,200 each), first cuts in 10 working days. Happy
                             to walk you through it on a call.
                           </p>
                         </blockquote>
@@ -309,11 +313,23 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
                       </div>
                     </div>
                   </div>
-                  <div class="nod-msg is-you">
+                  <div class="nod-msg is-you" data-at="1500">
                     <div class="nod-bubble"><div class="nod-text"><p>Yes, reply</p></div></div>
                   </div>
-                  <div class="nod-msg">
-                    <div class="nod-bubble"><div class="nod-text"><p>Replied in Slack.</p></div></div>
+                  <div class="nod-msg nod-msg-slot">
+                    <div class="nod-working" data-at="2000" data-until="2500" aria-hidden="true">
+                      <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"
+                        ><circle cx="16" cy="16" r="10" stroke="currentColor" stroke-width="4"></circle><g class="nod-orbit"
+                          ><circle cx="25" cy="6" r="4" fill="var(--nod-pink)"></circle></g
+                        ></svg
+                      >
+                      <span class="nod-working-steps">
+                        <span data-at="2000" data-until="2500">Nodding along…</span>
+                      </span>
+                    </div>
+                    <div class="nod-bubble" data-at="2500">
+                      <div class="nod-text"><p>Replied in Slack <span class="nod-emoji" data-at="2650">✅</span></p></div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -340,7 +356,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
             <div class="overlay"></div>
             <div class="lp-panel">
               <div class="nod-screen nod-watch-screen">
-                <div class="mac-note" role="img" aria-label="Notification from Nod: Brightline pricing changed">
+                <div class="mac-note" data-at="500" role="img" aria-label="Notification from Nod: Brightline pricing changed">
                   <div class="mac-note-icon">
                     <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"
                       ><circle cx="16" cy="16" r="10" stroke="currentColor" stroke-width="4"></circle><circle
@@ -660,6 +676,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
       import { startEqualPanels } from '../scripts/equal-panels.js';
       import { startHeroGlyph } from '../scripts/hero-glyph.js';
       import { startHeroVideo } from '../scripts/hero-video.js';
+      import { startPanelStories } from '../scripts/panel-stories.js';
       import { startRoadmapLine } from '../scripts/roadmap-line.js';
 
       startCarousel();
@@ -668,6 +685,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
       startRoadmapLine();
       startHeroGlyph();
       startHeroVideo();
+      startPanelStories();
     </script>
   </body>
 </html>
