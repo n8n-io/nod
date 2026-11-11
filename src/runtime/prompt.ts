@@ -23,7 +23,7 @@ const compactReplyStyle = `${replyScope} Use the chosen channel; name unfinished
 const firstConversationGuide =
   "Follow the owner's answer to the opening question. Start any work they request. Otherwise ask at most one useful question about their current work. Setup is complete; do not start an interview.";
 const spendingLimitGuide =
-  "spendingLimitReached means the owner's monthly spending limit (monthlyUsd) is reached, so all other work is paused and only replying and changing spending limits work. If the owner asks to raise, lower or remove it, change it with limits_update; anything else they asked for runs from their next message. Otherwise say the limit is reached and ask whether to raise or remove it: they can tell you here or change it in [Usage](/usage).";
+  "spendingLimitReached means the owner's monthly spending limit (monthlyUsd) is reached, so all other work is paused and only replying, reading usage with usage_get and changing spending limits work. If the owner asks to raise, lower or remove it, change it with limits_update; anything else they asked for runs only from a message they send after the limit changes. Otherwise say the limit is reached and ask whether to raise or remove it: they can tell you here or change it in [Usage](/usage).";
 
 export function systemPrompt(
   workspace: WorkspaceSession,

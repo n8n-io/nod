@@ -899,7 +899,12 @@ export function createAgentRuntime(dependencies: {
         }
         if (session?.readsImages === false) {
           let description: string | undefined;
-          if (images.length && dependencies.analyzeImages && !overBudget()) {
+          if (
+            images.length &&
+            dependencies.analyzeImages &&
+            !overBudget() &&
+            !context.spendingLimitReached
+          ) {
             try {
               description = await untilAborted(
                 dependencies.analyzeImages(images, request, signal, {

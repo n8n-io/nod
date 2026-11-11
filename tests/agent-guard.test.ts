@@ -1454,9 +1454,10 @@ test('past the spending check-in chat task start and reply are refused while rep
 test('past the monthly spending limit a turn can only reply and change spending limits', async () => {
   const managed: string[] = [];
   let actions = 0;
-  await fixture(
+  const { replies } = await fixture(
     async (tools, _emit, _options, request) => {
       assert.match(request, /"spendingLimitReached":\{"monthlyUsd":25\}/);
+      await call(tools, 'send_message', { text: 'Synthetic limit reply.' });
       await assert.rejects(
         call(tools, 'apps', { action: 'SLACK_SEND_MESSAGE', args: {} }),
         /spending limit/,
@@ -1485,6 +1486,7 @@ test('past the monthly spending limit a turn can only reply and change spending 
   );
   assert.equal(actions, 0);
   assert.deepEqual(managed, ['usage_get', 'limits_update']);
+  assert.ok(replies.includes('Synthetic limit reply.'));
 });
 
 test('app time annotations reach Pi inside the data boundary while scripts and browser observations stay unchanged', async () => {
