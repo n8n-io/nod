@@ -31,6 +31,7 @@ import type { Agent } from '../../ports/agent.ts';
 import {
   closeInterruptedCalls,
   completeAssistantMessage,
+  dropFailedInput,
   keptImages,
   openLocalSession,
   removedImage,
@@ -507,6 +508,7 @@ export function createPiAgent(options: {
       let idle = false;
       let activation: ExtensionAPI | undefined;
       const manager = ephemeral ? SessionManager.inMemory(directory) : openLocalSession(directory);
+      dropFailedInput(manager);
       closeInterruptedCalls(manager);
       const prior = manager.buildSessionContext().messages;
       const last = prior.findLast((message) => message.role === 'assistant');
@@ -1058,6 +1060,7 @@ export function createPiAgent(options: {
               triggerTurn: true,
             });
           else await session.prompt(text, { images, expandPromptTemplates: false });
+          if (dropFailedInput(manager)) session.refreshContext();
         },
         async abort() {
           await session.abort();

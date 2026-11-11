@@ -5156,6 +5156,92 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
   }
 });
 
+test('a failed model request leaves none of its unanswered input for later turns', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-failed-request-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const requests: string[] = [];
+  const replies: Array<'error' | 'tool' | 'text'> = ['error', 'tool', 'error', 'text', 'text'];
+  const agent = createPiAgent({
+    provider: 'openai',
+    apiKey: 'fixture-key',
+    sessionRoot: directory,
+    createSession: async (options) => {
+      const result = await createAgentSession(options);
+      result.session.setActiveToolsByName(result.session.getAllTools().map((tool) => tool.name));
+      result.session.agent.streamFunction = (model, context) => {
+        requests.push(JSON.stringify(context.messages));
+        const reply = replies.shift();
+        const message: AssistantMessage = {
+          ...fauxAssistantMessage(
+            reply === 'tool'
+              ? [{ type: 'toolCall', id: 'fixture-read', name: 'read_fixture', arguments: {} }]
+              : [{ type: 'text', text: reply === 'text' ? 'Hi' : '' }],
+          ),
+          provider: model.provider,
+          model: model.id,
+          api: model.api,
+        };
+        const stream = createAssistantMessageEventStream();
+        stream.push(
+          reply === 'error'
+            ? {
+                type: 'error',
+                reason: 'error',
+                error: { ...message, stopReason: 'error', errorMessage: 'Synthetic refusal' },
+              }
+            : reply === 'tool'
+              ? { type: 'done', reason: 'toolUse', message: { ...message, stopReason: 'toolUse' } }
+              : { type: 'done', reason: 'stop', message },
+        );
+        return stream;
+      };
+      return result;
+    },
+  });
+  t.after(() => agent.dispose());
+  const threadId = randomUUID();
+  const turn = async (prompt: string) => {
+    const session = await agent.open({
+      ...fakeExecution(threadId, randomUUID()),
+      systemPrompt: 'Fixture system',
+      ...sandbox,
+      tools: [
+        {
+          name: 'read_fixture',
+          description: 'Read the synthetic fixture.',
+          parameters: { type: 'object', properties: {} },
+          eager: true,
+          execute: async () => ({
+            content: [{ type: 'text', text: 'Synthetic hostile tool output' }],
+          }),
+        },
+      ],
+      shouldStop: () => false,
+      onEvent() {},
+    });
+    await session.prompt(prompt, []);
+    await session.dispose();
+  };
+  await turn('Synthetic hostile paste');
+  await turn('Read the synthetic fixture');
+  await turn('hello? can you just say hi');
+  const saved = join(directory, threadId);
+  SessionManager.continueRecent(saved, saved).appendCustomEntry('synthetic-padding', {
+    value: 'x'.repeat(8 * 1024 * 1024),
+  });
+  await turn('Thanks');
+  assert.equal(requests.length, 5);
+  assert.ok(!requests[1].includes('Synthetic hostile paste'));
+  assert.ok(requests[2].includes('Synthetic hostile tool output'));
+  for (const request of requests.slice(3)) {
+    assert.ok(!request.includes('Synthetic hostile paste'));
+    assert.ok(!request.includes('Synthetic hostile tool output'));
+    assert.ok(request.includes('Read the synthetic fixture'));
+    assert.ok(request.includes('hello? can you just say hi'));
+  }
+  assert.ok(requests[4].includes('Hi'));
+});
+
 test('task classification has a small request budget and never retries or records conversation traces', async (t) => {
   const deadlines: number[] = [];
   t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => {
