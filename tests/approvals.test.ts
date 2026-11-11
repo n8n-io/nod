@@ -1738,6 +1738,47 @@ test(
       });
 
       await t.test(
+        'a request the owner stopped, or whose continuation the owner stopped, is never owner words or a proposal for a later reply',
+        async () => {
+          const answered = await begin('Email Ana the answered invoice.');
+          await finish(answered.turnId);
+          await finish((await begin('Thanks, that is all.')).turnId, 'succeeded');
+          const continued = await begin('Email Carol the continued invoice.');
+          await finish(continued.turnId);
+          await thread.resumeTurn(
+            continued.turnId,
+            `synthetic-resume:${continued.turnId}`,
+            'The synthetic sign-in finished. Continue the request.',
+          );
+          const stopped = await begin('Email Bob the stopped invoice.');
+          await thread.reply(stopped, 'Should I send Bob the stopped invoice now?');
+          await thread.stopThread();
+          const later = await begin('Yes, go ahead.');
+          aligned = (input) =>
+            input.userMessages.some((message: { text: string }) =>
+              /continued invoice|stopped invoice/.test(message.text),
+            ) || /stopped invoice/.test(input.assistantMessageBeforeLatestUserMessage ?? '');
+          try {
+            const verdict = await trust.check(later, 'GMAIL_SEND_EMAIL', email('bob@example.test'));
+            compareVerdict(verdict, { confirm: true, reason: 'unrequested' });
+            assert.equal(verdict.chatRevision, (await row(later.turnId)).message_id);
+            const seen = reviews
+              .at(-1)!
+              .userMessages.map((message: { text: string }) => message.text);
+            assert.deepEqual(seen.slice(-3), [
+              'Email Ana the answered invoice.',
+              'Thanks, that is all.',
+              'Yes, go ahead.',
+            ]);
+            assert.equal(reviews.at(-1)!.assistantMessageBeforeLatestUserMessage, undefined);
+            assert.ok(!seen.some((text: string) => /continued invoice|stopped invoice/.test(text)));
+          } finally {
+            await finish(later.turnId, 'cancelled');
+          }
+        },
+      );
+
+      await t.test(
         'background work shows the checker only the standing instruction, and a scheduled run only its instruction',
         async () => {
           const setRule = (rule: string) =>

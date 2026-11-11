@@ -8659,6 +8659,66 @@ test(
       );
 
       await t.test(
+        'a request that failed at the model provider or that the owner stopped is no request for later turns',
+        async () => {
+          await waitFor(settledThread);
+          modelErrors.set(
+            'Synthetic refused paste',
+            'The model request failed: synthetic refusal.',
+          );
+          block('Synthetic stopped request');
+          try {
+            const kept = await thread.submitUserMessage('Synthetic standing request');
+            await waitFor(settled(kept.turnId));
+            const refused = await thread.submitUserMessage('Synthetic refused paste');
+            await waitFor(settled(refused.turnId));
+            assert.equal(await turnStatus(refused.turnId), 'failed');
+            const afterFailure = await thread.submitUserMessage('Synthetic first follow-up');
+            await waitFor(settled(afterFailure.turnId));
+            assert.equal(ran(afterFailure.turnId)!.withdrawnRequest, 'failed');
+            const scheduled = await thread.enqueueTurn('Synthetic scheduled check', {
+              source: 'schedule',
+            });
+            await waitFor(settled(scheduled));
+            const fresh = ran(scheduled)!.history.map(({ text }) => text);
+            assert.ok(fresh.includes('Synthetic standing request'));
+            assert.ok(!fresh.includes('Synthetic refused paste'));
+            const background = randomUUID();
+            modelErrors.set('Synthetic background check', 'The model request failed: overloaded.');
+            const failedCheck = await thread.enqueueTurn('Synthetic background check', {
+              source: 'event',
+              sessionId: background,
+            });
+            await waitFor(settled(failedCheck));
+            const nextCheck = await thread.enqueueTurn('Synthetic next background check', {
+              source: 'event',
+              sessionId: background,
+            });
+            await waitFor(settled(nextCheck));
+            assert.ok(ran(nextCheck)!.previousFailure);
+            assert.equal(ran(nextCheck)!.withdrawnRequest, undefined);
+            const stopped = await thread.submitUserMessage('Synthetic stopped request');
+            await waitFor(() => Boolean(ran(stopped.turnId)));
+            await thread.stopThread();
+            await waitFor(settled(stopped.turnId));
+            const next = await thread.submitUserMessage('Synthetic unrelated question');
+            await waitFor(settled(next.turnId));
+            assert.equal(ran(next.turnId)!.withdrawnRequest, 'stopped');
+            assert.ok(
+              !ran(next.turnId)!.history.some(({ text }) => text === 'Synthetic stopped request'),
+            );
+            const quiet = await thread.submitUserMessage('Synthetic second follow-up');
+            await waitFor(settled(quiet.turnId));
+            assert.equal(ran(quiet.turnId)!.withdrawnRequest, undefined);
+          } finally {
+            modelErrors.delete('Synthetic refused paste');
+            modelErrors.delete('Synthetic background check');
+            release('Synthetic stopped request');
+          }
+        },
+      );
+
+      await t.test(
         'a confirmed action whose resume turn stops or fails first reaches the next turn of its session once',
         async (t) => {
           let sends = 0;
@@ -8755,7 +8815,7 @@ const memoryFixture = async (tables: string[] = []) => {
   url.searchParams.set('options', `-c search_path=${schema}`);
   const pool = new pg.Pool({ connectionString: url.href });
   await pool.query(
-    "CREATE TABLE threads (id uuid PRIMARY KEY, owner_id text NOT NULL, archived_at timestamptz); CREATE TABLE messages (id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL, turn_id uuid, thread_id uuid, suggestions jsonb, attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now()); CREATE TABLE turns (id uuid PRIMARY KEY, owner_id text NOT NULL, channel text); CREATE TABLE preferences (owner_id text PRIMARY KEY, time_zone text)",
+    "CREATE TABLE threads (id uuid PRIMARY KEY, owner_id text NOT NULL, archived_at timestamptz); CREATE TABLE messages (id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL, turn_id uuid, thread_id uuid, suggestions jsonb, attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now()); CREATE TABLE turns (id uuid PRIMARY KEY, owner_id text NOT NULL, channel text, message_id uuid, withdrawn boolean NOT NULL DEFAULT false); CREATE TABLE preferences (owner_id text PRIMARY KEY, time_zone text)",
   );
   for (const table of tables) await pool.query(table);
   const ownerId = 'memory-fixture-owner';

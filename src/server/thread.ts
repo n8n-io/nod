@@ -22,7 +22,7 @@ import { PgBoss } from 'pg-boss';
 import type { Pool, PoolClient } from 'pg';
 import { cancellationTransaction, pool } from './db.ts';
 import { afterCommit, afterRollback, transaction } from './transaction.ts';
-import { laterSupersedingTurnSql, turnChainSql } from './turn-chain.ts';
+import { laterSupersedingTurnSql, turnChainSql, withdrawnSql } from './turn-chain.ts';
 import { dataRoot, databaseUrl, ownerId } from './config.ts';
 import { delta, refresh, working } from './events.ts';
 import {
@@ -718,8 +718,8 @@ export async function submitUserMessage(
         ).rows[0]
       : undefined;
     await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel,session_id,background,parent_turn_id,status,finished_at)
-       VALUES($1,$2,$3,'user',$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $11='cancelled' THEN now() END)`,
+      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel,session_id,background,parent_turn_id,status,finished_at,withdrawn)
+       VALUES($1,$2,$3,'user',$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $11='cancelled' THEN now() END,$11='cancelled')`,
       [
         turnId,
         ownerId,
@@ -779,6 +779,21 @@ export async function submitUserMessage(
   return result;
 }
 
+async function withdraw(client: PoolClient, turnIds: string[], wholeRequest: boolean) {
+  if (!turnIds.length) return;
+  await client.query(
+    `WITH RECURSIVE line(id,parent,session_id,start) AS (
+       SELECT id,parent_turn_id,session_id,id FROM turns WHERE owner_id=$2 AND id=ANY($1::uuid[])
+       UNION
+       SELECT p.id,p.parent_turn_id,p.session_id,l.start FROM line l
+       JOIN turns p ON $3 AND p.id=l.parent AND p.owner_id=$2 AND p.session_id=l.session_id)
+     UPDATE turns t SET withdrawn=true FROM line l
+     WHERE t.id=l.id AND EXISTS(SELECT 1 FROM line said JOIN turns c ON c.id=said.id WHERE said.start=l.start
+       AND (c.message_id IS NOT NULL OR EXISTS(SELECT 1 FROM messages m WHERE m.owner_id=c.owner_id AND m.turn_id=c.id AND m.role='user')))`,
+    [turnIds, ownerId, wholeRequest],
+  );
+}
+
 export async function cancelTurns(
   client: PoolClient,
   threadId: string,
@@ -792,8 +807,9 @@ export async function cancelTurns(
     nextStop = new AbortController();
   }
   const values = [threadId, ownerId, scope.sessionId ?? null, scope.background ?? false];
-  const candidates = await client.query<{ id: string }>(
-    "SELECT id FROM turns WHERE thread_id=$1 AND owner_id=$2 AND ($3::uuid IS NULL OR session_id=$3) AND (NOT $4 OR session_id<>$1) AND status IN ('queued','running','waiting')",
+  const candidates = await client.query<{ id: string; live: boolean }>(
+    `SELECT u.id,u.status<>'waiting' OR NOT ${laterSupersedingTurnSql} AS live FROM turns u
+     WHERE u.thread_id=$1 AND u.owner_id=$2 AND ($3::uuid IS NULL OR u.session_id=$3) AND (NOT $4 OR u.session_id<>$1) AND u.status IN ('queued','running','waiting')`,
     values,
   );
   abortTurns(candidates.rows.map(({ id }) => id));
@@ -801,6 +817,14 @@ export async function cancelTurns(
     "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND ($3::uuid IS NULL OR session_id=$3) AND (NOT $4 OR session_id<>$1) AND status IN ('queued','running','waiting') RETURNING id,session_id",
     values,
   );
+  if (actor === 'owner') {
+    const stopped = new Set(current.rows.map((row) => row.id as string));
+    await withdraw(
+      client,
+      candidates.rows.flatMap(({ id, live }) => (live && stopped.has(id) ? [id] : [])),
+      true,
+    );
+  }
   const taskIds = (
     await client.query(
       `SELECT DISTINCT to_jsonb(u)->>'task_id' AS id FROM turns u
@@ -1126,7 +1150,7 @@ async function failTurn(
   turnId: string,
   present: ThreadDependencies['present'],
   error = interrupted,
-  next?: string,
+  { next, withdrawn }: { next?: string; withdrawn?: boolean } = {},
 ) {
   const turn = await transaction(async (client) => {
     const thread = await lockThread(client);
@@ -1156,6 +1180,7 @@ async function failTurn(
     ).rows[0];
     if (!turn) return;
     await finishTurn(client, turnId, 'failed', { error });
+    if (withdrawn) await withdraw(client, [turnId], false);
     const task = turn.task_id
       ? (
           await client.query('SELECT message_id FROM tasks WHERE id=$1 AND owner_id=$2', [
@@ -1217,7 +1242,7 @@ function failAtLimit(turnId: string, monthlyUsd?: number) {
     turnId,
     undefined,
     monthlyUsd === undefined ? spendingLimitReached : spendingLimitText(monthlyUsd),
-    'Raise or remove it in [Usage](/usage), or tell me here.',
+    { next: 'Raise or remove it in [Usage](/usage), or tell me here.' },
   );
 }
 
@@ -1419,14 +1444,15 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
        FROM messages m CROSS JOIN seen CROSS JOIN boundary
        LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
        WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.hidden_at IS NULL AND m.id IS DISTINCT FROM $3::uuid
+       AND NOT (m.role='user' AND ${withdrawnSql('m')})
        AND (NOT $5::boolean OR (m.created_at<=boundary.at AND
          (u.id IS NULL OR u.session_id=$6
           OR (u.status IN ('succeeded','failed','cancelled') AND u.finished_at<=boundary.at))))
        ORDER BY m.created_at DESC,m.id DESC LIMIT 30) m ORDER BY created_at,id`,
       [ownerId, threadId, sourceMessageId, turn.id, Boolean(turn.background), turn.session_id],
     ),
-    pool.query<{ status: string; error: string | null }>(
-      `SELECT status,error FROM turns WHERE owner_id=$1 AND session_id=$2 AND id<>$3
+    pool.query<{ status: string; error: string | null; withdrawn: boolean }>(
+      `SELECT status,error,withdrawn FROM turns WHERE owner_id=$1 AND session_id=$2 AND id<>$3 AND started_at IS NOT NULL
          AND (created_at,id)<(SELECT created_at,id FROM turns WHERE id=$3)
          ORDER BY created_at DESC,id DESC LIMIT 1`,
       [ownerId, turn.session_id, turn.id],
@@ -1474,6 +1500,12 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       memory: memory ?? '',
       ...(previous.rows[0]?.status === 'failed' && previous.rows[0].error
         ? { previousFailure: previous.rows[0].error }
+        : {}),
+      ...(previous.rows[0]?.withdrawn
+        ? {
+            withdrawnRequest:
+              previous.rows[0].status === 'failed' ? ('failed' as const) : ('stopped' as const),
+          }
         : {}),
       ...(confirmedActions?.length ? { confirmedActions } : {}),
       ...(related.length ? { relatedConversation: related } : {}),
@@ -2162,7 +2194,11 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       await failAtLimit(turnId, limit?.monthlyUsd);
     } else {
       failure = error instanceof ModelRequestError ? 'model' : 'unknown';
-      if (await failTurn(turnId, dependencies.present, failureText(error)))
+      if (
+        await failTurn(turnId, dependencies.present, failureText(error), {
+          withdrawn: failure === 'model',
+        })
+      )
         logFailure('turn_failed', error, { threadId, turnId, sessionId: turn.session_id });
     }
   } finally {

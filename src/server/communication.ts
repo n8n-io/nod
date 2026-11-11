@@ -4,6 +4,7 @@ import type { ModelReview } from '../ports/decisions.ts';
 import type { ApprovalDescription } from './approvals.ts';
 import type { ChannelPresentation } from './channels.ts';
 import { redactSecretText, withoutSecretKeys } from './redaction.ts';
+import { withdrawnSql } from './turn-chain.ts';
 import { appPageLinks } from '../shared/app-links.ts';
 import { conversationStyle, sourceWording } from '../shared/conversation-style.ts';
 
@@ -73,7 +74,7 @@ export function createCommunication(options: {
     const users = (
       await options.pool.query<{ text: string; created_at: Date }>(
         `SELECT m.text,m.created_at FROM messages m
-         WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.role='user' AND m.text<>''
+         WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.role='user' AND m.text<>'' AND NOT ${withdrawnSql('m')}
            ${receipts ? 'AND NOT EXISTS (SELECT 1 FROM chat_verification_submissions v WHERE v.message_id=m.id)' : ''}
            AND NOT EXISTS (
              SELECT 1 FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task

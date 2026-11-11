@@ -1293,7 +1293,13 @@ test('hosted app connection bridge keeps browser proof on the configured origin'
       const { bridgeKey } = JSON.parse(
         bootstrap.body.match(/const \{brokerOrigin,id,expiresAt,bridgeKey\}=(.+);/)![1],
       );
-      assert.equal((await app.inject({ url: url.pathname, headers })).statusCode, 403);
+      const navigation = await app.inject({ url: url.pathname, headers });
+      assert.equal(navigation.statusCode, 200, navigation.body);
+      assert.equal(
+        JSON.parse(navigation.body.match(/const \{brokerOrigin,id,expiresAt,bridgeKey\}=(.+);/)![1])
+          .bridgeKey,
+        bridgeKey,
+      );
       const key = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).publicKey.export({
         format: 'jwk',
       });
@@ -1338,6 +1344,7 @@ test('hosted app connection bridge keeps browser proof on the configured origin'
         browser.remote(attempt.url),
         brokerOrigin + '/v2/connect/pair?ticket=synthetic-hosted',
       );
+      assert.equal((await app.inject({ url: url.pathname, headers })).statusCode, 403);
       assert.equal((await post({ origin, 'x-nod-bridge': bridgeKey })).statusCode, 403);
       assert.equal(calls.length, 2);
       browser.finish(state);
@@ -1619,7 +1626,12 @@ test('connection bridge binds a single browser bootstrap to one installation att
   assert.match(bootstrap.headers.get('content-security-policy')!, /frame-ancestors 'none'/);
   const html = await bootstrap.text();
   const bridgeKey = JSON.parse(html.match(/const bridgeKey=("[^"]+");/)![1]);
-  assert.equal((await fetch(url)).status, 403);
+  const navigation = await fetch(url);
+  assert.equal(navigation.status, 200);
+  assert.equal(
+    JSON.parse((await navigation.text()).match(/const bridgeKey=("[^"]+");/)![1]),
+    bridgeKey,
+  );
   const post = (headers: Record<string, string>) =>
     fetch(`${origin}/start`, {
       method: 'POST',
@@ -1641,6 +1653,7 @@ test('connection bridge binds a single browser bootstrap to one installation att
   assert.equal((await started.json()).id, id);
   assert.equal(calls, 1);
   assert.equal(browser.remote(url), `${brokerOrigin}/v2/connect/pair?ticket=fixture`);
+  assert.equal((await fetch(url)).status, 403);
   assert.equal((await post({ origin, 'x-nod-bridge': bridgeKey })).status, 403);
   assert.equal(
     (await fetch(origin + returnPath, { headers: { origin: 'https://attacker.example.test' } }))

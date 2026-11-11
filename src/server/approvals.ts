@@ -16,6 +16,7 @@ import { appConfirmation } from '../ports/agent.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { localTimestamp } from '../shared/date-locale.ts';
 import { lockKey, locksTable } from './locks.ts';
+import { withdrawnSql } from './turn-chain.ts';
 import { afterCommit, transaction } from './transaction.ts';
 import type { CaptureAnalytics } from './analytics.ts';
 
@@ -182,7 +183,7 @@ async function workOf(
   const task = (
     await client.query<{ title: string; request: string | null }>(
       `SELECT t.title,m.text AS request FROM tasks t
-       LEFT JOIN messages m ON m.id=t.source_message_id AND m.owner_id=t.owner_id AND m.role='user'
+       LEFT JOIN messages m ON m.id=t.source_message_id AND m.owner_id=t.owner_id AND m.role='user' AND NOT ${withdrawnSql('m')}
        WHERE t.id=$1 AND t.owner_id=$2`,
       [taskId, ownerId],
     )
