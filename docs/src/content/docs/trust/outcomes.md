@@ -48,7 +48,7 @@ When you say yes to an app action, the server runs that saved action once, and t
 
 ## Stop and restarts
 
-**Stop** cancels running, queued and waiting tasks. A form or code you submit late can't restart them. Stop can't undo anything that already reached a website or app.
+**Stop** cancels running, queued and waiting tasks. A form or code you submit late can't restart them. Stop can't undo anything that already reached a website or app. If you stop just after approving an app action, Nod still learns what happened to it the next time you write in that conversation or task.
 
 After Nod restarts, any claim or confirmed action that was still running becomes uncertain. Nothing that was in progress runs again.
 

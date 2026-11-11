@@ -1749,6 +1749,7 @@ async function initializeApplication(
       readArtifact: workspace.readArtifact.bind(workspace),
       mailCheck,
       executeConfirmation: approvals.executeConfirmed,
+      stoppedOutcomes: approvals.stoppedOutcomes,
       bindVerificationQuestion: chatVerification.bindQuestion,
       reactToMessage: reactions.react,
       proactivity: proactivity.context,

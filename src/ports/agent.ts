@@ -163,6 +163,7 @@ export interface RuntimeContext {
   checkIn?: { budgetUsd: number; spentUsd: number; planUsd?: number };
   spendingLimitReached?: { monthlyUsd: number };
   previousFailure?: string;
+  confirmedActions?: string[];
   taskContext?: {
     id: string;
     title: string;

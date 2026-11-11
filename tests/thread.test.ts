@@ -29,7 +29,7 @@ import type { ConnectedApp } from '../src/ports/integrations.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../src/ports/object-storage.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
-import { compactOwnerContext, ownerContext } from '../src/runtime/prompt.ts';
+import { compactOwnerContext, firstInstruction, ownerContext } from '../src/runtime/prompt.ts';
 import { createPreferencesStore } from '../src/server/preferences.ts';
 import type { ThreadDependencies } from '../src/server/thread.ts';
 import type {
@@ -8327,6 +8327,75 @@ test(
             for (const item of cases) modelErrors.delete(item.prompt);
             presentInterruption = previousPresenter;
           }
+        },
+      );
+
+      await t.test(
+        'a confirmed action that ran or may have run before Stop reaches the next turn of its session once',
+        async (t) => {
+          let sends = 0;
+          let interrupted = false;
+          const stopped = await createApprovals(
+            async () => {
+              sends++;
+              await thread.stopThread();
+              if (interrupted) throw new Error('Synthetic send interrupted.');
+              return { id: 'synthetic-sent-message' };
+            },
+            undefined,
+            async (reply) => (reply === 'yep go ahead' ? true : undefined),
+            async () => 'Send the synthetic update to Priya?',
+          );
+          const previous = {
+            observer: inspectObserver,
+            execute: dependencies.executeConfirmation,
+            outcomes: dependencies.stoppedOutcomes,
+          };
+          dependencies.executeConfirmation = stopped.executeConfirmed;
+          dependencies.stoppedOutcomes = stopped.stoppedOutcomes;
+          t.after(() => {
+            inspectObserver = previous.observer;
+            dependencies.executeConfirmation = previous.execute;
+            dependencies.stoppedOutcomes = previous.outcomes;
+          });
+          inspectObserver = async (context) => {
+            if (context.prompt !== 'Email Priya the synthetic update') return;
+            await stopped.request(
+              { threadId: context.threadId, turnId: context.turnId },
+              'GMAIL_SEND_EMAIL',
+              { recipient_email: 'priya@example.test', subject: 'Synthetic update' },
+            );
+            return { status: 'waiting_user', waitingFor: 'approval' };
+          };
+          const instruction = async (text: string) => {
+            const { turnId } = await thread.submitUserMessage(text);
+            await waitFor(settled(turnId));
+            return firstInstruction(ran(turnId)!, true, new Set());
+          };
+          for (const [failed, status, outcome] of [
+            [false, 'completed', /executed once[^]*synthetic-sent-message/],
+            [true, 'uncertain', /outcome is uncertain/],
+          ] as const) {
+            interrupted = failed;
+            const asked = await thread.submitUserMessage('Email Priya the synthetic update');
+            await waitFor(settled(asked.turnId));
+            const approval = (
+              await db.pool.query('SELECT * FROM approvals WHERE turn_id=$1', [asked.turnId])
+            ).rows[0];
+            const confirmed = await thread
+              .createUserMessageService({ confirmAction: stopped.chat })
+              .submit('yep go ahead', [], { replyToMessageId: approval.confirmation_message_id });
+            await waitFor(settled(confirmed.turnId));
+            assert.equal(await turnStatus(confirmed.turnId), 'cancelled');
+            assert.equal(
+              (await db.pool.query('SELECT status FROM approvals WHERE id=$1', [approval.id]))
+                .rows[0].status,
+              status,
+            );
+            assert.match(await instruction('Did the email to Priya go out?'), outcome);
+            assert.doesNotMatch(await instruction('Thanks.'), /confirmedActions/);
+          }
+          assert.equal(sends, 2);
         },
       );
     } finally {
