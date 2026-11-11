@@ -1374,11 +1374,18 @@ async function checkRemoteConnection(connection) {
     typeof account.settings?.onboardingCompleted !== 'boolean'
   )
     throw new Error('This address did not respond as a Nod server.');
+  const revision = account.settings.usageDataRevision;
+  const usageDataRevision =
+    typeof revision === 'string' && /^(?:0|[1-9]\d{0,18})$/.test(revision) ? revision : null;
   return {
     url,
     token: connection.token,
     owner: account.user.id,
-    analyticsAllowed: account.settings.usageData === true && account.analytics?.enabled === true,
+    usageDataRevision,
+    analyticsAllowed:
+      usageDataRevision !== null &&
+      account.settings.usageData === true &&
+      account.analytics?.enabled === true,
   };
 }
 
@@ -1434,7 +1441,8 @@ async function startRemote(connection) {
               !quitting &&
               remoteConnection === activeConnection &&
               current.owner === connected.owner &&
-              current.analyticsAllowed
+              current.analyticsAllowed &&
+              current.usageDataRevision === connected.usageDataRevision
             );
           },
         });

@@ -1285,11 +1285,12 @@ describe('account routes', () => {
       usageData: false,
       traces: false,
     };
+    let usageRevision = 0;
     const calls = { writes: 0, started: 0 };
     const activity = { days: 0, reads: 0, wait: undefined as (() => Promise<void>) | undefined };
     const accounts: AccountStore = {
       async readConsent() {
-        return { enabled: record.usageData, revision: '0' };
+        return { enabled: record.usageData, revision: String(usageRevision) };
       },
       async read() {
         return record;
@@ -1302,6 +1303,7 @@ describe('account routes', () => {
       async update(_owner, input) {
         calls.writes++;
         const saved = record;
+        if (input.usageData !== undefined && input.usageData !== saved.usageData) usageRevision++;
         record = {
           theme: input.theme ?? saved.theme,
           onboardingCompleted: input.onboardingCompleted ?? saved.onboardingCompleted,
@@ -1405,6 +1407,7 @@ describe('account routes', () => {
         });
       const initial = await request();
       assert.equal(initial.json().settings.usageData, false);
+      assert.equal(initial.json().settings.usageDataRevision, '0');
       assert.equal(initial.json().capabilities.traces, false);
       assert.deepEqual(
         [initial.json().analytics.enabled, initial.json().analytics.distinctId],
@@ -1420,6 +1423,7 @@ describe('account routes', () => {
       assert.equal(opted.statusCode, 200);
       assert.equal(opted.json().user.name, 'You');
       assert.equal(opted.json().settings.usageData, true);
+      assert.equal(opted.json().settings.usageDataRevision, '1');
       assert.equal(opted.json().analytics.enabled, available);
       assert.equal(opted.json().analytics.surveys, available ? true : undefined);
       assert.equal(f.activity.reads, available ? 1 : 0);
@@ -1455,6 +1459,7 @@ describe('account routes', () => {
       const reads = f.activity.reads;
       const declined = await request({ usageData: false });
       assert.equal(declined.json().analytics.enabled, false);
+      assert.equal(declined.json().settings.usageDataRevision, '2');
       assert.notEqual(declined.json().analytics.surveys, true);
       assert.equal(f.activity.reads, reads);
       analytics.capture('local-owner', { event: 'chat_stopped' });

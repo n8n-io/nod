@@ -4033,6 +4033,13 @@ test('verified server connections use the desktop ID and require both sharing ga
     { name: 'sharing enabled', usageData: true, serverAnalytics: true, expected: true },
     { name: 'server opt-out', usageData: false, serverAnalytics: true, expected: false },
     {
+      name: 'older server without consent revision',
+      usageData: true,
+      serverAnalytics: true,
+      olderServer: true,
+      expected: false,
+    },
+    {
       name: 'server collection disabled',
       usageData: true,
       serverAnalytics: false,
@@ -4054,7 +4061,11 @@ test('verified server connections use the desktop ID and require both sharing ga
         async () =>
           Response.json({
             user: { id: 'server-owner' },
-            settings: { onboardingCompleted: true, usageData: scenario.usageData },
+            settings: {
+              onboardingCompleted: true,
+              usageData: scenario.usageData,
+              ...(scenario.olderServer ? {} : { usageDataRevision: '1' }),
+            },
             analytics: { enabled: scenario.serverAnalytics },
           }),
         {
@@ -4124,74 +4135,88 @@ test('verified server connections use the desktop ID and require both sharing ga
   }
 });
 
-test(
-  'server opt-out during native capture suppresses a verified connection',
-  { timeout: 15_000 },
-  async (t) => {
-    const url = 'https://assistant.example.test';
-    const token = randomBytes(32).toString('base64url');
-    const loading = deferred();
-    const metadata = deferred();
-    let capturePending = false;
-    let serverSharing = true;
-    let sessionChecks = 0;
-    const f = await runningDesktop(
-      t,
-      async (resource) => {
-        if (String(resource) === `${url}/api/session`) sessionChecks++;
-        return Response.json({
-          user: { id: 'server-owner' },
-          settings: { onboardingCompleted: true, usageData: serverSharing },
-          analytics: { enabled: true },
+test('server consent changes during native capture suppress a verified connection', async (t) => {
+  for (const scenario of [
+    { name: 'opt-out', finalSharing: false, finalRevision: '2' },
+    { name: 'opt-out then opt-in', finalSharing: true, finalRevision: '3' },
+  ]) {
+    await t.test(scenario.name, { timeout: 15_000 }, async (t) => {
+      const url = 'https://assistant.example.test';
+      const token = randomBytes(32).toString('base64url');
+      const loading = deferred();
+      const metadata = deferred();
+      let capturePending = false;
+      let serverSharing = true;
+      let usageDataRevision = '1';
+      const observedSessions = [];
+      const f = await runningDesktop(
+        t,
+        async (resource) => {
+          if (String(resource) === `${url}/api/session`)
+            observedSessions.push({ usageData: serverSharing, revision: usageDataRevision });
+          return Response.json({
+            user: { id: 'server-owner' },
+            settings: {
+              onboardingCompleted: true,
+              usageData: serverSharing,
+              usageDataRevision,
+            },
+            analytics: { enabled: true },
+          });
+        },
+        {
+          initialState: 'fresh',
+          packaged: true,
+          buildMetadata: { release: true },
+          version: '0.1.17',
+          prepareRuntime: () => assert.fail('A remote client must not prepare a local runtime.'),
+          nativeMetadataRead: () => {
+            if (!capturePending) return;
+            loading.resolve();
+            return metadata.promise;
+          },
+        },
+      );
+      try {
+        await f.launch();
+        await waitFor(
+          () => {
+            assert.equal(f.nativeAnalytics.filter((item) => item.event === 'app_opened').length, 1);
+            return true;
+          },
+          { attempts: 40, interval: 10 },
+        );
+        capturePending = true;
+        await f.storage.store.saveConnection({ url, token });
+        assert.equal((await f.prepare()).phase, 'ready');
+        await loading.promise;
+        assert.deepEqual(observedSessions, [{ usageData: true, revision: '1' }]);
+        serverSharing = scenario.finalSharing;
+        usageDataRevision = scenario.finalRevision;
+        metadata.resolve();
+        await waitFor(
+          () => {
+            assert.equal(observedSessions.length, 2);
+            return true;
+          },
+          { attempts: 40, interval: 10 },
+        );
+        assert.deepEqual(observedSessions[1], {
+          usageData: scenario.finalSharing,
+          revision: scenario.finalRevision,
         });
-      },
-      {
-        initialState: 'fresh',
-        packaged: true,
-        buildMetadata: { release: true },
-        version: '0.1.17',
-        prepareRuntime: () => assert.fail('A remote client must not prepare a local runtime.'),
-        nativeMetadataRead: () => {
-          if (!capturePending) return;
-          loading.resolve();
-          return metadata.promise;
-        },
-      },
-    );
-    try {
-      await f.launch();
-      await waitFor(
-        () => {
-          assert.equal(f.nativeAnalytics.filter((item) => item.event === 'app_opened').length, 1);
-          return true;
-        },
-        { attempts: 40, interval: 10 },
-      );
-      capturePending = true;
-      await f.storage.store.saveConnection({ url, token });
-      assert.equal((await f.prepare()).phase, 'ready');
-      await loading.promise;
-      assert.equal(sessionChecks, 1);
-      serverSharing = false;
-      metadata.resolve();
-      await waitFor(
-        () => {
-          assert.equal(sessionChecks, 2);
-          return true;
-        },
-        { attempts: 40, interval: 10 },
-      );
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      assert.equal(
-        f.nativeAnalytics.filter((item) => item.event === 'server_connection_verified').length,
-        0,
-      );
-    } finally {
-      metadata.resolve();
-      await f.close();
-    }
-  },
-);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        assert.equal(
+          f.nativeAnalytics.filter((item) => item.event === 'server_connection_verified').length,
+          0,
+        );
+      } finally {
+        metadata.resolve();
+        await f.close();
+      }
+    });
+  }
+});
 
 test('the remote desktop starts without a local runtime and fences tokens to its trusted origin and frame', async (t) => {
   const storedProfile = await fixture(t);

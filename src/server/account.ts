@@ -63,7 +63,7 @@ export function createAccountSession(options: {
       if (accountVersion !== version || pending) continue;
       applyConsent(consent);
       options.onTraces?.(account.traces);
-      return { ...account, usageData: consent.enabled };
+      return { ...account, usageData: consent.enabled, usageDataRevision: consent.revision };
     }
   }
   async function updateAccount(input: AccountUpdate) {
@@ -124,6 +124,7 @@ export function createAccountSession(options: {
           theme: account.theme,
           onboardingCompleted: account.onboardingCompleted,
           usageData: account.usageData,
+          usageDataRevision: account.usageDataRevision,
           traces: account.traces,
         },
         capabilities: {

@@ -20,7 +20,7 @@ export interface AccountSettings {
 export interface SessionResponse {
   analytics?: AnalyticsConfiguration;
   user: AccountUser | null;
-  settings: AccountSettings | null;
+  settings: (AccountSettings & { usageDataRevision?: string }) | null;
   capabilities: { developer: boolean; traces: boolean; updatesEmail: boolean };
 }
 
