@@ -4118,16 +4118,34 @@ test('verified server connections use the desktop ID and require both sharing ga
         );
         assert.equal(verified.length, scenario.expected ? 1 : 0);
         if (!scenario.expected) return;
+        assert.equal(verified[0].api_key, posthogHost.key);
         assert.equal(verified[0].distinct_id, opening.distinct_id);
+        assert.match(verified[0].distinct_id, /^local:[0-9a-f-]{36}$/);
+        assert.match(
+          verified[0].uuid,
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        );
         assert.ok(new Date(verified[0].timestamp) >= new Date(opening.timestamp));
-        assert.equal(verified[0].properties.route, '/server');
-        assert.equal(verified[0].properties.$current_url, 'https://app.example/server');
-        assert.equal(verified[0].properties.$process_person_profile, false);
-        assert.equal(verified[0].properties.$geoip_disable, true);
-        assert.equal(verified[0].properties.app_version, '0.1.17');
-        assert.ok(!JSON.stringify(verified[0]).includes(url));
-        assert.ok(!JSON.stringify(verified[0]).includes(token));
-        assert.ok(!JSON.stringify(verified[0]).includes('server-owner'));
+        assert.deepEqual(Object.keys(verified[0]).sort(), [
+          'api_key',
+          'distinct_id',
+          'event',
+          'properties',
+          'timestamp',
+          'uuid',
+        ]);
+        assert.deepEqual(verified[0].properties, {
+          analytics_schema: posthogHost.schemaVersion,
+          environment: 'production',
+          surface: 'desktop',
+          app_version: '0.1.17',
+          route: '/server',
+          $current_url: 'https://app.example/server',
+          $pathname: '/server',
+          $host: 'app.example',
+          $process_person_profile: false,
+          $geoip_disable: true,
+        });
       } finally {
         await f.close();
       }

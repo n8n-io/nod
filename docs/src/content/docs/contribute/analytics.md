@@ -122,8 +122,7 @@ The team maintains an overview and focused analytics dashboards for the telemetr
 | Overview                | Observed installs, the first-use funnel, first-week usage, first-day app connections, and connected service, channel, and model rankings. |
 | Onboarding answers      | About you answer distributions for scope, who-for, company size, roles, and tasks.                                                        |
 | Apps and connections    | First-day app connection by first-observed date and version, latest observed app inventory, paired-channel state, and service reach.      |
-| Message usage           | Accepted-message volume, 30-minute sessions, first-day depth, and message source.                                                         |
-| Retention and aha       | D3 and D0–D7 activity, conditional D0→D1 return, message-count aha association, and Telegram pairing association.                         |
+| Usage and retention     | Accepted-message volume and source, first-day depth, D3 and D0–D7 activity, conditional D0→D1 return, and aha associations.               |
 | Product health          | Active analytics IDs, owner-requested work, execution outcomes, and return cohorts.                                                       |
 | Reliability and cost    | Queue/execution latency, model cost and pricing coverage, integration/tool failures, UI errors, and uncertain confirmations.              |
 | Outputs and interaction | Committed and shown output kinds, artifact actions, answer-choice use, explicit interaction reach, schedules, and source reads.           |
