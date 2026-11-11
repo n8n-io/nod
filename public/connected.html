@@ -134,7 +134,6 @@
       <h1 id="title">Return to Nod</h1>
       <p id="message">Check your connection in Nod.</p>
       <div class="actions">
-        <button id="close" class="return" type="button" hidden>Close page</button>
         <a id="return" class="return" href="/apps">Return to Nod</a>
       </div>
     </main>
@@ -169,19 +168,17 @@
               ? 'Sign-in link no longer active'
               : 'Sign-in didn’t finish';
         document.getElementById('title').textContent = title;
-        document.getElementById('message').textContent = succeeded
-          ? 'You can close this page and continue in Nod.'
-          : connection === 'expired'
-            ? 'Check your connection in Nod.'
-            : connection === 'cancelled'
-              ? 'You can start again in Nod.'
-              : 'Try again in Nod.';
+        const message = document.getElementById('message');
+        message.hidden = succeeded;
+        if (!succeeded)
+          message.textContent =
+            connection === 'expired'
+              ? 'Check your connection in Nod.'
+              : connection === 'cancelled'
+                ? 'You can start again in Nod.'
+                : 'Try again in Nod.';
         const desktop = query.get('desktop') === '1';
         const returnLink = document.getElementById('return');
-        const closeButton = document.getElementById('close');
-        returnLink.hidden = succeeded && !desktop;
-        closeButton.hidden = !succeeded;
-        closeButton.addEventListener('click', () => window.close());
         returnLink.href = desktop ? 'nod://open/apps' : '/apps';
         returnLink.addEventListener('click', (event) => {
           if (
