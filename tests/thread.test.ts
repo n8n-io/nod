@@ -8387,10 +8387,10 @@ test(
               .submit('yep go ahead', [], { replyToMessageId: approval.confirmation_message_id });
             await waitFor(settled(confirmed.turnId));
             assert.equal(await turnStatus(confirmed.turnId), 'cancelled');
-            assert.equal(
-              (await db.pool.query('SELECT status FROM approvals WHERE id=$1', [approval.id]))
-                .rows[0].status,
-              status,
+            await waitFor(
+              async () =>
+                (await db.pool.query('SELECT status FROM approvals WHERE id=$1', [approval.id]))
+                  .rows[0].status === status,
             );
             assert.match(await instruction('Did the email to Priya go out?'), outcome);
             assert.doesNotMatch(await instruction('Thanks.'), /confirmedActions/);
