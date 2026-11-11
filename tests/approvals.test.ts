@@ -1444,7 +1444,7 @@ test(
         turnIds.push(confirmed.turnId);
         await execute(approvalId);
         const sent = calls.length;
-        const resultId = randomUUID();
+        const resultId = '00000000-0000-4000-8000-000000000926';
         const resultText = 'Sent the synthetic report to Ana.';
         await db.pool.query(
           "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant',$5)",
@@ -1469,7 +1469,9 @@ test(
         assert.equal(reviews.at(-1)?.assistantMessageBeforeLatestUserMessage, resultText);
         aligned = () => ({ run: true, because: '👍' });
         assert.equal((await trust.check(reacted, 'GMAIL_SEND_EMAIL', args)).confirm, true);
-        const bare = await messages.submit('Yes.');
+        const bare = await messages.submit('Yes.', [], {
+          clientMessageId: '00000000-0000-4000-8000-000000000927',
+        });
         await db.pool.query(
           `WITH boundary AS (SELECT date_trunc('milliseconds',created_at) AS at FROM messages WHERE id=$2)
            UPDATE messages m SET created_at=boundary.at + CASE WHEN m.id=$1 THEN interval '500 microseconds' ELSE interval '800 microseconds' END
