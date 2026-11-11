@@ -117,21 +117,21 @@ The current contract is `v4`. It starts fresh. There is no historical migration 
 
 The team maintains an overview and focused analytics dashboards for the telemetry plan:
 
-| Dashboard               | Questions                                                                                                                             |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Overview                | Observed installs, the first-use funnel, first-week usage, first-day connections, and connected service, channel, and model rankings. |
-| Onboarding answers      | About you answer distributions for scope, who-for, company size, roles, and tasks.                                                    |
-| Apps and connections    | First-day app connection by first-observed date and version, current observed app types, paired-channel state, and service reach.     |
-| Message usage           | Accepted-message volume, 30-minute sessions, first-day depth, and message source.                                                     |
-| Retention and aha       | D3 and D0–D7 activity, conditional D0→D1 return, message-count aha association, and Telegram pairing association.                     |
-| Product health          | Active analytics IDs, owner-requested work, execution outcomes, and return cohorts.                                                   |
-| Reliability and cost    | Queue/execution latency, model cost and pricing coverage, integration/tool failures, UI errors, and uncertain confirmations.          |
-| Outputs and interaction | Committed and shown output kinds, artifact actions, answer-choice use, explicit interaction reach, schedules, and source reads.       |
-| Navigation and controls | Page and tab reach, committed settings, local choices, and memory/Vault changes.                                                      |
+| Dashboard               | Questions                                                                                                                                 |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Overview                | Observed installs, the first-use funnel, first-week usage, first-day app connections, and connected service, channel, and model rankings. |
+| Onboarding answers      | About you answer distributions for scope, who-for, company size, roles, and tasks.                                                        |
+| Apps and connections    | First-day app connection by first-observed date and version, latest observed app inventory, paired-channel state, and service reach.      |
+| Message usage           | Accepted-message volume, 30-minute sessions, first-day depth, and message source.                                                         |
+| Retention and aha       | D3 and D0–D7 activity, conditional D0→D1 return, message-count aha association, and Telegram pairing association.                         |
+| Product health          | Active analytics IDs, owner-requested work, execution outcomes, and return cohorts.                                                       |
+| Reliability and cost    | Queue/execution latency, model cost and pricing coverage, integration/tool failures, UI errors, and uncertain confirmations.              |
+| Outputs and interaction | Committed and shown output kinds, artifact actions, answer-choice use, explicit interaction reach, schedules, and source reads.           |
+| Navigation and controls | Page and tab reach, committed settings, local choices, and memory/Vault changes.                                                          |
 
 Task-category views answer five further questions: which purposes appear, how their execution duration and outcomes compare, what their known model costs are, how much classification coverage is missing or unavailable, and what the classifier itself costs. Keep purpose, execution mode, and outcome as separate dimensions.
 
-All insights filter `analytics_schema=v4` and `environment=production` and include internal and external usage. Empty charts before release are expected. Don't mix old schema history into them. The optional onboarding charts are grouped on the Onboarding answers board, including charts that need post-release events.
+All insights filter `analytics_schema=v4` and `environment=production` and include internal and external usage. New-event charts have no rows until their capturing release is used and any cohort window matures. Don't mix old schema history into them. The Onboarding answers board shows the five About you distributions, including skipped answers.
 
 Internal/test exclusions are off for these dashboards. The production sample intentionally includes staff using release builds. A separate project for internal use is deferred; don't describe this mixed sample as external users.
 
