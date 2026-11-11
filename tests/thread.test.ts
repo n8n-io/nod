@@ -18,7 +18,7 @@ import { z } from 'zod';
 import type { FeedbackEnvelope } from '../src/ports/feedback.ts';
 import { createN8nFeedback } from '../src/providers/n8n/feedback.ts';
 import { registerFeedback } from '../src/server/feedback.ts';
-import { spendingLimitReached } from '../src/server/ledger.ts';
+import { spendingLimitReached, spendingLimitText } from '../src/server/ledger.ts';
 import {
   feedbackLimits,
   type FeedbackReceipt,
@@ -448,7 +448,7 @@ test(
       executeConfirmation: async () => undefined,
       bindVerificationQuestion: verification.bindQuestion,
       connectedApps: readConnectedApps,
-      spendingLimitReached: async () => limitReached,
+      spendingLimit: async () => (limitReached ? { monthlyUsd: 25 } : null),
       speech,
       audioReplies: async () => audioReplyMode,
       requestCredential: async () => {
@@ -2449,7 +2449,7 @@ test(
         },
       );
 
-      await t.test('a reached spending limit pauses chat and background turns', async (t) => {
+      await t.test('a reached spending limit pauses all but owner messages', async (t) => {
         const raced = await thread.submitUserMessage('limit race fixture');
         await waitFor(settled(raced.turnId));
         assert.equal(
@@ -2485,13 +2485,14 @@ test(
             sourceId: `connection:${randomUUID()}`,
           }),
         ];
-        for (const turnId of [...background, chat.turnId]) await waitFor(settled(turnId));
-        for (const turnId of [...background, chat.turnId]) {
+        for (const turnId of background) await waitFor(settled(turnId));
+        assert.deepEqual(ran(chat.turnId)?.spendingLimitReached, { monthlyUsd: 25 });
+        for (const turnId of background) {
           assert.equal(ran(turnId), undefined);
           const row = (await db.pool.query('SELECT status,error FROM turns WHERE id=$1', [turnId]))
             .rows[0];
           assert.equal(row.status, 'failed');
-          assert.match(row.error, /spending limit was reached/);
+          assert.equal(row.error, spendingLimitText(25));
         }
         const notices = async (turnId: string) =>
           (
@@ -2500,16 +2501,12 @@ test(
               [turnId, `failure:${turnId}`],
             )
           ).rows.map((row) => row.text);
-        for (const turnId of [chat.turnId, background[2]!]) {
-          await waitFor(async () => (await notices(turnId)).length === 1);
-          assert.deepEqual(await notices(turnId), [
-            `I couldn't finish this. ${spendingLimitReached}`,
-          ]);
-        }
+        const notice = (work: string) =>
+          `I couldn't finish ${work}. ${spendingLimitText(25)} Raise or remove it in [Usage](/usage), or tell me here.`;
+        await waitFor(async () => (await notices(background[2]!)).length === 1);
+        assert.deepEqual(await notices(background[2]!), [notice('this')]);
         await waitFor(async () => (await notices(background[0]!)).length === 1);
-        assert.deepEqual(await notices(background[0]!), [
-          `I couldn't finish “limit schedule fixture”. ${spendingLimitReached}`,
-        ]);
+        assert.deepEqual(await notices(background[0]!), [notice('“limit schedule fixture”')]);
         assert.deepEqual(await notices(background[1]!), []);
         const taskSession = randomUUID();
         const taskMessage = await transaction(
@@ -2534,9 +2531,7 @@ test(
         });
         await waitFor(settled(checkIn));
         await waitFor(async () => (await notices(checkIn)).length === 1);
-        assert.deepEqual(await notices(checkIn), [
-          `I couldn't finish “Synthetic check-in”. ${spendingLimitReached}`,
-        ]);
+        assert.deepEqual(await notices(checkIn), [notice('“Synthetic check-in”')]);
       });
 
       await t.test(

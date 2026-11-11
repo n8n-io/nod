@@ -4,14 +4,12 @@ import { MessagingAttachmentError } from '../ports/messaging.ts';
 import type { ArtifactService } from './artifacts.ts';
 import type { SpeechService } from './speech.ts';
 import { SpeechSetupError, TranscriptionLengthError } from './speech.ts';
-import { spendingLimitReached } from './ledger.ts';
 
 export class ChannelMediaFailure extends Error {
   constructor(
     readonly reason:
       | 'too_large'
       | 'text_too_long'
-      | 'spending_limit'
       | 'unavailable'
       | 'transcription_unavailable'
       | 'speech_setup_required',
@@ -78,8 +76,6 @@ export function createChannelMedia(options: {
               throw new ChannelMediaFailure('speech_setup_required');
             if (error instanceof TranscriptionLengthError)
               throw new ChannelMediaFailure('text_too_long');
-            if (error instanceof Error && error.message === spendingLimitReached)
-              throw new ChannelMediaFailure('spending_limit');
             throw new ChannelMediaFailure('transcription_unavailable');
           }
         }

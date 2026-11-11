@@ -56,7 +56,7 @@ import {
 import { attachmentKind } from '../shared/attachment-kind.ts';
 import { inlineAppResult, noMailCheck, type MailCheck } from './integration-result.ts';
 import { saveIntegrationFiles } from './integration-files.ts';
-import { spendingLimitReached } from './ledger.ts';
+import { spendingLimitReached, spendingLimitText } from './ledger.ts';
 import type { ExecutionEvent } from '../shared/execution.ts';
 import { lockKey } from './locks.ts';
 import { redactSecretText } from './redaction.ts';
@@ -162,7 +162,7 @@ export interface ThreadDependencies {
     messageId: string,
     client: PoolClient,
   ) => Promise<void>;
-  spendingLimitReached?: () => Promise<boolean>;
+  spendingLimit?: () => Promise<{ monthlyUsd: number } | null>;
   checkIn?: (sessionId: string, turnId: string) => Promise<RuntimeContext['checkIn']>;
   skipTurn?: (sourceId: string) => Promise<boolean>;
   accountProfile?: () => Promise<RuntimeContext['account']>;
@@ -1074,6 +1074,7 @@ async function failTurn(
   turnId: string,
   present: ThreadDependencies['present'],
   error = interrupted,
+  next?: string,
 ) {
   const turn = await transaction(async (client) => {
     const thread = await lockThread(client);
@@ -1127,7 +1128,7 @@ async function failTurn(
       ? presented
       : error === interrupted
         ? `I was interrupted before I finished${work ? ` “${work}”` : ''}. Check anything I may have started before you ask me to continue.`
-        : `I couldn't finish ${work ? `“${work}”` : 'this'}. ${error}`;
+        : `I couldn't finish ${work ? `“${work}”` : 'this'}. ${error}${next ? ` ${next}` : ''}`;
   await transaction(async (client) => {
     if ((await lockThread(client)).id !== turn.thread_id) return;
     const current = await client.query(
@@ -1157,6 +1158,15 @@ async function failTurn(
       );
   }, pool);
   return true;
+}
+
+function failAtLimit(turnId: string, monthlyUsd?: number) {
+  return failTurn(
+    turnId,
+    undefined,
+    monthlyUsd === undefined ? spendingLimitReached : spendingLimitText(monthlyUsd),
+    'Raise or remove it in [Usage](/usage), or tell me here.',
+  );
 }
 
 export async function startThreadWorkers(dependencies: ThreadDependencies) {
@@ -1744,9 +1754,10 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       working();
     };
     const { reactToMessage, connections, browserConnection } = dependencies;
-    if (await dependencies.spendingLimitReached?.()) {
+    const limit = await dependencies.spendingLimit?.();
+    if (limit && turn.source !== 'user') {
       limited = true;
-      await failTurn(turnId, undefined, spendingLimitReached);
+      await failAtLimit(turnId, limit.monthlyUsd);
       return;
     }
     await emit('started', 'Turn started.');
@@ -1769,6 +1780,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       taskContext,
       tasks,
       ...(checkIn ? { checkIn } : {}),
+      ...(limit ? { spendingLimitReached: { monthlyUsd: limit.monthlyUsd } } : {}),
       currentMessageId: loaded.sourceMessageId ?? undefined,
       ...(loaded.audioCaption !== undefined ? { audioCaption: loaded.audioCaption } : {}),
       replyTo: loaded.replyTo && describe(loaded.replyTo),
@@ -1883,7 +1895,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           ? undefined
           : async () => {
               if (signal.aborted) throw turnStopped();
-              if (await dependencies.spendingLimitReached?.()) return [];
+              if (await dependencies.spendingLimit?.()) return [];
               const taken = await takeQueuedMessages(turnId, turn.session_id, turn.channel);
               if (taken.length) {
                 sourceMessageId = taken.at(-1)!.id;
@@ -2088,7 +2100,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     }
     if (error instanceof Error && error.message === spendingLimitReached) {
       limited = true;
-      await failTurn(turnId, undefined, spendingLimitReached);
+      const limit = await dependencies.spendingLimit?.().catch(() => null);
+      await failAtLimit(turnId, limit?.monthlyUsd);
     } else {
       failure = error instanceof ModelRequestError ? 'model' : 'unknown';
       if (await failTurn(turnId, dependencies.present, failureText(error)))

@@ -9270,7 +9270,7 @@ test(
       assert.equal(modelRequests, 1);
       await pool.query('DROP TRIGGER refuse_usage ON model_usage');
       assert.equal(await ledger.limitReached(), true);
-      await assert.rejects(curator.curate(request), /spending limit was reached/);
+      await assert.rejects(curator.curate(request), /spending limit is reached/);
       assert.equal(modelRequests, 1);
       const recoveredUsage = await pool.query(
         "SELECT created_at FROM model_usage WHERE owner_id='owner' AND turn_id IS NULL AND cost_usd=0.05",
@@ -9280,6 +9280,10 @@ test(
         Math.round((await app.inject('/api/trust')).json().month.spentUsd * 100) / 100,
         1.2,
       );
+      await ledger.withTurn(reply, () => curator.curate(request), true);
+      assert.equal(modelRequests, 2);
+      await assert.rejects(curator.curate(request), /spending limit is reached/);
+      await pool.query('DELETE FROM model_usage WHERE turn_id=$1', [reply]);
       const decimalLedger = createLedger({ pool, ownerId: 'decimal-owner' });
       await pool.query("INSERT INTO spending_limits VALUES('decimal-owner',1)");
       await pool.query(
@@ -9600,12 +9604,13 @@ test(
       assert.equal(transcriptionRequests, 1);
       speechReady = true;
       await service.transcribe(audio);
-      await assert.rejects(service.transcribe(audio), /spending limit was reached/);
-      assert.equal(transcriptionRequests, 2);
+      assert.equal(await speechLedger.limitReached(), true);
+      await service.transcribe(audio);
+      assert.equal(transcriptionRequests, 3);
       const billedSpeech = await pool.query(
-        "SELECT count(*)::int AS n,sum(cost_usd)::float8 AS spent FROM model_usage WHERE owner_id='speech-owner'",
+        "SELECT count(*)::int AS n,sum(cost_usd::numeric)::float8 AS spent FROM model_usage WHERE owner_id='speech-owner'",
       );
-      assert.deepEqual(billedSpeech.rows[0], { n: 2, spent: 1.2 });
+      assert.deepEqual(billedSpeech.rows[0], { n: 3, spent: 1.8 });
       assert.equal(
         (
           await pool.query(

@@ -134,11 +134,7 @@ export function createSpeech(provider: SpeechProvider) {
         return text;
       } catch (error) {
         signal?.throwIfAborted();
-        if (
-          error instanceof TranscriptionLengthError ||
-          error instanceof SpeechProviderError ||
-          (error instanceof Error && error.message === spendingLimitReached)
-        )
+        if (error instanceof TranscriptionLengthError || error instanceof SpeechProviderError)
           throw error;
         throw new SpeechProviderError(
           'The recording could not be transcribed. Try again or send a text message.',

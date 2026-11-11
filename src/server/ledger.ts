@@ -18,8 +18,9 @@ import { afterCommit, transaction } from './transaction.ts';
 import { analyticsModel, snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
 import { captureSettingChanges, type SettingActor } from './analytics-settings.ts';
 
-export const spendingLimitReached =
-  'Paused because this month’s spending limit was reached. Raise the limit in Usage to resume.';
+export const spendingLimitReached = 'This month’s spending limit is reached.';
+export const spendingLimitText = (monthlyUsd: number) =>
+  `This month’s $${Number.isInteger(monthlyUsd) ? monthlyUsd : monthlyUsd.toFixed(2)} spending limit is reached.`;
 const defaultTaskUsd = 5;
 const newOwnerMonthlyUsd = 200;
 const usd = z
@@ -120,6 +121,7 @@ export function createLedger({
   telemetry?: UsageTelemetry;
 }) {
   const activeTurn = new AsyncLocalStorage<string>();
+  const pastLimit = new AsyncLocalStorage<true>();
   const activeExecution = new AsyncLocalStorage<
     ExecutionScope & Pick<AgentSessionOptions, 'onEvent'>
   >();
@@ -366,7 +368,6 @@ export function createLedger({
       ...(base.transcribe
         ? ({
             async transcribe(audio, signal, onUsage) {
-              if (await limitReached()) throw new Error(spendingLimitReached);
               try {
                 return await base.transcribe!(audio, signal, (usage) => {
                   report(usage, true);
@@ -404,9 +405,14 @@ export function createLedger({
     );
   }
 
-  async function limitReached() {
+  async function reachedLimit() {
     await flushUsage();
-    return Boolean((await limits()).limit?.reached);
+    const { limit } = await limits();
+    return limit?.reached ? limit : null;
+  }
+
+  async function limitReached() {
+    return !pastLimit.getStore() && Boolean(await reachedLimit());
   }
 
   async function checkIn(sessionId: string, turnId: string) {
@@ -736,13 +742,15 @@ export function createLedger({
     attributeMediaUsage,
     action,
     limitReached,
+    reachedLimit,
     checkIn,
     limits,
     setLimits,
     onboard,
     sessionCosts,
     recentTurnCost,
-    withTurn: <T>(turnId: string, run: () => T) => activeTurn.run(turnId, run),
+    withTurn: <T>(turnId: string, run: () => T, overLimit = false) =>
+      activeTurn.run(turnId, () => (overLimit ? pastLimit.run(true, run) : run())),
     withExecution: <T>(
       execution: ExecutionScope & Pick<AgentSessionOptions, 'onEvent'>,
       run: () => T,

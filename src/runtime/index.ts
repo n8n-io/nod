@@ -79,6 +79,7 @@ const browserTools = new Set(['browser', 'browser_session', 'sign_in', 'pay']);
 const confirmationNotice = 'The confirmation question is in chat. Wait for the reply.';
 const reportingTools = new Set(['ask_user', 'send_message', 'share_file']);
 const reportingTaskActions = new Set(['finish', 'list', 'stop', 'update']);
+const limitActions = new Set(['usage_get', 'limits_update']);
 const dollars = (value: number) => `$${Number.isInteger(value) ? value : value.toFixed(2)}`;
 const delimitedTools = new Set([
   'read_source',
@@ -393,6 +394,17 @@ export function createAgentRuntime(dependencies: {
             );
         }
         if (
+          context.spendingLimitReached &&
+          !reportingTools.has(name) &&
+          !(
+            name === 'manage_personal_context' &&
+            limitActions.has(String((params as { action?: unknown })?.action))
+          )
+        )
+          throw new Error(
+            `The owner's ${dollars(context.spendingLimitReached.monthlyUsd)} monthly spending limit is reached, so only changing spending limits and replying work now.`,
+          );
+        if (
           overBudget() &&
           !reportingTools.has(name) &&
           !(
@@ -522,7 +534,7 @@ export function createAgentRuntime(dependencies: {
     };
     try {
       signal.throwIfAborted();
-      if (dependencies.prepareMemory && !overBudget()) {
+      if (dependencies.prepareMemory && !overBudget() && !context.spendingLimitReached) {
         context.memoryBrief = await untilAborted(
           dependencies.prepareMemory(
             context,

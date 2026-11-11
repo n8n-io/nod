@@ -58,21 +58,24 @@ To remove the limit, select it, then **Remove**. You can also tell Nod, for exam
 flowchart LR
   req[New request<br/>chat or background]:::accent --> check{{Spent less than<br/>the limit this month?}}
   check -- yes --> run[Nod works]:::go
-  check -- no --> stop[Stops before<br/>using the model]:::stop
+  check -- no --> stop[Schedules and background<br/>work stop before the model]:::stop
+  check -- no --> ask[Your messages get<br/>raise or remove the limit?]:::muted
   stop -.-> lift[Next month, or you<br/>raise or remove the limit]:::muted
+  ask -.-> lift
 ```
 
 When the month's spending reaches your limit:
 
-- New chat messages, schedules and background work stop before Nod calls the model. Work you started gets one message saying it's paused, in Nod and in the chat app you used.
+- Schedules, tasks and background work stop before Nod calls the model. Work you started gets one message that names the limit and asks whether to raise or remove it, in Nod and in the chat app you used.
+- Your messages still reach Nod, in Nod, Telegram and WhatsApp, voice messages included. Nod tells you the limit is reached and asks whether to raise or remove it. Reply with what you want, for example "Raise it to $300" or "Remove the limit", and Nod changes it. Until then, it only replies and changes limits. These replies cost a few cents and count as spending.
 - Work that's already running can finish.
 - An action you already approved still runs once.
 
-The pause lifts at the start of next month, or as soon as you raise or remove the limit.
+The pause lifts at the start of next month, or as soon as you raise or remove the limit, in **Usage** or by telling Nod. Then send your request again.
 
 Only paid usage with a known price counts toward the limit. See [How each model is priced](#how-each-model-is-priced).
 
-Switching to a ChatGPT plan doesn't remove an existing monthly limit or its recorded API spending. If that limit is already reached, new requests stay paused. Select an API model to review the limit.
+Switching to a ChatGPT plan doesn't remove an existing monthly limit or its recorded API spending. If that limit is already reached, Nod stays paused. Tell Nod to raise or remove the limit, or select an API model to review it in **Usage**.
 
 ## Task check-ins
 

@@ -39,7 +39,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Artifact } from '../src/shared/contracts.ts';
 import type { InboundMessage } from '../src/ports/messaging.ts';
-import { spendingLimitReached } from '../src/server/ledger.ts';
 import { ChannelMediaFailure } from '../src/server/channel-media.ts';
 import { loadAudioWaveform } from '../src/web/lib/audio-waveform.ts';
 import { contactCards } from '../src/shared/channel-content.ts';
@@ -2698,7 +2697,6 @@ test(
     const acceptedChannels: string[] = [];
     const privateCodes: string[] = [];
     const presentations: { kind: string; reason?: string }[] = [];
-    let voiceFailure: Error | undefined;
     let modelConfigured = true;
     let verificationPending = false;
     let speechConfigured = true;
@@ -2711,10 +2709,7 @@ test(
       synthesize: async () => {
         throw new Error('Not used by the fixture.');
       },
-      transcribe: async () => {
-        if (voiceFailure) throw voiceFailure;
-        return transcript;
-      },
+      transcribe: async () => transcript,
     });
     const transport = (): MessagingTransport => ({
       channels: [
@@ -2858,15 +2853,6 @@ test(
         url: '/api/webhooks/telegram',
         payload: { messageId },
       });
-    voiceFailure = new Error(spendingLimitReached);
-    await sendId('limited-voice');
-    await fixture.channels.drain();
-    assert.ok(
-      presentations.some(
-        (item) => item.kind === 'media_failure' && item.reason === 'spending_limit',
-      ),
-    );
-    voiceFailure = undefined;
     transcript = 'x'.repeat(100_001);
     await sendId('long-transcript');
     await fixture.channels.drain();

@@ -45,6 +45,7 @@ import { NodGlyph, Rise, prefersReducedMotion } from '../components/motion';
 import { LiveLine } from '../components/live-line';
 import { TaskDots } from '../components/task-dots';
 import { recordingSource } from '../lib/recording';
+import { money } from '../lib/money';
 import type { ImagePreview } from '../components/attachment-images';
 import { reuseFile } from '../components/file-actions';
 import { ownedArtifactUrl } from '../lib/attachment-url';
@@ -1115,7 +1116,7 @@ export function Chat({
     questionAnswer?: QuestionAnswer,
     displayText?: string,
   ): Promise<ComposerSendResult & { error?: string; questionUnavailable?: true }> {
-    if (welcoming || spendingPaused) return { sent: false, restoreText: true };
+    if (welcoming) return { sent: false, restoreText: true };
     unreadPositioned.current = currentUnreadVisit.current;
     const replyId = reply?.id;
     questionAnswer ??=
@@ -2188,9 +2189,7 @@ export function Chat({
                   ) : (
                     <MessageBubble
                       message={message}
-                      answersDisabled={
-                        sending || !state.configuration.llmReady || welcoming || spendingPaused
-                      }
+                      answersDisabled={sending || !state.configuration.llmReady || welcoming}
                       onAnswer={async (value, answer) => {
                         if (replyTo?.id === message.id && composer.current?.hasDraft()) {
                           composer.current.focus();
@@ -2383,10 +2382,10 @@ export function Chat({
               {connectionNotice.text}
             </Notice>
           )}
-          {spendingPaused && (
+          {spendingPaused && trust?.limit && (
             <Notice kind="info">
-              Chat is paused because you reached your spending limit.{' '}
-              <a href="/usage">Raise the limit in Usage</a> to resume.
+              You reached your {money(trust.limit.monthlyUsd)} monthly spending limit. Raise or
+              remove it in <a href="/usage">Usage</a>, or ask Nod here.
             </Notice>
           )}
           <div
@@ -2404,7 +2403,7 @@ export function Chat({
               restoreReply={(saved) => {
                 if (!saved || !hiddenMessageIds.current.has(saved.id)) setReplyTo(saved);
               }}
-              ready={state.configuration.llmReady && !welcoming && !spendingPaused}
+              ready={state.configuration.llmReady && !welcoming}
               busy={connected && working}
               text={text}
               setText={setText}

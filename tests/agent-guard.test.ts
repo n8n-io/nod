@@ -1451,6 +1451,42 @@ test('past the spending check-in chat task start and reply are refused while rep
   assert.equal(result.result.status, 'waiting_user');
 });
 
+test('past the monthly spending limit a turn can only reply and change spending limits', async () => {
+  const managed: string[] = [];
+  let actions = 0;
+  await fixture(
+    async (tools, _emit, _options, request) => {
+      assert.match(request, /"spendingLimitReached":\{"monthlyUsd":25\}/);
+      await assert.rejects(
+        call(tools, 'apps', { action: 'SLACK_SEND_MESSAGE', args: {} }),
+        /spending limit/,
+      );
+      await assert.rejects(
+        call(tools, 'manage_personal_context', { action: 'schedule_list', args: {} }),
+        /spending limit/,
+      );
+      await call(tools, 'manage_personal_context', { action: 'usage_get', args: {} });
+      await call(tools, 'manage_personal_context', {
+        action: 'limits_update',
+        args: { monthlyUsd: null },
+      });
+    },
+    {
+      spendingLimitReached: { monthlyUsd: 25 },
+      integration: async () => {
+        actions++;
+        return {};
+      },
+      manage: async (action) => {
+        managed.push(action);
+        return {};
+      },
+    },
+  );
+  assert.equal(actions, 0);
+  assert.deepEqual(managed, ['usage_get', 'limits_update']);
+});
+
 test('app time annotations reach Pi inside the data boundary while scripts and browser observations stay unchanged', async () => {
   const data = { items: [{ start: { dateTime: '2026-10-30T10:00:00Z' } }] };
   const raw = JSON.stringify(data);

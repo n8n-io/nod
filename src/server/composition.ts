@@ -838,7 +838,7 @@ async function initializeApplication(
     workspace,
     redactError: createErrorRedactor(secrets),
     keepWarm: async (threadId) =>
-      !(await ledger.limitReached()) && (await activeThread(pool, ownerId)).id === threadId,
+      !(await ledger.reachedLimit()) && (await activeThread(pool, ownerId)).id === threadId,
     observe: (turnId, event) => {
       const { execution, id, type, name } = event;
       diagnostics.log?.record(
@@ -1752,10 +1752,12 @@ async function initializeApplication(
       reactToMessage: reactions.react,
       proactivity: proactivity.context,
       runTurn: (context) =>
-        ledger.withTurn(context.turnId, () =>
-          runtime.runTurn(context).finally(() => proactivity.release(context.turnId)),
+        ledger.withTurn(
+          context.turnId,
+          () => runtime.runTurn(context).finally(() => proactivity.release(context.turnId)),
+          Boolean(context.spendingLimitReached),
         ),
-      spendingLimitReached: ledger.limitReached,
+      spendingLimit: ledger.reachedLimit,
       checkIn: ledger.checkIn,
       skipTurn: async (sourceId) =>
         sourceId.startsWith('proactivity:') && !(await proactivity.canRun()),
