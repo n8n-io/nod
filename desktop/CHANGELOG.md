@@ -2,6 +2,57 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.6.2 - 2026-11-11
+
+### Features
+
+- **analytics:** Measure onboarding and first-week use. [#664](https://github.com/n8n-io/nod/pull/664) (b3c7db9)
+- Capture consented Nod onboarding profiles in Customer.io. [#667](https://github.com/n8n-io/nod/pull/667) (776ddbe)
+- **onboarding:** Separate unsubscribing from unlinking the email. [#680](https://github.com/n8n-io/nod/pull/680) (67f4090)
+- **chat:** Hand the thinking line straight to the reply. [#675](https://github.com/n8n-io/nod/pull/675) (9e569d1)
+- **desktop:** Use GitHub Releases for public upgrades. [commit](https://github.com/n8n-io/nod/commit/9ee0e17772a59cc339687cbc893caba99735d215) (9ee0e17)
+- **privacy:** Apply Legal's compromise consent wording. [#670](https://github.com/n8n-io/nod/pull/670) (83141a3)
+- **legal:** Link the Nod Terms of Use and save the exact consent wording. [#666](https://github.com/n8n-io/nod/pull/666) (f7e50c8)
+- **landing:** Render text with antialiased font smoothing. [#669](https://github.com/n8n-io/nod/pull/669) (8b9fb85)
+- **landing:** Make header labels plain text and let the unmute button fade. [#668](https://github.com/n8n-io/nod/pull/668) (e138f1c)
+
+### Fixes
+
+- **proactivity:** Keep app changes visible to screening. [#681](https://github.com/n8n-io/nod/pull/681) (f5c63e1)
+- **landing:** Restore brand pink and simplify benchmark cards. [#684](https://github.com/n8n-io/nod/pull/684) (cece17f)
+- **chat:** Preserve pasted text before Nod sees it (LAB-886). [#674](https://github.com/n8n-io/nod/pull/674) (ec9ee60)
+- **schedules:** Describe stopped schedules as paused. [#673](https://github.com/n8n-io/nod/pull/673) (2baf9b8)
+- Keep question choices visible after absorbed follow-ups (LAB-913). [#671](https://github.com/n8n-io/nod/pull/671) (fc33735)
+- **landing:** Tidy the page on phones and match the social image to the tagline. [#672](https://github.com/n8n-io/nod/pull/672) (711b4b7)
+
+### Performance
+
+- Stream memory replies and cut reminder and calendar round trips. [#655](https://github.com/n8n-io/nod/pull/655) (d5e7ae2)
+
+### Documentation
+
+- Simplify the README into one story. [#685](https://github.com/n8n-io/nod/pull/685) (fe9faf8)
+- Explain benchmark results and evaluation methods. [#683](https://github.com/n8n-io/nod/pull/683) (ffbc936)
+- Turn the README into a launch page with every benchmark. [#678](https://github.com/n8n-io/nod/pull/678) (b6c5f17)
+- Refresh README and scope checks to each change. [#677](https://github.com/n8n-io/nod/pull/677) (70c11ad)
+
+<details>
+<summary>Maintenance (1 changes)</summary>
+
+- Allow the public PostHog token in posthog-host.json. [#679](https://github.com/n8n-io/nod/pull/679) (e91aea2)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.6.1...b3c7db9f23800e8a8e2cdbff8cb2fa76bd568ec7)
+
+<details>
+<summary>Build details</summary>
+
+Source: `b3c7db9f23800e8a8e2cdbff8cb2fa76bd568ec7`
+Previous release: `nod-v0.6.1`
+
+</details>
+
 ## 0.6.1 - 2026-11-10
 
 ### Features
