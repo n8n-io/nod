@@ -120,16 +120,21 @@ export function Sidebar({
         ),
       );
     const down = (event: KeyboardEvent) => {
+      const eventPath = event.composedPath();
+      const action = navigationShortcut(event, mac);
+      const composerNavigation =
+        action?.type === 'navigate' &&
+        event.target instanceof Element &&
+        event.target.closest('.composer .composer-editor[contenteditable="true"]') ===
+          document.activeElement;
       if (
         event.defaultPrevented ||
         event.isComposing ||
-        event.composedPath().some(isEditingTarget) ||
-        event
-          .composedPath()
-          .some(
-            (target) => target instanceof Element && Boolean(target.closest('[role="dialog"]')),
-          ) ||
-        isEditingTarget(document.activeElement)
+        ((eventPath.some(isEditingTarget) || isEditingTarget(document.activeElement)) &&
+          !composerNavigation) ||
+        eventPath.some(
+          (target) => target instanceof Element && Boolean(target.closest('[role="dialog"]')),
+        )
       ) {
         clear();
         return;
@@ -147,7 +152,6 @@ export function Sidebar({
         return;
       }
       clear();
-      const action = navigationShortcut(event, mac);
       if (!action) return;
       event.preventDefault();
       event.stopPropagation();
