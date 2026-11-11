@@ -193,7 +193,7 @@ Drafts are never offered to the installer or the updater.
 - A Windows runtime follows the same rule, plus its own Dockerfile, guest script and build script. When it hasn't changed, the release build downloads the published one, checks it against its manifest and GitHub's asset digest, and runs the full Windows install check on it. A Windows install that already has that runtime then updates with only the installer.
 - The first release built in a new week (from Monday, UTC) rebuilds both runtimes and refetches the images' system packages, such as Chromium, instead of reusing Docker's cached layers. Later releases that week reuse them. A week without a release build ships no refresh.
 - A Windows app refuses a downloaded installer unless n8n GmbH signed it with the `nod-windows` profile.
-- On Windows, the restart runs the verified installer silently over the current install, then opens Nod again. The profile is kept.
+- On Windows, the restart runs the verified installer silently over the current install, then opens Nod again. The profile is kept. Nod starts the install script through `Start-Process` and waits for that to succeed before it quits, because a PowerShell process spawned detached from Nod exits before it runs anything. The Windows update check starts its final update from the running fixture app the same way.
 
 ## Help with desktop installation
 

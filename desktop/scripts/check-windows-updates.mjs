@@ -136,6 +136,10 @@ try {
   const source = join(root, 'source');
   await mkdir(source);
   await copyFile(join(repository, 'desktop/main/settings.mjs'), join(source, 'settings.mjs'));
+  await copyFile(
+    join(repository, 'desktop/main/windows-update.mjs'),
+    join(source, 'windows-update.mjs'),
+  );
   const vaultPath = join(repository, 'src/server/vault-crypto.ts');
   await writeFile(
     join(source, 'vault-crypto.mjs'),
@@ -156,6 +160,7 @@ import { createHash, sign } from 'node:crypto';
 import { appendFile, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createSettingsStore } from './settings.mjs';
+import { startWindowsInstall } from './windows-update.mjs';
 import { sealVaultValue, openVaultValue } from './vault-crypto.mjs';
 import { loadIntegrationIdentity } from './identity.mjs';
 const root = process.env.NOD_UPDATE_FIXTURE_ROOT;
@@ -210,7 +215,9 @@ app.whenReady().then(async () => {
     setInterval(async () => {
       if (stopping || !await stat(join(root, 'stop')).then(() => true, () => false)) return;
       stopping = true;
+      const update = (await readFile(join(root, 'stop'), 'utf8')).replace(/^stop$/, '');
       await rm(join(root, 'stop'));
+      if (update) await startWindowsInstall({ directory: update, appPath: process.execPath, pid: process.pid, systemRoot: process.env.SYSTEMROOT });
       await record('stopped');
       app.exit(0);
     }, 100);
@@ -370,9 +377,11 @@ app.whenReady().then(async () => {
     entries.find((entry) => entry.event === 'stopped' && entry.pid === child.pid),
   );
   verifyIdentity(await start());
-  receipt.stage = 'updating to 1.0.1';
-  const success = await replace(dirname(installers['1.0.1']));
-  assert.equal(success.ok, true, success.error?.diagnostic);
+  receipt.stage = 'updating to 1.0.1 from the running app';
+  await writeFile(stop, dirname(installers['1.0.1']));
+  await waitFor((entries) =>
+    entries.find((entry) => entry.event === 'stopped' && entry.pid === child.pid),
+  );
   const updated = await waitFor((entries) =>
     entries.find((entry) => entry.event === 'ready' && entry.version === '1.0.1'),
   );
@@ -392,6 +401,7 @@ app.whenReady().then(async () => {
     realElectron: true,
     failedInstallPreserved: true,
     runningAppQuitByInstaller: true,
+    updateStartedByApp: true,
     foreignInstallerRefused: true,
     windowsCatalogInstallerRefused: true,
     encryptedProfilePreserved: true,

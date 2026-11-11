@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { win32 } from 'node:path';
 
 export function windowsInstallCommand({ directory, appPath, pid, systemRoot = 'C:\\Windows' }) {
@@ -24,4 +25,35 @@ export function windowsInstallCommand({ directory, appPath, pid, systemRoot = 'C
       NOD_UPDATE_TARGET: win32.dirname(appPath),
     },
   };
+}
+
+export function startWindowsInstall(options) {
+  const { command, args, env } = windowsInstallCommand(options);
+  return new Promise((resolve, reject) => {
+    const launcher = spawn(
+      command,
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        'Start-Process -FilePath $env:NOD_UPDATE_POWERSHELL -WindowStyle Hidden -ArgumentList $env:NOD_UPDATE_ARGUMENTS',
+      ],
+      {
+        stdio: 'ignore',
+        windowsHide: true,
+        env: {
+          ...process.env,
+          ...env,
+          NOD_UPDATE_POWERSHELL: command,
+          NOD_UPDATE_ARGUMENTS: args.join(' '),
+        },
+      },
+    );
+    launcher.once('error', reject);
+    launcher.once('exit', (code) =>
+      code === 0
+        ? resolve()
+        : reject(new Error(`Nod could not start the Windows installer (${code}).`)),
+    );
+  });
 }

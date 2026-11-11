@@ -21,7 +21,6 @@ import {
 } from 'electron';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
 import { appendFile, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -47,7 +46,7 @@ import { saveArtifactDownload } from './downloads.mjs';
 import { createDesktopLifecycle, startupErrorDetails } from './lifecycle.mjs';
 import { createMacEncryption } from './mac-encryption.mjs';
 import { createDesktopUpdater, createUpdateSource, startDesktopUpdateChecks } from './updates.mjs';
-import { windowsInstallCommand } from './windows-update.mjs';
+import { startWindowsInstall } from './windows-update.mjs';
 import { appOpenPath } from './app-links.mjs';
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -1856,23 +1855,17 @@ async function confirmRestart() {
   return response === 0 && !quitting;
 }
 
-function installUpdate() {
+async function installUpdate() {
   if (process.platform === 'win32') {
-    const { command, args, env } = windowsInstallCommand({
+    await startWindowsInstall({
       directory: join(windowsUpdates, updates.ready.version),
       appPath: process.execPath,
       pid: process.pid,
       systemRoot: process.env.SystemRoot,
     });
-    spawn(command, args, {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-      env: { ...process.env, ...env },
-    }).unref();
     installingUpdate = true;
     app.exit();
-    return Promise.resolve();
+    return;
   }
   return new Promise((resolve, reject) => {
     const cleanup = () => {
