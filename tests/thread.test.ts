@@ -8331,15 +8331,15 @@ test(
       );
 
       await t.test(
-        'a confirmed action that ran or may have run before Stop reaches the next turn of its session once',
+        'a confirmed action whose resume turn stops or fails first reaches the next turn of its session once',
         async (t) => {
           let sends = 0;
-          let interrupted = false;
+          let ending: 'stop' | 'interrupt' | 'limit' = 'stop';
           const stopped = await createApprovals(
             async () => {
               sends++;
-              await thread.stopThread();
-              if (interrupted) throw new Error('Synthetic send interrupted.');
+              if (ending !== 'limit') await thread.stopThread();
+              if (ending === 'interrupt') throw new Error('Synthetic send interrupted.');
               return { id: 'synthetic-sent-message' };
             },
             undefined,
@@ -8354,6 +8354,7 @@ test(
           dependencies.executeConfirmation = stopped.executeConfirmed;
           dependencies.stoppedOutcomes = stopped.stoppedOutcomes;
           t.after(() => {
+            limitReached = false;
             inspectObserver = previous.observer;
             dependencies.executeConfirmation = previous.execute;
             dependencies.stoppedOutcomes = previous.outcomes;
@@ -8372,21 +8373,24 @@ test(
             await waitFor(settled(turnId));
             return firstInstruction(ran(turnId)!, true, new Set());
           };
-          for (const [failed, status, outcome] of [
-            [false, 'completed', /executed once[^]*synthetic-sent-message/],
-            [true, 'uncertain', /outcome is uncertain/],
+          const sent = /executed once[^]*synthetic-sent-message/;
+          for (const [end, turn, status, outcome] of [
+            ['stop', 'cancelled', 'completed', sent],
+            ['interrupt', 'cancelled', 'uncertain', /outcome is uncertain/],
+            ['limit', 'failed', 'completed', sent],
           ] as const) {
-            interrupted = failed;
+            ending = end;
             const asked = await thread.submitUserMessage('Email Priya the synthetic update');
             await waitFor(settled(asked.turnId));
             const approval = (
               await db.pool.query('SELECT * FROM approvals WHERE turn_id=$1', [asked.turnId])
             ).rows[0];
+            limitReached = end === 'limit';
             const confirmed = await thread
               .createUserMessageService({ confirmAction: stopped.chat })
               .submit('yep go ahead', [], { replyToMessageId: approval.confirmation_message_id });
             await waitFor(settled(confirmed.turnId));
-            assert.equal(await turnStatus(confirmed.turnId), 'cancelled');
+            assert.equal(await turnStatus(confirmed.turnId), turn);
             await waitFor(
               async () =>
                 (await db.pool.query('SELECT status FROM approvals WHERE id=$1', [approval.id]))
@@ -8394,8 +8398,9 @@ test(
             );
             assert.match(await instruction('Did the email to Priya go out?'), outcome);
             assert.doesNotMatch(await instruction('Thanks.'), /confirmedActions/);
+            limitReached = false;
           }
-          assert.equal(sends, 2);
+          assert.equal(sends, 3);
         },
       );
     } finally {
