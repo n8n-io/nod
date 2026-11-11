@@ -300,7 +300,7 @@ export async function createChatVerification(
         throw conflict(
           request.kind === 'payment'
             ? 'Send just the card’s security code.'
-            : 'Send the code by itself.',
+            : 'Send the code by itself, using 4 to 8 digits.',
         );
       const codeFingerprint = await fingerprint(code, input);
       input.signal?.throwIfAborted();
