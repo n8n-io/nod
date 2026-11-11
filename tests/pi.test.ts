@@ -5270,6 +5270,7 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
   )!;
   const directory = await mkdtemp(join(tmpdir(), 'nod-model-switch-'));
   const requests: Array<{ provider: string; effort: string; history: string }> = [];
+  const errors: string[] = [];
   let selected: import('../src/ports/models.ts').ModelAccess = {
     provider: 'openai',
     method: 'api_key',
@@ -5297,7 +5298,18 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
           api: model.api,
         };
         const stream = createAssistantMessageEventStream();
-        stream.push({ type: 'done', reason: 'stop', message });
+        if (JSON.stringify(context.messages).includes('Synthetic switched provider failure'))
+          stream.push({
+            type: 'error',
+            reason: 'error',
+            error: {
+              ...message,
+              stopReason: 'error',
+              errorMessage:
+                '413 Request too large for fixture-model on tokens per minute (TPM): Limit 6000, Requested 12000',
+            },
+          });
+        else stream.push({ type: 'done', reason: 'stop', message });
         return stream;
       };
       return result;
@@ -5312,7 +5324,9 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
       tools: [],
       ephemeral: background,
       shouldStop: () => false,
-      onEvent() {},
+      onEvent(event) {
+        if (event.type === 'error') errors.push(event.message);
+      },
     });
   try {
     const first = await open();
@@ -5357,6 +5371,19 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
     assert.equal(requests[3].effort, 'high');
     assert.ok(requests[3].history.includes('Remember the synthetic blue label.'));
     assert.ok(!requests[3].history.includes(chatgptFixtureCredential().access));
+    selected = {
+      provider: 'anthropic',
+      method: 'api_key',
+      definition: anthropic,
+      effort: 'medium',
+      read: async () => ({ type: 'api_key', key: 'fixture-anthropic-key' }),
+    };
+    const failed = await open();
+    await failed.prompt('Synthetic switched provider failure', []);
+    await failed.dispose();
+    assert.equal(requests[4].provider, 'anthropic');
+    assert.match(errors.at(-1) ?? '', /^anthropic \/ claude-opus-5-5: 413 Request too large/);
+    assert.doesNotMatch(errors.at(-1) ?? '', /openai/);
   } finally {
     await agent.dispose();
     await rm(directory, { recursive: true, force: true });

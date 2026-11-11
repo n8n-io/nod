@@ -179,7 +179,11 @@ A request you stop, or one you started whose model request fails at the provider
 
 You can also tell Nod in the main chat, from any app, for example "stop everything" or "stop the flight search". Nod stops every task, scheduled run and app check, or only the task you name, and tells you what it stopped. Nod reads your message after its current step, or after its current reply if you write from another app. For an immediate stop, use the Stop control, or `/stop` in Telegram.
 
-When a run you started stops on an error or on your spending limit, Nod tells you what failed in the main chat or as a reply to the affected task. If an agent model request fails with a recognizable quota or rate limit, Nod gives you a short explanation instead of the provider's raw response. For a temporary limit, Nod includes an approximate wait time when it can read a provider retry delay of up to two minutes. For an account or workspace usage cap, wait for the limit to reset or check its settings; a workspace admin may need to raise it. Other errors still include safe details, such as a rejected model key. Nod's next turn knows what went wrong. If Nod restarts during a run you started, that run fails and Nod posts an interruption notice. Nod never repeats failed or interrupted work on its own. Saved tasks and waiting questions survive a restart.
+When a run you started stops on an error or on your spending limit, Nod tells you what failed in the main chat or as a reply to the affected task. For a failed agent model request, Nod shows the provider and model that handled it, the service's specific reason and status, and useful details after removing secrets.
+
+If the service reports an oversized tokens-per-minute request, the error keeps its requested and allowed token counts and suggests shortening the conversation or choosing a model with a higher limit. If a daily quota error includes a retry delay, Nod gives you an approximate wait time. For an account or workspace usage cap, wait for the limit to reset or check its settings; a workspace admin may need to raise it. Nod's next turn knows what went wrong.
+
+If Nod restarts during a run you started, that run fails and Nod posts an interruption notice. Nod never repeats failed or interrupted work on its own. Saved tasks and waiting questions survive a restart.
 
 If Nod may have sent or changed something, verify the result yourself or ask Nod to inspect it before continuing. Don't make a new attempt while the result is unclear.
 

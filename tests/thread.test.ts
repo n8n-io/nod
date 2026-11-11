@@ -8766,7 +8766,11 @@ test(
         'model failures retain provider reasons and codes without unrelated response fields',
         async () => {
           const previousPresenter = presentInterruption;
-          presentInterruption = async () => '';
+          const presentedFailures: string[] = [];
+          presentInterruption = async (_threadId, input) => {
+            if (input.kind === 'failed') presentedFailures.push(input.error);
+            return '';
+          };
           const prefix = 'The model request failed: openrouter / anthropic/fixture-model: ';
           const nestedQuota =
             prefix +
@@ -8800,12 +8804,60 @@ test(
             error: string;
             reason: RegExp;
             code?: RegExp;
+            advice?: RegExp;
           }> = [
             {
               prompt: 'model-gemini-quota-fixture',
               error: nestedQuota,
               reason: /You exceeded your current quota\. Please retry in 14s\./,
               code: /HTTP 429.*GenerateContentInputTokensPerModelPerMinute-FreeTier/,
+            },
+            {
+              prompt: 'model-oversized-tpm-fixture',
+              error:
+                prefix +
+                '413 ' +
+                JSON.stringify({
+                  error: {
+                    type: 'tokens',
+                    code: 'rate_limit_exceeded',
+                    message:
+                      'Request too large for fixture-model on tokens per minute (TPM): Limit 6000, Requested 12000; please reduce your message size.',
+                    detail: 'synthetic-private-provider-detail',
+                  },
+                }),
+              reason: /Request too large.*Limit 6000, Requested 12000/,
+              code: /rate_limit_exceeded/,
+              advice:
+                /Shorten the conversation or choose a model with a higher tokens-per-minute limit\./,
+            },
+            {
+              prompt: 'model-daily-quota-fixture',
+              error:
+                prefix +
+                JSON.stringify({
+                  error: {
+                    code: 429,
+                    status: 'Too Many Requests',
+                    message: {
+                      error: {
+                        code: 429,
+                        status: 'RESOURCE_EXHAUSTED',
+                        message: 'You exceeded your current quota. Please retry in 23h0m0s.',
+                        details: [
+                          {
+                            quotaId: 'GenerateRequestsPerDay-FreeTier',
+                            retryDelay: '82800s',
+                            detail: 'synthetic-private-provider-detail',
+                          },
+                        ],
+                      },
+                    },
+                  },
+                }),
+              reason: /You exceeded your current quota\. Please retry in 23h0m0s\./,
+              code: /HTTP 429.*GenerateRequestsPerDay-FreeTier.*retryDelay: 82800s/,
+              advice: /Try again in about 23 hours\./,
             },
             {
               prompt: 'model-plain-rate-limit-fixture',
@@ -8970,11 +9022,13 @@ test(
                 )
               ).rows[0].text as string;
               assert.equal(turn.status, 'failed');
+              assert.equal(presentedFailures.at(-1), turn.error);
               assert.ok(shown.endsWith(turn.error));
               assert.ok(turn.error.length <= 2000);
               assert.ok(turn.error.startsWith(prefix));
               assert.match(turn.error, item.reason);
               if (item.code) assert.match(turn.error, item.code);
+              if (item.advice) assert.match(turn.error, item.advice);
               for (const text of [turn.error, shown])
                 assert.doesNotMatch(
                   text,
