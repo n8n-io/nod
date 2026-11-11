@@ -243,7 +243,7 @@ import assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
 const dom=new JSDOM('<!doctype html>',{url:'https://app.example/onboarding'});
 Object.assign(globalThis,{window:dom.window,document:dom.window.document});
-const calls=[];const captured=[];let resolveFirst;let accepted=0;let nativeFallback=false;
+const calls=[];const captured=[];let resolveFirst;let accepted=0;let nativeFallback=false;let nativeMarker=false;
 const first=new Promise(resolve=>{resolveFirst=resolve});
 window.nodDesktop={
  getSettings:async()=>({}),
@@ -251,7 +251,7 @@ window.nodDesktop={
   calls.push({consented,distinctId});
   if(!consented)return Promise.resolve(null);
   if(++accepted===1)return first;
-  if(nativeFallback)return Promise.resolve({openedAt:1700000002000,uuid:'00000000-0000-4000-8000-000000000004',entry:'native_setup'});
+  if(nativeFallback)return Promise.resolve({openedAt:1700000002000,uuid:accepted===3?'00000000-0000-4000-8000-000000000004':'00000000-0000-4000-8000-000000000006',entry:'native_setup',...(nativeMarker?{serverConnectionTelemetryAvailable:true}:{})});
   return Promise.resolve({openedAt:1700000001000,uuid:'00000000-0000-4000-8000-000000000002',entry:'app_ui'});
  },
 };
@@ -292,6 +292,16 @@ await settle();
 assert.equal(captured.length,2);
 assert.equal(captured[1].properties.entry,'native_setup');
 assert.equal(captured[1].properties.route,'/onboarding');
+assert.equal(captured[1].properties.server_connection_telemetry_available,undefined);
+assert.equal(captured[1].uuid,'00000000-0000-4000-8000-000000000004');
+nativeMarker=true;
+setRequestAccount('owner-three');
+configureAnalytics({...configuration,distinctId:'local:00000000-0000-4000-8000-000000000007'},'desktop');
+await settle();
+assert.equal(captured.length,3);
+assert.equal(captured[2].properties.entry,'native_setup');
+assert.equal(captured[2].properties.server_connection_telemetry_available,true);
+assert.equal(captured[2].uuid,'00000000-0000-4000-8000-000000000006');
 configureAnalytics(undefined,'desktop');dom.window.close();
 `,
   });

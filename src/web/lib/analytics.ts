@@ -23,7 +23,10 @@ import type { AttachmentKind } from '../../shared/attachment-kind';
 import type { Presentation } from '../../shared/presentation';
 
 type AnalyticsEvents = {
-  app_opened: { entry: 'native_setup' | 'app_ui' };
+  app_opened: {
+    entry: 'native_setup' | 'app_ui';
+    server_connection_telemetry_available?: true;
+  };
   onboarding_step_viewed: {
     step: OnboardingStep;
     direction: 'forward' | 'back';
@@ -155,7 +158,7 @@ const artifactKinds = [
   'file',
 ];
 const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unknown[]>> = {
-  app_opened: { entry: ['native_setup', 'app_ui'] },
+  app_opened: { entry: ['native_setup', 'app_ui'], server_connection_telemetry_available: [true] },
   onboarding_step_viewed: {
     step: onboardingSteps,
     direction: ['forward', 'back'],
@@ -657,6 +660,10 @@ function captureAppOpened(path: string) {
             {
               route: opening.entry === 'native_setup' ? '/onboarding' : route,
               entry: opening.entry,
+              ...(opening.entry === 'native_setup' &&
+              opening.serverConnectionTelemetryAvailable === true
+                ? { server_connection_telemetry_available: true }
+                : {}),
             },
             {
               timestamp: new Date(opening.openedAt),

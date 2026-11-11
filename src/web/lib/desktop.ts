@@ -56,6 +56,7 @@ type DesktopAppOpening = {
   openedAt: number;
   uuid: string;
   entry: 'native_setup' | 'app_ui';
+  serverConnectionTelemetryAvailable?: true;
 };
 
 type DesktopWindow = Window & {

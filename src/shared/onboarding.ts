@@ -32,7 +32,7 @@ export const profileCompanySizes = [
   { id: '2_10', label: '2–10' },
   { id: '11_100', label: '11–100' },
   { id: '101_1000', label: '101–1,000' },
-  { id: '1000_plus', label: '1,000+' },
+  { id: '1000_plus', label: 'More than 1,000' },
 ] as const;
 export const profileJobs = [
   { id: 'email', label: 'Stay on top of email and Slack' },

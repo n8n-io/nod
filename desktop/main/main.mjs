@@ -1129,11 +1129,21 @@ function analyticsEnvironment(metadata) {
     : 'development';
 }
 
-async function captureNativeAnalytics({ event, distinctId, openedAt, uuid, properties }) {
+async function captureNativeAnalytics({
+  event,
+  distinctId,
+  openedAt,
+  uuid,
+  properties,
+  verifyConsent,
+}) {
   try {
+    const route = event === 'server_connection_verified' ? '/server' : '/onboarding';
     const { nodBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
     const saved = await settings.get();
     if (saved.welcome?.usageData === false) deferAppOpening();
+    if (appOpeningDeferred) return false;
+    if (verifyConsent && !(await verifyConsent())) return false;
     if (appOpeningDeferred) return false;
     const response = await fetch(`${posthogConfig.host}/i/v0/e/`, {
       method: 'POST',
@@ -1152,9 +1162,9 @@ async function captureNativeAnalytics({ event, distinctId, openedAt, uuid, prope
           surface: 'desktop',
           app_version: app.getVersion(),
           ...properties,
-          route: '/onboarding',
-          $current_url: 'https://app.example/onboarding',
-          $pathname: '/onboarding',
+          route,
+          $current_url: `https://app.example${route}`,
+          $pathname: route,
           $host: 'app.example',
           $process_person_profile: false,
           $geoip_disable: true,
@@ -1213,7 +1223,7 @@ function captureFreshAppOpen() {
       distinctId: analytics.distinctId,
       openedAt,
       uuid,
-      properties: { entry: 'native_setup' },
+      properties: { entry: 'native_setup', server_connection_telemetry_available: true },
     });
     if (accepted) claimedAppOpens.add(analytics.distinctId);
     return accepted;
@@ -1364,14 +1374,20 @@ async function checkRemoteConnection(connection) {
     typeof account.settings?.onboardingCompleted !== 'boolean'
   )
     throw new Error('This address did not respond as a Nod server.');
-  return { url, token: connection.token, owner: account.user.id };
+  return {
+    url,
+    token: connection.token,
+    owner: account.user.id,
+    analyticsAllowed: account.settings.usageData === true && account.analytics?.enabled === true,
+  };
 }
 
 async function startRemote(connection) {
   update({ remote: true, phase: 'starting', message: 'Connecting to your server.' });
   const connected = await checkRemoteConnection(connection);
   if (quitting) return;
-  remoteConnection = connected;
+  remoteConnection = { url: connected.url, token: connected.token, owner: connected.owner };
+  const activeConnection = remoteConnection;
   engineOrigin = connected.url;
   authToken = connected.token;
   engineBound = true;
@@ -1401,6 +1417,29 @@ async function startRemote(connection) {
   });
   synchronizeNotifications();
   showEngine();
+  if (connected.analyticsAllowed && !testInstall)
+    void analyticsConfiguration()
+      .then((analytics) => {
+        if (!analytics.enabled || !analytics.distinctId || quitting) return;
+        return captureNativeAnalytics({
+          event: 'server_connection_verified',
+          distinctId: analytics.distinctId,
+          openedAt: Date.now(),
+          uuid: randomUUID(),
+          properties: {},
+          verifyConsent: async () => {
+            if (quitting || remoteConnection !== activeConnection) return false;
+            const current = await checkRemoteConnection(activeConnection);
+            return (
+              !quitting &&
+              remoteConnection === activeConnection &&
+              current.owner === connected.owner &&
+              current.analyticsAllowed
+            );
+          },
+        });
+      })
+      .catch(() => {});
   return status;
 }
 
@@ -2468,6 +2507,7 @@ else {
             openedAt: native?.openedAt ?? Date.now(),
             uuid: native?.uuid ?? randomUUID(),
             entry: native ? 'native_setup' : 'app_ui',
+            ...(native ? { serverConnectionTelemetryAvailable: true } : {}),
           };
           appUIOpenings.set(distinctId, opening);
         }
