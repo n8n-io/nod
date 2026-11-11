@@ -188,6 +188,7 @@ export function dropFailedInput(manager: SessionManager) {
       )
     )
       manager.appendContextEdit(sourceEntry.id, null);
+  closeInterruptedCalls(manager);
   return true;
 }
 

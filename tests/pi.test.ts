@@ -5222,10 +5222,24 @@ test('a failed model request leaves none of its unanswered input for later turns
     await session.prompt(prompt, []);
     await session.dispose();
   };
+  const unpaired = (messages: Array<{ role: string; content?: unknown; toolCallId?: string }>) => {
+    const results = new Set(
+      messages.flatMap((message) => (message.role === 'toolResult' ? [message.toolCallId] : [])),
+    );
+    return messages.flatMap((message) =>
+      message.role === 'assistant' && Array.isArray(message.content)
+        ? message.content.filter((part) => part.type === 'toolCall' && !results.has(part.id))
+        : [],
+    );
+  };
+  const saved = join(directory, threadId);
   await turn('Synthetic hostile paste');
   await turn('Read the synthetic fixture');
+  assert.deepEqual(
+    unpaired(SessionManager.continueRecent(saved, saved).buildSessionContext().messages),
+    [],
+  );
   await turn('hello? can you just say hi');
-  const saved = join(directory, threadId);
   SessionManager.continueRecent(saved, saved).appendCustomEntry('synthetic-padding', {
     value: 'x'.repeat(8 * 1024 * 1024),
   });
@@ -5234,6 +5248,7 @@ test('a failed model request leaves none of its unanswered input for later turns
   assert.ok(!requests[1].includes('Synthetic hostile paste'));
   assert.ok(requests[2].includes('Synthetic hostile tool output'));
   for (const request of requests.slice(3)) {
+    assert.deepEqual(unpaired(JSON.parse(request)), []);
     assert.ok(!request.includes('Synthetic hostile paste'));
     assert.ok(!request.includes('Synthetic hostile tool output'));
     assert.ok(request.includes('Read the synthetic fixture'));
