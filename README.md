@@ -1,10 +1,6 @@
 <p align="center">
-  <a href="https://nod.n8n.io">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/hero-dark.webp" />
-      <img src="docs/src/assets/readme/hero.webp" alt="n8n presents Nod: open source personal agent with its own computer" width="100%" />
-    </picture>
-  </a>
+  <a href="https://nod.n8n.io#gh-dark-mode-only"><img src="docs/src/assets/readme/hero-dark.webp" alt="n8n presents Nod: open source personal agent with its own computer" width="100%" /></a>
+  <a href="https://nod.n8n.io#gh-light-mode-only"><img src="docs/src/assets/readme/hero.webp" alt="n8n presents Nod: open source personal agent with its own computer" width="100%" /></a>
 </p>
 
 <p align="center">
@@ -13,9 +9,12 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/n8n-io/nod/releases/latest/download/nod-arm64.dmg"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/button-mac-dark.webp" /><img src="docs/src/assets/readme/button-mac.webp" alt="Download for Mac" width="219" /></picture></a>
-  <a href="https://github.com/n8n-io/nod/releases/latest/download/nod-Setup-x64.exe"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/button-windows-dark.webp" /><img src="docs/src/assets/readme/button-windows.webp" alt="Download for Windows" width="259" /></picture></a>
-  <a href="https://nod.n8n.io/docs/"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/button-docs-dark.webp" /><img src="docs/src/assets/readme/button-docs.webp" alt="Read the docs" width="190" /></picture></a>
+  <a href="https://github.com/n8n-io/nod/releases/latest/download/nod-arm64.dmg#gh-dark-mode-only"><img src="docs/src/assets/readme/button-mac-dark.webp" alt="Download for Mac" width="219" /></a>
+  <a href="https://github.com/n8n-io/nod/releases/latest/download/nod-arm64.dmg#gh-light-mode-only"><img src="docs/src/assets/readme/button-mac.webp" alt="Download for Mac" width="219" /></a>
+  <a href="https://github.com/n8n-io/nod/releases/latest/download/nod-Setup-x64.exe#gh-dark-mode-only"><img src="docs/src/assets/readme/button-windows-dark.webp" alt="Download for Windows" width="259" /></a>
+  <a href="https://github.com/n8n-io/nod/releases/latest/download/nod-Setup-x64.exe#gh-light-mode-only"><img src="docs/src/assets/readme/button-windows.webp" alt="Download for Windows" width="259" /></a>
+  <a href="https://nod.n8n.io/docs/#gh-dark-mode-only"><img src="docs/src/assets/readme/button-docs-dark.webp" alt="Read the docs" width="190" /></a>
+  <a href="https://nod.n8n.io/docs/#gh-light-mode-only"><img src="docs/src/assets/readme/button-docs.webp" alt="Read the docs" width="190" /></a>
 </p>
 
 <p align="center">
@@ -34,10 +33,8 @@
 <br />
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-machine-dark.webp" />
-    <img src="docs/src/assets/readme/heading-machine.webp" alt="On your machine, on your word" width="586" />
-  </picture>
+  <a href="docs/src/assets/readme/heading-machine-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-machine-dark.webp" alt="On your machine, on your word" width="586" /></a>
+  <a href="docs/src/assets/readme/heading-machine.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-machine.webp" alt="On your machine, on your word" width="586" /></a>
 </p>
 
 <p align="center">It gets on with the work across Gmail, Calendar, Slack, Notion, and the web,<br />and asks before it speaks for you.</p>
@@ -57,10 +54,8 @@
 <br />
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-hard-ones-dark.webp" />
-    <img src="docs/src/assets/readme/heading-hard-ones.webp" alt="Hand it the hard ones" width="421" />
-  </picture>
+  <a href="docs/src/assets/readme/heading-hard-ones-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-hard-ones-dark.webp" alt="Hand it the hard ones" width="421" /></a>
+  <a href="docs/src/assets/readme/heading-hard-ones.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-hard-ones.webp" alt="Hand it the hard ones" width="421" /></a>
 </p>
 
 <p align="center">Jobs that eat an afternoon of tabs, logins, and forms.<br />Nod has its own computer and browser, so it finishes them.</p>
@@ -72,10 +67,8 @@
 <br />
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-memory-dark.webp" />
-    <img src="docs/src/assets/readme/heading-memory.webp" alt="A memory like an elephant" width="508" />
-  </picture>
+  <a href="docs/src/assets/readme/heading-memory-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-memory-dark.webp" alt="A memory like an elephant" width="508" /></a>
+  <a href="docs/src/assets/readme/heading-memory.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-memory.webp" alt="A memory like an elephant" width="508" /></a>
 </p>
 
 <p align="center">Say once that Anna, not Bob, handles invoices. It remembers.</p>
@@ -99,10 +92,8 @@
 <br />
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-rules-dark.webp" />
-    <img src="docs/src/assets/readme/heading-rules.webp" alt="Your machine. Your model. Your rules." width="688" />
-  </picture>
+  <a href="docs/src/assets/readme/heading-rules-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-rules-dark.webp" alt="Your machine. Your model. Your rules." width="688" /></a>
+  <a href="docs/src/assets/readme/heading-rules.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-rules.webp" alt="Your machine. Your model. Your rules." width="688" /></a>
 </p>
 
 - **Runs on your computer or server.** Files, memory, and saved logins stay there. Your model provider gets what each task needs.
@@ -120,10 +111,8 @@
 <a name="benchmarks"></a>
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-measured-dark.webp" />
-    <img src="docs/src/assets/readme/heading-measured.webp" alt="Measured, not promised" width="476" />
-  </picture>
+  <a href="docs/src/assets/readme/heading-measured-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-measured-dark.webp" alt="Measured, not promised" width="476" /></a>
+  <a href="docs/src/assets/readme/heading-measured.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-measured.webp" alt="Measured, not promised" width="476" /></a>
 </p>
 
 <p align="center">We give Nod real errands in test apps and websites, then check what actually changed.</p>
@@ -145,10 +134,8 @@
 <br />
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-hood-dark.webp" />
-    <img src="docs/src/assets/readme/heading-hood.webp" alt="Under the hood" width="328" />
-  </picture>
+  <a href="docs/src/assets/readme/heading-hood-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-hood-dark.webp" alt="Under the hood" width="328" /></a>
+  <a href="docs/src/assets/readme/heading-hood.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-hood.webp" alt="Under the hood" width="328" /></a>
 </p>
 
 <p align="center">One Node process and a few Docker containers, all on the machine that runs Nod.</p>
@@ -178,10 +165,8 @@ flowchart TB
 <br />
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-next-dark.webp" />
-    <img src="docs/src/assets/readme/heading-next.webp" alt="Next on the list" width="316" />
-  </picture>
+  <a href="docs/src/assets/readme/heading-next-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-next-dark.webp" alt="Next on the list" width="316" /></a>
+  <a href="docs/src/assets/readme/heading-next.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-next.webp" alt="Next on the list" width="316" /></a>
 </p>
 
 - **Run while your machine is asleep.** Hosted, so the morning brief still arrives.
@@ -192,10 +177,8 @@ flowchart TB
 <br />
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-answers-dark.webp" />
-    <img src="docs/src/assets/readme/heading-answers.webp" alt="Straight answers" width="355" />
-  </picture>
+  <a href="docs/src/assets/readme/heading-answers-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-answers-dark.webp" alt="Straight answers" width="355" /></a>
+  <a href="docs/src/assets/readme/heading-answers.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-answers.webp" alt="Straight answers" width="355" /></a>
 </p>
 
 <details>
@@ -245,18 +228,19 @@ Pick a capable model. In 240 test decisions, GPT-6.1 Sol and Claude Opus 5.5 got
 <a name="get-nod"></a>
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-get-dark.webp" />
-    <img src="docs/src/assets/readme/heading-get.webp" alt="Get Nod" width="209" />
-  </picture>
+  <a href="docs/src/assets/readme/heading-get-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-get-dark.webp" alt="Get Nod" width="209" /></a>
+  <a href="docs/src/assets/readme/heading-get.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-get.webp" alt="Get Nod" width="209" /></a>
 </p>
 
 <p align="center">Install the app, connect a model and your apps, then ask for something<br />in the app, on Telegram, or on WhatsApp. Setup takes about ten minutes.</p>
 
 <p align="center">
-  <a href="https://github.com/n8n-io/nod/releases/latest/download/nod-arm64.dmg"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/button-mac-dark.webp" /><img src="docs/src/assets/readme/button-mac.webp" alt="Download for Mac" width="219" /></picture></a>
-  <a href="https://github.com/n8n-io/nod/releases/latest/download/nod-Setup-x64.exe"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/button-windows-dark.webp" /><img src="docs/src/assets/readme/button-windows.webp" alt="Download for Windows" width="259" /></picture></a>
-  <a href="https://nod.n8n.io/docs/"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/button-docs-dark.webp" /><img src="docs/src/assets/readme/button-docs.webp" alt="Read the docs" width="190" /></picture></a>
+  <a href="https://github.com/n8n-io/nod/releases/latest/download/nod-arm64.dmg#gh-dark-mode-only"><img src="docs/src/assets/readme/button-mac-dark.webp" alt="Download for Mac" width="219" /></a>
+  <a href="https://github.com/n8n-io/nod/releases/latest/download/nod-arm64.dmg#gh-light-mode-only"><img src="docs/src/assets/readme/button-mac.webp" alt="Download for Mac" width="219" /></a>
+  <a href="https://github.com/n8n-io/nod/releases/latest/download/nod-Setup-x64.exe#gh-dark-mode-only"><img src="docs/src/assets/readme/button-windows-dark.webp" alt="Download for Windows" width="259" /></a>
+  <a href="https://github.com/n8n-io/nod/releases/latest/download/nod-Setup-x64.exe#gh-light-mode-only"><img src="docs/src/assets/readme/button-windows.webp" alt="Download for Windows" width="259" /></a>
+  <a href="https://nod.n8n.io/docs/#gh-dark-mode-only"><img src="docs/src/assets/readme/button-docs-dark.webp" alt="Read the docs" width="190" /></a>
+  <a href="https://nod.n8n.io/docs/#gh-light-mode-only"><img src="docs/src/assets/readme/button-docs.webp" alt="Read the docs" width="190" /></a>
 </p>
 
 <p align="center">
@@ -287,10 +271,8 @@ See [Install from source](https://nod.n8n.io/docs/get-started/install-from-sourc
 <a name="build-with-us"></a>
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-build-dark.webp" />
-    <img src="docs/src/assets/readme/heading-build.webp" alt="Build with us" width="280" />
-  </picture>
+  <a href="docs/src/assets/readme/heading-build-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-build-dark.webp" alt="Build with us" width="280" /></a>
+  <a href="docs/src/assets/readme/heading-build.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-build.webp" alt="Build with us" width="280" /></a>
 </p>
 
 <p align="center">Nod is open source, from the team behind <a href="https://n8n.io">n8n</a>.<br />Read <a href="CONTRIBUTING.md">CONTRIBUTING</a> to send your first change.</p>
