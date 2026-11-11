@@ -21,6 +21,7 @@ import { captureSettingChanges, type SettingActor } from './analytics-settings.t
 export const spendingLimitReached =
   'Paused because this month’s spending limit was reached. Raise the limit in Usage to resume.';
 const defaultTaskUsd = 5;
+const newOwnerMonthlyUsd = 200;
 const usd = z
   .number()
   .min(1)
@@ -396,6 +397,13 @@ export function createLedger({
     };
   }
 
+  async function onboard(client: PoolClient) {
+    await client.query(
+      `INSERT INTO spending_limits(owner_id,monthly_usd) VALUES($1,${newOwnerMonthlyUsd}) ON CONFLICT DO NOTHING`,
+      [ownerId],
+    );
+  }
+
   async function limitReached() {
     await flushUsage();
     return Boolean((await limits()).limit?.reached);
@@ -731,6 +739,7 @@ export function createLedger({
     checkIn,
     limits,
     setLimits,
+    onboard,
     sessionCosts,
     recentTurnCost,
     withTurn: <T>(turnId: string, run: () => T) => activeTurn.run(turnId, run),

@@ -572,6 +572,15 @@ test(
         model.configured = true;
         assert.equal((await complete()).statusCode, 200);
         assert.equal((await session()).settings.onboardingCompleted, true);
+        assert.equal(
+          (
+            await pool.query(
+              'SELECT 1 FROM spending_limits WHERE owner_id=$1 AND monthly_usd IS NOT NULL',
+              [ownerId],
+            )
+          ).rowCount,
+          1,
+        );
         await waitFor(
           async () =>
             Boolean(

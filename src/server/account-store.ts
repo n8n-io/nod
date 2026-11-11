@@ -1,4 +1,4 @@
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { transaction } from './transaction.ts';
 import type { AccountSettings, AccountUpdate } from '../shared/account.ts';
 
@@ -12,7 +12,10 @@ export interface AccountStore {
   ): Promise<AccountSettings & { onboardingCompletedNow?: boolean }>;
 }
 
-export function createAccountStore(database: Pool): AccountStore & {
+export function createAccountStore(
+  database: Pool,
+  options: { onboard?(client: PoolClient): Promise<void> } = {},
+): AccountStore & {
   initialize(): Promise<void>;
 } {
   async function save(connection: Pick<Pool, 'query'>, ownerId: string, input: AccountUpdate) {
@@ -95,10 +98,9 @@ export function createAccountStore(database: Pool): AccountStore & {
           [ownerId],
         );
         const account = await save(connection, ownerId, input);
-        return {
-          ...account,
-          onboardingCompletedNow: !previous.rows[0].onboardingCompleted,
-        };
+        const onboardingCompletedNow = !previous.rows[0].onboardingCompleted;
+        if (onboardingCompletedNow) await options.onboard?.(connection);
+        return { ...account, onboardingCompletedNow };
       }, database);
     },
   };

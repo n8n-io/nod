@@ -42,6 +42,10 @@ Costs are Nod's estimates from each model's API price. Your provider's bill is t
 
 ## Set a monthly limit
 
+Nod sets a $200 monthly limit when you finish setup. If you set up Nod before it did this, you have no limit until you set one.
+
+To change it:
+
 1. Select an API model and open **Usage**.
 2. In the sentence at the top, select **no monthly limit**, or your current limit.
 3. Enter an amount in US dollars, from $1 up, and select **Save**.

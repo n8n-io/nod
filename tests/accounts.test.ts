@@ -5952,6 +5952,21 @@ describe('persisted setting analytics privacy', { skip: !process.env.TEST_DATABA
     assert.equal(f.changes().length, 3);
   });
 
+  test('finishing setup gives a new owner a monthly limit once and never restores a removed one', async (t) => {
+    const { createAccountStore } = await import('../src/server/account-store.ts');
+    const f = await fixture(t);
+    const ledger = createLedger({ pool: f.database, ownerId: f.owner });
+    await ledger.initialize();
+    const accounts = createAccountStore(f.database, { onboard: ledger.onboard });
+    await accounts.initialize();
+    assert.equal((await ledger.limits()).limit, null);
+    await accounts.update(f.owner, { onboardingCompleted: true });
+    assert.equal((await ledger.limits()).limit?.reached, false);
+    await ledger.setLimits({ monthlyUsd: null });
+    await accounts.update(f.owner, { onboardingCompleted: true });
+    assert.equal((await ledger.limits()).limit, null);
+  });
+
   test('account changes follow saved values and do not cross queued opt-out or failed writes', async (t) => {
     const { createAccountStore } = await import('../src/server/account-store.ts');
     const f = await fixture(t);

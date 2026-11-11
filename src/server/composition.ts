@@ -1367,7 +1367,7 @@ async function initializeApplication(
     deliver: async (messageId, reaction, signal) =>
       channels ? channels.react(messageId, reaction, signal) : 'absent',
   });
-  const localAccounts = createAccountStore(pool);
+  const localAccounts = createAccountStore(pool, { onboard: ledger.onboard });
   const ownerNames = async () =>
     (await integrations.list(ownerId, { refresh: false }))
       .filter(connectedGmail)
