@@ -10158,7 +10158,7 @@ test('a first task stays open after its chat turn ends and follows its own saved
 });
 
 test(
-  'the live line drops a step from before a follow-up and keeps work Nod started apart',
+  'the live line uses an active tool label, drops old steps, and keeps work Nod started apart',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async () => {
     const schema = `test_activity_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
@@ -10206,14 +10206,48 @@ test(
       assert.deepEqual(item.receivedMessageIds, [message]);
       assert.equal(item.doing, 'model');
       assert.ok(Date.parse(item.quietSince) <= Date.now() - 3 * 60_000);
+      const firstCall = randomUUID();
       await pool.query(
-        "INSERT INTO turn_events(turn_id,type,summary,site,call_id) VALUES($1,'tool_start','Open page','example.test',$2)",
-        [chat, randomUUID()],
+        "INSERT INTO turn_events(turn_id,type,summary,site,call_id,created_at) VALUES($1,'tool_start','Open page','example.test',$2,now()-interval '3 seconds')",
+        [chat, firstCall],
       );
       item = await live();
       assert.equal(item.doing, 'tool');
       assert.equal(item.site, 'example.test');
       assert.ok(Date.parse(item.quietSince) > Date.now() - 60_000);
+      const secondCall = randomUUID();
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,site,call_id,created_at) VALUES($1,'tool_start','Read app','another.example',$2,now()-interval '2 seconds')",
+        [chat, secondCall],
+      );
+      assert.equal((await live()).site, 'another.example');
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,site,call_id,created_at) VALUES($1,'tool_complete','Read app','another.example',$2,now()-interval '1 second')",
+        [chat, secondCall],
+      );
+      item = await live();
+      assert.equal(item.doing, 'tool');
+      assert.equal(item.site, 'example.test');
+      const unlabeledCall = randomUUID();
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,call_id) VALUES($1,'tool_start','Wait for result',$2)",
+        [chat, unlabeledCall],
+      );
+      assert.equal((await live()).site, 'example.test');
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,site,call_id) VALUES($1,'tool_complete','Open page','example.test',$2)",
+        [chat, firstCall],
+      );
+      item = await live();
+      assert.equal(item.doing, 'tool');
+      assert.equal(item.site, null);
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,call_id) VALUES($1,'tool_complete','Wait for result',$2)",
+        [chat, unlabeledCall],
+      );
+      item = await live();
+      assert.equal(item.doing, 'model');
+      assert.equal(item.site, null);
       await pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [followUp]);
       await pool.query("INSERT INTO turn_events(turn_id,type) VALUES($1,'steered')", [chat]);
       item = await live();
