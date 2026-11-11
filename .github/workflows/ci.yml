@@ -290,6 +290,19 @@ jobs:
             --test-reporter=spec --test-reporter-destination=stdout `
             --test-reporter=junit --test-reporter-destination=.local/windows-setup/desktop.xml `
             desktop/test/settings.test.mjs
+      - name: Check Windows browser app sign-in bridge
+        shell: pwsh
+        run: |
+          $edge = @(
+            (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe')
+            (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe')
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $edge) { throw 'Microsoft Edge is required for the native app sign-in test.' }
+          $env:NOD_TEST_BROWSER_EXECUTABLE = $edge
+          node --import tsx --test --test-name-pattern="native browser completes the local app sign-in bridge" `
+            --test-reporter=spec --test-reporter-destination=stdout `
+            --test-reporter=junit --test-reporter-destination=.local/windows-setup/bridge.xml `
+            tests/integrations.test.ts
       - name: Check local file rules on Windows
         run: pnpm exec tsx --test --test-name-pattern="local file rules" tests/sandbox.test.ts
       - name: Execute the PowerShell installer fixtures

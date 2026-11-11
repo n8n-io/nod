@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { getEventListeners } from 'node:events';
+import { spawn, spawnSync } from 'node:child_process';
+import { getEventListeners, once } from 'node:events';
+import { createServer } from 'node:http';
 import {
   createHash,
   generateKeyPairSync,
@@ -41,6 +42,7 @@ import {
 } from '../src/ports/integrations.ts';
 import { createComposioProvider } from '../src/providers/composio/integrations.ts';
 import { createComposioProxy } from '../src/providers/composio/proxy.ts';
+import { serviceEnvironment } from '../src/providers/process.ts';
 import { createIntegrationIdentityCheckpoint } from '../src/server/integration-identity.ts';
 import { createIntegrationBrowser } from '../src/server/integration-browser.ts';
 import { createDiscoveredTransport, safeRemoteFetch } from '../src/providers/discovered/remote.ts';
@@ -1729,6 +1731,201 @@ test('connection bridge binds a single browser bootstrap to one installation att
     browser.open(randomBytes(32).toString('base64url'), brokerOrigin, async () => ''),
   );
 });
+
+test(
+  'native browser completes the local app sign-in bridge through a signed proof and synthetic callback',
+  {
+    skip: process.env.NOD_TEST_BROWSER_EXECUTABLE
+      ? false
+      : 'No native browser executable is configured.',
+    timeout: 60_000,
+  },
+  async (t) => {
+    const executable = process.env.NOD_TEST_BROWSER_EXECUTABLE;
+    assert.ok(executable, 'Set NOD_TEST_BROWSER_EXECUTABLE to Microsoft Edge on Windows.');
+    const profile = await mkdtemp(join(tmpdir(), 'nod-native-connection-'));
+    const browser = createIntegrationBrowser();
+    const state = randomBytes(32).toString('base64url');
+    const completionToken = randomBytes(32).toString('base64url');
+    const proof = 'synthetic-native-proof';
+    let browserKey: import('node:crypto').JsonWebKey | undefined;
+    let bridgeOrigin = '';
+    let returnPath = '';
+    let brokerOrigin = '';
+    let challenge = '';
+    let verified = 0;
+    let callbacks = 0;
+    let brokerFailure: unknown;
+    let child: ReturnType<typeof spawn> | undefined;
+    let childClosed: Promise<void> | undefined;
+    let complete!: () => void;
+    const completed = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    const app = createServer((request, response) => {
+      const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+      if (
+        request.method !== 'GET' ||
+        url.pathname !== '/api/apps/callback' ||
+        url.searchParams.get('state') !== state ||
+        url.searchParams.get('completion_token') !== completionToken ||
+        verified !== 1
+      ) {
+        response.writeHead(400).end();
+        return;
+      }
+      callbacks++;
+      browser.finish(state);
+      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      response.end('<html><body data-connection="complete">Synthetic app connected</body></html>');
+      complete();
+    });
+    const broker = createServer(async (request, response) => {
+      try {
+        const url = new URL(request.url ?? '/', brokerOrigin);
+        if (request.method === 'GET' && url.pathname === '/v2/connect/pair') {
+          assert.equal(url.searchParams.get('ticket'), state);
+          assert.ok(browserKey && bridgeOrigin && returnPath);
+          challenge = [
+            'nod-proxy-connect-v2',
+            state,
+            bridgeOrigin,
+            'a'.repeat(64),
+            randomBytes(32).toString('base64url'),
+          ].join('\n');
+          response.writeHead(302, {
+            Location: `${bridgeOrigin}${returnPath}#${encodeURIComponent(
+              JSON.stringify({ id: state, challenge, proof }),
+            )}`,
+          });
+          response.end();
+          return;
+        }
+        if (request.method === 'GET' && url.pathname === '/v2/connect/native-proof') {
+          response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          response.end(`<html><body data-connection="verifying"><script>
+const result=JSON.parse(decodeURIComponent(location.hash.slice(1)));
+history.replaceState(null,'',location.pathname);
+fetch('/v2/connect/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(result)})
+.then(response=>{if(!response.ok)throw Error();location.replace(${JSON.stringify(
+            `http://127.0.0.1:${(app.address() as { port: number }).port}/api/apps/callback?state=${state}&completion_token=${completionToken}`,
+          )})})
+.catch(()=>{document.body.dataset.connection='failed'});
+</script></body></html>`);
+          return;
+        }
+        if (request.method === 'POST' && url.pathname === '/v2/connect/verify') {
+          const chunks: Buffer[] = [];
+          for await (const chunk of request) chunks.push(Buffer.from(chunk));
+          const result = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          assert.deepEqual(Object.keys(result).sort(), ['proof', 'signature']);
+          assert.equal(result.proof, proof);
+          assert.ok(browserKey);
+          const signature = Buffer.from(result.signature, 'base64url');
+          assert.equal(signature.length, 64);
+          assert.ok(
+            verify(
+              'sha256',
+              Buffer.from(challenge),
+              {
+                key: createPublicKey({ key: browserKey, format: 'jwk' }),
+                dsaEncoding: 'ieee-p1363',
+              },
+              signature,
+            ),
+          );
+          verified++;
+          response.writeHead(204).end();
+          return;
+        }
+        response.writeHead(404).end();
+      } catch (error) {
+        brokerFailure = error;
+        response.writeHead(500).end();
+      }
+    });
+    t.after(async () => {
+      if (child) {
+        if (process.platform === 'win32' && child.pid)
+          spawnSync('taskkill.exe', ['/T', '/F', '/PID', String(child.pid)], {
+            env: serviceEnvironment(),
+            stdio: 'ignore',
+            timeout: 3000,
+          });
+        child.kill('SIGKILL');
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 3000);
+          void childClosed?.then(() => {
+            clearTimeout(timer);
+            resolve();
+          });
+        });
+      }
+      await browser.close();
+      app.closeAllConnections();
+      broker.closeAllConnections();
+      await Promise.all([
+        new Promise<void>((resolve) => app.close(() => resolve())),
+        new Promise<void>((resolve) => broker.close(() => resolve())),
+        rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }),
+      ]);
+    });
+    app.listen(0, '127.0.0.1');
+    broker.listen(0, '127.0.0.1');
+    await Promise.all([once(app, 'listening'), once(broker, 'listening')]);
+    brokerOrigin = `http://127.0.0.1:${(broker.address() as { port: number }).port}`;
+    const bridgeUrl = await browser.open(state, brokerOrigin, async (key, origin, native) => {
+      assert.ok(native);
+      browserKey = key as import('node:crypto').JsonWebKey;
+      bridgeOrigin = origin;
+      returnPath = native.returnPath;
+      return `${brokerOrigin}/v2/connect/pair?ticket=${state}`;
+    });
+    const preview = await fetch(bridgeUrl);
+    assert.equal(preview.status, 200);
+    await preview.arrayBuffer();
+    child = spawn(
+      executable,
+      [
+        '--headless=new',
+        ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
+        '--disable-gpu',
+        '--disable-background-networking',
+        '--no-first-run',
+        `--user-data-dir=${profile}`,
+        bridgeUrl,
+      ],
+      { env: serviceEnvironment(), stdio: 'ignore' },
+    );
+    childClosed = new Promise<void>((resolve) => {
+      child!.once('close', () => resolve());
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        completed,
+        new Promise<never>((_, reject) => {
+          child.once('error', reject);
+          child.once('close', (code) =>
+            reject(new Error(`The native browser exited before sign-in completed (${code}).`)),
+          );
+        }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('The native browser sign-in timed out.')),
+            30_000,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (brokerFailure !== undefined) throw brokerFailure;
+    }
+    assert.equal(verified, 1);
+    assert.equal(callbacks, 1);
+    assert.equal(browser.owns(bridgeUrl), false);
+  },
+);
 
 for (const desktop of [false, true]) {
   test(
