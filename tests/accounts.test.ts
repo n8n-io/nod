@@ -5986,6 +5986,7 @@ describe('persisted setting analytics privacy', { skip: !process.env.TEST_DATABA
     const accounts = createAccountStore(f.database);
     await accounts.initialize();
     await accounts.update(f.owner, { usageData: false });
+    const initialConsent = await accounts.readConsent(f.owner);
     const origin = 'http://localhost:4399';
     const app = Fastify();
     t.after(() => app.close());
@@ -6008,8 +6009,12 @@ describe('persisted setting analytics privacy', { skip: !process.env.TEST_DATABA
     const update = (payload: object) =>
       app.inject({ method: 'PATCH', url: '/api/account', headers: { origin }, payload });
     assert.equal((await update({ usageData: true })).statusCode, 200);
+    const enabledConsent = await accounts.readConsent(f.owner);
+    assert.equal(enabledConsent.enabled, true);
+    assert.equal(BigInt(enabledConsent.revision), BigInt(initialConsent.revision) + 1n);
     assert.deepEqual(f.changes(), [{ setting: 'usage_data', actor: 'owner', state: 'on' }]);
     await update({ theme: 'dark', traces: true });
+    assert.equal((await accounts.readConsent(f.owner)).revision, enabledConsent.revision);
     assert.deepEqual(f.changes().slice(1), [
       { setting: 'theme', actor: 'owner', state: 'dark' },
       { setting: 'conversation_traces', actor: 'owner', state: 'on' },
@@ -6049,11 +6054,17 @@ describe('persisted setting analytics privacy', { skip: !process.env.TEST_DATABA
     await new Promise((resolve) => setTimeout(resolve, 5));
     release.resolve();
     await Promise.all([theme, off, on]);
+    const restoredConsent = await accounts.readConsent(f.owner);
+    assert.equal(restoredConsent.enabled, true);
+    assert.equal(BigInt(restoredConsent.revision), BigInt(enabledConsent.revision) + 2n);
     assert.equal((await accounts.read(f.owner)).theme, 'system');
     assert.deepEqual(f.changes().slice(3), [
       { setting: 'usage_data', actor: 'owner', state: 'on' },
     ]);
     await update({ usageData: false, traces: false });
+    const disabledConsent = await accounts.readConsent(f.owner);
+    assert.equal(disabledConsent.enabled, false);
+    assert.equal(BigInt(disabledConsent.revision), BigInt(restoredConsent.revision) + 1n);
     assert.equal(f.changes().length, 4);
     assert.equal(f.analytics.consent(f.owner).enabled, false);
     holdAll = true;
