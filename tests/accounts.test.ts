@@ -1371,6 +1371,14 @@ describe('account routes', () => {
     ready = false;
     assert.equal((await complete()).statusCode, 200);
     assert.equal(checked, checks);
+    const reopened = await f.app.inject({
+      method: 'PATCH',
+      url: '/api/account',
+      headers: { origin },
+      payload: { onboardingCompleted: false },
+    });
+    assert.ok(reopened.statusCode >= 400);
+    assert.equal(f.record().onboardingCompleted, true);
   });
 
   test('usage data stays off until the owner opts in and the environment switch always wins', async (t) => {

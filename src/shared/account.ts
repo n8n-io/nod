@@ -26,7 +26,7 @@ export interface SessionResponse {
 
 export interface AccountUpdate {
   theme?: AccountTheme;
-  onboardingCompleted?: boolean;
+  onboardingCompleted?: true;
   usageData?: boolean;
   traces?: boolean;
 }

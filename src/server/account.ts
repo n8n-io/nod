@@ -10,7 +10,7 @@ const surveyActiveDays = 3;
 const accountUpdate = z
   .object({
     theme: z.enum(['light', 'dark', 'system']).optional(),
-    onboardingCompleted: z.boolean().optional(),
+    onboardingCompleted: z.literal(true).optional(),
     usageData: z.boolean().optional(),
     traces: z.boolean().optional(),
   })
