@@ -19,9 +19,9 @@ If your problem isn't here, [send feedback with a diagnostic report](#send-feedb
 
 Docker isn't running, or Compose is too old. Start Docker (on a Mac, open Docker Desktop) and check that `docker compose version` reports v2.
 
-### Run npm run dev to prepare the local database
+### NOD_POSTGRES_PASSWORD is missing a value
 
-You ran `docker compose` yourself before Nod created the database password. Run `pnpm start` once. It generates `NOD_POSTGRES_PASSWORD` and starts the containers for you.
+You ran `docker compose` yourself before Nod created the database password. Run `pnpm start` from the repository root. It generates `NOD_POSTGRES_PASSWORD`, starts the containers, and starts Nod.
 
 ### Configure NOD_VAULT_KEY in server settings before saving a connection.
 
