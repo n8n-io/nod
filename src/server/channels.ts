@@ -942,7 +942,6 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
 
   async function inboxStep() {
     if (closed || replacing) return false;
-    const stopSignal = options.stopSignal?.();
     const pending = (
       await pool.query<InboxRow>(
         "SELECT * FROM channel_inbox WHERE state='pending' AND owner_id=$1 ORDER BY created_at LIMIT 1",
@@ -950,6 +949,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       )
     ).rows[0];
     if (!pending) return false;
+    const stopSignal = options.stopSignal?.();
     const messageAccepted = options.messageAccepted?.();
     const channel = conversationChannel(pending);
     if (closed || replacing) return false;
