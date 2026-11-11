@@ -31,7 +31,7 @@ For application changes, start with focused tests. Run broader checks only when 
 - Keep keys, credentials and private content out of code, tests, logs and screenshots.
 - Update the docs in [`docs/`](docs/README.md) when setup or behaviour changes.
 
-A member of [@n8n-io/n8n-labs](.github/CODEOWNERS) reviews every change. See [Pull requests](docs/src/content/docs/contribute/pull-requests.md) for review, merge and release details.
+A maintainer reviews every change. See [Pull requests](docs/src/content/docs/contribute/pull-requests.md) for review, merge and release details.
 
 ## License
 
