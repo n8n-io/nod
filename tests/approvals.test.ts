@@ -1470,6 +1470,12 @@ test(
         aligned = () => ({ run: true, because: '👍' });
         assert.equal((await trust.check(reacted, 'GMAIL_SEND_EMAIL', args)).confirm, true);
         const bare = await messages.submit('Yes.');
+        await db.pool.query(
+          `WITH boundary AS (SELECT date_trunc('milliseconds',created_at) AS at FROM messages WHERE id=$2)
+           UPDATE messages m SET created_at=boundary.at + CASE WHEN m.id=$1 THEN interval '500 microseconds' ELSE interval '800 microseconds' END
+           FROM boundary WHERE m.id IN ($1,$2)`,
+          [resultId, bare.messageId],
+        );
         turnIds.push(bare.turnId);
         const bareTurn = await running(bare.turnId);
         aligned = () => ({ run: true, because: originalText });

@@ -162,19 +162,19 @@ export function createTrust(options: {
             [ownerId, threadId, latest.id, taskId, since],
           )
         : await pool.query<{ text: string }>(
-            `WITH latest AS (SELECT m.reply_to_message_id,u.channel FROM messages m
+            `WITH latest AS (SELECT m.id,m.created_at,m.reply_to_message_id,u.channel FROM messages m
                JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
-               WHERE m.id=$4 AND m.owner_id=$1 AND m.thread_id=$2),
+               WHERE m.id=$3 AND m.owner_id=$1 AND m.thread_id=$2),
              answered AS (SELECT m.id,m.owner_id,m.turn_id,m.text FROM messages m CROSS JOIN latest
                WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.role='assistant' AND m.text<>'' AND m.hidden_at IS NULL
-                 AND m.created_at>$5 AND (m.created_at,m.id)<($3,$4)
+                 AND m.created_at>$4 AND (m.created_at,m.id)<(latest.created_at,latest.id)
                  AND (m.id=latest.reply_to_message_id OR (latest.reply_to_message_id IS NULL
                    AND EXISTS (SELECT 1 FROM turns c WHERE c.id=m.turn_id AND c.owner_id=$1 AND c.channel=latest.channel)))
                  AND m.turn_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=$1 AND u.id=m.turn_id AND to_jsonb(u)->>'task_id' IS NOT NULL)
                ORDER BY m.created_at DESC,m.id DESC LIMIT 1)
              SELECT text FROM answered WHERE NOT ${withdrawnSql('answered')}
                AND NOT EXISTS (SELECT 1 FROM approvals p WHERE p.owner_id=$1 AND p.confirmation_message_id=answered.id)`,
-            [ownerId, threadId, latest.created_at, latest.id, since],
+            [ownerId, threadId, latest.id, since],
           )
     ).rows[0];
     const ordered = users.reverse();
