@@ -60,6 +60,17 @@ export type ChatConfirmationResult =
   | { waiting: { id: string; session_id: string; background: boolean } }
   | undefined;
 
+function chatConfirmationSql(match: string) {
+  return `SELECT a.*,u.source AS turn_source,u.status AS turn_status,u.background AS turn_background,u.session_id AS turn_session_id,u.prompt AS turn_prompt
+  FROM approvals a JOIN turns u ON u.id=a.turn_id
+  WHERE ${match}
+    AND a.owner_id=$2 AND u.owner_id=$2 AND a.thread_id=$3 AND u.thread_id=$3 AND u.channel=$4
+    AND EXISTS (SELECT 1 FROM messages c WHERE c.id=a.confirmation_message_id AND c.owner_id=a.owner_id AND c.hidden_at IS NULL)
+    AND (to_jsonb(u)->>'task_id' IS NULL OR NOT EXISTS (
+      SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id AND n.id<>u.id
+        AND n.source IN ('user','task') AND n.message_id IS NOT NULL AND n.status IN ('queued','running')))`;
+}
+
 type TurnRow = {
   id: string;
   thread_id: string;
@@ -492,16 +503,11 @@ export async function createApprovals(
     });
   }
 
-  async function confirmationFor(
-    database: Pick<PoolClient, 'query'>,
-    input: ChatConfirmationInput,
-    approvalId?: string,
-  ) {
+  async function confirmationFor(input: ChatConfirmationInput) {
     const target =
-      approvalId ??
       input.replyToMessageId ??
       (
-        await database.query(
+        await pool.query(
           `SELECT m.id FROM messages m JOIN turns u ON u.id=m.turn_id WHERE m.owner_id=$1 AND u.owner_id=$1 AND m.thread_id=$2 AND u.channel=$3 AND m.role='assistant' AND m.hidden_at IS NULL
            AND NOT EXISTS (SELECT 1 FROM messages s WHERE s.id=$4 AND s.owner_id=$1 AND s.thread_id=$2 AND date_trunc('milliseconds',s.created_at)<date_trunc('milliseconds',m.created_at))
            AND NOT EXISTS (SELECT 1 FROM messages n WHERE n.owner_id=$1 AND n.thread_id=$2 AND n.role='assistant' AND n.turn_id IS NULL AND n.delivered_channel=$3 AND n.hidden_at IS NULL
@@ -512,21 +518,10 @@ export async function createApprovals(
         )
       ).rows[0]?.id;
     if (!target) return undefined;
-    const match = approvalId
-      ? 'a.id=$1'
-      : `a.confirmation_message_id=COALESCE((SELECT m.reply_to_message_id FROM messages m
-         WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3 AND m.role='assistant' AND m.turn_id IS NULL AND m.hidden_at IS NULL),$1)`;
     return (
-      await database.query(
-        `SELECT a.*,u.source AS turn_source,u.status AS turn_status,u.background AS turn_background,u.session_id AS turn_session_id,u.prompt AS turn_prompt
-       FROM approvals a JOIN turns u ON u.id=a.turn_id
-       WHERE ${match}
-         AND a.owner_id=$2 AND u.owner_id=$2 AND a.thread_id=$3 AND u.thread_id=$3 AND u.channel=$4
-         AND EXISTS (SELECT 1 FROM messages c WHERE c.id=a.confirmation_message_id AND c.owner_id=a.owner_id AND c.hidden_at IS NULL)
-         AND (to_jsonb(u)->>'task_id' IS NULL OR NOT EXISTS (
-           SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id AND n.id<>u.id
-             AND n.source IN ('user','task') AND n.message_id IS NOT NULL AND n.status IN ('queued','running')))
-       ${approvalId ? ' FOR UPDATE OF a' : ''}`,
+      await pool.query(
+        chatConfirmationSql(`a.confirmation_message_id=COALESCE((SELECT m.reply_to_message_id FROM messages m
+         WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3 AND m.role='assistant' AND m.turn_id IS NULL AND m.hidden_at IS NULL),$1)`),
         [target, ownerId, input.threadId, input.channel],
       )
     ).rows[0];
@@ -534,7 +529,7 @@ export async function createApprovals(
 
   async function answerChat(input: ChatConfirmationInput) {
     if (!interpret) return undefined;
-    const approval = await confirmationFor(pool, input);
+    const approval = await confirmationFor(input);
     if (!approval) return undefined;
     const approvalId = approval.id as string;
     if (input.hasAttachments) return { approvalId };
@@ -552,7 +547,14 @@ export async function createApprovals(
     onInserted?: () => void,
   ): Promise<ChatConfirmationResult> {
     if (!input.answer) return undefined;
-    const approval = await confirmationFor(client, input, input.answer.approvalId);
+    const approval = (
+      await client.query(`${chatConfirmationSql('a.id=$1')} FOR UPDATE OF a`, [
+        input.answer.approvalId,
+        ownerId,
+        input.threadId,
+        input.channel,
+      ])
+    ).rows[0];
     if (approval?.status !== 'pending') return undefined;
     const { approved } = input.answer;
     const active = ['running', 'waiting'].includes(approval.turn_status);

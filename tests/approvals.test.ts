@@ -2100,7 +2100,7 @@ test(
             await held.promise;
           };
           const submitted = messages.submit(reply, [], { channel });
-          await reading.promise;
+          await Promise.race([reading.promise, submitted]);
           duringReply = async () => {};
           const later = await running(
             await thread.enqueueTurn('Synthetic background check', { source: 'event', channel }),
