@@ -2770,6 +2770,51 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     for (const access of captured) assert.equal(await access.read(), undefined);
   });
 
+  test('model refresh and saved connections repair unsupported efforts and keep valid selections', async (t) => {
+    const f = await fixture(t);
+    const definition = (await f.backend.catalog('openrouter', 'api_key')).find(
+      (model) => model.choice.id === 'openrouter/free',
+    )!;
+    let updated = false;
+    let empty = false;
+    const owner = await f.create('fixture-refreshed-effort', {
+      ...f.backend,
+      catalog: async () => [
+        {
+          ...definition,
+          choice: {
+            ...definition.choice,
+            efforts: empty ? [] : updated ? ['minimal', 'low', 'medium', 'high'] : ['off', 'high'],
+          },
+        },
+      ],
+    });
+    const id = await owner.addKey('openrouter', 'fixture-refreshed-key');
+    for (const replace of [
+      () => owner.refreshCatalog(id),
+      () => owner.addKey('openrouter', 'fixture-refreshed-key'),
+    ]) {
+      updated = false;
+      await replace();
+      await owner.select({ connectionId: id, modelId: 'openrouter/free', effort: 'off' });
+      updated = true;
+      await replace();
+      assert.deepEqual(owner.view().selection, {
+        connectionId: id,
+        modelId: 'openrouter/free',
+        effort: 'minimal',
+      });
+      assert.equal((await owner.resolve()).effort, 'minimal');
+      await owner.select({ connectionId: id, modelId: 'openrouter/free', effort: 'high' });
+      await replace();
+      assert.equal((await owner.resolve()).effort, 'high');
+    }
+    empty = true;
+    await owner.refreshCatalog(id);
+    assert.equal(owner.view().selection?.effort, 'high');
+    await assert.rejects(owner.resolve());
+  });
+
   test('model setup chooses capable defaults, preserves explicit choices and requires valid cloud accounts', async (t) => {
     const f = await fixture(t);
     const backend = {

@@ -18,18 +18,9 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - 'desktop/**'
-      - 'src/**'
-      - 'public/**'
-      - 'index.html'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - 'tsconfig.json'
-      - 'vite.config.ts'
-      - 'Dockerfile.*'
-      - '.dockerignore'
-      - '.github/workflows/linux-desktop.yml'
+      - 'desktop/flatpak/**'
+      - 'desktop/scripts/*linux*.mjs'
+      - 'desktop/test/*linux*.test.mjs'
 
 permissions:
   contents: read

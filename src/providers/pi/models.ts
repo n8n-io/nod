@@ -47,6 +47,16 @@ import {
 
 const localModelSilenceMs = 30 * 60_000;
 
+function supportedModel(model: Model<Api>): Model<Api> {
+  if (model.provider === 'groq' && model.id.startsWith('qwen/'))
+    return { ...model, compat: { ...model.compat, supportsDeveloperRole: false } };
+  if (model.provider === 'openrouter' && model.id === 'xiaomi/mimo-v2.6-flash')
+    return { ...model, compat: { ...model.compat, supportsStrictMode: false } };
+  if (model.provider === 'openrouter' && model.id === 'openrouter/free')
+    return { ...model, thinkingLevelMap: { ...model.thinkingLevelMap, off: null } };
+  return model;
+}
+
 const resource = 'https://api.openai.com/v1';
 const issuer = 'https://auth.openai.com';
 
@@ -186,10 +196,9 @@ function ollamaModel(show: z.infer<typeof ollamaShowSchema>) {
   const contextWindow = Math.min(trained ?? Infinity, configured ?? Infinity);
   const values = show.thinking?.values;
   const named = levels.filter((level) => values?.includes(level));
-  const thinkingLevelMap = !show.capabilities.includes('thinking')
-    ? undefined
-    : !values
-      ? { off: 'none' }
+  const thinkingLevelMap =
+    !show.capabilities.includes('thinking') || !values
+      ? undefined
       : named.length
         ? {
             off: values.includes(false) || values.includes('none') ? 'none' : null,
@@ -199,9 +208,9 @@ function ollamaModel(show: z.infer<typeof ollamaShowSchema>) {
           }
         : values.includes(true)
           ? {
-              off: 'none',
+              off: values.includes(false) ? 'none' : null,
               ...Object.fromEntries(
-                levels.map((level) => [level, level === 'high' ? 'high' : null]),
+                levels.map((level) => [level, level === 'high' ? 'true' : null]),
               ),
             }
           : undefined;
@@ -285,6 +294,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
     return token;
   }
   function definition(model: Model<Api>): ModelDefinition {
+    model = supportedModel(model);
     return {
       choice: {
         id: model.id,
@@ -1113,7 +1123,7 @@ export async function createPiModelRuntime(
   runtime.registerProvider(provider, {
     models: [access.definition, ...(access.textModel ? [access.textModel.definition] : [])].map(
       ({ spec }) => ({
-        ...spec,
+        ...supportedModel(spec as unknown as Model<Api>),
         contextWindow: modelContextBudget(spec as unknown as Model<Api>).window,
       }),
     ) as unknown as ProviderModelConfig[],
@@ -1142,6 +1152,9 @@ export async function createPiModelRuntime(
           ? Math.min(options.maxTokens, target.maxTokens)
           : options?.maxTokens,
       maxRetries: 0,
+      ...(target.provider === 'openrouter' && target.id === 'openrouter/free'
+        ? { reasoning: options?.reasoning ?? 'minimal' }
+        : {}),
       ...(target !== model
         ? { reasoning: access.textModel!.effort === 'off' ? undefined : access.textModel!.effort }
         : {}),
@@ -1178,6 +1191,10 @@ export async function createPiModelRuntime(
       onPayload: async (payload, target) => {
         const changed = await options?.onPayload?.(payload, target);
         const body = (changed ?? payload) as Record<string, unknown>;
+        if (access.provider === 'compatible' && target.thinkingLevelMap?.high === 'true') {
+          body.think = body.reasoning_effort !== 'none' || target.thinkingLevelMap.off === null;
+          delete body.reasoning_effort;
+        }
         if (access.provider === 'openrouter')
           body.provider = { require_parameters: true, allow_fallbacks: false };
         if (

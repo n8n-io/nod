@@ -280,7 +280,7 @@ This is an ad-hoc signed local app, not a release. It reuses the cached workspac
 
 ## Build a Linux Flatpak
 
-The Linux app is a Flatpak preview with the runtime pack inside it. **Build Linux desktop** builds and checks the x64 package. The desktop release workflow calls it and includes its files in the release. You can also run it separately from **Actions** to get the `desktop-linux-x64` artifact. Changes to desktop, application, and build inputs run the package check on pull requests.
+The Linux app is a Flatpak preview with the runtime pack inside it. **Build Linux desktop** builds and checks the x64 package. The desktop release workflow calls it and includes its files in the release. You can also run it separately from **Actions** to get the `desktop-linux-x64` artifact. On pull requests, this check runs only for `desktop/flatpak/**`, `desktop/scripts/*linux*.mjs`, and `desktop/test/*linux*.test.mjs`. Shared runtime and build files use standard CI. Run the package workflow from **Actions** when those changes need a Linux package check.
 
 CI installs the bundle and checks its server imports and native image library inside Flatpak. It does not verify a complete chat, secure storage, desktop integration, or KVM startup. Check those on a Linux desktop before wider distribution. Linux ARM builds are not published.
 

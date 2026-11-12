@@ -593,6 +593,14 @@ export function createModelService(options: {
   function selectDefault(state: ModelState, row: ModelRecord) {
     const { provider, method, models: definitions, id, managed, status } = row;
     const choices = definitions.map((model) => model.choice);
+    const selected = state.selection;
+    const choice = choices.find((model) => model.id === selected?.modelId);
+    if (
+      selected?.connectionId === id &&
+      choice?.efforts.length &&
+      !choice.efforts.includes(selected.effort)
+    )
+      selected.effort = lightestEffort(choice.efforts);
     const configuredModel =
       managed && options.bootstrap?.provider === provider ? options.bootstrap.model : undefined;
     const preferred = configuredModel
