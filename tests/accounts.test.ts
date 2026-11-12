@@ -32,6 +32,11 @@ import { trustBasis, trustDecision } from '../src/server/trust-basis.ts';
 import { createTrust } from '../src/server/trust.ts';
 import { createTrustReview } from '../src/server/trust-review.ts';
 import { trustFacts } from '../src/server/trust-facts.ts';
+import {
+  createErrorRedactor,
+  createRedactor,
+  createTextRedactor,
+} from '../src/server/redaction.ts';
 
 test('decision selection uses the LLM only when no decision connection is available', async () => {
   let resolutions = 0;
@@ -2466,6 +2471,26 @@ test('server model credentials reject invalid destinations and cloud accounts be
   );
 });
 
+test('secret redaction keeps valid tokens when another token is missing', () => {
+  const secrets = [' fixture-access-token ', undefined, null, 42] as unknown as string[];
+  const text = createTextRedactor(secrets);
+  const error = createErrorRedactor(secrets);
+  const redact = createRedactor(secrets);
+  assert.equal(text('Using fixture-access-token.'), 'Using [redacted].');
+  assert.equal(error('Failed for fixture-access-token.'), 'Failed for [redacted].');
+  assert.equal(
+    JSON.stringify(redact({ detail: 'fixture-access-token' })),
+    '{"detail":"[redacted]"}',
+  );
+  secrets.push('fixture-refresh-token', undefined as unknown as string);
+  assert.equal(text('fixture-access-token fixture-refresh-token'), '[redacted] [redacted]');
+  assert.equal(error('fixture-refresh-token'), '[redacted]');
+  assert.equal(
+    JSON.stringify(redact({ detail: 'fixture-refresh-token' })),
+    '{"detail":"[redacted]"}',
+  );
+});
+
 describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
   async function fixture(t: import('node:test').TestContext) {
     const { createModelService } = await import('../src/server/models.ts');
@@ -2589,6 +2614,45 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       'https://eu.api.openai.com/v1/models',
       'https://eu.api.openai.com/v1/models',
     ]);
+  });
+
+  test('an incomplete saved subscription does not break redaction for the selected connection', async (t) => {
+    const f = await fixture(t);
+    const ownerId = 'fixture-incomplete-subscription';
+    const owner = await f.create(ownerId);
+    await owner.addKey('openai', 'fixture-selected-model-key');
+    const { createDatabaseModelStore } = await import('../src/server/model-store.ts');
+    const store = createDatabaseModelStore({
+      database: f.database,
+      ownerId,
+      keyStore: f.keyStore,
+    });
+    await store.initialize();
+    const { idToken: _, ...saved } = subscriptionCredential();
+    await store.change((state) => {
+      state.connections.push({
+        id: randomUUID(),
+        provider: 'openai',
+        method: 'subscription',
+        label: 'Synthetic older subscription',
+        status: 'reconnect',
+        models: [],
+        managed: false,
+        credential: saved as import('../src/ports/models.ts').ModelCredential,
+      });
+    });
+    const restored = await f.create(ownerId);
+    const secrets: string[] = [];
+    restored.onSecrets((values) => secrets.push(...values));
+    assert.equal(
+      createTextRedactor(secrets)('Using fixture-selected-model-key and fixture-access.'),
+      'Using [redacted] and [redacted].',
+    );
+    assert.ok(secrets.every((secret) => typeof secret === 'string' && secret.length > 0));
+    assert.deepEqual(await (await restored.resolve()).read(), {
+      type: 'api_key',
+      key: 'fixture-selected-model-key',
+    });
   });
 
   function stubSignIn(

@@ -874,6 +874,12 @@ test('local files stay in home, skip secrets and kept-out folders, and never ove
   });
   const turn = { turnId: 'turn', threadId: 'thread' };
   try {
+    for (const path of [undefined, null, 42])
+      await assert.rejects(
+        files.keepOut(turn, path as unknown as string, pool),
+        /Name the absolute path/,
+      );
+    assert.deepEqual(keep, []);
     assert.ok(
       ((await files.execute('LOCAL_FILES_LIST', { path: home })) as { entries: unknown[] }).entries
         .length,

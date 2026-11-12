@@ -341,7 +341,7 @@ export function createModelService(options: {
         : value.key
           ? [value.key]
           : []
-    ).filter((secret) => !secrets.has(secret));
+    ).filter((secret) => typeof secret === 'string' && secret.length > 0 && !secrets.has(secret));
     for (const secret of values) secrets.add(secret);
     if (values.length) for (const observer of observers) observer(values);
   }

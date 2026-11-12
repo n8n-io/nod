@@ -63,7 +63,7 @@ function secretText(secrets: string[], minimumSecretLength = 8) {
   const values = [
     ...new Set(
       secrets
-        .flatMap((value) => [value, value.trim()])
+        .flatMap((value) => (typeof value === 'string' ? [value, value.trim()] : []))
         .filter((value) => value.length >= minimumSecretLength),
     ),
   ].sort((a, b) => b.length - a.length);
