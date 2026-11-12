@@ -4,13 +4,17 @@ on:
   push:
     branches: [main]
   pull_request:
+  merge_group:
+    types: [checks_requested]
+  schedule:
+    - cron: '17 3 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && 'scheduled' || (github.ref == 'refs/heads/main' && github.sha || github.ref) }}
   cancel-in-progress: true
 
 jobs:
@@ -19,13 +23,18 @@ jobs:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     outputs:
-      core: ${{ steps.scope.outputs.core }}
+      types: ${{ steps.scope.outputs.types }}
+      build: ${{ steps.scope.outputs.build }}
+      integration: ${{ steps.scope.outputs.integration }}
       desktop: ${{ steps.scope.outputs.desktop }}
+      macos: ${{ steps.scope.outputs.macos }}
       windows: ${{ steps.scope.outputs.windows }}
       n8n: ${{ steps.scope.outputs.n8n }}
       evals: ${{ steps.scope.outputs.evals }}
       images: ${{ steps.scope.outputs.images }}
       network: ${{ steps.scope.outputs.network }}
+      ci: ${{ steps.scope.outputs.ci }}
+      test_files: ${{ steps.scope.outputs.test_files }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -37,7 +46,7 @@ jobs:
       - name: Read the changed paths
         id: scope
         env:
-          CI_DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+          CI_DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || '' }}
         run: node .github/scripts/ci-scope.mjs
 
   notes:
@@ -59,15 +68,61 @@ jobs:
               echo "Deleted $ref"
             done
 
-  checks:
-    name: Checks, tests and build
-    needs: [scope, macos-native]
-    if: ${{ always() }}
+  quality:
+    name: Formatting, types and client build
+    needs: scope
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 45
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: ${{ (github.head_ref == 'release/desktop' || github.ref == 'refs/heads/release/desktop') && '0' || '1' }}
+          persist-credentials: false
+      - name: Install tooling and dependencies
+        uses: ./.github/actions/setup-node
+      - name: Check CI selection and required results
+        run: node --test .github/scripts/ci-scope.test.mjs
+      - name: Check formatting
+        run: pnpm run format:check
+      - name: Check types and import boundaries
+        if: needs.scope.outputs.types == 'true'
+        run: pnpm run lint
+      - name: Build the web and desktop clients
+        if: needs.scope.outputs.build == 'true'
+        run: pnpm exec vite build && node desktop/scripts/build-ui.mjs
+      - name: Check the release version and source
+        if: >-
+          (github.event_name == 'pull_request' &&
+           github.head_ref == 'release/desktop' &&
+           github.event.pull_request.head.repo.full_name == github.repository) ||
+          github.ref == 'refs/heads/release/desktop'
+        run: node .github/scripts/prepare-desktop-release.mjs --check
+      - name: Install verified actionlint 1.7.12
+        if: needs.scope.outputs.ci == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/actionlint"
+          gh release download v1.7.12 --repo rhysd/actionlint --pattern actionlint_1.7.12_linux_amd64.tar.gz --output "$RUNNER_TEMP/actionlint.tar.gz"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check --status
+          tar --extract --gzip --file "$RUNNER_TEMP/actionlint.tar.gz" --directory "$RUNNER_TEMP/actionlint" actionlint
+      - name: Check workflow syntax and expressions
+        if: needs.scope.outputs.ci == 'true'
+        run: >-
+          "$RUNNER_TEMP/actionlint/actionlint" -shellcheck= -pyflakes=
+          -ignore 'label "blacksmith-.*" is unknown'
+          -ignore 'unexpected key "queue" for "concurrency" section'
+
+  integration:
+    name: Linux integration tests
+    needs: scope
+    if: needs.scope.outputs.integration == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
     services:
       postgres:
-        image: ${{ (needs.scope.outputs.core == 'true' || needs.scope.outputs.evals == 'true') && 'postgres:17-alpine' || '' }}
+        image: postgres:17-alpine
         env:
           POSTGRES_USER: nod
           POSTGRES_PASSWORD: nod-ci
@@ -83,109 +138,23 @@ jobs:
       CI: 'true'
       TEST_DATABASE_URL: postgresql://nod:nod-ci@127.0.0.1:5432/nod_ci
     steps:
-      - name: Fail canceled checks
-        if: ${{ cancelled() }}
-        run: exit 1
-      - name: Require a valid change scope
-        env:
-          CI_SCOPE_RESULT: ${{ needs.scope.result }}
-          CI_NATIVE_REQUIRED: ${{ needs.scope.outputs.desktop }}
-          CI_NATIVE_RESULT: ${{ needs.macos-native.result }}
-        run: |
-          test "$CI_SCOPE_RESULT" = success
-          if [ "$CI_NATIVE_REQUIRED" = true ]; then
-            test "$CI_NATIVE_RESULT" = success
-          fi
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          fetch-depth: 0
           persist-credentials: false
-      - name: Set up pnpm
-        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
-      - name: Set up Node.js 24.21.0
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: '24.21.0'
-          cache: pnpm
-          cache-dependency-path: |
-            pnpm-lock.yaml
-            desktop/pnpm-lock.yaml
-      - name: Install locked dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Check the release version and source
-        if: >-
-          (github.event_name == 'pull_request' &&
-           github.head_ref == 'release/desktop' &&
-           github.event.pull_request.head.repo.full_name == github.repository) ||
-          github.ref == 'refs/heads/release/desktop'
-        run: node .github/scripts/prepare-desktop-release.mjs --check
-      - name: Install desktop build tooling without downloading Electron
-        if: needs.scope.outputs.desktop == 'true'
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-        run: pnpm --dir desktop install --frozen-lockfile
-      - name: Check desktop lifecycle, storage and release contracts
-        if: needs.scope.outputs.desktop == 'true'
-        run: pnpm run desktop:test
-      - name: Check n8n delivery contracts
-        if: needs.scope.outputs.n8n == 'true'
-        run: node --test deployment/n8n/*.test.mjs
-      - name: Check desktop network isolation during restart
-        if: needs.scope.outputs.network == 'true'
-        run: >-
-          sudo env NOD_TEST_RUNTIME_NETWORK=1 "$(command -v node)"
-          --test --test-name-pattern='workload firewall refresh'
-          desktop/test/runtime-assets.test.mjs
-      - name: Check types, boundaries and formatting
-        if: needs.scope.outputs.core == 'true'
-        run: pnpm run check
-      - name: Check formatting without a full type check
-        if: needs.scope.outputs.core != 'true'
-        run: pnpm run format:check
-      - name: Build the client
-        if: needs.scope.outputs.images == 'true'
-        run: pnpm run build
-      - name: Check the capability eval harness
-        if: needs.scope.outputs.evals == 'true'
-        run: |
-          pnpm --dir evals run check
-          pnpm --dir evals test
-      - name: Set up the Docker layer cache
-        if: needs.scope.outputs.images == 'true'
+      - name: Set up the integration image cache
         uses: useblacksmith/setup-docker-builder@06dd9c83a5d541274d2e3ac67625560979275267
         with:
-          cache-key: n8n-io/nod/ci
-      - name: Build the computer and integration images
-        if: needs.scope.outputs.images == 'true'
-        run: |
-          docker buildx build --load --platform linux/amd64 --file Dockerfile.browser --tag nod-ci-browser .
-          docker buildx build --load --platform linux/amd64 --file Dockerfile.workspace --tag nod-ci-workspace .
-          docker buildx build --load --platform linux/amd64 --file scripts/Dockerfile.integration --tag nod-ci-integration .
-          docker buildx build --load --platform linux/amd64 --file deployment/self-host/Dockerfile --tag nod-server:ci .
-          docker tag nod-ci-browser nod-browser:ci
-          docker tag nod-ci-workspace nod-workspace:ci
-      - name: Check workspace egress in source and self-host deployments
-        if: needs.scope.outputs.images == 'true'
+          cache-key: n8n-io/nod/ci-integration
+      - name: Build the integration fixture
+        run: docker buildx build --load --platform linux/amd64 --file scripts/Dockerfile.integration --tag nod-ci-integration .
+      - name: Build the web fixture and run the selected tests
         env:
-          NOD_TEST_WORKSPACE_IMAGE: nod-ci-workspace
-        run: pnpm exec tsx --test --test-name-pattern='workspace egress' tests/sandbox.test.ts
-      - name: Verify the single-user server deployment and token rotation
-        if: needs.scope.outputs.images == 'true'
-        env:
-          NOD_IMAGE_TAG: ci
-        run: node deployment/self-host/check.mjs
-      - name: Verify the shared local and desktop browser image
-        if: needs.scope.outputs.images == 'true'
-        run: node --import tsx desktop/scripts/check-browser-image.mjs nod-ci-browser
-      - name: Verify automatic RTK savings and unfiltered exports
-        if: needs.scope.outputs.images == 'true'
-        run: node --import tsx scripts/eval-rtk.ts --smoke --image nod-ci-workspace
-      - name: Run all integration tests with PostgreSQL and Chromium
-        if: needs.scope.outputs.core == 'true'
+          NOD_TEST_FILES: ${{ needs.scope.outputs.test_files }}
         run: >-
           docker run --rm --network host --shm-size=1g
           --env TEST_DATABASE_URL
+          --env NOD_TEST_FILES
           --env NOD_TEST_NATIVE_DOWNLOAD=true
           --env NOD_TEST_BROWSER_EXECUTABLE=/usr/bin/chromium
           --volume "$PWD/src:/app/src:ro"
@@ -197,15 +166,151 @@ jobs:
           --volume "$PWD/desktop/ui:/app/desktop/ui:ro"
           --volume "$PWD/deployment/self-host:/app/deployment/self-host:ro"
           --volume "$PWD/tsconfig.json:/app/tsconfig.json:ro"
-          --volume "$PWD/dist/web:/app/dist/web:ro"
+          --volume "$PWD/vite.config.ts:/app/vite.config.ts:ro"
+          --volume "$PWD/index.html:/app/index.html:ro"
           --tmpfs /app/.local:uid=1000,gid=1000
-          --init --entrypoint node nod-ci-integration
-          scripts/test-integration.mjs --run
+          --tmpfs /app/dist:uid=1000,gid=1000
+          --tmpfs /app/node_modules/.vite-temp:uid=1000,gid=1000
+          --init --entrypoint sh nod-ci-integration
+          -c 'node_modules/.bin/vite build && node scripts/test-integration.mjs --run'
 
-  macos-native:
+  desktop:
+    name: Desktop contracts and network isolation
+    needs: scope
+    if: needs.scope.outputs.desktop == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install tooling and dependencies
+        uses: ./.github/actions/setup-node
+      - name: Install desktop tooling without downloading Electron
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: pnpm --dir desktop install --frozen-lockfile
+      - name: Check desktop lifecycle, storage and release contracts
+        run: pnpm run desktop:test
+      - name: Check desktop network isolation during restart
+        if: needs.scope.outputs.network == 'true'
+        run: >-
+          sudo env NOD_TEST_RUNTIME_NETWORK=1 "$(command -v node)"
+          --test --test-name-pattern='workload firewall refresh'
+          desktop/test/runtime-assets.test.mjs
+
+  evals:
+    name: Eval harness contracts
+    needs: scope
+    if: needs.scope.outputs.evals == 'true'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: nod
+          POSTGRES_PASSWORD: nod-ci
+          POSTGRES_DB: nod_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U nod -d nod_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      CI: 'true'
+      TEST_DATABASE_URL: postgresql://nod:nod-ci@127.0.0.1:5432/nod_ci
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install tooling and dependencies
+        uses: ./.github/actions/setup-node
+      - name: Check the eval harness with disposable schemas
+        run: |
+          pnpm --dir evals run check
+          pnpm --dir evals test
+
+  n8n:
+    name: n8n delivery contracts
+    needs: scope
+    if: needs.scope.outputs.n8n == 'true'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install tooling and dependencies
+        uses: ./.github/actions/setup-node
+      - name: Check n8n delivery contracts
+        run: node --test deployment/n8n/*.test.mjs
+
+  images:
+    name: Container and self-host checks
+    needs: scope
+    if: needs.scope.outputs.images == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install tooling and dependencies
+        uses: ./.github/actions/setup-node
+      - name: Set up the Docker layer cache
+        uses: useblacksmith/setup-docker-builder@06dd9c83a5d541274d2e3ac67625560979275267
+        with:
+          cache-key: n8n-io/nod/ci
+      - name: Build the browser, workspace and server images
+        run: |
+          docker buildx build --load --platform linux/amd64 --file Dockerfile.browser --tag nod-ci-browser .
+          docker buildx build --load --platform linux/amd64 --file Dockerfile.workspace --tag nod-ci-workspace .
+          docker buildx build --load --platform linux/amd64 --file deployment/self-host/Dockerfile --tag nod-server:ci .
+          docker tag nod-ci-browser nod-browser:ci
+          docker tag nod-ci-workspace nod-workspace:ci
+      - name: Check workspace egress in source and self-host deployments
+        if: needs.scope.outputs.images == 'true'
+        env:
+          NOD_TEST_WORKSPACE_IMAGE: nod-ci-workspace
+        run: pnpm exec tsx --test --test-name-pattern='workspace egress' tests/sandbox.test.ts
+      - name: Verify the single-user server deployment and token rotation
+        env:
+          NOD_IMAGE_TAG: ci
+        run: node deployment/self-host/check.mjs
+      - name: Verify the shared local and desktop browser image
+        run: node --import tsx desktop/scripts/check-browser-image.mjs nod-ci-browser
+      - name: Verify automatic RTK savings and unfiltered exports
+        run: node --import tsx scripts/eval-rtk.ts --smoke --image nod-ci-workspace
+
+  checks:
+    name: Checks, tests and build
+    needs: [scope, quality, integration, desktop, macos, windows, n8n, evals, images, secrets]
+    if: ${{ !cancelled() }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.21.0'
+      - name: Require every selected check to pass
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: node .github/scripts/ci-scope.mjs --require-checks
+
+  macos:
     name: macOS native identity and updates (${{ matrix.arch }})
     needs: scope
-    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.scope.outputs.desktop == 'true') }}
+    if: needs.scope.outputs.macos == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -223,18 +328,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Set up pnpm
-        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
-      - name: Set up Node.js 24.21.0
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      - name: Install tooling and dependencies
+        uses: ./.github/actions/setup-node
         with:
-          node-version: '24.21.0'
-          cache: pnpm
           cache-dependency-path: |
             pnpm-lock.yaml
             desktop/pnpm-lock.yaml
-      - name: Install locked dependencies
-        run: pnpm install --frozen-lockfile
       - name: Install Electron and desktop tooling
         run: pnpm --dir desktop install --frozen-lockfile
       - name: Verify native updates and identity preservation
@@ -248,10 +347,10 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
 
-  windows-setup:
+  windows:
     name: Windows setup and installer
     needs: scope
-    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.scope.outputs.windows == 'true') }}
+    if: needs.scope.outputs.windows == 'true'
     runs-on: windows-2025
     timeout-minutes: 35
     env:
@@ -261,18 +360,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Set up pnpm
-        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
-      - name: Set up Node.js 24.21.0
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      - name: Install tooling and dependencies
+        uses: ./.github/actions/setup-node
         with:
-          node-version: '24.21.0'
-          cache: pnpm
           cache-dependency-path: |
             pnpm-lock.yaml
             desktop/pnpm-lock.yaml
-      - name: Install locked dependencies
-        run: pnpm install --frozen-lockfile
       - name: Install Electron and desktop tooling
         run: pnpm --dir desktop install --frozen-lockfile
       - name: Download the Electron binary before the tests
@@ -280,7 +373,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node desktop/scripts/prepare-windows-electron.mjs
       - name: Install NSIS for native update acceptance
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
         run: choco install nsis --yes --no-progress
       - name: Check Windows credential storage across Electron restarts
         shell: pwsh
@@ -314,7 +407,7 @@ jobs:
           --test-name-pattern="CLI-INSTALL: (the Windows script|Windows refuses)"
           deployment/n8n/install.test.mjs
       - name: Verify native Windows updates and profile preservation
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
         run: node desktop/scripts/check-windows-updates.mjs
       - name: Preserve Windows test reports
         if: always()

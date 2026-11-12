@@ -3,6 +3,8 @@ name: PR title
 on:
   pull_request:
     types: [opened, edited, reopened, synchronize, ready_for_review]
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
     inputs:
       pull_request:
@@ -14,7 +16,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: pr-title-${{ github.event.pull_request.number || inputs.pull_request }}
+  group: pr-title-${{ github.event.pull_request.number || inputs.pull_request || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -24,6 +26,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Check the PR title
+        if: github.event_name != 'merge_group'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         with:
           script: |

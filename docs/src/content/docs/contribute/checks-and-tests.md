@@ -165,32 +165,46 @@ To compare with an image built without RTK, run `--phase baseline --baseline <co
 
 ## What CI checks
 
-CI reads the files a pull request changes and runs only the checks those files need. Formatting and secret scanning always run. The required **Checks, tests and build** result is present on every pull request, and fails if the scope check fails.
+CI reads the changed files on pull requests, merge queue checks and pushes to `main`. Formatting, CI selection tests and secret scanning always run. The run summary lists the selected checks and the number of integration test files.
+
+The required **Checks, tests and build** result keeps its existing name. It waits for each selected job. A failed scope check, missing scope output, failed job or selected job that was skipped makes this result fail. The native Windows result is included. No branch protection change is needed.
+
+Application, desktop, native, eval and container jobs can run in parallel after file selection. Linux checks do not wait for Mac checks. Type checks run once in the quality job. Integration tests build their own web fixture inside the cached test image. They use the dependencies in that image without an install on the runner, and run up to four test files at a time, within the available CPU count.
 
 ```mermaid
 flowchart TD
   files[Changed files] --> scope{{Select checks}}:::accent
-  scope -- docs and Markdown only --> light[Formatting<br/>and secrets]:::muted
-  scope -- src, tests, packages --> core[Full app checks]:::go
-  scope -- desktop --> desk[Desktop tests]
-  scope -- evals or deployment --> area[That area's checks]
-  scope -- unknown file type --> all[Every check]:::go
+  scope -- text only --> light[Formatting and secrets]:::muted
+  scope -- web --> web[Client build and web tests]:::go
+  scope -- tests only --> tests[Changed test files]
+  scope -- server --> core[Full Linux test suite]:::go
+  scope -- platform or container --> area[Checks for that area]
+  scope -- unknown input --> all[Every check]:::go
 ```
 
-| You change                                       | CI also runs                                                                                                                                 |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `docs/`, Markdown files, `LICENSE` or `NOTICE`   | Nothing more. This is the light path. A `docs/` change also runs the **Docs** workflow, which builds the site and checks its internal links. |
-| Only a release's version, manifest and changelog | The release metadata and source check. Installers are built after merge.                                                                     |
-| `src/`, `public/` or `tests/`                    | `pnpm run check`, the build, integration tests, image checks, and the desktop and eval checks                                                |
-| Root package files, lockfile or Dockerfiles      | All of the above, plus the n8n delivery checks                                                                                               |
-| `desktop/`                                       | Desktop tests                                                                                                                                |
-| `evals/`                                         | `pnpm --dir evals run check` and `pnpm --dir evals test`                                                                                     |
-| `deployment/n8n/`                                | The n8n delivery contract tests                                                                                                              |
-| `deployment/self-host/`                          | Full app checks, plus the **Self-host bundle** workflow's native builds and server and installer checks for both architectures               |
+| You change                                                                  | CI also runs                                                                                                                                                                    |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docs/`, Markdown files, `LICENSE` or `NOTICE`                              | No application checks. Docs changes also run the **Docs** workflow.                                                                                                             |
+| Only a release's version, manifest and changelog                            | The release metadata and source check. Installers are built after merge.                                                                                                        |
+| Web code or public HTML and JavaScript                                      | The client build and tests that refer to web code, built web files or public files. Web source changes also run type and import checks.                                         |
+| Web CSS or public images and fonts                                          | The client build. Web source changes also run type and import checks.                                                                                                           |
+| Test files only                                                             | Type checks and the changed test files that still exist. A renamed test runs under its new name. A change to a shared test fixture runs the full Linux suite.                   |
+| Server, runtime, provider, shared or port code                              | Type and import checks, the full Linux suite and eval harness checks. Shared and port code also select client and desktop checks.                                               |
+| Container recipes, container provider code or self-host deployment files    | Container build and deployment checks, plus desktop contracts.                                                                                                                  |
+| Desktop files                                                               | Desktop contracts. Desktop UI changes also select the client build and type checks. Native Mac and Windows checks run only for their source, package, fixture and build inputs. |
+| `evals/`                                                                    | Eval harness type and contract checks with disposable PostgreSQL schemas.                                                                                                       |
+| `deployment/n8n/`                                                           | n8n delivery contracts, plus Windows checks when installer inputs change.                                                                                                       |
+| Root package files, dependency patches, CI selection code or unknown inputs | Every check.                                                                                                                                                                    |
 
-A manual CI run uses every check. The exception is a run on `release/desktop`, which compares that branch with `main`. The rules are in [`.github/scripts/ci-scope.mjs`](https://github.com/n8n-io/nod/blob/main/.github/scripts/ci-scope.mjs).
+A daily CI run at 03:17 UTC uses every check, including both Mac architectures and full Windows update acceptance. A manual CI run also uses every check, except a run on `release/desktop`, which compares that branch with `main`. The scope job reads full Git history so a base branch update does not hide the diff base. If that base is unavailable, CI runs every check. New pull request commits cancel older runs for that pull request. Main runs stay bound to each commit because releases require CI to pass on their exact source. Daily runs have a separate group so a push cannot cancel them.
 
-Nod keeps no Git notes. Every CI run deletes any `refs/notes/*` ref on GitHub, such as the AI authorship notes that [git-ai](https://usegitai.com) pushes after each `git push`. GitHub can't block notes refs, and git-ai skips Git hooks, so don't run tools that push notes in this repository.
+The **Self-host bundle** workflow builds and checks both Linux architectures when package, container or deployment inputs change. It also runs each Sunday at 04:47 UTC and on request. Ordinary web and server changes do not create both bundles. To get a bundle for a specific revision, run that workflow on the revision. Draft release creation still needs its separate manual input.
+
+The selection and required-result rules are in [`.github/scripts/ci-scope.mjs`](https://github.com/n8n-io/nod/blob/main/.github/scripts/ci-scope.mjs). CI tests these rules with disposable Git repositories, including renames, removed tests and version-only releases. Workflow changes also run a pinned, checksum-verified actionlint to check syntax and expressions.
+
+Actionlint 1.7.12 [does not yet accept GitHub's `queue` key](https://github.com/rhysd/actionlint/issues/657). CI ignores that specific parser error and checks the queue values and cancellation settings in its own tests.
+
+Nod keeps no Git notes. Push and manual CI runs on `main` delete any `refs/notes/*` ref on GitHub, such as the AI authorship notes that [git-ai](https://usegitai.com) pushes after each `git push`. GitHub can't block notes refs, and git-ai skips Git hooks, so don't run tools that push notes in this repository.
 
 Pull requests that change Linux build inputs also run **Build Linux desktop**. It builds and installs the Linux x64 Flatpak preview, checks the engine and bundle parts, and uploads the files.
 
