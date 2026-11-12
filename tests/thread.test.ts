@@ -6658,6 +6658,39 @@ test(
             }
           ).messages.find((message) => message.id === long)!;
           assert.ok(whole.text.length > 4000);
+          const historyTurn = randomUUID();
+          await db.pool.query(
+            "INSERT INTO turns(id,owner_id,thread_id,session_id,prompt,source,status,created_at) VALUES($1,$2,$3,$3,'Synthetic history turn lookup','user','succeeded','2019-04-01T10:00:00Z')",
+            [historyTurn, ownerId, freshThread],
+          );
+          await db.pool.query('UPDATE messages SET turn_id=$1 WHERE id=$2', [historyTurn, long]);
+          const turnHits = (await personal.manage('history_search', {
+            query: 'Synthetic history turn lookup',
+          })) as { turns: Array<{ id: string }> };
+          assert.ok(turnHits.turns.some(({ id }) => id === historyTurn));
+          const turnContext = (await personal.manage('history_search', {
+            around: historyTurn,
+          })) as {
+            messages: Array<{ id: string; text: string; shortened: boolean }>;
+          };
+          assert.equal(turnContext.messages.find(({ id }) => id === long)?.text, whole.text);
+          assert.equal(turnContext.messages.find(({ id }) => id === long)?.shortened, false);
+          for (const [owner, threadId] of [
+            ['history-other-owner', foreignThread],
+            [ownerId, firstThreadId],
+          ]) {
+            const unavailableTurn = randomUUID();
+            const message = await add('Synthetic hidden turn lookup', minute(14), owner, threadId);
+            await db.pool.query(
+              "INSERT INTO turns(id,owner_id,thread_id,session_id,prompt,source,status) VALUES($1,$2,$3,$3,'Synthetic hidden turn lookup','user','succeeded')",
+              [unavailableTurn, owner, threadId],
+            );
+            await db.pool.query('UPDATE messages SET turn_id=$1 WHERE id=$2', [
+              unavailableTurn,
+              message,
+            ]);
+            await assert.rejects(search({ around: unavailableTurn }), /unavailable/);
+          }
           const listed = (await shown({ from: '2019-04-01', to: '2019-04-01' })) as Array<{
             id: string;
             text: string;
