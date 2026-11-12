@@ -2768,33 +2768,37 @@ test(
           assert.equal(await turnStatus(workerId), 'cancelled');
           assert.equal(calls.length, before);
 
-          const response = await request('GET', '/api/tasks/' + task.id);
+          const response = await request('GET', '/api/tasks');
           assert.equal(response.statusCode, 200, response.body);
-          const detail = response.json<{
-            task: {
-              status: string;
-              now: string;
-              question: string | null;
-              questionMessageId: string | null;
-            };
-          }>();
-          assert.equal(detail.task.status, 'needs_you');
-          assert.equal(detail.task.now, 'Reading the synthetic inbox');
-          assert.match(detail.task.question ?? '', /did not run.*Reply here to continue/i);
-          assert.ok(detail.task.questionMessageId);
-          assert.notEqual(detail.task.questionMessageId, confirmationId);
+          const detail = response
+            .json<
+              Array<{
+                id: string;
+                status: string;
+                now: string;
+                question: string | null;
+                questionMessageId: string | null;
+              }>
+            >()
+            .find((item) => item.id === task.id);
+          assert.ok(detail);
+          assert.equal(detail.status, 'needs_you');
+          assert.equal(detail.now, 'Reading the synthetic inbox');
+          assert.match(detail.question ?? '', /did not run.*Reply here to continue/i);
+          assert.ok(detail.questionMessageId);
+          assert.notEqual(detail.questionMessageId, confirmationId);
           const continuation = (
             await db.pool.query('SELECT turn_id,text FROM messages WHERE id=$1 AND owner_id=$2', [
-              detail.task.questionMessageId,
+              detail.questionMessageId,
               ownerId,
             ])
           ).rows[0];
           assert.equal(continuation.turn_id, workerId);
-          assert.equal(continuation.text, detail.task.question);
+          assert.equal(continuation.text, detail.question);
           assert.equal(
             (
               await db.pool.query('SELECT created_at FROM messages WHERE id=$1 AND owner_id=$2', [
-                detail.task.questionMessageId,
+                detail.questionMessageId,
                 ownerId,
               ])
             ).rows[0].created_at >
@@ -2808,7 +2812,7 @@ test(
           );
 
           const resumed = await messages.submit('Continue the remaining synthetic summary.', [], {
-            replyToMessageId: detail.task.questionMessageId,
+            replyToMessageId: detail.questionMessageId,
           });
           const resumedTurn = await row(resumed.turnId);
           assert.equal(resumedTurn.session_id, task.id);
