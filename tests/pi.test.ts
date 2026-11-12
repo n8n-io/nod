@@ -2036,7 +2036,8 @@ test('decision routing uses the selected connection and never sends subscription
     provider: 'openai' | 'openrouter' | 'anthropic' | 'compatible';
     method: 'api_key' | 'oauth' | 'subscription';
     key: string;
-  } = { provider: 'openai', method: 'api_key', key: 'fixture-owner-one-key' };
+    region?: 'eu';
+  } = { provider: 'openai', method: 'api_key', key: 'fixture-owner-one-key', region: 'eu' };
   let reads = 0;
   Object.defineProperty(models, 'configured', { get: () => true });
   models.resolve = async () => {
@@ -2066,7 +2067,7 @@ test('decision routing uses the selected connection and never sends subscription
               clientId: 'fixture-client',
               idToken: 'fixture-id-token',
             }
-          : { type: 'api_key', key: current.key };
+          : { type: 'api_key', key: current.key, region: current.region };
       },
     };
   };
@@ -2095,7 +2096,7 @@ test('decision routing uses the selected connection and never sends subscription
   }
   assert.equal(reads, count);
   assert.deepEqual(requests, [
-    { url: 'https://api.openai.com/v1/decisions', key: 'Bearer fixture-owner-one-key' },
+    { url: 'https://eu.api.openai.com/v1/decisions', key: 'Bearer fixture-owner-one-key' },
     { url: 'https://openrouter.ai/api/alpha/decisions', key: 'Bearer fixture-owner-two-key' },
     { url: 'https://api.openai.com/v1/decisions', key: 'Bearer fixture-rotated-key' },
   ]);
@@ -2167,7 +2168,7 @@ test('trust mode selects available Jev, Decider and OpenAI before the small LLM'
   adapters.models!.apiKey = async (provider) => keys.get(provider);
   adapters.models!.apiCredential = async (provider) => {
     const key = keys.get(provider);
-    return key ? { type: 'api_key', key } : undefined;
+    return key ? { type: 'api_key', key, region: 'eu' } : undefined;
   };
   adapters.models!.resolve = async () =>
     assert.fail('Trust routing must not read subscription credentials.');
@@ -2196,6 +2197,7 @@ test('trust mode selects available Jev, Decider and OpenAI before the small LLM'
   keys.set('openrouter', 'fixture-router-no-decider');
   await check();
   assert.equal(requests.at(-1)?.model, 'gpt-6-luna');
+  assert.equal(requests.at(-1)?.url, 'https://eu.api.openai.com/v1/decisions');
   keys.delete('openai');
   await check();
   assert.equal(requests.at(-1)?.model, 'openai/gpt-6-luna-decisions');
@@ -4404,6 +4406,130 @@ test('Anthropic cache boundaries preserve the shared text, workspace suffix, lif
   assert.equal(bodies[3].system.length, 1);
   assert.ok(!JSON.stringify(bodies[3]).includes('cache_control'));
   assert.deepEqual(bodies[4].system, [bodies[0].system[0]]);
+});
+
+test('native OpenAI model discovery and requests keep each connection in its region', async () => {
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const { modelKeyCredential } = await import('../src/server/models.ts');
+  const { openAIBaseUrl } = await import('../src/providers/openai/api.ts');
+  const geography = 'Attempted to access resource from outside project geography EU';
+  const backend = createPiModelBackend({
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      const region = url.hostname === 'api.openai.com' ? 'global' : url.hostname.split('.')[0];
+      assert.equal(url.pathname, '/v1/models');
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer fixture-${region}`);
+      assert.equal(init?.redirect, 'error');
+      return Response.json({
+        data: ['gpt-6.1-sol', 'gpt-6-luna', 'gpt-audio-1.5'].map((id) => ({ id })),
+      });
+    },
+  });
+  await Promise.all(
+    (['global', 'eu', 'us'] as const).map(async (region) => {
+      const credential = modelKeyCredential('openai', `fixture-${region}`, { region });
+      const definitions = await backend.catalog('openai', 'api_key', credential);
+      assert.equal(definitions.length, 3);
+      for (const definition of definitions) {
+        assert.equal(definition.spec.baseUrl, openAIBaseUrl(region));
+        assert.equal(definition.spec.provider, 'openai');
+        const audio = definition.choice.id === 'gpt-audio-1.5';
+        assert.equal(definition.spec.api, audio ? 'openai-completions' : 'openai-responses');
+        assert.ok((definition.spec.cost as { input: number }).input > 0);
+        if (!audio) assert.ok(definition.choice.efforts.includes('low'));
+        const { runtime, model } = await createPiModelRuntime({
+          provider: 'openai',
+          method: 'api_key',
+          definition,
+          effort: audio ? 'off' : 'low',
+          read: async () => credential,
+        });
+        let calls = 0;
+        const result = await runtime.completeSimple(
+          model,
+          { messages: [{ role: 'user', content: 'Synthetic request.', timestamp: 1 }] },
+          {
+            maxRetries: 5,
+            fetch: async (input, init) => {
+              calls++;
+              assert.equal(
+                String(input),
+                `${openAIBaseUrl(region)}/${audio ? 'chat/completions' : 'responses'}`,
+              );
+              assert.equal(
+                new Headers(init?.headers).get('authorization'),
+                `Bearer fixture-${region}`,
+              );
+              return Response.json({ error: { message: geography } }, { status: 401 });
+            },
+          },
+        );
+        assert.equal(calls, 1);
+        assert.equal(result.stopReason, 'error');
+        assert.match(result.errorMessage!, /outside project geography EU/);
+      }
+    }),
+  );
+});
+
+test('OpenAI discovery keeps the provider reason and only permits the model-list scope exception', async () => {
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const { openAIBaseUrl, openAIRequestError } = await import('../src/providers/openai/api.ts');
+  const geography = 'Attempted to access resource from outside project geography EU';
+  const key = 'fixture-"error-key';
+  for (const status of [401, 403, 429, 503]) {
+    let calls = 0;
+    const backend = createPiModelBackend({
+      fetch: async () => {
+        calls++;
+        return Response.json(
+          { error: { message: `${geography} ${key}`, code: 'synthetic_code', param: 'model' } },
+          { status },
+        );
+      },
+    });
+    await assert.rejects(
+      backend.catalog('openai', 'api_key', { type: 'api_key', key, region: 'eu' }),
+      (error: Error) => {
+        assert.match(error.message, /outside project geography EU/);
+        assert.ok(error.message.includes(String(status)));
+        assert.match(error.message, /synthetic_code/);
+        assert.ok(!error.message.includes(key));
+        assert.ok(!error.message.includes(JSON.stringify(key).slice(1, -1)));
+        return true;
+      },
+    );
+    assert.equal(calls, 1);
+  }
+  for (const scopes of ['api.model.read', 'api.model.read api.responses.write']) {
+    const backend = createPiModelBackend({
+      fetch: async () =>
+        Response.json({ error: { message: `Missing scopes: ${scopes}` } }, { status: 403 }),
+    });
+    const models = backend.catalog('openai', 'api_key', { type: 'api_key', key, region: 'eu' });
+    if (scopes === 'api.model.read')
+      assert.ok((await models).every(({ spec }) => spec.baseUrl === openAIBaseUrl('eu')));
+    else await assert.rejects(models, /api.responses.write/);
+  }
+  let cancelled = false;
+  const failure = await openAIRequestError(
+    new Response(
+      new ReadableStream({
+        start(stream) {
+          stream.enqueue(Buffer.alloc(16_385, 65));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+      { status: 401, headers: { 'content-type': 'application/json' } },
+    ),
+    key,
+  );
+  assert.equal(cancelled, true);
+  assert.match(failure.message, /401/);
+  assert.ok(failure.message.length < 100);
 });
 
 test('OpenAI-compatible servers get tool models, a system message and one attempt without the key', async (t) => {

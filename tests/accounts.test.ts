@@ -102,6 +102,38 @@ test('decision selection uses the LLM only when no decision connection is availa
   assert.equal(llm, 1);
 });
 
+test('OpenAI decision failures keep the region and provider reason without exposing the key', async () => {
+  const key = 'fixture-decision-"key';
+  let calls = 0;
+  const decisions = createDecisionModel({
+    resolve: async () => ({ provider: 'openai', key, region: 'eu' }),
+    fetch: async (input, init) => {
+      calls++;
+      assert.equal(String(input), 'https://eu.api.openai.com/v1/decisions');
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
+      return Response.json(
+        { error: { message: `Synthetic project geography EU error ${key}` } },
+        { status: 401 },
+      );
+    },
+  });
+  await assert.rejects(
+    decisions.check({
+      instructions: 'Apply the synthetic rule.',
+      input: {},
+      question: { name: 'answer', choices: [{ value: false, description: 'Ask.' }] },
+    }),
+    (error: Error) => {
+      assert.match(error.message, /401/);
+      assert.match(error.message, /project geography EU/);
+      assert.ok(!error.message.includes(key));
+      assert.ok(!error.message.includes(JSON.stringify(key).slice(1, -1)));
+      return true;
+    },
+  );
+  assert.equal(calls, 1);
+});
+
 test('About records only confirmed shared choices and clears them on failure', async (t) => {
   const { JSDOM } = await import('jsdom');
   const { act, createElement } = await import('react');
@@ -2326,6 +2358,8 @@ test('server model credentials reject invalid destinations and cloud accounts be
   const { modelEnvironment } = await import('../src/server/composition.ts');
   const key = 'fixture-environment-key';
   const invalid: Record<string, string>[] = [
+    { OPENAI_API_KEY: key, OPENAI_API_REGION: 'eu.example.test' },
+    { OPENAI_API_KEY: key, OPENAI_API_REGION: '__proto__' },
     { AWS_BEARER_TOKEN_BEDROCK: key },
     { AWS_BEARER_TOKEN_BEDROCK: key, AWS_REGION: 'eu-west-1.example.test/path' },
     { AZURE_OPENAI_API_KEY: key },
