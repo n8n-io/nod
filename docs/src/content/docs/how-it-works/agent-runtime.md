@@ -53,6 +53,8 @@ Owner replies and corrections steer unfinished work until the owner cancels or r
 
 Recent chat history goes into the prompt only when Pi has no saved session. A resumed session gets new background messages since its previous turn started. Neither includes owner messages of a [withdrawn turn](/how-it-works/threads-and-turns/#stop-and-failures); the session's next turn gets `withdrawnRequest` instead, so the model doesn't continue that request unless the owner asks again.
 
+History search returns message IDs and turn IDs. Its `around` option accepts either kind. A turn ID opens the context around that turn's first visible message. The anchor message is complete; nearby messages can be shortened. Reads remain limited to the owner's active conversation. Hidden messages and turns with no visible message cannot serve as anchors.
+
 Nod repairs incomplete assistant text and thinking blocks when it restores or saves a session and before each model request. This also covers tool continuations and summary requests. The repair keeps valid text and tool calls and does not repeat an action.
 
 Pi validates tool arguments as JSON Schema with `@earendil-works/pi-schema`. It can convert a numeric string to a number or a single value to an array. This also applies to MCP tools. TypeBox refinements and custom TypeBox formats do not run. Nod's tool checks, turn guard, and trust check still apply before an action runs.
