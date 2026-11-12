@@ -29,6 +29,62 @@ import { appConfirmation } from '../src/ports/agent.ts';
 import type { ApprovalDescription, ApprovalExecutionContext } from '../src/server/approvals.ts';
 import { serverNetwork } from '../src/server/network.ts';
 import { approvalContent, approvalTitle } from '../src/server/action-presentation.ts';
+import { createCommunication } from '../src/server/communication.ts';
+
+test('confirmation repair keeps action facts fixed and requires a new independent check', async () => {
+  const data = {
+    kind: 'confirmation',
+    action: 'SEND_REPORT',
+    args: { recipient: 'recipient@example.test', title: 'Synthetic report' },
+  };
+  for (const invalid of ['format', 'facts', 'twice'] as const) {
+    const calls: Array<Record<string, any>> = [];
+    let drafts = 0;
+    const communication = createCommunication({
+      pool: {} as pg.Pool,
+      ownerId: 'synthetic-owner',
+      review: async (_instructions, input) => {
+        const request = structuredClone(input) as Record<string, any>;
+        calls.push(request);
+        assert.deepEqual(request.data, data);
+        if (request.purpose === 'confirmation_review') {
+          assert.equal(request.repair, undefined);
+          return request.text === 'Send Synthetic report to recipient@example.test?'
+            ? { valid: true }
+            : { valid: false, reason: 'The recipient does not match args.recipient.' };
+        }
+        drafts++;
+        if (drafts === 1) {
+          assert.equal(request.repair, undefined);
+          return invalid === 'format'
+            ? { message: 'Send the report?' }
+            : { text: 'Send Synthetic report to another@example.test?' };
+        }
+        assert.equal(drafts, 2);
+        if (invalid === 'format') assert.match(request.repair.issue, /text/);
+        else {
+          assert.equal(request.repair.draft, 'Send Synthetic report to another@example.test?');
+          assert.equal(request.repair.issue, 'The recipient does not match args.recipient.');
+        }
+        return {
+          text:
+            invalid === 'twice'
+              ? 'Send Synthetic report to another@example.test?'
+              : 'Send Synthetic report to recipient@example.test?',
+        };
+      },
+    });
+    const result = communication.present(null, data);
+    if (invalid === 'twice')
+      await assert.rejects(result, /could not write an accurate confirmation/);
+    else assert.equal(await result, 'Send Synthetic report to recipient@example.test?');
+    assert.equal(drafts, 2);
+    assert.equal(
+      calls.filter(({ purpose }) => purpose === 'confirmation_review').length,
+      invalid === 'format' ? 1 : 2,
+    );
+  }
+});
 
 test('server configuration refuses remote exposure without a valid token and an exact secure public origin', () => {
   const key = randomBytes(32).toString('base64url');
