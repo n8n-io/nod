@@ -51,8 +51,10 @@ jobs:
         run: |
           sudo add-apt-repository --yes ppa:flatpak/stable
           sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder zstd
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo apt-get install -y dbus flatpak flatpak-builder zstd
+          if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user --noninteractive flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08 org.electronjs.Electron2.BaseApp//25.08
       - name: Install locked dependencies
@@ -100,7 +102,7 @@ jobs:
           flatpak install --user --noninteractive --no-deps .local/nod-linux-x64.flatpak
       - name: Check the installed engine inside Flatpak
         run: |
-          flatpak run --env=ELECTRON_RUN_AS_NODE=1 --command=sh io.n8n.Nod -c 'cd /app/nod/resources/engine && exec "$@"' nod-check /app/nod/nod --input-type=module -e '
+          dbus-run-session -- flatpak run --env=ELECTRON_RUN_AS_NODE=1 --command=sh io.n8n.Nod -c 'cd /app/nod/resources/engine && exec "$@"' nod-check /app/nod/nod --input-type=module -e '
             const { register } = await import("tsx/esm/api");
             register();
             await import("./src/server/composition.ts");
