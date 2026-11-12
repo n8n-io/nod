@@ -63,11 +63,11 @@ flowchart LR
 </TabItem>
 <TabItem label="Linux (preview)" icon="linux">
 
-- A Flatpak runs Electron, the Nod server and the same Lima runtime as the Mac, with QEMU and KVM instead of Apple's Virtualization framework. It isn't published yet; see [Build a Linux Flatpak](/contribute/desktop-releases/#build-a-linux-flatpak-preview).
+- A Flatpak runs Electron, the Nod server and the same Lima runtime as the Mac, with QEMU and KVM instead of Apple's Virtualization framework. Install the [Linux x64 preview](/get-started/install-desktop/#linux), or [build the Flatpak](/contribute/desktop-releases/#build-a-linux-flatpak).
 - The VM, its firewall rules, container protection and the PostgreSQL, workspace and browser containers are the same as on a Mac. Docker runs only inside the VM, and Nod never uses a Docker installation on your computer.
 - Nod needs `/dev/kvm`. Without hardware virtualization it refuses to start its private computer rather than fall back to slow emulation.
 - The VM files live in `~/.nod-desktop`, as on a Mac. Saved keys use your desktop's Secret Service, such as GNOME Keyring or KWallet; Nod refuses to save keys when no secret store is available.
-- Flatpak updates the app. Nod's own update checks are off on Linux.
+- Install the next release bundle to update the app. These bundles have no update repository. Nod's own update checks are off on Linux.
 - Like the Mac and Windows apps, the Flatpak can reach your home folder and external drives, so [Local files](/connect/local-files/) and saving to Downloads work. Moving files to the Trash goes through your desktop's portal service (`xdg-desktop-portal`), and saved files go to the Downloads folder your desktop names in `~/.config/user-dirs.dirs`, or your home folder without one. A normal desktop session provides both.
 
 </TabItem>
@@ -159,7 +159,7 @@ There's no supported backup, restore or downgrade. Don't delete the profile, VM 
 
 ## Updates
 
-On Linux, Flatpak updates the app and its runtime pack, and Nod's own update checks are off. The rest of this section is about Mac and Windows.
+On Linux, install the next release bundle to update the app and its runtime pack. These bundles have no update repository. Nod's own update checks are off. The rest of this section is about Mac and Windows.
 
 Nod checks for updates when it starts, every six hours while open, and after your computer wakes if a check is due. Checks continue while a downloaded update waits for restart. Public builds read published releases and download assets from GitHub. Older builds keep their embedded n8n update source until they are replaced. **Check for Updates…** stays available in the Nod menu, menu bar, or tray alongside **Restart to update**.
 
@@ -219,7 +219,7 @@ Inside Nod's distribution, drive mounts and Windows process access are turned of
 
 ## Current limits
 
-- Published builds exist for Mac with Apple silicon or Intel, and Windows 11 x64. Linux has only an unpublished Flatpak preview that you [build yourself](/contribute/desktop-releases/#build-a-linux-flatpak-preview). There are no Windows ARM builds.
+- Release builds cover Mac with Apple silicon or Intel, Windows 11 x64, and Linux x64 as a [Flatpak preview](/get-started/install-desktop/#linux). Linux ARM and Windows ARM builds are not published.
 - Local tasks run only while Nod is open and the computer is awake. Server tasks run while the server runs.
 - Meta's WhatsApp Cloud API needs a public HTTPS callback. The QR connection works without one. The app doesn't relay webhooks to your computer.
 - Separate local installations start with their own profiles and do not sync or migrate data from a source install. To use the same assistant from several devices, connect them to one server.

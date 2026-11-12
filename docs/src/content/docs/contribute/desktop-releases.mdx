@@ -9,7 +9,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 This page is for maintainers who publish the Nod desktop app, and for anyone helping users install it.
 
-The short version: run **Release desktop**, review and merge the version pull request, and CI publishes one GitHub release with all three installers.
+Run **Release desktop**, review and merge the version pull request, and CI publishes one GitHub release with four platform bundles.
 
 ```mermaid
 flowchart TD
@@ -18,20 +18,25 @@ flowchart TD
   ci --> arm[Mac Apple silicon]
   ci --> intel[Mac Intel]
   ci --> win[Windows x64]
+  ci --> linux[Linux x64 Flatpak]
   arm --> rel[One GitHub release]:::go
   intel --> rel
   win --> rel
+  linux --> rel
 ```
 
 Each release is named **Nod v0.x.x** and links these installers:
 
-| Platform          | Installer           | Updates   |
-| ----------------- | ------------------- | --------- |
-| Mac Apple silicon | `nod-arm64.dmg`     | Automatic |
-| Mac Intel         | `nod-x64.dmg`       | Automatic |
-| Windows x64       | `nod-Setup-x64.exe` | Automatic |
+| Platform          | Installer                      | Updates                 |
+| ----------------- | ------------------------------ | ----------------------- |
+| Mac Apple silicon | `nod-arm64.dmg`                | Automatic               |
+| Mac Intel         | `nod-x64.dmg`                  | Automatic               |
+| Windows x64       | `nod-Setup-x64.exe`            | Automatic               |
+| Linux x64 preview | `nod-linux-x64.flatpak.partNN` | Install the next bundle |
 
 Mac ZIP files, runtime packs, checksums, the public certificate, update metadata and the Terminal and PowerShell install scripts stay on the same release as supporting assets.
+
+Linux bundles include the runtime pack. The build divides them into parts of at most 1900 MiB to stay below GitHub's 2 GiB limit per file. `release-linux-x64.json` records the version, source commit, Flatpak commit, sizes, and hashes. `SHA256SUMS-linux-x64` covers every part and the joined bundle. Releases keep at most 30 assets so older installed apps can still read them. See [Linux installation](/get-started/install-desktop/#linux).
 
 Desktop builds include the server source, built web files, production dependencies, required runtime files, and licenses. The server runs TypeScript through `tsx`.
 
@@ -39,7 +44,7 @@ Builds exclude frontend source, duplicate public files, lockfiles, development p
 
 Packaged windows disable DevTools. The production menu excludes developer tools and force reload. It keeps standard reload, zoom, fullscreen, and onboarding replay. Source runs keep the development controls.
 
-Before signing or making an installer, both platform builds disable Node option injection, Node inspector flags, and extra file-protocol privileges. They enable cookie encryption and check the binary settings. Node execution stays enabled because the audio decoder runs in a separate child process.
+Before packaging, the Mac, Windows and Linux builds disable Node option injection, Node inspector flags, and extra file-protocol privileges. They enable cookie encryption and check the binary settings. Node execution stays enabled because the audio decoder runs in a separate child process.
 
 The runtime dependency overrides use patched Sharp and Undici versions. A single Sharp version avoids duplicate native image libraries.
 
@@ -142,7 +147,7 @@ Desktop binaries built from this code use public GitHub assets for installs and 
 
 3. Merge after review and CI. If `main` changes before you merge, run **Release desktop** again to update the source and notes.
 
-4. Wait for CI on the merge commit, then **Build desktop release**. The release workflow builds all three installers and signs the Mac and Windows apps. It checks Mac updates, signature rejection and profile preservation on both Mac architectures. It also checks signing, runtime hashes, Windows workspace paths, installation, startup, updates and downloaded installer bytes. On Windows, every `.exe`, `.dll` and `.node` file in the installed app, `Uninstall.exe` and the installer itself must carry a valid, timestamped n8n GmbH signature. Files identical to ones Windows ships, such as `d3dcompiler_47.dll`, are signed too, but Windows reports its own catalog signature for them, so the check accepts that instead when Microsoft signed it. The workflow verifies uploaded hashes, publishes the release, then uses the app's own update code to check all three platforms. Private builds also check delivery through the n8n service; public builds check direct GitHub downloads for every release asset. If delivery fails, the release goes back to draft.
+4. Wait for CI on the merge commit, then **Build desktop release**. The release workflow builds all four platform bundles and signs the Mac and Windows apps. It checks Mac updates, signature rejection and profile preservation on both Mac architectures. It also checks signing, runtime hashes, Windows workspace paths, installation, startup, updates and downloaded installer bytes. On Windows, every `.exe`, `.dll` and `.node` file in the installed app, `Uninstall.exe` and the installer itself must carry a valid, timestamped n8n GmbH signature. Files identical to ones Windows ships, such as `d3dcompiler_47.dll`, are signed too, but Windows reports its own catalog signature for them, so the check accepts that instead when Microsoft signed it. The workflow verifies uploaded hashes, publishes the release, then uses the app's own update code to check the Mac and Windows update platforms. Private builds also check delivery through the n8n service; public builds check direct GitHub downloads for every release asset. If delivery fails, the release goes back to draft.
 
 </Steps>
 
@@ -167,11 +172,11 @@ Release builds run one at a time, and up to 100 runs can wait in the queue. A fa
 
 If only the final publisher fails, fix the publisher, then run **Recover desktop release** on `main` with the failed run ID within three days, while its artifacts are retained. It requires all platform builds and checks, and CI on their exact source, to have passed. It uses the current publisher with the original signed files and saved release context, plus the release plan for automatic releases. It verifies their source and hashes, then publishes without rebuilding the apps. If repository visibility changed since the build, start a new release build instead.
 
-The container images, Windows runtime, Mac signing, Mac update checks, and publishing steps run on Blacksmith runners. Both Mac apps build on Apple silicon. The Intel app uses x64 Node under Rosetta. Windows jobs use GitHub's Windows runners because the installer check needs WSL 2.
+The container images, Linux Flatpak, Windows runtime, Mac signing, Mac update checks, and publishing steps run on Blacksmith runners. Both Mac apps build on Apple silicon. The Intel app uses x64 Node under Rosetta. Windows jobs use GitHub's Windows runners because the installer check needs WSL 2.
 
-Docker builds use Blacksmith's disk cache, with a separate cache for each Mac architecture and the Windows runtime. They do not export Docker layers to GitHub's cache service.
+Docker builds use Blacksmith's disk cache, with a separate cache for each Mac architecture, the Linux x64 runtime, and the Windows runtime. They do not export Docker layers to GitHub's cache service.
 
-Update checks run alongside the builds. App jobs can install dependencies and build the source while their runtimes are prepared. Each Mac job waits only for its own images. It then signs its runtime and app. The final job downloads platform artifacts in parallel. It checks all three platform bundles, then uploads their files together. It downloads the installers, Mac ZIPs, and Windows runtime together to check their bytes before publication.
+Update checks run alongside the builds. App jobs can install dependencies and build the source while their runtimes are prepared. Each Mac job waits only for its own images. It then signs its runtime and app. The final job downloads platform artifacts in parallel. It checks all four platform bundles, then uploads their files together. It downloads the installers, Mac ZIPs, and Windows runtime together to check their bytes before publication.
 
 Developer ID builds submit the signed app to Apple and attach its ticket before they create the disk image and update ZIP. The build then submits the signed disk image and attaches its ticket. It mounts the finished disk image, copies its app to a temporary folder, and checks the app's signature, attached ticket and Gatekeeper result. A failed check stops the release. Runtime host tools have a separate notarization check because the app downloads them separately. ZIP and disk image creation run in parallel.
 
@@ -181,9 +186,9 @@ The Mac build logs show separate times for signing, notarization, ZIP creation, 
 
 Drafts are never offered to the installer or the updater.
 
-- Every app checks at startup, even when its runtime fails to start, every six hours while it's open, and after waking if a check is due. **Check for Updates…** checks right away.
+- Mac and Windows apps check at startup, even when their runtime fails to start, every six hours while open, and after waking if a check is due. **Check for Updates…** checks right away. Linux users install the next bundle; Nod's own update checks are off there.
 - After a failed automatic check, Nod retries after 15 minutes, doubling up to six hours, and the menu shows **Update Failed. Try Again…**.
-- Existing private-service builds try up to three newer releases and offer the first complete one. Public GitHub builds use the latest regular release and fail closed if its platform files are incomplete. The publisher checks all three bundles before publication and returns a release to draft if public asset delivery fails.
+- Existing private-service builds try up to three newer releases and offer the first complete one. Public GitHub builds use the latest regular release and fail closed if its platform files are incomplete. The publisher checks all four bundles before publication and returns a release to draft if public asset delivery fails.
 - A Mac app outside Applications offers to move itself there at startup, because it can update itself only from Applications.
 - Updates download in the background. While a runtime pack or Windows installer downloads, the update menu item shows its percentage. On a Mac with a running local VM, Nod tries to load the new runtime's images before restart; a deferred or failed preload leaves that work for startup. Windows applies a changed WSL runtime after restart.
 - Newer builds show a ready update in the app with its version and **Restart to update** and **Later** actions. Older builds may show only the menu action. Later dismisses the notice for that version during the current app session; the menu still offers **Restart to update**. An automatic check also announces it with a system notification when Nod is in the background, notifications are on and quiet hours allow it. Background checks never open a dialog.
@@ -247,9 +252,13 @@ Test profiles live under `~/Library/Application Support/nod Setup Test/test-prof
 
 This is an ad-hoc signed local app, not a release. It reuses the cached workspace and browser images; it doesn't verify a newly built runtime image or release signing.
 
-## Build a Linux Flatpak (preview)
+## Build a Linux Flatpak
 
-The Linux app is a Flatpak with the runtime pack inside it. It isn't built by CI or published yet. Build it on a 64-bit Linux computer with Docker, `flatpak-builder` and access to `/dev/kvm`:
+The Linux app is a Flatpak preview with the runtime pack inside it. **Build Linux desktop** builds and checks the x64 package. The desktop release workflow calls it and includes its files in the release. You can also run it separately from **Actions** to get the `desktop-linux-x64` artifact. Changes to the Flatpak manifest, Linux package scripts, or that workflow run the package check on pull requests.
+
+CI installs the bundle and checks its server imports and native image library inside Flatpak. It does not verify a complete chat, secure storage, desktop integration, or KVM startup. Check those on a Linux desktop before wider distribution. Linux ARM builds are not published.
+
+To build locally, use a 64-bit Linux computer with Docker and `flatpak-builder`. Running a local assistant also needs access to `/dev/kvm`:
 
 ```sh title="Terminal"
 flatpak install --user flathub org.freedesktop.Sdk//25.08 org.electronjs.Electron2.BaseApp//25.08
@@ -265,6 +274,10 @@ flatpak run io.n8n.Nod
 `desktop:prepare` builds the workspace and browser images and downloads the pinned Lima, Docker and Ubuntu files. `desktop:linux:build` packages the app in `dist/desktop/Nod-linux-<arch>`, and the manifest builds QEMU, libslirp and the OpenSSH client that Lima needs.
 
 The Flatpak gets KVM, network, display, audio, notification, tray and Secret Service access, and your home folder and external drives under `/media` and `/run/media` for Local files and downloads, as the Mac and Windows apps have. The VM lives in `~/.nod-desktop`, as on a Mac.
+
+Release builds export a `stable` Flatpak bundle with Flathub as its desktop runtime source. They install it, check the engine, and divide the bundle into release parts. Publication verifies the source, Flatpak commit, each part, and the joined bundle. Linux files use the same release provenance checks as the other platforms. Recovery requires the Linux build to pass and keeps its original files.
+
+The published bundles have no Nod update repository and are not on Flathub. Users install the next bundle to update Nod. `flatpak update` can update the shared desktop runtime, but it does not fetch new Nod bundles.
 
 ## Signing limits
 

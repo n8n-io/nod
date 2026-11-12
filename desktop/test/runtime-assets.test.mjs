@@ -52,6 +52,7 @@ import { bindRecovery, recoveryContext } from '../../.github/scripts/desktop-rel
 import { run, verifyDiskImage, verifyRuntimeRelease } from '../scripts/release-tools.mjs';
 import { draftServerRelease } from '../../.github/scripts/server-release.mjs';
 import { imageIdentities } from '../../deployment/self-host/image-identities.mjs';
+import { packageLinuxBundle } from '../scripts/linux-release.mjs';
 
 test('server release helpers load without desktop build dependencies', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'nod-server-release-import-'));
@@ -608,6 +609,7 @@ test('release recovery binds normal and automatic builds to their original run a
           ['arm64/release.json', 'darwin-arm64'],
           ['x64/release.json', 'darwin-x64'],
           ['win32-x64/release-win32-x64.json', 'win32-x64'],
+          ['linux-x64/release-linux-x64.json', 'linux-x64'],
         ];
         for (const [file, platform] of manifests) {
           const path = join(f.root, 'dist/desktop', file);
@@ -621,7 +623,7 @@ test('release recovery binds normal and automatic builds to their original run a
               ...(updateSourceUrl ? { updateSourceUrl } : {}),
             }),
           );
-          if (platform !== 'win32-x64')
+          if (platform.startsWith('darwin-'))
             await writeFile(
               join(dirname(path), 'runtime-release.json'),
               JSON.stringify({ releaseTag: automatic ? 'nod-v0.1.0' : `nod-v${version}` }),
@@ -647,6 +649,7 @@ test('release recovery binds normal and automatic builds to their original run a
           'Build the Windows runtime',
           'Check Windows updates',
           'Package and check the Windows installer',
+          'Package and check Linux Flatpak / Linux x64 Flatpak',
         ].map((name) => ({ name, conclusion: 'success' }));
         if (!automatic)
           for (const arch of ['arm64', 'x64'])
@@ -1516,7 +1519,7 @@ test('one official release waits for verified runtime and downloaded app bytes',
   await assert.rejects(f.invoke('draft'));
 });
 
-test('all three checked bundles publish together as one regular Nod release', async (t) => {
+test('all four checked bundles publish together as one regular Nod release', async (t) => {
   for (const { isPublic, updateSourceUrl, rejectBroker = false, reusedRuntime = false } of [
     { isPublic: false, updateSourceUrl: 'https://releases.example.invalid/nod' },
     { isPublic: true },
@@ -1533,6 +1536,16 @@ test('all three checked bundles publish together as one regular Nod release', as
     const arm = join(target, 'arm64');
     const intel = join(target, 'x64');
     const windows = join(target, 'win32-x64');
+    const linuxBundle = join(f.root, '.local/synthetic.flatpak');
+    await writeFile(linuxBundle, 'Synthetic Linux Flatpak bundle');
+    await packageLinuxBundle({
+      root: f.root,
+      bundle: linuxBundle,
+      version: f.metadata.version,
+      source: f.source,
+      commit: 'c'.repeat(64),
+      partBytes: 16,
+    });
     const names = [
       'release.json',
       'runtime-release.json',
@@ -1703,6 +1716,13 @@ test('all three checked bundles publish together as one regular Nod release', as
       const subjects = await readFile(join(f.root, '.local/release-SHA256SUMS'), 'utf8');
       assert(subjects.includes(`${win.installer.sha256}  ${win.installer.file}\n`));
       assert(subjects.includes(`${win.runtime.sha256}  ${win.runtime.file}\n`));
+      const linuxManifestPath = join(target, 'linux-x64/release-linux-x64.json');
+      const linuxManifest = await readFile(linuxManifestPath, 'utf8');
+      assert(subjects.includes('nod-linux-x64.flatpak.part00\n'));
+      await writeFile(linuxManifestPath, linuxManifest.replace(f.source, 'd'.repeat(40)));
+      await assert.rejects(f.invoke('draft-all'), /Linux release does not match/);
+      assert.equal((await f.readState()).created, 0);
+      await writeFile(linuxManifestPath, linuxManifest);
       assert(subjects.includes('nod-install.sh'));
       assert(subjects.includes('nod-install.ps1'));
       await writeFile(join(intel, 'nod-x64.zip'), 'Corrupt Intel ZIP');
@@ -1813,6 +1833,10 @@ test('all three checked bundles publish together as one regular Nod release', as
       'nod-arm64.dmg',
       'nod-x64.dmg',
       'nod-Setup-x64.exe',
+      'release-linux-x64.json',
+      'SHA256SUMS-linux-x64',
+      'nod-linux-x64.flatpak.part00',
+      'nod-linux-x64.flatpak.part01',
       ...(!reusedRuntime ? [runtime.archive.file, f.release.archive.file] : []),
       win.runtime.file,
       windowsManifest,

@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <sub>macOS 14+ (Apple silicon or <a href="https://github.com/n8n-io/nod/releases/latest/download/nod-x64.dmg">Intel</a>) · Windows 11 preview · Free and open source · ChatGPT Plus or Pro, or an AI key</sub>
+  <sub>macOS 14+ (Apple silicon or <a href="https://github.com/n8n-io/nod/releases/latest/download/nod-x64.dmg">Intel</a>) · Windows 11 preview · <a href="https://nod.n8n.io/docs/get-started/install-desktop/#linux">Linux x64 preview</a> · Free and open source · ChatGPT Plus or Pro, or an AI key</sub>
 </p>
 
 <p align="center">

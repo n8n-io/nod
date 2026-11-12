@@ -77,7 +77,7 @@ jobs:
         with:
           run-id: ${{ inputs.run_id }}
           github-token: ${{ github.token }}
-          pattern: desktop-@(macos-*|runtime-pack-*|windows-x64|release-plan|release-context|release-provenance)
+          pattern: desktop-@(macos-*|runtime-pack-*|windows-x64|linux-x64|release-plan|release-context|release-provenance)
           path: release/.local/desktop-release-artifacts
       - name: Place and bind the release files
         working-directory: release
@@ -91,6 +91,7 @@ jobs:
           mv .local/desktop-release-artifacts/desktop-macos-arm64 dist/desktop/arm64
           mv .local/desktop-release-artifacts/desktop-macos-x64 dist/desktop/x64
           mv .local/desktop-release-artifacts/desktop-windows-x64 dist/desktop/win32-x64
+          mv .local/desktop-release-artifacts/desktop-linux-x64 dist/desktop/linux-x64
           for arch in arm64 x64; do
             if [ -d ".local/desktop-release-artifacts/desktop-runtime-pack-$arch" ]; then
               mv ".local/desktop-release-artifacts/desktop-runtime-pack-$arch" ".local/desktop-runtime-release/$arch"

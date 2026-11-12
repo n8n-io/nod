@@ -62,6 +62,8 @@ Secret scanning skips its generic keyword check in tests and fixtures. Known key
 | `evals/`                                | `pnpm --dir evals run check` and `pnpm --dir evals test`                                                                                      |
 | Docs site pages, configuration, or code | `pnpm --dir docs build`                                                                                                                       |
 
+For Linux release packaging, run **Build Linux desktop** in Actions. It builds the x64 runtime and Flatpak, installs the bundle, and checks the engine inside it. It saves checked bundle parts as `desktop-linux-x64`. The desktop release workflow requires this build. Full KVM startup and desktop integration still need a Linux desktop check. See [Linux builds](/contribute/desktop-releases/#build-a-linux-flatpak).
+
 The [capability evals](/contribute/evals/) call live models, so they aren't part of these checks. They run nightly and on request.
 
 When the evaluation harness changes, CI starts PostgreSQL for its database checks. These checks use synthetic data and disposable schemas.

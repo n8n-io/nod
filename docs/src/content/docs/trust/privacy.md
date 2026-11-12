@@ -85,11 +85,11 @@ Select **How Nod uses your data** next to the **Privacy & data** heading to see 
 
 ## Where your data lives
 
-|                 | Desktop app                                                                                                                | Source install                     | Self-hosted server                 |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ---------------------------------- |
-| Runs on         | A private virtual machine on your computer                                                                                 | Docker containers on your computer | Your server                        |
-| Data folder     | Mac: `~/Library/Application Support/nod/` and `~/.nod-desktop/`. Windows: `%APPDATA%\nod\` and the `nod-` WSL distribution | `.local/` and Docker volumes       | Docker volumes and its `.env` file |
-| Who can read it | You                                                                                                                        | You                                | Anyone who administers the server  |
+|                 | Desktop app                                                                                                                                                                                          | Source install                     | Self-hosted server                 |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ---------------------------------- |
+| Runs on         | A private virtual machine on your computer                                                                                                                                                           | Docker containers on your computer | Your server                        |
+| Data folder     | Mac: `~/Library/Application Support/nod/` and `~/.nod-desktop/`. Windows: `%APPDATA%\nod\` and the `nod-` WSL distribution. Linux Flatpak: `~/.var/app/io.n8n.Nod/config/nod/` and `~/.nod-desktop/` | `.local/` and Docker volumes       | Docker volumes and its `.env` file |
+| Who can read it | You                                                                                                                                                                                                  | You                                | Anyone who administers the server  |
 
 For what Nod stores and for how long, see the [Security review guide](/trust/security-review/#what-nod-stores).
 
