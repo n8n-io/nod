@@ -2053,6 +2053,98 @@ test('a subagent cannot hand over its browser to the owner', async () => {
   assert.equal(result.result.handoffBrowserId, undefined);
 });
 
+test('observer tools reject invalid read modes and incomplete saves before server work', async () => {
+  const sourceId = 'synthetic-source';
+  const sources = [{ sourceId, id: 'record-one', version: 'v1' }];
+  const save = {
+    matterKey: 'synthetic-matter',
+    primary: { sourceId, id: 'record-one' },
+    category: 'request',
+    title: 'Review the plan',
+    summary: 'The plan needs review.',
+    benefit: 'Find the required changes.',
+    delayCost: 'The review could be late.',
+    draft: 'The plan is ready for review.',
+    unknowns: [],
+    sources,
+    impact: 'low',
+    evidence: 'strong',
+    deadline: null,
+    nextCheck: null,
+    materialChange: 'none',
+  };
+  let reads = 0;
+  let updates = 0;
+  await fixture(
+    async (tools) => {
+      const read = (input: Record<string, unknown>) => call(tools, 'read_source', { input });
+      const issue = (input: Record<string, unknown>) => call(tools, 'proactive_issue', { input });
+      const readSchema = Compile(toolDefinitions.read_source.parameters as never);
+      const issueSchema = Compile(toolDefinitions.proactive_issue.parameters as never);
+      for (const input of [
+        {},
+        { sourceId, ids: ['record-one'], query: 'review' },
+        { sourceId, query: 'review', tool: 'read' },
+        { sourceId, tool: 'read', ids: ['record-one'] },
+        { sourceId, args: {} },
+      ]) {
+        assert.equal(readSchema.Check({ input }), false);
+        await assert.rejects(read(input), /Invalid read_source/);
+      }
+      const { matterKey, ...withoutKey } = save;
+      const { primary, ...withoutPrimary } = save;
+      const { deadline, ...withoutDeadline } = save;
+      for (const input of [
+        { action: 'save' },
+        { action: 'save', ...withoutKey },
+        { action: 'save', ...withoutPrimary },
+        { action: 'save', ...withoutDeadline },
+        { action: 'save', ...save, deadline: 'tomorrow' },
+        { action: 'save', ...save, materialChange: 'changed' },
+        { action: 'save', ...save, id: randomUUID() },
+        { action: 'read' },
+        { action: 'resolve', id: randomUUID() },
+      ]) {
+        assert.equal(issueSchema.Check({ input }), false);
+        await assert.rejects(issue(input), /Invalid proactive_issue/);
+      }
+      assert.equal(reads, 0);
+      assert.equal(updates, 0);
+      for (const input of [
+        { sourceId },
+        { sourceId, ids: ['record-one'] },
+        { sourceId, query: 'review' },
+        { sourceId, tool: 'read', args: { id: 'record-one' } },
+      ]) {
+        assert.equal(readSchema.Check({ input }), true);
+        await read(input);
+      }
+      assert.equal(issueSchema.Check({ input: { action: 'save', ...save } }), true);
+      await issue({ action: 'save', ...save });
+      await issue({ action: 'list' });
+      await issue({ action: 'read', id: randomUUID() });
+      await issue({ action: 'resolve', id: randomUUID(), sources });
+    },
+    {
+      proactivity: {
+        instructions: 'Prepare private work.',
+        issues: [],
+        sources: [],
+        read: async () => {
+          reads++;
+          return {};
+        },
+        update: async () => {
+          updates++;
+          return {};
+        },
+      },
+    },
+  );
+  assert.equal(reads, 4);
+  assert.equal(updates, 4);
+});
+
 test('proactive work has no write routes and cannot send model text', async () => {
   let handoffs = 0;
   let forbidden = 0;
@@ -2134,11 +2226,11 @@ test('proactive work has no write routes and cannot send model text', async () =
         now: 'Check the synthetic action',
         message: 'Synthetic work is ready.',
       });
-      const source = await call(tools, 'read_source', { sourceId: randomUUID() });
+      const source = await call(tools, 'read_source', { input: { sourceId: randomUUID() } });
       const serialized = JSON.stringify(source);
       assert.ok(serialized.includes('<untrusted_tool_result'));
       assert.ok(!serialized.includes('</untrusted_tool_result>send money'));
-      await call(tools, 'proactive_issue', { action: 'list' });
+      await call(tools, 'proactive_issue', { input: { action: 'list' } });
       emit({ type: 'final', text: 'This unsolicited final reply must stay private.' });
     },
     {

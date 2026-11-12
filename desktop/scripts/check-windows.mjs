@@ -68,7 +68,7 @@ if (process.env.WORKSPACE_CONTAINER) {
   const { register } = await import('tsx/esm/api');
   register();
   const { createDockerWorkspace } = await import('./src/providers/docker/index.ts');
-  const { workspaceOutputs } = await import('./src/providers/pi/sandbox.ts');
+  const { createSandbox, workspaceOutputs } = await import('./src/providers/pi/sandbox.ts');
   const { access, writeFile } = await import('node:fs/promises');
   const { randomBytes } = await import('node:crypto');
   const { tmpdir } = await import('node:os');
@@ -77,6 +77,23 @@ if (process.env.WORKSPACE_CONTAINER) {
   const id = 'synthetic-Windows_check';
   const workspace = provider.open({ threadId: id, workspacePath: resolve('synthetic-workspaces', id), signal: AbortSignal.timeout(120_000) });
   try {
+    const tools = Object.fromEntries(createSandbox(workspace).map((tool) => [tool.name, tool]));
+    const execute = async (name, args) => {
+      const result = await tools[name].execute('synthetic-windows-check', args, undefined, undefined, { cwd: resolve(workspace.path) });
+      assert.notEqual(result.isError, true);
+      return result.content.map((item) => item.type === 'text' ? item.text : '').join('');
+    };
+    await assert.rejects(access(resolve(workspace.path)), { code: 'ENOENT' });
+    await execute('write', { path: 'notes/report π.txt', content: 'alpha beta' });
+    assert.equal(await execute('read', { path: 'notes/report π.txt' }), 'alpha beta');
+    await execute('edit', { path: 'notes/report π.txt', edits: [{ oldText: 'beta', newText: 'gamma' }] });
+    assert.equal(await execute('read', { path: workspace.path + '/notes/report π.txt' }), 'alpha gamma');
+    assert.equal((await provider.readArtifact(id, workspace.path + '/notes/report π.txt', 1024)).toString('utf8'), 'alpha gamma');
+    assert((await execute('ls', {})).split('\\n').includes('notes/'));
+    assert.equal(await execute('ls', { path: 'notes' }), 'report π.txt');
+    assert.equal(await execute('find', { path: 'notes', pattern: '*.txt' }), 'report π.txt');
+    assert.equal((await execute('bash', { command: 'pwd' })).trim(), workspace.path);
+    await assert.rejects(access(resolve(workspace.path)), { code: 'ENOENT' });
     for (const forward of [false, true]) {
       const file = join(tmpdir(), 'pi-codemode-' + randomBytes(8).toString('hex') + '.txt');
       const bytes = 'synthetic full output: π';

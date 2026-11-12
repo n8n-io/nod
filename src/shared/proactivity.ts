@@ -1,3 +1,58 @@
+import { z } from 'zod';
+
+const text = (max: number) => z.string().trim().min(1).max(max);
+const resource = text(1024).refine((value) => !/[\u0000-\u001f]/.test(value));
+const sourceId = text(200);
+const instant = z.iso.datetime({ offset: true });
+
+export const sourceReadSchema = z.union([
+  z.object({ sourceId, ids: z.array(resource).min(1).max(10).optional() }).strict(),
+  z.object({ sourceId, query: text(1000) }).strict(),
+  z
+    .object({ sourceId, tool: text(300), args: z.record(z.string(), z.unknown()).optional() })
+    .strict(),
+]);
+
+export const proactiveSourcesSchema = z
+  .array(z.object({ sourceId, id: resource, version: text(1000) }).strict())
+  .min(1)
+  .max(6)
+  .transform((refs) => [...new Map(refs.map((ref) => [JSON.stringify(ref), ref])).values()]);
+
+export const proactiveProposalSchema = z
+  .object({
+    action: z.literal('save'),
+    matterKey: text(200),
+    primary: z.object({ sourceId, id: resource }).strict(),
+    category: text(60),
+    title: text(120),
+    summary: text(600),
+    benefit: text(600),
+    delayCost: text(600),
+    draft: text(20000).describe('Reusable result only. Put owner-only review notes in unknowns.'),
+    unknowns: z.array(text(500)).max(8),
+    sources: proactiveSourcesSchema,
+    impact: z.enum(['low', 'medium', 'high']),
+    delivery: z.enum(['private', 'offer']).default('offer'),
+    evidence: z.enum(['strong', 'uncertain']),
+    deadline: instant.nullable(),
+    nextCheck: instant.nullable(),
+    materialChange: z.enum(['none', 'deadline_advanced', 'condition_changed', 'new_option']),
+  })
+  .strict();
+const list = z.object({ action: z.literal('list') }).strict();
+const read = z.object({ action: z.literal('read'), id: z.uuid() }).strict();
+const resolve = z
+  .object({ action: z.literal('resolve'), id: z.uuid(), sources: proactiveSourcesSchema })
+  .strict();
+
+export const proactiveUpdateSchema = z.discriminatedUnion('action', [
+  proactiveProposalSchema,
+  list,
+  read,
+  resolve,
+]);
+
 export type ProactiveCategory = string;
 export interface ProactiveEvidence {
   sourceId: string;

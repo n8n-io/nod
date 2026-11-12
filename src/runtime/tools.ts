@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { answerChoiceInputSchema, answerChoicesSchema } from '../shared/answer-choices.ts';
 import { presentationInputSchema, type Presentation } from '../shared/presentation.ts';
+import { proactiveUpdateSchema, sourceReadSchema } from '../shared/proactivity.ts';
 import { Value } from '@sinclair/typebox/value';
 import {
   appConfirmation,
@@ -171,6 +172,12 @@ const taskNextCheck = Type.String({
   description: 'ISO time with seconds and offset, such as 2026-10-08T09:00:00+01:00',
 });
 
+function modelInput<S extends z.ZodType>(name: string, schema: S) {
+  TypeRegistry.Set(name, (_schema, value) => schema.safeParse(value).success);
+  const { $schema, ...json } = z.toJSONSchema(schema, { target: 'draft-7', io: 'input' });
+  return Type.Unsafe<z.input<S>>({ ...json, [Kind]: name });
+}
+
 TypeRegistry.Set(
   'NodPresentation',
   (_schema, value) => presentationInputSchema.safeParse(value).success,
@@ -238,85 +245,19 @@ export const toolDefinitions = {
   ),
   read_source: defineTool(
     'read_source',
-    'Read current observations from one registered read-only source. For a source with tools, pass query to find its read tools, then tool and args from that result. For other sources, pass record ids, or omit them for a bounded recent page; the server saves page progress and nextCursor shows that more records remain. This tool cannot change connected data.',
-    Type.Object({
-      sourceId: Type.String({ minLength: 1, maxLength: 200 }),
-      ids: Type.Optional(
-        Type.Array(Type.String({ minLength: 1, maxLength: 1024 }), {
-          minItems: 1,
-          maxItems: 10,
-        }),
-      ),
-      query: Type.Optional(Type.String({ minLength: 1, maxLength: 1000 })),
-      tool: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
-      args: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-    }),
+    'Read current observations from one registered read-only source. Put the request in input. Use exactly one input shape: {sourceId}, {sourceId,ids}, {sourceId,query}, or {sourceId,tool,args?}. For a source with tools, pass query to find its read tools, then tool and args from that result. For other sources, pass record ids, or omit them for a bounded recent page; the server saves page progress and nextCursor shows that more records remain. This tool cannot change connected data.',
+    Type.Object(
+      { input: modelInput('NodSourceRead', sourceReadSchema) },
+      { additionalProperties: false },
+    ),
   ),
   proactive_issue: defineTool(
     'proactive_issue',
-    'List, read, prepare, or resolve a private update. read needs id and returns the complete saved draft. save identifies one matter with a stable matterKey and explicit primary {sourceId,id}; omit id. Reuse the returned matterKey for that matter. Different matters can share a source record. save needs a short descriptive category, title, summary, benefit, delayCost, a complete plain-text draft, unknowns, sources [{sourceId,id,version}], impact (low,medium,high), delivery (private to save without a nudge, offer to request attention), evidence (strong,uncertain), deadline and nextCheck (ISO timestamps or null), and materialChange (none,deadline_advanced,condition_changed,new_option). summary is the nudge text; the server adds a link to the saved result. resolve needs id and fresh sources. The server checks evidence and controls notification delivery. It never sends the draft to another person.',
-    Type.Object({
-      action: Type.Union([
-        Type.Literal('list'),
-        Type.Literal('read'),
-        Type.Literal('save'),
-        Type.Literal('resolve'),
-      ]),
-      args: Type.Optional(
-        Type.Object(
-          {
-            id: Type.Optional(uuid),
-            matterKey: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
-            primary: Type.Optional(
-              Type.Object(
-                {
-                  sourceId: Type.String({ minLength: 1, maxLength: 200 }),
-                  id: Type.String({ minLength: 1, maxLength: 1024 }),
-                },
-                { additionalProperties: false },
-              ),
-            ),
-            category: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })),
-            title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
-            summary: Type.Optional(Type.String({ minLength: 1, maxLength: 600 })),
-            benefit: Type.Optional(Type.String({ minLength: 1, maxLength: 600 })),
-            delayCost: Type.Optional(Type.String({ minLength: 1, maxLength: 600 })),
-            draft: Type.Optional(
-              Type.String({
-                minLength: 1,
-                maxLength: 20000,
-                description: 'Reusable result only. Put owner-only review notes in unknowns.',
-              }),
-            ),
-            unknowns: Type.Optional(
-              Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { maxItems: 8 }),
-            ),
-            sources: Type.Optional(
-              Type.Array(
-                Type.Object(
-                  {
-                    sourceId: Type.String({ minLength: 1, maxLength: 200 }),
-                    id: Type.String({ minLength: 1, maxLength: 1024 }),
-                    version: Type.String({ minLength: 1, maxLength: 1000 }),
-                  },
-                  { additionalProperties: false },
-                ),
-                { minItems: 1, maxItems: 6 },
-              ),
-            ),
-            impact: Type.Optional(literals(['low', 'medium', 'high'])),
-            delivery: Type.Optional(literals(['private', 'offer'])),
-            evidence: Type.Optional(literals(['strong', 'uncertain'])),
-            deadline: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-            nextCheck: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-            materialChange: Type.Optional(
-              literals(['none', 'deadline_advanced', 'condition_changed', 'new_option']),
-            ),
-          },
-          { additionalProperties: false },
-        ),
-      ),
-    }),
+    'List, read, prepare, or resolve a private update. Put action and all its fields directly in input: {input:{action:"list"}}, {input:{action:"read",id}}, {input:{action:"save",...}}, or {input:{action:"resolve",id,sources}}. read needs id and returns the complete saved draft. save identifies one matter with a stable matterKey and explicit primary {sourceId,id}; omit id. Reuse the returned matterKey for that matter. Different matters can share a source record. save needs a short descriptive category, title, summary, benefit, delayCost, a complete plain-text draft, unknowns, sources [{sourceId,id,version}], impact (low,medium,high), delivery (private to save without a nudge, offer to request attention), evidence (strong,uncertain), deadline and nextCheck (ISO timestamps or null), and materialChange (none,deadline_advanced,condition_changed,new_option). summary is the nudge text; the server adds a link to the saved result. resolve needs id and fresh sources. The server checks evidence and controls notification delivery. It never sends the draft to another person.',
+    Type.Object(
+      { input: modelInput('NodProactiveIssue', proactiveUpdateSchema) },
+      { additionalProperties: false },
+    ),
   ),
   delegate: defineTool(
     'delegate',
@@ -911,10 +852,10 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
     ...(context.proactivity
       ? [
           bind(toolDefinitions.read_source, async (p) =>
-            confirm(await context.proactivity!.read(p, signal)),
+            confirm(await context.proactivity!.read(p.input, signal)),
           ),
           bind(toolDefinitions.proactive_issue, async (p) =>
-            confirm(await context.proactivity!.update({ ...p.args, action: p.action }, signal)),
+            confirm(await context.proactivity!.update(p.input, signal)),
           ),
         ]
       : []),

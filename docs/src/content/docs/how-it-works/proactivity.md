@@ -62,6 +62,8 @@ The model judges usefulness. The server enforces permission, freshness and deliv
 
 The observer reads sources with `read_source`, saves work and nudges with `proactive_issue`, and reads personal context. It uses `task` to start separate work with a stable key for the source record and actual change. That key returns the existing task, including completed work. Only a spending check-in can pause the observer with `ask_user`. A check that ends past the check-in without asking waits on the check-in notice instead, so no new check starts until you reply to it. It has no sandbox, browser, web, code or connected-app write tools, and its final text stays private. App content, memory and saved drafts reach it as data, never instructions or permission. Secret fields are removed and email that gives account access is hidden before anything reaches the model.
 
+The observer tools and server use the same input rules. Each tool takes one required `input` object. A source read selects one mode: recent records, record IDs, tool search, or a tool call. A saved matter requires its identity, primary record, draft, evidence, timing, and type of change. The runtime checks these fields before the server reads or saves data.
+
 A separate task sends a draft only when your words permit it, through the [trust check](/trust/approvals/). An observer task keeps only your current notification rule and rules as its authority. Its generated brief grants no permission.
 
 ## Prepare the full result

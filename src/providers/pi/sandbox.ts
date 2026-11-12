@@ -34,6 +34,10 @@ function quote(value: string) {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
+function workspacePath(path: string) {
+  return process.platform === 'win32' ? path.replace(/^[a-z]:/i, '').replaceAll('\\', '/') : path;
+}
+
 async function run(
   workspace: WorkspaceSession,
   script: string,
@@ -207,11 +211,13 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
     return (await run(workspace, script)).exitCode === 0;
   }
   async function readBytes(path: string) {
+    path = workspacePath(path);
     const { exitCode, output } = await run(workspace, `cat -- ${quote(path)}`);
     if (exitCode) throw new Error(`File not found or not readable: ${path}`);
     return output;
   }
-  const writeBytes = (path: string, bytes: Buffer) => writeWorkspaceFile(workspace, path, bytes);
+  const writeBytes = (path: string, bytes: Buffer) =>
+    writeWorkspaceFile(workspace, workspacePath(path), bytes);
   const directories = new Map<string, boolean>();
   async function bash(
     command: string,
@@ -269,6 +275,7 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
     root: string,
     options: { ignore: string[]; limit: number },
   ) => {
+    root = workspacePath(root);
     const program = [
       'import os,sys,fnmatch,json',
       'root,pattern,limit=sys.argv[1],sys.argv[2],int(sys.argv[3])',
@@ -319,23 +326,26 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
       operations: {
         writeFile: (path, content) => writeBytes(path, Buffer.from(content, 'utf8')),
         mkdir: async (dir) => {
+          dir = workspacePath(dir);
           if (!(await check(`mkdir -p -- ${quote(dir)}`)))
             throw new Error(`Could not create ${dir}.`);
         },
       },
     }),
     createFindToolDefinition(cwd, {
-      operations: { exists: (path) => check(`[ -e ${quote(path)} ]`), glob },
+      operations: { exists: (path) => check(`[ -e ${quote(workspacePath(path))} ]`), glob },
     }),
     createLsToolDefinition(cwd, {
       operations: {
-        exists: (path) => check(`[ -e ${quote(path)} ]`),
+        exists: (path) => check(`[ -e ${quote(workspacePath(path))} ]`),
         stat: async (path) => {
+          path = workspacePath(path);
           const directory = directories.get(path) ?? (await check(`[ -d ${quote(path)} ]`));
           directories.delete(path);
           return { isDirectory: () => directory };
         },
         readdir: async (path) => {
+          path = workspacePath(path);
           const { exitCode, output } = await run(
             workspace,
             `python3 -c ${quote(listProgram)} ${quote(path)}`,
@@ -361,7 +371,7 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
       : {}),
     execute: async (id, params, signal, onUpdate, context) => {
       const result = await workspaceOutputs(
-        () => definition.execute(id, params, signal, onUpdate, context),
+        () => definition.execute(id, params, signal, onUpdate, { ...context, cwd }),
         workspace,
         signal,
       );

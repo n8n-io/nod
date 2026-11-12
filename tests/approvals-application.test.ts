@@ -276,7 +276,7 @@ test(
                     .find((tool) => tool.name === (plan.tool ?? 'manage_personal_context'))!
                     .execute(
                       plan.tool === 'read_source'
-                        ? plan.args
+                        ? { input: plan.args }
                         : plan.tool === 'browser' ||
                             plan.tool === 'sign_in' ||
                             plan.tool === 'files'

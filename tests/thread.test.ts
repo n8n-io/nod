@@ -7362,7 +7362,10 @@ test(
                           costSource: 'sdk_estimate',
                           createdAt: new Date().toISOString(),
                         });
-                        await assert.rejects(tool('read_source').execute({ sourceId }), /check-in/);
+                        await assert.rejects(
+                          tool('read_source').execute({ input: { sourceId } }),
+                          /check-in/,
+                        );
                         await tool('ask_user').execute({
                           question: 'The synthetic check used six dollars. Continue?',
                         });

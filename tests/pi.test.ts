@@ -8,7 +8,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { syncBuiltinESMExports } from 'node:module';
+import path, { join, win32 } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
@@ -1622,8 +1623,9 @@ async function hostSandbox(t: test.TestContext) {
   const host = await mkdtemp(join(tmpdir(), 'nod-sandbox-'));
   const bin = join(host, 'bin');
   const root = join(host, 'root');
+  const cwd = join(root, 'workspace');
   await mkdir(bin);
-  await mkdir(join(root, 'workspace'), { recursive: true });
+  await mkdir(cwd, { recursive: true });
   if (process.platform !== 'linux') {
     await writeFile(join(bin, 'timeout'), timeoutShim);
     await chmod(join(bin, 'timeout'), 0o755);
@@ -1638,7 +1640,7 @@ async function hostSandbox(t: test.TestContext) {
       calls.push(command);
       return new Promise((resolve) => {
         const child = spawn('bash', ['-c', command.replaceAll(prefix, root)], {
-          cwd: join(root, 'workspace'),
+          cwd,
           env: { PATH: `${bin}:/usr/bin:/bin` },
         });
         const deliver = (chunk: Buffer) =>
@@ -1653,13 +1655,13 @@ async function hostSandbox(t: test.TestContext) {
     },
   };
   const tools = Object.fromEntries(createSandbox(workspace).map((tool) => [tool.name, tool]));
-  const run = async (name: string, params: Record<string, unknown>) => {
+  const run = async (name: string, params: Record<string, unknown>, context?: { cwd: string }) => {
     const result = await (tools[name] as ToolDefinition).execute(
       randomUUID(),
       params,
       undefined,
       undefined,
-      undefined as never,
+      context as never,
     );
     return result.content.map((part) => (part.type === 'text' ? part.text : part.type)).join('');
   };
@@ -1680,6 +1682,41 @@ test('native Pi tools run only through workspace exec on sandbox paths that do n
   await assert.rejects(run('read', { path: 'missing.txt' }));
   assert.ok(calls.length >= 8);
   assert.equal(existsSync(prefix), false);
+});
+
+test('native Pi tools use Linux workspace paths on a Windows host', async (t) => {
+  const { prefix, calls, run } = await hostSandbox(t);
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  const posix = Object.getOwnPropertyDescriptor(path, 'posix')!;
+  Object.defineProperty(path, 'posix', { value: { ...path.posix } });
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  for (const name of ['join', 'dirname', 'isAbsolute', 'relative'] as const)
+    t.mock.method(path, name, win32[name]);
+  t.mock.method(path, 'resolve', (...parts: string[]) => win32.resolve('C:\\nod', ...parts));
+  syncBuiltinESMExports();
+  t.after(() => {
+    Object.defineProperty(process, 'platform', platform);
+    t.mock.restoreAll();
+    Object.defineProperty(path, 'posix', posix);
+    syncBuiltinESMExports();
+  });
+  const context = { cwd: `C:${prefix.replaceAll('/', '\\')}\\workspace` };
+  const execute = (name: string, params: Record<string, unknown>) => run(name, params, context);
+  await execute('write', { path: 'notes/a.txt', content: 'alpha\nbeta\n' });
+  assert.equal(await execute('read', { path: 'notes/a.txt' }), 'alpha\nbeta\n');
+  await execute('edit', { path: 'notes/a.txt', edits: [{ oldText: 'beta', newText: 'gamma' }] });
+  assert.equal(
+    await execute('read', { path: `${prefix}/workspace/notes/a.txt` }),
+    'alpha\ngamma\n',
+  );
+  assert.equal(await execute('ls', {}), 'notes/');
+  assert.equal(await execute('ls', { path: 'notes' }), 'a.txt');
+  assert.equal(await execute('find', { pattern: '*.txt' }), 'notes/a.txt');
+  assert.equal((await execute('bash', { command: 'pwd' })).trim(), `${prefix}/workspace`);
+  assert.deepEqual(
+    calls.filter((command) => command.includes('C:') || command.includes('\\workspace')),
+    [],
+  );
 });
 
 test('bash output larger than Pi limits stays in the sandbox and never creates host temp files', async (t) => {
