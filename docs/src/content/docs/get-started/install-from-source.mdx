@@ -17,7 +17,7 @@ To run Nod on a VPS, cloud VM, or Mac mini and reach it from other devices, use 
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Node.js          | 24.21.0 or newer                                                                                                                                                     |
 | pnpm             | 10.34.5, enabled through Corepack                                                                                                                                    |
-| Docker           | With Compose v2, running, for example Docker Desktop on a Mac or Windows                                                                                             |
+| Docker           | With Compose v2, running. For a Docker VM such as Colima, start with two CPUs and 8 GB of memory.                                                                    |
 | Git              | Any recent version                                                                                                                                                   |
 | Model connection | A [supported model service](/connect/models/) with its required credentials, a ChatGPT plan that supports sign-in, or a [local model](/connect/local-models/) server |
 
@@ -36,6 +36,8 @@ flowchart LR
 ```
 
 The workspace is where Nod runs commands and keeps files. The browser is where it visits websites. Neither of them receives your provider keys. The workspace reaches the network only through its [firewall](/deploy/self-host/#what-runs-on-the-server), which blocks private addresses.
+
+`pnpm start` sets the browser and workspace CPU limits to fit the CPUs available to Docker. To check a Docker VM's allocation, run `docker info --format '{{.NCPU}}'`. If Nod runs slowly, raise the VM's CPU or memory allocation and restart it.
 
 ## Get the code
 
