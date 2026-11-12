@@ -32,6 +32,11 @@ import { trustBasis, trustDecision } from '../src/server/trust-basis.ts';
 import { createTrust } from '../src/server/trust.ts';
 import { createTrustReview } from '../src/server/trust-review.ts';
 import { trustFacts } from '../src/server/trust-facts.ts';
+import {
+  createErrorRedactor,
+  createRedactor,
+  createTextRedactor,
+} from '../src/server/redaction.ts';
 
 test('decision selection uses the LLM only when no decision connection is available', async () => {
   let resolutions = 0;
@@ -2466,6 +2471,26 @@ test('server model credentials reject invalid destinations and cloud accounts be
   );
 });
 
+test('secret redaction keeps valid tokens when another token is missing', () => {
+  const secrets = [' fixture-access-token ', undefined, null, 42] as unknown as string[];
+  const text = createTextRedactor(secrets);
+  const error = createErrorRedactor(secrets);
+  const redact = createRedactor(secrets);
+  assert.equal(text('Using fixture-access-token.'), 'Using [redacted].');
+  assert.equal(error('Failed for fixture-access-token.'), 'Failed for [redacted].');
+  assert.equal(
+    JSON.stringify(redact({ detail: 'fixture-access-token' })),
+    '{"detail":"[redacted]"}',
+  );
+  secrets.push('fixture-refresh-token', undefined as unknown as string);
+  assert.equal(text('fixture-access-token fixture-refresh-token'), '[redacted] [redacted]');
+  assert.equal(error('fixture-refresh-token'), '[redacted]');
+  assert.equal(
+    JSON.stringify(redact({ detail: 'fixture-refresh-token' })),
+    '{"detail":"[redacted]"}',
+  );
+});
+
 describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
   async function fixture(t: import('node:test').TestContext) {
     const { createModelService } = await import('../src/server/models.ts');
@@ -2589,6 +2614,106 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       'https://eu.api.openai.com/v1/models',
       'https://eu.api.openai.com/v1/models',
     ]);
+  });
+
+  test('incomplete saved credentials do not break redaction for the selected connection', async (t) => {
+    const f = await fixture(t);
+    const ownerId = 'fixture-incomplete-subscription';
+    const owner = await f.create(ownerId);
+    await owner.addKey('openai', 'fixture-selected-model-key');
+    const { createDatabaseModelStore } = await import('../src/server/model-store.ts');
+    const store = createDatabaseModelStore({
+      database: f.database,
+      ownerId,
+      keyStore: f.keyStore,
+    });
+    await store.initialize();
+    const { idToken: _, ...saved } = subscriptionCredential();
+    await store.change((state) => {
+      state.connections.push({
+        id: randomUUID(),
+        provider: 'openai',
+        method: 'subscription',
+        label: 'Synthetic older subscription',
+        status: 'reconnect',
+        models: [],
+        managed: false,
+        credential: saved as import('../src/ports/models.ts').ModelCredential,
+      });
+      for (const [type, provider] of [
+        ['api_key', 'openai'],
+        ['endpoint', 'compatible'],
+        ['bedrock', 'amazon-bedrock'],
+        ['cloudflare', 'cloudflare-workers-ai'],
+        ['azure', 'azure'],
+      ] as const)
+        for (const key of [undefined, null, 42, '', 'a', 'ab', 'abc', 'abcd'])
+          state.connections.push({
+            id: randomUUID(),
+            provider,
+            method: 'api_key',
+            label: 'Synthetic incomplete key',
+            status: 'reconnect',
+            models: [],
+            managed: false,
+            credential: {
+              type,
+              key,
+            } as unknown as import('../src/ports/models.ts').ModelCredential,
+          });
+      for (const [provider, credential] of [
+        [
+          'compatible',
+          { type: 'endpoint', url: 'http://127.0.0.1:1/v1', key: 'fixture-endpoint-key-ab12' },
+        ],
+        [
+          'azure',
+          {
+            type: 'azure',
+            url: 'https://fixture.example.test/openai/v1',
+            model: 'fixture-model',
+            deployment: 'fixture-deployment',
+            key: 'fixture-azure-key-cd34',
+          },
+        ],
+      ] as const)
+        state.connections.push({
+          id: randomUUID(),
+          provider,
+          method: 'api_key',
+          label: `Synthetic keyed ${credential.type}`,
+          status: 'reconnect',
+          models: [],
+          managed: false,
+          credential,
+        });
+    });
+    const restored = await f.create(ownerId);
+    assert.ok(
+      restored
+        .view()
+        .connections.filter((row) => row.label === 'Synthetic incomplete key')
+        .every((row) => row.keyEnding === undefined),
+    );
+    for (const [label, ending] of [
+      ['Synthetic keyed endpoint', 'ab12'],
+      ['Synthetic keyed azure', 'cd34'],
+    ])
+      assert.equal(
+        restored.view().connections.find((row) => row.label === label)?.keyEnding,
+        ending,
+      );
+    const secrets: string[] = [];
+    restored.onSecrets((values) => secrets.push(...values));
+    assert.equal(
+      createTextRedactor(secrets)('Using fixture-selected-model-key and fixture-access.'),
+      'Using [redacted] and [redacted].',
+    );
+    assert.ok(secrets.every((secret) => typeof secret === 'string' && secret.length > 0));
+    assert.deepEqual(await (await restored.resolve()).read(), {
+      type: 'api_key',
+      key: 'fixture-selected-model-key',
+    });
   });
 
   function stubSignIn(

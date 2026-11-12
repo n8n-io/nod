@@ -18,7 +18,11 @@ import type { CredentialKind } from '../src/ports/computer.ts';
 import type { IntegrationProvider, VerificationEmail } from '../src/ports/integrations.ts';
 import { readVerificationEmails } from '../src/providers/composio/verification-email.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
-import { verificationCode, verificationSenderDomain } from '../src/server/email-code.ts';
+import {
+  normalizedEmail,
+  verificationCode,
+  verificationSenderDomain,
+} from '../src/server/email-code.ts';
 import { createIntegrations } from '../src/server/integrations.ts';
 import type { TurnRef } from '../src/server/thread.ts';
 import {
@@ -1584,6 +1588,12 @@ const message: VerificationEmail = {
   recipients: ['owner@example.com'],
   text: 'O seu código de autenticação é 381742.',
 };
+
+test('verification addresses reject missing or invalid values before normalization', () => {
+  for (const value of [undefined, null, 42, {}, '', 'invalid'])
+    assert.equal(normalizedEmail(value), undefined);
+  assert.equal(normalizedEmail('  OWNER@EXAMPLE.COM  '), 'owner@example.com');
+});
 
 test('site matching uses public suffix boundaries and separates hosted tenants', () => {
   for (const [origin, domain] of [

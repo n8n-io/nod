@@ -48,7 +48,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 
 - No tool returns a saved password, code or card to the model.
 - Nod is told never to ask for a password, code, card or API key in chat; it opens private entry instead. While a verification code is pending in the conversation that asked for it, only a message that is the code by itself, 4–8 digits (0–9), is taken as the code. Any other message with a number of three or more digits is refused, whatever its wording or language, unless the number follows letters without a space and doesn't end the message, as in "SKU1042 arrived". Nod asks you to send the code by itself. While a card's security code is pending, only a code sent by itself or labeled CVV, CVC or security code, as in "my CVC is 123", is taken, and any other message with a 3- or 4-digit number is refused. A code sent as a reply to a closed request, or by itself or at the end of a message until 10 minutes after Nod starts on a newer message, is refused too. None of these reach the model. Digits in other scripts and any other secret you type into chat reach the model.
-- Known secret values are removed from tool output and masked in screenshots.
+- Known secret values are removed from tool output and masked in screenshots. Missing token values in an older saved sign-in do not stop removal of the other known secrets.
 - Provider keys never enter the workspace, the browser or a prompt.
 
 ### Browser

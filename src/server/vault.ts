@@ -1153,7 +1153,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const siteLabel = async (selector: string, fallback: string) =>
       (
         await options.page?.(threadId, { action: 'fill', selector }).catch(() => undefined)
-      )?.controls?.[0]?.name.trim() || fallback;
+      )?.controls?.[0]?.name?.trim() || fallback;
     const targetLabel = await siteLabel(
       [target].flat()[0]!,
       kind === 'identifier'

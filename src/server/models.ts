@@ -341,7 +341,7 @@ export function createModelService(options: {
         : value.key
           ? [value.key]
           : []
-    ).filter((secret) => !secrets.has(secret));
+    ).filter((secret) => typeof secret === 'string' && secret.length > 0 && !secrets.has(secret));
     for (const secret of values) secrets.add(secret);
     if (values.length) for (const observer of observers) observer(values);
   }
@@ -349,7 +349,11 @@ export function createModelService(options: {
     const state = await store.read();
     rows = state.connections.map(({ credential: saved, ...row }) => {
       const value = row.managed ? options.bootstrap?.credentials[row.provider] : saved;
-      return value?.type === 'api_key' || value?.type === 'bedrock' || value?.type === 'cloudflare'
+      return value &&
+        typeof value === 'object' &&
+        'key' in value &&
+        typeof value.key === 'string' &&
+        value.key.length > 4
         ? { ...row, keyEnding: value.key.slice(-4) }
         : row;
     });

@@ -132,7 +132,7 @@ export function createTaskClassification(options: {
           : undefined;
       const text = messages.length
         ? messages.map(({ text }) => text).join('\n')
-        : task?.brief.trim() || task?.done_when.trim() || root.prompt;
+        : task?.brief?.trim() || task?.done_when?.trim() || root.prompt;
       const request = redact(text).slice(0, 6000).trim();
       if (!request) classified = result('not_applicable');
       else if (current(consent) && (await active(root.id))) {
