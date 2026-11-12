@@ -17,7 +17,7 @@ Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](ht
 - **approvals:** Preserve task continuation after non-answer. [#787](https://github.com/n8n-io/nod/pull/787) (08ca218)
 - **chat:** Keep Stop separate from Send. [#781](https://github.com/n8n-io/nod/pull/781) (67dd237)
 - **onboarding:** Skip work-use follow-up for personal scope. [#780](https://github.com/n8n-io/nod/pull/780) (2f2f014)
-- Honor clock preference in quiet hours (LAB-824). [#778](https://github.com/n8n-io/nod/pull/778) (1039be5)
+- Honor clock preference in quiet hours. [#778](https://github.com/n8n-io/nod/pull/778) (1039be5)
 - Fit source containers to Docker CPU allocation. [#776](https://github.com/n8n-io/nod/pull/776) (970060f)
 - **feedback:** Separate notice from diagnostic scroll area. [#777](https://github.com/n8n-io/nod/pull/777) (aebc9d8)
 - **desktop:** Clarify local setup heading. [#775](https://github.com/n8n-io/nod/pull/775) (9423daa)
