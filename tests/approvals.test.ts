@@ -362,6 +362,14 @@ test('approval cards shorten long recipients and bodies, skip blank bodies and t
 });
 
 test('HTML approval previews show the actual link destination', () => {
+  assert.equal(
+    approvalContent('GMAIL_SEND_EMAIL', {
+      to: 'recipient@example.test',
+      is_html: true,
+      body: '<noscript><p>Hi</p><a href="https://actual.example.test">Pay here</a></noscript>',
+    }).body,
+    'Hi\nPay here (https://actual.example.test)',
+  );
   for (const [attributes, address] of [
     [
       'data-href="https://safe.example.test" href="https://actual.example.test"',
@@ -2696,6 +2704,8 @@ test(
           assert.equal(await shownState(), 'expired');
           await db.pool.query("UPDATE approvals SET status='executing' WHERE id=$1", [firstId]);
           assert.equal(await shownState(), 'uncertain');
+          await db.pool.query("UPDATE approvals SET status='completed' WHERE id=$1", [firstId]);
+          assert.equal(await shownState(), 'done');
           await db.pool.query("UPDATE approvals SET status='confirmed' WHERE id=$1", [firstId]);
         },
       );

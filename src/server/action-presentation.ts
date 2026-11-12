@@ -90,7 +90,10 @@ function listed(values: string[]) {
 function plainText(html: string) {
   const bounded = html.length > 20_000;
   let cut = bounded;
-  const document = parseFragment(html.slice(0, 20_000), { sourceCodeLocationInfo: true });
+  const document = parseFragment(html.slice(0, 20_000), {
+    sourceCodeLocationInfo: true,
+    scriptingEnabled: false,
+  });
   function read(nodes: DefaultTreeAdapterMap['node'][], links: boolean): string {
     const pending: Array<DefaultTreeAdapterMap['node'] | string> = [...nodes].reverse();
     let text = '';
