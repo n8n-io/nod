@@ -690,7 +690,7 @@ function downloadRuntime(release, options) {
       return download.stream;
     },
     {
-      message: 'Downloading your local computer…',
+      message: 'Setting up Nod on this computer…',
       failure: 'The Nod runtime download did not complete. Try again.',
       onStatus: (value) => {
         if (!download || !Number.isFinite(value.progress)) return onStatus(value);
