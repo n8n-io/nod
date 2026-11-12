@@ -174,7 +174,7 @@ Nod doesn't ask for passwords or card numbers in chat. It uses a saved login or 
 
 While Nod works, the status line under the chat shows its work on your messages, and each task shows its progress on its card and as a dot above the message box.
 
-While the message box is empty, the send button becomes **Stop**. Select it to stop Nod. Typing a message restores **Send**.
+While the message box is empty, **Stop** appears beside the send button while Nod is working. Select it to stop Nod. The send button stays in place and becomes available when you type a message.
 
 The main Stop control ends active work, cancels queued messages and open questions, and closes all open tasks. To stop only one task, open its preview and select **Stop**. Your schedules stay configured. Stop can't undo something that already happened, such as an email that was already sent.
 
