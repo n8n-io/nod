@@ -12,8 +12,8 @@ Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](ht
 
 - **release:** Keep the GitHub CLI's reason when a release call fails. [#756](https://github.com/n8n-io/nod/pull/756) (e28a6e9)
 - **models:** Support OpenAI project regions. [#753](https://github.com/n8n-io/nod/pull/753) (ad8f416)
-- Explain provider failures after model changes (LAB-925). [#728](https://github.com/n8n-io/nod/pull/728) (29fe7f9)
-- **activity:** Start core service status updates with a verb (LAB-936). [#724](https://github.com/n8n-io/nod/pull/724) (e5f77b3)
+- Explain provider failures after model changes. [#728](https://github.com/n8n-io/nod/pull/728) (29fe7f9)
+- **activity:** Start core service status updates with a verb. [#724](https://github.com/n8n-io/nod/pull/724) (e5f77b3)
 - **web:** Allow section shortcuts from chat composer. [#726](https://github.com/n8n-io/nod/pull/726) (54f832e)
 - **apps:** Show one return action after sign-in. [commit](https://github.com/n8n-io/nod/commit/c0c15236e3311c8900f67561fd7b06890075eef0) (c0c1523)
 - **pi:** Repair assistant blocks before model requests. [commit](https://github.com/n8n-io/nod/commit/dbef2b3a3d8a48494315fc817b644367cd9e4053) (dbef2b3)
@@ -32,26 +32,6 @@ Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](ht
 <summary>Build details</summary>
 
 Source: `e28a6e9fac34f9f352a48c4ad39ee2ccf8d5d4ca`
-Previous release: `nod-v0.7.0`
-
-</details>
-
-## 0.7.1 - 2026-11-12
-
-### Fixes
-
-- Explain provider failures after model changes. [#728](https://github.com/n8n-io/nod/pull/728) (29fe7f9)
-- **activity:** Start core service status updates with a verb. [#724](https://github.com/n8n-io/nod/pull/724) (e5f77b3)
-- **web:** Allow section shortcuts from chat composer. [#726](https://github.com/n8n-io/nod/pull/726) (54f832e)
-- **apps:** Show one return action after sign-in. [commit](https://github.com/n8n-io/nod/commit/c0c15236e3311c8900f67561fd7b06890075eef0) (c0c1523)
-- **pi:** Repair assistant blocks before model requests. [commit](https://github.com/n8n-io/nod/commit/dbef2b3a3d8a48494315fc817b644367cd9e4053) (dbef2b3)
-
-[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.7.0...29fe7f9ef83782c44aa15a36662dd66f54f4dc58)
-
-<details>
-<summary>Build details</summary>
-
-Source: `29fe7f9ef83782c44aa15a36662dd66f54f4dc58`
 Previous release: `nod-v0.7.0`
 
 </details>
