@@ -1,4 +1,5 @@
 import { presentationInputSchema, type Presentation } from '../shared/presentation.ts';
+import { proactiveUpdateSchema, sourceReadSchema } from '../shared/proactivity.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
@@ -674,12 +675,19 @@ export function createAgentRuntime(dependencies: {
                     async () => {
                       if (!deferred && !Value.Check(parameters, params)) {
                         const error = Value.Errors(parameters, params).First();
-                        if (error?.schema[Kind] === 'NodPresentation') {
-                          const parsed = presentationInputSchema.safeParse(error.value);
+                        const schema =
+                          error &&
+                          {
+                            NodPresentation: presentationInputSchema,
+                            NodSourceRead: sourceReadSchema,
+                            NodProactiveIssue: proactiveUpdateSchema,
+                          }[error.schema[Kind]];
+                        if (schema) {
+                          const parsed = schema.safeParse(error.value);
                           const issue = !parsed.success ? parsed.error.issues[0] : undefined;
                           if (issue)
                             throw new Error(
-                              `Invalid ${name} arguments at ${[error.path, ...issue.path].join('/')}: ${issue.message}. Correct the presentation and call ${name} again; read visual-replies for its current schema.`,
+                              `Invalid ${name} arguments at ${[error.path, ...issue.path].join('/')}: ${issue.message}${error.schema[Kind] === 'NodPresentation' ? `. Correct the presentation and call ${name} again; read visual-replies for its current schema.` : ''}`,
                             );
                         }
                         throw new Error(

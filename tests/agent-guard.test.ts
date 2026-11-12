@@ -41,6 +41,7 @@ import { createMemoryService } from '../src/server/memory.ts';
 import type { Presentation } from '../src/shared/presentation.ts';
 import { appToolArgs, type AppTool } from '../src/server/app-reads.ts';
 import { withoutSchemaPatterns } from '../src/shared/json-schema.ts';
+import { sourceReadSchema } from '../src/shared/proactivity.ts';
 import { memoryObjectStore } from './fixtures/object-store.ts';
 
 async function fixture(
@@ -2081,15 +2082,20 @@ test('observer tools reject invalid read modes and incomplete saves before serve
       const issue = (input: Record<string, unknown>) => call(tools, 'proactive_issue', { input });
       const readSchema = Compile(toolDefinitions.read_source.parameters as never);
       const issueSchema = Compile(toolDefinitions.proactive_issue.parameters as never);
-      for (const input of [
-        {},
-        { sourceId, ids: ['record-one'], query: 'review' },
-        { sourceId, query: 'review', tool: 'read' },
-        { sourceId, tool: 'read', ids: ['record-one'] },
-        { sourceId, args: {} },
-      ]) {
+      for (const [input, reason] of [
+        [{}, /sourceId/],
+        [{ sourceId, ids: ['record-one'], query: 'review' }, /ids, query or tool/],
+        [{ sourceId, query: 'review', tool: 'read' }, /ids, query or tool/],
+        [{ sourceId, tool: 'read', ids: ['record-one'] }, /ids, query or tool/],
+        [{ sourceId, args: {} }, /args belong to a tool read/],
+      ] as const) {
         assert.equal(readSchema.Check({ input }), false);
-        await assert.rejects(read(input), /Invalid read_source/);
+        assert.throws(() => sourceReadSchema.parse(input), reason);
+        await assert.rejects(read(input), (error: Error) => {
+          assert.match(error.message, /Invalid read_source/);
+          assert.match(error.message, reason);
+          return true;
+        });
       }
       const { matterKey, ...withoutKey } = save;
       const { primary, ...withoutPrimary } = save;

@@ -5,13 +5,30 @@ const resource = text(1024).refine((value) => !/[\u0000-\u001f]/.test(value));
 const sourceId = text(200);
 const instant = z.iso.datetime({ offset: true });
 
-export const sourceReadSchema = z.union([
-  z.object({ sourceId, ids: z.array(resource).min(1).max(10).optional() }).strict(),
-  z.object({ sourceId, query: text(1000) }).strict(),
-  z
-    .object({ sourceId, tool: text(300), args: z.record(z.string(), z.unknown()).optional() })
-    .strict(),
-]);
+function sourceReadError(issue: { input?: unknown }) {
+  if (issue.input && typeof issue.input === 'object') {
+    const input = issue.input as Record<string, unknown>;
+    if ([input.ids, input.query, input.tool].filter((value) => value !== undefined).length > 1)
+      return 'Use ids, query or tool, not more than one.';
+    if (input.args !== undefined && input.tool === undefined) return 'args belong to a tool read.';
+  }
+  return 'Use {sourceId}, {sourceId,ids}, {sourceId,query}, or {sourceId,tool,args?}.';
+}
+
+export const sourceReadSchema = z.union(
+  [
+    z.strictObject(
+      { sourceId, ids: z.array(resource).min(1).max(10).optional() },
+      { error: sourceReadError },
+    ),
+    z.strictObject({ sourceId, query: text(1000) }, { error: sourceReadError }),
+    z.strictObject(
+      { sourceId, tool: text(300), args: z.record(z.string(), z.unknown()).optional() },
+      { error: sourceReadError },
+    ),
+  ],
+  { error: sourceReadError },
+);
 
 export const proactiveSourcesSchema = z
   .array(z.object({ sourceId, id: resource, version: text(1000) }).strict())
