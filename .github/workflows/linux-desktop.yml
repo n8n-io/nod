@@ -12,6 +12,9 @@ on:
       runtime_refresh:
         type: string
         required: true
+    secrets:
+      NOD_TRACES_TOKEN:
+        required: false
   workflow_dispatch:
   pull_request:
     paths:
