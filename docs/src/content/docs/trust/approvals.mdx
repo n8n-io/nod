@@ -84,7 +84,7 @@ flowchart TD
 
 If the checker can't answer, Nod requires confirmation. In a scheduled run or background work, nobody is waiting to answer, so the action doesn't run and Nod doesn't ask you; the work gets the reason and can try again. When the checker does answer but your words don't clearly cover the action, Nod still asks you. The server formats that confirmation from the saved action and arguments. Nod sends the complete request and never cuts it to fit a model limit. A request that exceeds the decision service's limit fails the check. A failed check does not switch to another model or service.
 
-If deleting a Gmail draft needs your approval, Nod first reads that draft under your read rules and shows its subject or recipient, when available, and the task in the confirmation. If the draft cannot be identified, Nod does not ask you to approve an unidentified deletion. It checks the draft again before deleting it; if it detects a changed message, the old confirmation does not delete it. Creating a draft during a task does not itself authorize deleting it.
+If deleting a Gmail draft needs your approval, Nod first reads that draft under your read rules and shows its subject or recipient, when available, and the task in the confirmation. If the draft cannot be identified, Nod does not ask you to approve an unidentified deletion. It checks read permission and the draft again before deleting it; if the draft's message changed, the old confirmation does not delete it. Gmail has no conditional draft delete, so an edit in the narrow interval between that final read and the delete call may still be deleted. Creating a draft during a task does not itself authorize deleting it.
 
 ## Browser steps
 
