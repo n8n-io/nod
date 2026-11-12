@@ -103,6 +103,23 @@ export function gmailMessageTarget(result: unknown, expectedId: string) {
   };
 }
 
+export function gmailDraftTarget(result: unknown, expectedId: string) {
+  const object = (value: unknown): Record<string, unknown> | undefined =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+  const outer = object(result);
+  if (!outer || outer.successful === false) return;
+  const data = object(outer.data) ?? outer;
+  const draft = object(data.draft) ?? data;
+  if (draft.id !== expectedId) return;
+  const message = object(draft.message);
+  const messageId = message?.id ?? message?.messageId;
+  if (typeof messageId !== 'string' || !messageId.trim()) return;
+  const target = gmailMessageTarget(message, messageId);
+  return target && (target.subject || target.to) ? { draftId: expectedId, ...target } : undefined;
+}
+
 const fieldKeys: Array<[string, string[]]> = [
   ['To', ['recipient_email', 'to', 'extra_recipients']],
   ['Cc', ['cc']],

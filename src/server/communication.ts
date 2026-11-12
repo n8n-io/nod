@@ -161,6 +161,7 @@ export function createCommunication(options: {
       delete details[key];
     }
     delete details.verifiedBinding;
+    delete details.verifiedDraftMessageId;
     delete details.reason;
     const source = {
       action: proposal.action,
@@ -172,12 +173,38 @@ export function createCommunication(options: {
     const withheld = withheldPaths(source, visible);
     const title = approvalTitle(proposal.action);
     const label = [title.app, title.title].filter(Boolean).join(': ');
+    const workTitle = proposal.work?.title
+      ? publicText(proposal.work.title).replace(/\s+/g, ' ').trim()
+      : '';
+    const contextTitle =
+      workTitle.length > 200 ? `${workTitle.slice(0, 188)} [truncated]` : workTitle;
+    const draftTarget =
+      proposal.details?.target &&
+      typeof proposal.details.target === 'object' &&
+      !Array.isArray(proposal.details.target)
+        ? (proposal.details.target as Record<string, unknown>)
+        : undefined;
+    const shortField = (value: unknown) => {
+      const text = typeof value === 'string' ? publicText(value).replace(/\s+/g, ' ').trim() : '';
+      return text.length > 120 ? `${text.slice(0, 108)} [truncated]` : text;
+    };
+    const draftSubject = shortField(draftTarget?.subject);
+    const draftRecipient = shortField(draftTarget?.to);
+    const draftContext = [
+      contextTitle ? `While working on “${contextTitle}”, Nod proposes` : 'Nod proposes',
+      'to permanently delete an unsent Gmail draft',
+      draftSubject ? `with subject “${draftSubject}”` : '',
+      draftRecipient ? `${draftSubject ? 'and' : 'with'} recipient ${draftRecipient}` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
     const fields = JSON.stringify(visible, null, 2)
       .split('\n')
       .map((line) => `    ${line}`)
       .join('\n');
     return [
       label,
+      ...(proposal.action === 'GMAIL_DELETE_DRAFT' ? [`${draftContext}.`] : []),
       'This is the exact action your answer approves:',
       fields,
       ...(withheld.length

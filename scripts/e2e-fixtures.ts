@@ -703,6 +703,16 @@ const toolDefinitions = [
     },
   },
   {
+    name: 'GMAIL_DELETE_DRAFT',
+    description: 'Permanently delete one observed synthetic draft using its draft ID.',
+    parameters: {
+      type: 'object',
+      properties: { draft_id: { type: 'string' }, user_id: { type: 'string', enum: ['me'] } },
+      required: ['draft_id'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'GMAIL_DELETE_MESSAGE',
     description:
       'Permanently delete an observed synthetic email or draft message from the selected account. Use the message ID, not the draft ID.',
@@ -1062,9 +1072,11 @@ export function createIntegrationFixture(
                 ? ['user_id']
                 : action === 'GMAIL_GET_DRAFT'
                   ? ['draft_id', 'user_id']
-                  : action === 'GMAIL_DELETE_MESSAGE'
-                    ? ['message_id', 'user_id']
-                    : undefined;
+                  : action === 'GMAIL_DELETE_DRAFT'
+                    ? ['draft_id', 'user_id']
+                    : action === 'GMAIL_DELETE_MESSAGE'
+                      ? ['message_id', 'user_id']
+                      : undefined;
           if (fields && Object.keys(args).some((key) => !fields.includes(key)))
             throw new Error('The synthetic action fields are invalid.');
           if (
@@ -1180,6 +1192,20 @@ export function createIntegrationFixture(
             if (!draft || draft.accountId !== accountId)
               throw new Error('The synthetic draft was not found in this account.');
             return { id: draft.id, message: draft.message, ...fixtureMetadata };
+          }
+          if (action === 'GMAIL_DELETE_DRAFT') {
+            const draft = typeof args.draft_id === 'string' ? drafts.get(args.draft_id) : undefined;
+            if (!draft || draft.accountId !== accountId)
+              throw new Error('The synthetic draft was not found in this account.');
+            const item = recordWrite(action, accountId!);
+            drafts.delete(draft.id);
+            return {
+              id: item.id,
+              draft_id: draft.id,
+              deleted: true,
+              ...fixtureMetadata,
+              deliveredExternally: false,
+            };
           }
           if (action === 'GMAIL_DELETE_MESSAGE') {
             const draft = [...drafts.values()].find(

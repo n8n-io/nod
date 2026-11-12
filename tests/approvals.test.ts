@@ -31,6 +31,7 @@ import { serverNetwork } from '../src/server/network.ts';
 import {
   approvalContent,
   approvalTitle,
+  gmailDraftTarget,
   gmailMessageTarget,
 } from '../src/server/action-presentation.ts';
 import { createCommunication } from '../src/server/communication.ts';
@@ -121,6 +122,24 @@ test('confirmation escapes visual format controls and hides the internal account
   assert.ok(question.includes(nonJoiner));
   assert.doesNotMatch(question, /(?![\u200c\u200d])\p{Cf}/u);
   assert.doesNotMatch(question, /synthetic-internal-binding/);
+  const draft = await communication.describe({
+    turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
+    action: 'GMAIL_DELETE_DRAFT',
+    args: { draft_id: 'synthetic-draft' },
+    details: {
+      target: {
+        draftId: 'synthetic-draft',
+        subject: 'Synthetic team summary',
+        to: 'cleanup@example.test',
+      },
+      verifiedDraftMessageId: 'synthetic-internal-draft-message',
+    },
+    work: { kind: 'task', title: 'Email summaries for the team' },
+  });
+  assert.match(draft, /Email summaries for the team/);
+  assert.match(draft, /Synthetic team summary/);
+  assert.match(draft, /cleanup@example.test/);
+  assert.doesNotMatch(draft, /synthetic-internal-draft-message/);
 });
 
 test('confirmation stops on cancellation and rejects an unbound presentation', async () => {
@@ -197,6 +216,48 @@ test('Gmail delete target metadata must match the bound message ID', () => {
   assert.match(long?.from ?? '', / \[truncated\]$/);
   assert.match(long?.to ?? '', / \[truncated\]$/);
   assert.ok((long?.subject?.length ?? 0) <= 300);
+});
+
+test('Gmail draft target requires the bound draft and its current message', () => {
+  const observed = {
+    successful: true,
+    data: {
+      id: 'synthetic-draft',
+      message: {
+        id: 'synthetic-draft-message',
+        payload: {
+          headers: [
+            { name: 'Subject', value: 'Synthetic team summary' },
+            { name: 'To', value: 'cleanup@example.test' },
+          ],
+        },
+      },
+    },
+  };
+  assert.deepEqual(gmailDraftTarget(observed, 'synthetic-draft'), {
+    draftId: 'synthetic-draft',
+    messageId: 'synthetic-draft-message',
+    subject: 'Synthetic team summary',
+    to: 'cleanup@example.test',
+  });
+  assert.equal(gmailDraftTarget(observed, 'another-draft'), undefined);
+  assert.equal(
+    gmailDraftTarget(
+      { data: { id: 'synthetic-draft', message: { subject: 'Synthetic team summary' } } },
+      'synthetic-draft',
+    ),
+    undefined,
+  );
+  assert.equal(
+    gmailDraftTarget(
+      {
+        id: 'synthetic-draft',
+        message: { id: 'synthetic-draft-message', from: 'sender@example.test' },
+      },
+      'synthetic-draft',
+    ),
+    undefined,
+  );
 });
 
 test('server configuration refuses remote exposure without a valid token and an exact secure public origin', () => {
