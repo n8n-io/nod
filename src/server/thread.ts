@@ -1123,45 +1123,97 @@ async function finishTurn(
 
 const interrupted = 'Interrupted.';
 
+function modelRecoveryAdvice(text: string) {
+  const oversized = text.match(
+    /\brequest too large\b.{0,250}?\btokens per minute\s*\(TPM\):\s*Limit\s+(\d{1,9}),\s*Requested\s+(\d{1,9})/is,
+  );
+  if (oversized && Number(oversized[1]) > 0 && Number(oversized[2]) > Number(oversized[1]))
+    return 'Shorten the conversation or choose a model with a higher tokens-per-minute limit.';
+  if (
+    !/\bHTTP 429\b/.test(text) ||
+    !/\b(?:GenerateRequestsPerDay|requests?\s*(?:\/|per\s+)day)\b/i.test(text)
+  )
+    return '';
+  const retry = text.match(/\bretryDelay:\s*(\d{1,6})s\b/i);
+  const seconds = retry ? Number(retry[1]) : 0;
+  if (!seconds) return '';
+  const amount =
+    seconds < 60
+      ? seconds
+      : seconds < 3600
+        ? Math.ceil(seconds / 60)
+        : seconds < 172800
+          ? Math.ceil(seconds / 3600)
+          : Math.ceil(seconds / 86400);
+  const unit =
+    seconds < 60 ? 'second' : seconds < 3600 ? 'minute' : seconds < 172800 ? 'hour' : 'day';
+  return `Try again in about ${amount} ${unit}${amount === 1 ? '' : 's'}.`;
+}
+
 function failureText(error: unknown) {
-  const text = error instanceof Error ? error.message || error.name : String(error);
+  let text = error instanceof Error ? error.message || error.name : String(error);
   if (error instanceof ModelRequestError) {
-    const code = /\b429\b/.test(text) ? ' (HTTP 429)' : '';
-    if (/\bsubscription_sharing_workplace_individual_usage_limit_exceeded\b/i.test(text))
-      return `The model provider's workspace usage limit was reached${code}. Ask your workspace admin to review the limit, or wait for it to reset.`;
-    if (
-      /\b(?:GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|subscription_sharing_usage_limit_exceeded)\b/i.test(
-        text,
-      ) ||
-      /["']code["']\s*:\s*["']?1308(?!\d)/i.test(text)
-    )
-      return `The model provider's quota was reached${code}. Wait for it to reset, or check the provider account's usage limits and plan.`;
-    const quota =
-      /\b(?:insufficient[_ -]?quota|quota[_ -]?(?:exceeded|exhausted|reached)|exceeded\s+(?:your\s+)?(?:current\s+)?quota)\b/i.test(
-        text,
-      );
-    if (
-      quota ||
-      /\b(?:429|too many requests|resource_exhausted|rate[ _-]?limit(?:ed|ing|[_ -]?(?:error|exceeded))?)\b/i.test(
-        text,
-      )
-    ) {
-      const retry = text.match(
-        /\b(?:please\s+)?retry\s+in\s+(\d{1,3}(?:\.\d{1,9})?)\s*s(?:econds?)?\b/i,
-      );
-      const seconds = retry ? Math.ceil(Number(retry[1])) : 0;
-      const next =
-        seconds > 0 && seconds <= 120
-          ? `Try again in about ${seconds} second${seconds === 1 ? '' : 's'}.`
-          : quota
-            ? 'Try again later.'
-            : 'Try again shortly.';
-      return quota
-        ? `The model provider's quota was reached${code}. ${next} If it keeps happening, check the provider account's usage limits and billing.`
-        : `The model provider is rate limiting requests${code}. ${next}`;
-    }
+    const start = text.indexOf('{');
+    const reasons: string[] = [];
+    const read = (value: unknown, depth = 0): void => {
+      if (depth > 8) return;
+      if (typeof value === 'string') {
+        if (!value.trim()) return;
+        try {
+          read(JSON.parse(value), depth + 1);
+        } catch {
+          reasons.push(value);
+        }
+      } else if (Array.isArray(value)) {
+        for (const item of value.slice(0, 20)) read(item, depth + 1);
+      } else if (value && typeof value === 'object') {
+        const data = value as Record<string, unknown>;
+        for (const key of [
+          'code',
+          'type',
+          'status',
+          'quotaMetric',
+          'quotaId',
+          'quotaValue',
+          'retryDelay',
+        ]) {
+          const field = data[key];
+          if (typeof field === 'string' || typeof field === 'number')
+            reasons.push(
+              key === 'code' && /^[45]\d{2}$/.test(String(field))
+                ? `HTTP ${field}`
+                : `${key}: ${field}`,
+            );
+        }
+        read(data.message, depth + 1);
+        read(data.error, depth + 1);
+        read(data.details, depth + 1);
+        read(data.violations, depth + 1);
+        const metadata = data.metadata as Record<string, unknown> | undefined;
+        if (metadata && typeof metadata === 'object') {
+          for (const key of [
+            'provider_name',
+            'error_type',
+            'provider_code',
+            'limit_source',
+            'reason',
+            'remedy_hint',
+          ])
+            if (typeof metadata[key] === 'string') reasons.push(`${key}: ${metadata[key]}`);
+          read(metadata.raw, depth + 1);
+        }
+      }
+    };
+    if (start !== -1)
+      try {
+        read(JSON.parse(text.slice(start)));
+        if (reasons.length) text = `${text.slice(0, start)}${[...new Set(reasons)].join('; ')}`;
+      } catch {}
   }
-  return redactSecretText(text).trim().slice(0, 2_000) || 'Unknown error.';
+  const advice = error instanceof ModelRequestError ? modelRecoveryAdvice(text) : '';
+  const safe = redactSecretText(text).trim().slice(0, 2_000);
+  if (!advice || safe.length + advice.length >= 2_000) return safe || 'Unknown error.';
+  return `${safe} ${advice}`;
 }
 
 async function failTurn(

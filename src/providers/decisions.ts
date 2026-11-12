@@ -1,10 +1,13 @@
 import { z } from 'zod';
 import type { DecisionModel, DecisionQuestion } from '../ports/decisions.ts';
+import type { OpenAIRegion } from '../shared/models.ts';
+import { openAIBaseUrl, openAIRequestError, OpenAIRequestError } from './openai/api.ts';
 
 export type DecisionConnection = {
   provider: 'openai' | 'openrouter' | 'typesafe';
   key: string;
   model?: string;
+  region?: OpenAIRegion;
 };
 
 const services = {
@@ -205,7 +208,11 @@ export function createDecisionModel(options: {
       let usage: z.infer<typeof usageSchema> | undefined;
       let status: 'succeeded' | 'failed' | 'cancelled' = 'failed';
       try {
-        const response = await request(service.url, {
+        const url =
+          connection.provider === 'openai'
+            ? `${openAIBaseUrl(connection.region)}/decisions`
+            : service.url;
+        const response = await request(url, {
           method: 'POST',
           redirect: 'error',
           headers: {
@@ -252,7 +259,11 @@ export function createDecisionModel(options: {
                 }),
           }),
         });
-        if (!response.ok) throw new Error();
+        if (!response.ok) {
+          if (connection.provider === 'openai')
+            throw await openAIRequestError(response, connection.key);
+          throw new Error();
+        }
         const body = z
           .object({
             answers: z.unknown(),
@@ -314,8 +325,9 @@ export function createDecisionModel(options: {
               }
             : {}),
         };
-      } catch {
+      } catch (error) {
         status = signal?.aborted ? 'cancelled' : 'failed';
+        if (error instanceof OpenAIRequestError) throw error;
         throw new Error('The decision service could not complete the check.');
       } finally {
         const cacheRead =

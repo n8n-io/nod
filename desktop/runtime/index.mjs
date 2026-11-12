@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { constants, createReadStream } from 'node:fs';
 import {
   access,
   chmod,
@@ -164,8 +164,17 @@ async function prepare(options, onComputerStart) {
     const { prepareWindowsRuntime } = await import('./windows.mjs');
     return prepareWindowsRuntime(options, onComputerStart);
   }
-  if (process.platform !== 'darwin' || !['arm64', 'x64'].includes(process.arch))
-    throw new Error('This experimental Nod build requires an Intel or Apple Silicon Mac.');
+  if (!['darwin', 'linux'].includes(process.platform) || !['arm64', 'x64'].includes(process.arch))
+    throw new Error('This Nod build requires a Mac or a 64-bit Linux computer.');
+  if (process.platform === 'linux')
+    await access('/dev/kvm', constants.R_OK | constants.W_OK).catch(() => {
+      throw Object.assign(
+        new Error(
+          'Nod needs hardware virtualization for its private computer. Turn on virtualization in your firmware settings and make sure you can use /dev/kvm.',
+        ),
+        { code: 'NOD_KVM_UNAVAILABLE' },
+      );
+    });
   const dataRoot = resolve(options.dataRoot || options.root);
   const resourcesPath = resolve(options.resourcesPath || options.resources);
   const onStatus = options.onStatus || options.onProgress || (() => {});
@@ -200,7 +209,7 @@ async function prepare(options, onComputerStart) {
   const manifest = JSON.parse(await readFile(join(assets, 'manifest.json'), 'utf8'));
   if (
     manifest.version !== 1 ||
-    manifest.platform !== `darwin-${process.arch}` ||
+    manifest.platform !== `${process.platform}-${process.arch}` ||
     manifest.guest.file !== 'guest.img' ||
     manifest.dockerGuest.file !== 'docker-guest.tar.gz'
   )
@@ -220,7 +229,14 @@ async function prepare(options, onComputerStart) {
   await chmod(limaHome, 0o700);
   const lima = join(assets, 'lima/bin/limactl');
   const docker = join(assets, 'docker-host/docker/docker');
-  const path = [join(assets, 'lima/bin'), '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(delimiter);
+  const path = [
+    join(assets, 'lima/bin'),
+    ...(process.platform === 'linux' && process.env.FLATPAK_ID ? ['/app/bin'] : []),
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+  ].join(delimiter);
   const hostEnvironment = {
     PATH: path,
     HOME: homedir(),

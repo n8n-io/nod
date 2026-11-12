@@ -121,7 +121,7 @@ The `source-revision` file records the installed bundle revision. Don't change `
 
 ## Prepare a private server release
 
-After maintainer approval, run the **Self-host bundle** workflow on `main` with **draft_release** selected. Normal pushes, pull requests and manual runs leave this option off and only create temporary workflow artifacts.
+After maintainer approval, run the **Self-host bundle** workflow on `main` with **draft_release** selected. Package, container and deployment changes start bundle checks on pushes and pull requests. The workflow also runs each week and on request. These runs leave the release option off and only create temporary workflow artifacts.
 
 Both native architecture builds, server checks and standalone installer checks must pass before the release job runs. That job uses the existing `release` environment and its protection rules. It verifies each archive's checksum, source commit and architecture, creates `server-<full-source-commit>`, uploads both bundles and checks GitHub's asset digests. The result is an unpublished draft in the private repository.
 

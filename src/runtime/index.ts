@@ -352,7 +352,7 @@ export function createAgentRuntime(dependencies: {
     );
     const appName = (name: string, params: unknown) => {
       if (name.startsWith('mcp__')) return servers.get(name.split('__')[1]);
-      if (name === 'files') return 'Handling local files';
+      if (name === 'files') return 'local files';
       if (name !== 'apps') return undefined;
       const { action, args } = (params ?? {}) as {
         action?: unknown;

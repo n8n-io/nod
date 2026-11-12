@@ -20,6 +20,7 @@ const requiredJobs = [
   'Build the Windows runtime',
   'Check Windows updates',
   'Package and check the Windows installer',
+  'Package and check Linux Flatpak / Linux x64 Flatpak',
 ];
 const publisherJob = 'Verify uploaded assets and prepare the release';
 
@@ -173,13 +174,15 @@ export async function bindRecovery({ root, artifacts, expected, getAttemptJobs }
     ['arm64', 'darwin-arm64', 'dist/desktop/arm64/release.json'],
     ['x64', 'darwin-x64', 'dist/desktop/x64/release.json'],
     [null, 'win32-x64', 'dist/desktop/win32-x64/release-win32-x64.json'],
+    [null, 'linux-x64', 'dist/desktop/linux-x64/release-linux-x64.json'],
   ]) {
     const manifest = JSON.parse(await readFile(join(root, path), 'utf8'));
     if (
       manifest.platform !== platform ||
       manifest.version !== context.version ||
       manifest.source !== context.source ||
-      manifest.updateSourceUrl !== (context.updateSourceUrl || undefined)
+      (platform !== 'linux-x64' &&
+        manifest.updateSourceUrl !== (context.updateSourceUrl || undefined))
     )
       throw new Error(`The ${platform} release does not match the original build context.`);
     if (arch) {

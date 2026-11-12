@@ -17,6 +17,10 @@ Choose **Connect to a server** on first launch. After setup, choose **Replay onb
 
 Nod checks the connection before saving it. The operating system's secure storage protects the token. The app restarts into the remote assistant without starting its local runtime. Loopback HTTP addresses work for an SSH tunnel.
 
+For a private certificate authority (CA), first trust its certificate in your operating system's certificate store. Restart Nod after you change that store. Nod adds system CAs to Node's default certificates at startup. It keeps bundled certificates and any certificates loaded through `NODE_EXTRA_CA_CERTS`.
+
+This applies to all Node HTTPS requests in the desktop main thread. It includes server checks, later API calls, file downloads, update checks, and analytics. Certificate and hostname checks stay enabled. This uses Node's certificate verification rules, which can differ from the app window's Chromium rules. An operating system distrust setting does not remove a certificate that Node trusts from another source.
+
 Your conversations, files, memories, model connections, and connected accounts stay on the server. The server also owns the encrypted Composio installation identity: connecting another desktop app or browser uses those same accounts, as do Telegram and WhatsApp. The desktop client does not create a separate integration identity or need a local Vault key to connect.
 
 App sign-in opens in your system browser. The completion page names the connected app; close it and return to Nod. The connected account stays on the server.
@@ -61,6 +65,16 @@ flowchart LR
 - Nod doesn't change your default WSL distribution or global WSL settings.
 
 </TabItem>
+<TabItem label="Linux (preview)" icon="linux">
+
+- A Flatpak runs Electron, the Nod server and the same Lima runtime as the Mac, with QEMU and KVM instead of Apple's Virtualization framework. Install the [Linux x64 preview](/get-started/install-desktop/#linux), or [build the Flatpak](/contribute/desktop-releases/#build-a-linux-flatpak).
+- The VM, its firewall rules, container protection and the PostgreSQL, workspace and browser containers are the same as on a Mac. Docker runs only inside the VM, and Nod never uses a Docker installation on your computer.
+- Nod needs `/dev/kvm`. Without hardware virtualization it refuses to start its private computer rather than fall back to slow emulation.
+- The VM files live in `~/.nod-desktop`, as on a Mac. Saved keys use your desktop's Secret Service, such as GNOME Keyring or KWallet; Nod refuses to save keys when no secret store is available.
+- Install the next release bundle to update the app. These bundles have no update repository. Nod's own update checks are off on Linux.
+- Like the Mac and Windows apps, the Flatpak can reach your home folder and external drives, so [Local files](/connect/local-files/) and saving to Downloads work. Moving files to the Trash goes through your desktop's portal service (`xdg-desktop-portal`), and saved files go to the Downloads folder your desktop names in `~/.config/user-dirs.dirs`, or your home folder without one. A normal desktop session provides both.
+
+</TabItem>
 </Tabs>
 
 The workspace and browser have separate networks, no access to your home folder, no Docker socket and no model keys. Model requests go to the provider you connect, or to a [local model](/connect/local-models/) server you run.
@@ -71,13 +85,13 @@ On a new desktop profile, choose **Get started** to start a local assistant or *
 
 Before the server starts, the native window saves only the usage data setting and whether Welcome was completed. After the ordinary account API accepts that choice, Nod records its acknowledgment. The email step preview stays visible until the main window can show its account choices or an actionable error. That handoff does not wait for the full app catalog, workspace or browser. A restart does not repeat Welcome or overwrite the saved analytics choice; the temporary marker is removed when onboarding completes. Sign-ins, keys and connections use the normal server and storage from the beginning; there is no separate setup backend or credential transfer. The first chat opens with a short greeting and idea cards, under the normal chat and memory rules.
 
-When local setup finishes, Nod tries to turn on Open at login and checks it with the operating system. If the operating system blocks this setting, setup still finishes. A restart does not repeat this attempt. A settings storage error still requires a retry. You can turn it off in **Settings → General**. The first stored chat introduction offers an explicit choice to enable notifications. Rendering the introduction does not change the saved preference. macOS may ask for permission; your system settings control delivery. Existing notification choices are preserved. Enabling delivery does not authorize app monitoring or scheduled work. If alerts are blocked, allow Nod in the computer’s notification settings. The web app uses the same onboarding. A completed installation keeps its choices and skips onboarding after an update.
+When local setup finishes, Nod tries to turn on Open at login and checks it with the operating system. On Linux, Open at login adds `io.n8n.Nod.desktop` to your autostart folder, `$XDG_CONFIG_HOME/autostart` or `~/.config/autostart`. If the operating system blocks this setting, setup still finishes. A restart does not repeat this attempt. A settings storage error still requires a retry. You can turn it off in **Settings → General**. The first stored chat introduction offers an explicit choice to enable notifications. Rendering the introduction does not change the saved preference. macOS may ask for permission; your system settings control delivery. Existing notification choices are preserved. Enabling delivery does not authorize app monitoring or scheduled work. If alerts are blocked, allow Nod in the computer’s notification settings. The web app uses the same onboarding. A completed installation keeps its choices and skips onboarding after an update.
 
 If the user finishes first, an animated Nod logo stays visible until the workspace and browser are ready and completion has been saved. If the services are already ready, chat opens directly without a preparation screen. Runtime failures offer an explicit retry without clearing saved connections. The logo uses the same bounce as Welcome while work continues and pauses on an error. While the runtime pack downloads, the logo's dot travels around its ring as the download progresses, and the screen shows the percentage and the time left, estimated from the last 45 seconds. If no data arrives for five seconds, the dot fades and the screen says Nod is waiting for the network. The Dock icon, or the taskbar button on Windows, shows the same progress. On a Mac, the Dock icon bounces once when Nod is ready for you to carry on, if you're using another app. Assistive technology reads the same progress. The screen groups detailed startup events into a few messages, while diagnostics keep the individual stages. If completion reports a missing setup requirement, onboarding returns to the relevant step. If notifications are enabled and Nod is not focused, a single notification announces when setup is ready.
 
 ## The runtime pack
 
-The app download is small. Local setup downloads a matching runtime pack with the container images, the base VM image and the tools that run them.
+On Mac and Windows the app download is small, and local setup downloads a matching runtime pack with the container images, the base VM image and the tools that run them. The Linux Flatpak already contains its runtime pack, so setup downloads nothing and the pack updates with the app. The rest of this section is about Mac and Windows.
 
 - Nod unpacks the archive while it downloads. It uses each file only after that file matches its SHA-256 in the release, and treats the pack as installed only once the archive size and SHA-256 match too. On a Mac, the private computer starts while the container images are still downloading.
 - On a Mac, before it installs, Nod checks free space for the files it still needs to install plus 512 MiB.
@@ -98,7 +112,7 @@ If a download isn't available, you can import the matching `nod-Runtime-darwin-<
 
 The server listens on a loopback port that needs a token, created again at every launch. Only the app's own windows receive it, so a website in your normal browser can't reach Nod. The app sends the token only after the server it started reports that port, so another program that takes the port first never gets it.
 
-Electron `safeStorage` encrypts the Vault key. It uses the macOS key store on a Mac and DPAPI on Windows. Model connections and saved logins are encrypted with the Vault key. The key and model credentials stay in the server. A saved website login reaches the browser only through the private sign-in flow.
+Electron `safeStorage` encrypts the Vault key. It uses the macOS key store on a Mac, DPAPI on Windows and the desktop's Secret Service, such as GNOME Keyring or KWallet, on Linux. Model connections and saved logins are encrypted with the Vault key. The key and model credentials stay in the server. A saved website login reaches the browser only through the private sign-in flow.
 
 App connections use Nod's connection service. The private installation identity is encrypted with the Vault key and retained in your profile. Notion and Linear connect directly to their hosted MCP servers, and n8n to your instance's MCP server. See [Apps](/connect/apps/).
 
@@ -124,6 +138,17 @@ App connections use Nod's connection service. The private installation identity 
 Windows file permissions protect the profile folder. Uninstalling removes the app but keeps the profile and the distribution.
 
 </TabItem>
+<TabItem label="Linux (preview)" icon="linux">
+
+| What                            | Where                                             |
+| ------------------------------- | ------------------------------------------------- |
+| App settings and profile        | `~/.var/app/io.n8n.Nod/config/nod/profiles/local` |
+| Private VM, database, workspace | `~/.nod-desktop/<profile>`                        |
+| Runtime pack                    | Inside the Flatpak                                |
+
+To remove Nod completely, choose **Remove all data** first, then run `flatpak uninstall --delete-data io.n8n.Nod`. If you only uninstall, the private computer stays in `~/.nod-desktop`.
+
+</TabItem>
 </Tabs>
 
 **Remove all data** in **Settings → Privacy & data**, or in the **Nod** menu when setup cannot finish, stops Nod and its private computer. It deletes the private computer, the profile and the app's browser storage, then restarts and opens setup. The app stays installed. On a Mac it keeps the runtime packs and the key store entry. See [Remove Nod](/get-started/install-desktop/#remove-nod).
@@ -137,6 +162,8 @@ There's no supported backup, restore or downgrade. Don't delete the profile, VM 
 :::
 
 ## Updates
+
+On Linux, install the next release bundle to update the app and its runtime pack. These bundles have no update repository. Nod's own update checks are off. The rest of this section is about Mac and Windows.
 
 Nod checks for updates when it starts, every six hours while open, and after your computer wakes if a check is due. Checks continue while a downloaded update waits for restart. Public builds read published releases and download assets from GitHub. Older builds keep their embedded n8n update source until they are replaced. **Check for Updates…** stays available in the Nod menu, menu bar, or tray alongside **Restart to update**.
 
@@ -196,7 +223,7 @@ Inside Nod's distribution, drive mounts and Windows process access are turned of
 
 ## Current limits
 
-- Builds exist for Mac with Apple silicon or Intel, and Windows 11 x64. There are no Linux or Windows ARM builds.
+- Release builds cover Mac with Apple silicon or Intel, Windows 11 x64, and Linux x64 as a [Flatpak preview](/get-started/install-desktop/#linux). Linux ARM and Windows ARM builds are not published.
 - Local tasks run only while Nod is open and the computer is awake. Server tasks run while the server runs.
 - Meta's WhatsApp Cloud API needs a public HTTPS callback. The QR connection works without one. The app doesn't relay webhooks to your computer.
 - Separate local installations start with their own profiles and do not sync or migrate data from a source install. To use the same assistant from several devices, connect them to one server.

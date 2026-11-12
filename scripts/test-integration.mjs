@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { availableParallelism } from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { run } from 'node:test';
 import { spec } from 'node:test/reporters';
@@ -44,11 +45,18 @@ if (process.argv.includes('--run')) {
   ) {
     throw new Error('Integration tests require the Linux browser and PostgreSQL fixtures.');
   }
-  const files = (await readdir('tests'))
+  const available = (await readdir('tests'))
     .filter((name) => name.endsWith('.test.ts'))
     .sort()
     .map((name) => `tests/${name}`);
-  const tests = run({ files, concurrency: 2, execArgv: ['--import', 'tsx'] });
+  const files = process.env.NOD_TEST_FILES ? JSON.parse(process.env.NOD_TEST_FILES) : available;
+  if (!Array.isArray(files) || !files.length || files.some((file) => !available.includes(file)))
+    throw new Error('The integration test selection must name existing test files.');
+  const tests = run({
+    files,
+    concurrency: Math.min(4, availableParallelism()),
+    execArgv: ['--import', 'tsx'],
+  });
   tests.on('test:summary', ({ success, counts }) => {
     if (!success || counts.skipped || counts.todo || counts.cancelled) process.exitCode = 1;
   });

@@ -26,6 +26,7 @@ import {
   cloudflareGatewayPattern,
   lightestEffort,
   modelSource,
+  openAIRegions,
 } from '../shared/models.ts';
 import { signInPage } from '../shared/sign-in-page.ts';
 import { modelKeyError } from '../shared/model-keys.ts';
@@ -115,6 +116,16 @@ export function modelKeyCredential(
     workspaceId?: string;
   },
 ): ModelCredential {
+  if (provider === 'openai') {
+    const region = settings.region || 'global';
+    if (!Object.hasOwn(openAIRegions, region))
+      throw new ConnectionError('Choose an OpenAI API region.');
+    return {
+      type: 'api_key',
+      key,
+      ...(region !== 'global' ? { region: region as keyof typeof openAIRegions } : {}),
+    };
+  }
   if (provider === 'anthropic') {
     const workspaceId = settings.workspaceId?.trim();
     if (workspaceId && (workspaceId.length > 100 || !/^[\x21-\x7e]+$/.test(workspaceId)))
@@ -167,6 +178,8 @@ function sameAccount(
 }
 
 function connectionLabel(provider: ModelProvider, method: ModelMethod, value: ModelCredential) {
+  if (provider === 'openai' && value.type === 'api_key' && value.region)
+    return `OpenAI · ${openAIRegions[value.region]}`;
   if (provider === 'anthropic' && value.type === 'api_key' && value.workspaceId)
     return value.workspaceId;
   if (value.type === 'oauth') return value.email ?? 'ChatGPT account';
@@ -1010,10 +1023,13 @@ export function createModelService(options: {
     hasApiKey(provider: ModelProvider) {
       return Boolean(apiKeyConnection(provider));
     },
-    async apiKey(provider: ModelProvider) {
+    async apiCredential(provider: ModelProvider) {
       const row = apiKeyConnection(provider);
       const value = row && (await read(row.id));
-      return value?.type === 'api_key' ? value.key : undefined;
+      return value?.type === 'api_key' ? value : undefined;
+    },
+    async apiKey(provider: ModelProvider) {
+      return (await service.apiCredential(provider))?.key;
     },
     hasImageModel() {
       return Boolean(imageModel());

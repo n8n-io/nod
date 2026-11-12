@@ -1,6 +1,6 @@
 ---
 title: Install the desktop app
-description: Install Nod on a Mac or Windows PC, get through the first launch and keep it running and up to date.
+description: Install Nod on Mac, Windows or Linux, complete setup, and keep the app up to date.
 sidebar:
   order: 2
 ---
@@ -103,9 +103,39 @@ Use a normal PowerShell window, not **Run as administrator**. It finds the lates
 </TabItem>
 </Tabs>
 
+## Linux
+
+The Linux x64 app is a Flatpak preview. It needs a 64-bit Intel or AMD computer, Flatpak, and a desktop secret store. A local assistant also needs hardware virtualization and access to `/dev/kvm`. GNOME Keyring and KWallet are supported secret stores. Nod refuses to save keys without secure storage.
+
+<Steps>
+
+1. Install Flatpak with your Linux distribution's package manager. Add Flathub for the desktop runtime:
+
+   ```sh title="Terminal"
+   flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+   ```
+
+2. Open [Nod releases](https://github.com/n8n-io/nod/releases). Select a release with Linux files. Download **every** `nod-linux-x64.flatpak.partNN` file and `SHA256SUMS-linux-x64` from that release into one empty folder. GitHub limits each release file to 2 GiB, so Nod divides the bundle into numbered parts.
+
+3. In that folder, join the parts, check their contents, and install the bundle. The install command runs only if every checksum passes:
+
+   ```sh title="Terminal"
+   cat nod-linux-x64.flatpak.part[0-9][0-9] > nod-linux-x64.flatpak &&
+     sha256sum --check SHA256SUMS-linux-x64 &&
+     flatpak install --user ./nod-linux-x64.flatpak
+   ```
+
+4. Open **Nod** from your application menu, or run `flatpak run io.n8n.Nod`. Choose **Get started** for a local assistant or **Connect to a server** for an existing one. The bundle includes Nod's private computer runtime. Flatpak can also download its desktop runtime during installation.
+
+5. Keep your secret store unlocked during setup. After setup, choose **Enable notifications** if you want alerts. **Open at login** uses your desktop's autostart folder. See [Your first conversation](/get-started/first-conversation/).
+
+</Steps>
+
+Linux ARM builds are not published. Developers can [build the Flatpak from source](/contribute/desktop-releases/#build-a-linux-flatpak).
+
 ## Keep Nod running
 
-For a local assistant, closing the window keeps Nod running in the menu bar on a Mac, or the tray on Windows. **Quit Nod** stops Nod and its private computer. On Windows, running the installer or uninstaller while Nod is open offers to quit it first.
+For a local assistant, closing the window keeps Nod running in the menu bar on a Mac, or the tray on Windows and Linux. Linux tray support depends on your desktop. **Quit Nod** stops Nod and its private computer. On Windows, running the installer or uninstaller while Nod is open offers to quit it first.
 
 | Nod is                                  | What runs                                       |
 | --------------------------------------- | ----------------------------------------------- |
@@ -117,6 +147,8 @@ Nod tries to turn on **Open at login** when setup finishes. If the operating sys
 When connected to a server, the server keeps your assistant, channels and schedules running after you quit the app or put your computer to sleep. The server must stay running and connected.
 
 ## Update Nod
+
+On Linux, quit Nod, then download, check, and install the next bundle with the [Linux procedure](#linux). Your profile and private computer stay in place. These bundles have no update repository. `flatpak update` can update shared desktop runtimes, but it does not fetch a new Nod bundle. Nod's own update checks are off on Linux. The rest of this section applies to Mac and Windows.
 
 Nod checks for updates after it starts, every six hours while it's open, and after your computer wakes if a check is due. Checks continue when an update is already downloaded, so a newer release can replace it before you restart.
 
@@ -142,13 +174,17 @@ Nod starts with a fresh profile and doesn't import data from a source install.
 | Private computer      | `~/.nod-desktop/<profile id>`                      | A WSL distribution named `nod-<profile id>` |
 | Saved keys            | Encrypted with the macOS key store                 | Encrypted with Windows DPAPI                |
 
+On Linux, app data and settings are in `~/.var/app/io.n8n.Nod/config/nod/profiles/local`. The private computer is in `~/.nod-desktop/<profile id>`. Your desktop's Secret Service protects saved keys. The Flatpak contains Nod's runtime pack.
+
 ## Remove Nod
 
 Moving Nod to the Trash or uninstalling it keeps your data, so a later install opens where you left off. Uninstalling a connected client does not delete server data. To return to a local assistant first, choose **Replay onboarding… → Change server → Use this computer**, then:
 
 1. Select **Remove all data** in **Settings → Privacy & data**. If Nod can't finish setup, select **Remove all data…** in the **Nod** menu instead.
 2. Review the warning, then confirm. It lists what Nod will delete and explains that you must complete setup again. Nod deletes your profile and private computer, then restarts and opens setup. The app stays installed.
-3. To remove the app too, quit Nod. Move it to the Trash on a Mac, or uninstall it in **Settings → Apps** on Windows.
+3. To remove the app too, quit Nod. Move it to the Trash on a Mac, uninstall it in **Settings → Apps** on Windows, or run `flatpak uninstall --delete-data io.n8n.Nod` on Linux.
+
+On Linux, uninstalling the Flatpak alone leaves the private computer in `~/.nod-desktop`. Use **Remove all data** first to delete it safely.
 
 On a Mac, Nod keeps the runtime it downloaded, so a new install doesn't download it again, and its entry in the key store. Neither holds your data. Apps you connected may still list Nod until you remove it there.
 

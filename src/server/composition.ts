@@ -258,7 +258,7 @@ export function modelEnvironment(
               [
                 id,
                 modelKeyCredential(id, key, {
-                  region: env.AWS_REGION,
+                  region: id === 'openai' ? env.OPENAI_API_REGION : env.AWS_REGION,
                   url: env.AZURE_OPENAI_ENDPOINT,
                   model: env.AZURE_OPENAI_MODEL,
                   deployment: env.AZURE_OPENAI_DEPLOYMENT,
@@ -331,7 +331,7 @@ export function createDefaultAdapters(
   const localSpeech = createLocalSpeechProvider({ cacheDir: join(dataRoot, 'speech') });
   const voicePreferences = createPreferencesStore(pool, ownerId);
   const openAISpeech = createOpenAISpeechProvider({
-    apiKey: () => models.apiKey('openai'),
+    connection: () => models.apiCredential('openai'),
     configured: () => models.hasApiKey('openai'),
     speechModel: env.TTS_MODEL,
     transcriptionModel: env.STT_MODEL,
@@ -411,7 +411,7 @@ export function createDefaultAdapters(
         return;
       const credential = await access.read();
       if (credential?.type !== 'api_key') throw new Error('The model connection is unavailable.');
-      return { provider: access.provider, key: credential.key };
+      return { provider: access.provider, key: credential.key, region: credential.region };
     },
   });
   const trustModel = z
@@ -436,9 +436,9 @@ export function createDefaultAdapters(
           if (available.has(model)) return { provider: 'openrouter', key: routerKey, model };
       }
       if (models.hasApiKey('openai')) {
-        const key = await models.apiKey('openai');
-        if (!key) throw new Error('The trust model connection is unavailable.');
-        return { provider: 'openai', key };
+        const credential = await models.apiCredential('openai');
+        if (!credential) throw new Error('The trust model connection is unavailable.');
+        return { provider: 'openai', key: credential.key, region: credential.region };
       }
       if (routerKey && available?.has('openai/gpt-6-luna-decisions'))
         return { provider: 'openrouter', key: routerKey, model: 'openai/gpt-6-luna-decisions' };

@@ -79,7 +79,15 @@ The same installation works on a conventional Ubuntu VM from another provider. I
 
 Check [EC2 free-tier eligibility](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-free-tier-usage.html) or [Google's machine sizes](https://docs.cloud.google.com/compute/docs/general-purpose-machines#e2_machine_types) before choosing a VM. Small always-free machines have less memory than the starting size above. An existing paid account follows different billing rules.
 
+## Community deployment guides
+
+These guides describe setups tested by contributors. Check each guide's test scope and operating limits before you choose a provider.
+
+- [Deploy on boxd](/deploy/boxd/): run Nod on a persistent VM with managed HTTPS. The guide includes the contributor's installation checks and the remaining operating checks.
+
 ## Finish the network setup
+
+These steps apply to conventional VMs. For boxd, follow its [managed HTTPS instructions](/deploy/boxd/#install-nod) instead.
 
 For public access, point a domain at the VM and use [Nod's HTTPS setup](/deploy/self-host/#add-public-https). Open only ports 80 and 443 for the proxy and keep SSH restricted. An SSH tunnel works without a domain.
 

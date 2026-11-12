@@ -7308,7 +7308,7 @@ test('chat shows pending sends and active work before a model step', async () =>
         for (const [detail, line] of [[{ site: 'example.test', doing: 'tool' }, 'example.test'], [{ site: 'example.test', doing: 'model' }, null], [{ step: '   ' }, null], [{ doing: 'model' }, null]]) {
           state = { ...state, activity: [{ ...activity, ...detail }] };
           await render();
-          if (line) assert.equal(document.querySelector('.thinking')?.textContent, line);
+          if (line) assert.ok(document.querySelector('.thinking')?.textContent?.includes(line));
           else {
             assert.equal(document.querySelector('.thinking .sr-only')?.textContent, 'Working…');
             assert.ok(document.querySelector('.thinking .working-text [aria-hidden="true"]')?.textContent.trim());

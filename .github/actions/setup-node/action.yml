@@ -1,0 +1,18 @@
+name: Install Node.js and dependencies
+description: Install the pinned Node.js and pnpm versions and restore the dependency cache.
+inputs:
+  cache-dependency-path:
+    description: Lockfiles that select the pnpm cache.
+    default: pnpm-lock.yaml
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: '24.21.0'
+        cache: pnpm
+        cache-dependency-path: ${{ inputs.cache-dependency-path }}
+    - name: Install locked dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile

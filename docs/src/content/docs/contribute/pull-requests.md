@@ -65,7 +65,7 @@ Require **Conventional PR title** in the status checks for `main`. In the merge 
 
 ## From merge to release
 
-Merged changes reach desktop users in the next desktop release. A maintainer runs **Release desktop**, merges its version pull request, and CI publishes one GitHub release. Installed Mac and Windows apps then update on their own. See [Desktop releases](/contribute/desktop-releases/). Self-hosted servers follow the [server update procedure](/deploy/server-operations/); merging does not update a running server.
+Merged changes reach desktop users in the next desktop release. A maintainer runs **Release desktop**, merges its version pull request, and CI publishes one GitHub release. Installed Mac and Windows apps then update on their own. Linux x64 preview users install the next Flatpak bundle. See [Desktop releases](/contribute/desktop-releases/). Self-hosted servers follow the [server update procedure](/deploy/server-operations/); merging does not update a running server.
 
 ## Dependency updates
 

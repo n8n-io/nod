@@ -51,6 +51,8 @@ The About you profile can link this ID's events to its fixed choices. If you sub
 | Source or self-hosted server | `<NOD_DATA_ROOT>/analytics-id` | `NODE_ENV=production`           |
 | Local desktop runtime        | Desktop profile                | Packaged apps                   |
 
+Official Mac, Windows and Linux desktop releases label events as `production`. Pull request and manual preview builds use `development`.
+
 The owner's sharing choice still applies. Nod disables IP geolocation. Ordinary events don't create PostHog person profiles. Submitting About you explicitly creates or updates a profile with fixed choices under the analytics ID while **Share usage data** is on. This happens whether or not you provide an email. The profile has `onboarding_profile_completed=true` and one property per question:
 
 | Person property           | Value                                                                |

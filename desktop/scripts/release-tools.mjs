@@ -25,6 +25,16 @@ export async function hardenElectron(application) {
 }
 
 const directory = dirname(fileURLToPath(import.meta.url));
+export function desktopBuildOptions(env = process.env) {
+  const tracesToken = env.NOD_TRACES_TOKEN;
+  if (tracesToken && !/^[A-Za-z0-9_-]{32,128}$/.test(tracesToken))
+    throw new Error('NOD_TRACES_TOKEN must be 32 to 128 URL-safe characters.');
+  return {
+    ...(tracesToken ? { tracesToken } : {}),
+    ...(env.NOD_RELEASE_BUILD === 'true' ? { release: true } : {}),
+  };
+}
+
 export const minimumSystemVersion = JSON.parse(
   await readFile(join(directory, 'runtime-build-lock.json'), 'utf8'),
 ).minimumSystemVersion;

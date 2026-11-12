@@ -1345,12 +1345,17 @@ test('speech uses a bounded transcription request and generates Ogg voice output
   const bytes = Buffer.from('synthetic voice bytes');
   const usage: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
   let key: string | undefined;
+  let region: 'global' | 'eu' | 'us' = 'global';
   const provider = createOpenAISpeechProvider({
-    apiKey: async () => key,
+    connection: async () => (key ? { key, region } : undefined),
     configured: () => Boolean(key),
     fetch: async (input, init) => {
       assert.equal(init?.redirect, 'error');
       assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
+      assert.equal(
+        new URL(String(input)).origin,
+        region === 'global' ? 'https://api.openai.com' : `https://${region}.api.openai.com`,
+      );
       if (String(input).endsWith('/transcriptions')) {
         assert.ok(init?.body instanceof FormData);
         assert.equal(init.body.get('model'), 'gpt-transcribe');
@@ -1399,12 +1404,15 @@ test('speech uses a bounded transcription request and generates Ogg voice output
     /fixture-never-live|Read the attached image|synthetic voice bytes/,
   );
   key = 'fixture-rotated';
+  region = 'eu';
   await speech.synthesize('Synthetic changed key');
+  region = 'us';
+  await speech.transcribe({ bytes, mimeType: 'audio/ogg', name: 'voice.ogg' });
   key = undefined;
   await assert.rejects(speech.synthesize('Synthetic removed key'));
   let cancelled = 0;
   const failed = createOpenAISpeechProvider({
-    apiKey: 'fixture-never-live',
+    connection: { key: 'fixture-never-live' },
     fetch: async () =>
       new Response(
         new ReadableStream({
@@ -1418,6 +1426,29 @@ test('speech uses a bounded transcription request and generates Ogg voice output
   await assert.rejects(failed.transcribe!({ bytes, mimeType: 'audio/ogg', name: 'voice.ogg' }));
   await assert.rejects(failed.synthesize('Synthetic provider error'));
   assert.equal(cancelled, 2);
+  const regionalKey = 'fixture-"regional-key';
+  const denied = createOpenAISpeechProvider({
+    connection: { key: regionalKey, region: 'eu' },
+    fetch: async (input, init) => {
+      assert.equal(new URL(String(input)).hostname, 'eu.api.openai.com');
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${regionalKey}`);
+      return Response.json(
+        { error: { message: `Synthetic project geography EU error ${regionalKey}` } },
+        { status: 401 },
+      );
+    },
+  });
+  for (const run of [
+    () => denied.transcribe!({ bytes, mimeType: 'audio/ogg', name: 'voice.ogg' }),
+    () => denied.synthesize('Synthetic text.'),
+  ])
+    await assert.rejects(run, (error: Error) => {
+      assert.match(error.message, /401/);
+      assert.match(error.message, /project geography EU/);
+      assert.ok(!error.message.includes(regionalKey));
+      assert.ok(!error.message.includes(JSON.stringify(regionalKey).slice(1, -1)));
+      return true;
+    });
   for (const status of [400, 401, 402, 403, 429, 503]) {
     for (const engine of ['openai', 'openrouter']) {
       let discarded = false;
@@ -1439,7 +1470,10 @@ test('speech uses a bounded transcription request and generates Ogg voice output
       };
       const provider =
         engine === 'openai'
-          ? createOpenAISpeechProvider(options)
+          ? createOpenAISpeechProvider({
+              ...options,
+              connection: async () => ({ key: await options.apiKey() }),
+            })
           : {
               ...createOpenRouterSpeechProvider(options),
               transcribe: createOpenRouterTranscriptionProvider(options).transcribe,
@@ -1461,7 +1495,7 @@ test('speech uses a bounded transcription request and generates Ogg voice output
   }
   const silent = createSpeech(
     createOpenAISpeechProvider({
-      apiKey: 'fixture-never-live',
+      connection: { key: 'fixture-never-live' },
       fetch: async () => Response.json({ text: '  ' }),
     }),
   );
@@ -1474,7 +1508,7 @@ test('speech honors the selected OpenAI voice and refuses voices from another en
   const requests: Record<string, unknown>[] = [];
   const service = createSpeech(
     createOpenAISpeechProvider({
-      apiKey: 'fixture-never-live',
+      connection: { key: 'fixture-never-live' },
       fetch: async (_url, init) => {
         requests.push(JSON.parse(String(init?.body)));
         return new Response(Buffer.from('synthetic speech'));

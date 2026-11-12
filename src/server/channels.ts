@@ -1440,6 +1440,12 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   let presenceCall: { turnIds: string[]; controller: AbortController } | undefined;
   const presenceUnavailable = () =>
     closed || replacing || options.admission?.paused || options.admission?.closed;
+  const activityStatus = (item?: LiveWork) => {
+    const site = item?.doing === 'tool' ? item.site : null;
+    return [item?.title, item?.step?.trim() || (site && `Using ${site}`)]
+      .filter(Boolean)
+      .join(': ');
+  };
 
   async function progressStep(work: LiveWork[]) {
     if (!transport.progress || presenceUnavailable()) return;
@@ -1475,9 +1481,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       const item = targets.get(row.message_id);
       if (item && item.channel !== conversationChannel(row)) continue;
       const original = channelText(row.text);
-      const current = channelText(
-        [item?.title, item?.step ?? item?.site].filter(Boolean).join(': '),
-      );
+      const current = channelText(activityStatus(item));
       const status =
         item &&
         !original.secureAction &&
@@ -1567,8 +1571,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       return;
     const live = new Map<string, string>();
     for (const item of work)
-      if (item.channel !== 'web')
-        live.set(item.channel, [item.title, item.step ?? item.site].filter(Boolean).join(': '));
+      if (item.channel !== 'web') live.set(item.channel, activityStatus(item));
     for (const channel of presence.keys()) if (!live.has(channel)) presence.delete(channel);
     for (const [channel, text] of live) {
       const safe = channelText(text);

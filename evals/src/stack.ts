@@ -23,6 +23,21 @@ const here = dirname(fileURLToPath(import.meta.url));
 export const repository = resolve(here, '../..');
 export const appSource = process.env.NOD_EVAL_SOURCE || repository;
 
+export async function loadWaitingTurnSql(source: string): Promise<(alias: string) => string> {
+  const load = (path: string) =>
+    import(pathToFileURL(join(source, path)).href) as Promise<{
+      waitingTurnSql?: (alias: string) => string;
+    }>;
+  const current = existsSync(join(source, 'src/server/turn-chain.ts'))
+    ? await load('src/server/turn-chain.ts')
+    : undefined;
+  if (current?.waitingTurnSql) return current.waitingTurnSql;
+  if (source === repository)
+    throw new Error('The current source must export its waiting-turn rule.');
+  const legacy = await load('src/server/vault.ts');
+  return legacy.waitingTurnSql ?? ((alias) => `${alias}.status='waiting'`);
+}
+
 export type Provider = 'openai' | 'anthropic' | 'openrouter';
 
 export interface Model {
@@ -316,7 +331,7 @@ export async function startStack(options: {
       { createContainerBrowserComputer },
       { createDockerWorkspace },
       { createPublicLinkPreviewProvider },
-      { waitingTurnSql },
+      waitingTurnSql,
     ] = await Promise.all([
       load<typeof import('../../src/server/composition.ts')>('src/server/composition.ts'),
       load<typeof import('../../src/server/db.ts')>('src/server/db.ts'),
@@ -332,7 +347,7 @@ export async function startStack(options: {
       load<typeof import('../../src/providers/public-web/link-preview.ts')>(
         'src/providers/public-web/link-preview.ts',
       ),
-      load<{ waitingTurnSql?: (alias: string) => string }>('src/server/vault.ts'),
+      loadWaitingTurnSql(appSource),
     ]);
     databasePool = pool;
     const vaultKey = randomBytes(32);
@@ -449,7 +464,7 @@ export async function startStack(options: {
         },
       },
       request: createStackRequest(baseUrl, cookie),
-      waiting: (alias) => waitingTurnSql?.(alias) ?? `${alias}.status='waiting'`,
+      waiting: waitingTurnSql,
       origin: baseUrl,
       directory,
       container,

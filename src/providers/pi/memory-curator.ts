@@ -132,6 +132,9 @@ export function createPiMemoryCurator(options: {
         throw error;
       });
       const { runtime, model, effort, subscription } = await loaded;
+      const sessionId = ['opencode', 'opencode-go'].includes(model.provider)
+        ? crypto.randomUUID()
+        : undefined;
       const complete = async () => {
         const context: Context = {
           systemPrompt: instructions,
@@ -164,6 +167,7 @@ export function createPiMemoryCurator(options: {
               ...(signal ? [signal] : []),
             ]),
             maxTokens: task === 'classify' ? 512 : 8192,
+            ...(sessionId ? { sessionId } : {}),
             ...(task === 'classify' ? { maxRetries: 0, timeoutMs: 10_000 } : {}),
             reasoning: effort === 'off' ? undefined : effort,
           });
@@ -209,14 +213,23 @@ export function createPiMemoryCurator(options: {
         reply.stopReason === 'error' ||
         reply.stopReason === 'aborted' ||
         reply.stopReason === 'length'
-      )
-        throw new Error(
+      ) {
+        const label =
           task === 'vision'
             ? 'The image model is unavailable.'
             : task === 'classify'
               ? 'The classification model is unavailable.'
-              : 'The memory model is unavailable.',
-        );
+              : task === 'review' || task === 'access'
+                ? 'The action review model is unavailable.'
+                : 'The memory model is unavailable.';
+        const detail =
+          reply.stopReason === 'error' && reply.errorMessage
+            ? ` The provider said: ${reply.errorMessage.trim().slice(0, 300)}`
+            : reply.stopReason === 'length'
+              ? ' The reply stopped at the token limit.'
+              : '';
+        throw new Error(`${label} Task: ${task}. Model: ${model.provider}/${model.id}.${detail}`);
+      }
       return json(
         reply.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join(''),
       );

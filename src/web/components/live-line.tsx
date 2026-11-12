@@ -79,7 +79,7 @@ function useIdleWord(enabled: boolean) {
 export function LiveLine({ item, quiet = true }: { item?: Activity; quiet?: boolean }) {
   const step = item?.step?.trim();
   const site = item?.doing === 'tool' ? item.site : null;
-  const described = step || site;
+  const described = step || (site && `Using ${site}`);
   const queued = item?.doing === 'queued';
   const word = useIdleWord(!described && !queued);
   const minutes = useQuietMinutes(item?.quietSince ?? '', quiet && Boolean(item));

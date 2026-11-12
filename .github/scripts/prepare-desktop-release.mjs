@@ -7,6 +7,31 @@ import { fileURLToPath } from 'node:url';
 const releaseFiles = ['desktop/package.json', 'desktop/release.json', 'desktop/CHANGELOG.md'];
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const maximumNotesBytes = 64 * 1024;
+const maximumHighlightsBytes = 8 * 1024;
+
+export function releaseHighlights(value) {
+  if (value === undefined)
+    throw new Error('No release highlights were supplied. Add public Markdown highlights.');
+  if (typeof value !== 'string') throw new Error('The release highlights must be Markdown text.');
+  if (!value.trim())
+    throw new Error('The release highlights are empty. Add public Markdown highlights.');
+  if (Buffer.byteLength(value) > maximumHighlightsBytes)
+    throw new Error('The release highlights exceed 8 KiB. Shorten them.');
+  return value.trim();
+}
+
+export function publicReleaseNotes(release, details, downloads = '') {
+  if (!Object.hasOwn(release, 'highlights')) return details;
+  return (
+    [
+      releaseHighlights(release.highlights),
+      downloads,
+      `<details>\n<summary>All changes, installation requirements, and build details</summary>\n\n${details.trimEnd()}\n\n</details>`,
+    ]
+      .filter(Boolean)
+      .join('\n\n') + '\n'
+  );
+}
 
 export function releaseVersion(value) {
   if (typeof value !== 'string' || value.length > 64 || !versionPattern.test(value))
@@ -201,7 +226,7 @@ export function releaseNotes(root, version, previousTag, source, date, allowEmpt
   return notes;
 }
 
-export function automaticRelease(root, releases, sourceRepository) {
+export function automaticRelease(root, releases, sourceRepository, highlights) {
   const source = repository(root);
   if (git(root, ['status', '--porcelain', '--untracked-files=no']).trim())
     throw new Error('Automatic releases require clean tested source.');
@@ -247,6 +272,7 @@ export function automaticRelease(root, releases, sourceRepository) {
     previousTag,
     source,
     date,
+    ...(highlights === undefined ? {} : { highlights: releaseHighlights(highlights) }),
     notes: releaseNotes(root, version, previousTag, source, date, true),
   };
 }
@@ -258,12 +284,15 @@ export async function checkReleasePlan(root, input, path, digest) {
     createHash('sha256').update(bytes).digest('hex') !== digest
   )
     throw new Error('The release plan failed its checksum.');
-  if (bytes.length > maximumNotesBytes + 1024)
+  if (bytes.length > maximumNotesBytes + maximumHighlightsBytes + 1024)
     throw new Error('The desktop release plan is too large.');
   const plan = JSON.parse(bytes.toString('utf8'));
   const source = repository(root);
   if (
-    Object.keys(plan).sort().join(',') !== 'date,notes,previousTag,source,version' ||
+    ![
+      'date,notes,previousTag,source,version',
+      'date,highlights,notes,previousTag,source,version',
+    ].includes(Object.keys(plan).sort().join(',')) ||
     plan.version !== releaseVersion(input) ||
     plan.source !== source ||
     typeof plan.date !== 'string' ||
@@ -277,6 +306,7 @@ export async function checkReleasePlan(root, input, path, digest) {
     git(root, ['status', '--porcelain', '--untracked-files=no']).trim()
   )
     throw new Error('The release plan does not match the clean tested source.');
+  if (Object.hasOwn(plan, 'highlights')) releaseHighlights(plan.highlights);
   if (plan.notes !== releaseNotes(root, plan.version, plan.previousTag, source, plan.date, true))
     throw new Error('The release plan notes do not match the source changes.');
   if (
@@ -293,7 +323,7 @@ export async function configuredRelease(root) {
   return checkRelease(root, process.env.NOD_RELEASE_VERSION || manifest.version);
 }
 
-export async function prepareRelease(root, input) {
+export async function prepareRelease(root, input, highlights) {
   const source = repository(root);
   const previousTag = latestTag(root, source);
   const [major, minor, patch] = (
@@ -323,7 +353,12 @@ export async function prepareRelease(root, input) {
     );
   if (new RegExp(`^## ${version.replaceAll('.', '\\.')} - `, 'm').test(changelog))
     throw new Error(`The changelog already contains desktop version ${version}.`);
-  const manifest = { version, previousTag, source };
+  const manifest = {
+    version,
+    previousTag,
+    source,
+    ...(highlights === undefined ? {} : { highlights: releaseHighlights(highlights) }),
+  };
   const notes = releaseNotes(
     root,
     version,
@@ -371,10 +406,13 @@ export async function checkRelease(root, input) {
   if (
     releaseVersion(pkg.version) !== version ||
     manifest.version !== version ||
-    Object.keys(manifest).sort().join(',') !== 'previousTag,source,version' ||
+    !['previousTag,source,version', 'highlights,previousTag,source,version'].includes(
+      Object.keys(manifest).sort().join(','),
+    ) ||
     !/^[a-f0-9]{40}$/.test(manifest.source ?? '')
   )
     throw new Error('Desktop release manifest and package versions are inconsistent.');
+  if (Object.hasOwn(manifest, 'highlights')) releaseHighlights(manifest.highlights);
   if (git(root, ['merge-base', '--is-ancestor', manifest.source, head], true) === null)
     throw new Error('The release source must be an ancestor of the current commit.');
   if (
@@ -414,12 +452,19 @@ async function main() {
   const root = process.cwd();
   let version;
   if (!args.length) {
-    const manifest = await prepareRelease(root, process.env.NOD_RELEASE_VERSION);
+    const manifest = await prepareRelease(
+      root,
+      process.env.NOD_RELEASE_VERSION,
+      releaseHighlights(process.env.NOD_RELEASE_HIGHLIGHTS),
+    );
     version = manifest.version;
     if (process.env.NOD_RELEASE_NOTES_FILE)
       await writeFile(
         process.env.NOD_RELEASE_NOTES_FILE,
-        currentNotes(await readFile(resolve(root, releaseFiles[2]), 'utf8'), version),
+        publicReleaseNotes(
+          manifest,
+          currentNotes(await readFile(resolve(root, releaseFiles[2]), 'utf8'), version),
+        ),
       );
     process.stdout.write(`Prepared nod-v${version} from ${manifest.source}.\n`);
   } else {
@@ -428,8 +473,9 @@ async function main() {
     );
     const release = await checkRelease(root, version);
     if (args[0] === '--notes') {
-      if (args[1]) await writeFile(resolve(root, args[1]), release.notes);
-      else process.stdout.write(release.notes);
+      const notes = publicReleaseNotes(release, release.notes);
+      if (args[1]) await writeFile(resolve(root, args[1]), notes);
+      else process.stdout.write(notes);
     } else process.stdout.write(`Validated nod-v${version}.\n`);
   }
   if (process.env.GITHUB_OUTPUT)

@@ -50,7 +50,7 @@ Nod:    Sends to [email]:
         anything is missing. [owner]
 ```
 
-The trace also includes Nod's instructions, the model name, token counts, and cost. Its ID changes every day and whenever Nod restarts.
+The trace also includes Nod's instructions, the model name, token counts, and cost. Its conversation ID changes after 30 minutes without a request to the model and whenever Nod restarts.
 
 "Jordi" is still there. Nod spots details by their shape, such as email addresses, phone numbers, and bank accounts. It also knows your name from your connected accounts. It can't spot every name in a sentence, so traces are pseudonymised, not anonymous.
 
@@ -85,11 +85,11 @@ Select **How Nod uses your data** next to the **Privacy & data** heading to see 
 
 ## Where your data lives
 
-|                 | Desktop app                                                                                                                | Source install                     | Self-hosted server                 |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ---------------------------------- |
-| Runs on         | A private virtual machine on your computer                                                                                 | Docker containers on your computer | Your server                        |
-| Data folder     | Mac: `~/Library/Application Support/nod/` and `~/.nod-desktop/`. Windows: `%APPDATA%\nod\` and the `nod-` WSL distribution | `.local/` and Docker volumes       | Docker volumes and its `.env` file |
-| Who can read it | You                                                                                                                        | You                                | Anyone who administers the server  |
+|                 | Desktop app                                                                                                                                                                                          | Source install                     | Self-hosted server                 |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ---------------------------------- |
+| Runs on         | A private virtual machine on your computer                                                                                                                                                           | Docker containers on your computer | Your server                        |
+| Data folder     | Mac: `~/Library/Application Support/nod/` and `~/.nod-desktop/`. Windows: `%APPDATA%\nod\` and the `nod-` WSL distribution. Linux Flatpak: `~/.var/app/io.n8n.Nod/config/nod/` and `~/.nod-desktop/` | `.local/` and Docker volumes       | Docker volumes and its `.env` file |
+| Who can read it | You                                                                                                                                                                                                  | You                                | Anyone who administers the server  |
 
 For what Nod stores and for how long, see the [Security review guide](/trust/security-review/#what-nod-stores).
 

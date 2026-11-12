@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import dns from 'node:dns';
 import { lookup } from 'node:dns/promises';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, request as httpRequest } from 'node:http';
 import { connect as tlsConnect } from 'node:tls';
 import { tmpdir } from 'node:os';
@@ -13,6 +13,7 @@ import { createAgentRuntime } from '../../src/runtime/index.ts';
 import { runProcess } from '../../src/providers/process.ts';
 import { accessCookie, registerLocalAccess } from '../../src/server/access.ts';
 import { createAccountSession } from '../../src/server/account.ts';
+import { waitingTurnSql } from '../../src/server/turn-chain.ts';
 import type { AccountSettings } from '../../src/shared/account.ts';
 import { fakeComputer, fakeWorkspace } from '../../tests/runtime-fixtures.ts';
 import {
@@ -71,7 +72,7 @@ import {
 import { changes, compareTable, html, markdown, runsTable, terminal } from '../src/report.ts';
 import { fingerprint, scenarios } from '../src/scenarios/index.ts';
 import { createSession, type Session } from '../src/session.ts';
-import { createStackRequest, repository, type Stack } from '../src/stack.ts';
+import { createStackRequest, loadWaitingTurnSql, repository, type Stack } from '../src/stack.ts';
 import { gmail } from '../src/world/apps.ts';
 import { createFixtureProxy } from '../src/world/fixture-proxy.ts';
 import { routeFixtureHosts } from '../src/world/fixture-fetch.ts';
@@ -83,6 +84,17 @@ import onboardingFirstValue from '../src/scenarios/onboarding-first-value.ts';
 import { paymentScenario } from '../src/world/checkout.ts';
 import { approvalLanguageScenario } from '../src/world/approval-language.ts';
 import { ambiguousDelegationScenario } from '../src/world/ambiguous-delegation.ts';
+
+test('eval waits use the current rule and can load an older baseline export', async (t) => {
+  assert.equal(await loadWaitingTurnSql(repository), waitingTurnSql);
+  const source = await mkdtemp(join(tmpdir(), 'nod-eval-wait-rule-'));
+  t.after(() => rm(source, { recursive: true, force: true }));
+  await mkdir(join(source, 'src/server'), { recursive: true });
+  await writeFile(join(source, 'src/server/turn-chain.ts'), 'export {};');
+  await copyFile(join(repository, 'src/server/turn-chain.ts'), join(source, 'src/server/vault.ts'));
+  const legacy = await loadWaitingTurnSql(source);
+  assert.equal(legacy('u'), waitingTurnSql('u'));
+});
 
 test('map evidence accepts split and detail maps but rejects duplicate, wrong or missing locations', async () => {
   const definition = scenarios.find((item) => item.id === 'inline-visual-map')!;

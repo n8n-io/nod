@@ -11,7 +11,7 @@ export type LiveWork = Activity & {
 };
 
 const query = `SELECT DISTINCT ON (u.session_id) u.id,u.channel,u.status,COALESCE(u.started_at,u.created_at) AS since,
-    ${ownerStarted()} AS owner_started,t.id AS task_id,t.title,w.site,o.calling,
+    ${ownerStarted()} AS owner_started,t.id AS task_id,t.title,o.site,o.calling,
     GREATEST(COALESCE(u.started_at,u.created_at),w.last) AS quiet_since,
     COALESCE(t.message_id,(SELECT m.id FROM messages m WHERE m.turn_id=u.id AND m.owner_id=u.owner_id
       AND m.role='assistant' ORDER BY m.created_at,m.id LIMIT 1)) AS message_id,
@@ -25,12 +25,11 @@ const query = `SELECT DISTINCT ON (u.session_id) u.id,u.channel,u.status,COALESC
     ORDER BY created_at DESC LIMIT 1) t ON true
   LEFT JOIN LATERAL (SELECT summary,created_at FROM turn_events WHERE turn_id=u.id AND type IN ('step','thought')
     ORDER BY created_at DESC,id DESC LIMIT 1) s ON true
-  LEFT JOIN LATERAL (SELECT true AS calling FROM turn_events e WHERE e.turn_id=u.id AND e.type='tool_start'
+  LEFT JOIN LATERAL (SELECT true AS calling,e.site FROM turn_events e WHERE e.turn_id=u.id AND e.type='tool_start'
     AND e.call_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM turn_events c WHERE c.turn_id=e.turn_id
-      AND c.call_id=e.call_id AND c.type IN ('tool_complete','tool_failed')) LIMIT 1) o ON true
+      AND c.call_id=e.call_id AND c.type IN ('tool_complete','tool_failed'))
+    ORDER BY (e.site IS NOT NULL) DESC,e.created_at DESC,e.id DESC LIMIT 1) o ON true
   CROSS JOIN LATERAL (SELECT
-    (SELECT site FROM turn_events WHERE turn_id=u.id AND type IN ('tool_start','tool_complete','tool_failed')
-       ORDER BY created_at DESC,id DESC LIMIT 1) AS site,
     (SELECT max(created_at) FROM turn_events WHERE turn_id=u.id) AS last,
     (SELECT max(created_at) FROM turn_events WHERE turn_id=u.id AND type='steered') AS steered,
     (SELECT max(created_at) FROM turn_events WHERE turn_id=u.id

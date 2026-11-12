@@ -1,0 +1,152 @@
+name: Build Linux desktop
+
+on:
+  workflow_call:
+    inputs:
+      source:
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+      runtime_refresh:
+        type: string
+        required: true
+    secrets:
+      NOD_TRACES_TOKEN:
+        required: false
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig.json'
+      - 'vite.config.ts'
+      - 'Dockerfile.*'
+      - '.dockerignore'
+      - '.github/workflows/linux-desktop.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Linux x64 Flatpak
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    timeout-minutes: 90
+    environment:
+      name: ${{ github.ref == 'refs/heads/main' && inputs.source != '' && 'release' || 'linux-preview' }}
+      deployment: false
+    env:
+      NOD_DESKTOP_TARGET: linux-x64
+      NOD_RUNTIME_REFRESH: ${{ inputs.runtime_refresh || 'local' }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source || github.sha }}
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.21.0'
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            desktop/pnpm-lock.yaml
+      - name: Install build tools and Flatpak runtimes
+        run: |
+          sudo add-apt-repository --yes ppa:flatpak/stable
+          sudo apt-get update
+          sudo apt-get install -y dbus flatpak flatpak-builder zstd
+          if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08 org.electronjs.Electron2.BaseApp//25.08
+      - name: Install locked dependencies
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir desktop install --frozen-lockfile
+      - name: Select the version and source
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          echo "NOD_DESKTOP_VERSION=${RELEASE_VERSION:-$(node -p 'JSON.parse(require("fs").readFileSync("desktop/package.json")).version')}" >> "$GITHUB_ENV"
+          echo "NOD_RELEASE_SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Set up Docker build cache
+        uses: useblacksmith/setup-docker-builder@06dd9c83a5d541274d2e3ac67625560979275267
+        with:
+          cache-key: n8n-io/nod/desktop-images-linux-x64
+      - name: Build the workspace image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        with:
+          context: .
+          file: Dockerfile.workspace
+          platforms: linux/amd64
+          load: true
+          build-args: NOD_RUNTIME_REFRESH=${{ env.NOD_RUNTIME_REFRESH }}
+          tags: nod-desktop-workspace:experiment
+      - name: Build the browser image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        with:
+          context: .
+          file: Dockerfile.browser
+          platforms: linux/amd64
+          load: true
+          build-args: NOD_RUNTIME_REFRESH=${{ env.NOD_RUNTIME_REFRESH }}
+          tags: nod-desktop-browser:experiment
+      - name: Check and build the app
+        run: |
+          pnpm run desktop:test
+          pnpm run build
+          node desktop/scripts/prepare-runtime.mjs --prebuilt-images
+      - name: Package the Linux app
+        env:
+          NOD_RELEASE_BUILD: ${{ github.ref == 'refs/heads/main' && inputs.source != '' }}
+          NOD_TRACES_TOKEN: ${{ github.ref == 'refs/heads/main' && inputs.source != '' && secrets.NOD_TRACES_TOKEN || '' }}
+        run: |
+          pnpm run desktop:linux:build
+      - name: Build and install the Flatpak bundle
+        run: |
+          flatpak-builder --user --force-clean --default-branch=stable --repo=.local/flatpak-repo .local/flatpak-build desktop/flatpak/io.n8n.Nod.yml
+          flatpak build-bundle --arch=x86_64 --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo .local/flatpak-repo .local/nod-linux-x64.flatpak io.n8n.Nod stable
+          flatpak install --user --noninteractive --no-deps .local/nod-linux-x64.flatpak
+      - name: Check the installed engine inside Flatpak
+        run: |
+          dbus-run-session -- flatpak run --env=ELECTRON_RUN_AS_NODE=1 --command=sh io.n8n.Nod -c 'cd /app/nod/resources/engine && exec "$@"' nod-check /app/nod/nod --input-type=module -e '
+            const { register } = await import("tsx/esm/api");
+            register();
+            await import("./src/server/composition.ts");
+            const { pool } = await import("./src/server/db.ts");
+            await pool.end();
+            const sharp = (await import("sharp")).default;
+            await sharp({ create: { width: 2, height: 2, channels: 4, background: "#ff0000" } }).png().toBuffer();
+          '
+      - name: Split and verify release files
+        run: |
+          NOD_FLATPAK_COMMIT="$(flatpak info --user --show-commit io.n8n.Nod)"
+          export NOD_FLATPAK_COMMIT
+          node desktop/scripts/linux-release.mjs
+      - name: Save the checked Linux release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: desktop-linux-x64
+          path: |
+            dist/desktop/linux-x64/release-linux-x64.json
+            dist/desktop/linux-x64/SHA256SUMS-linux-x64
+            dist/desktop/linux-x64/nod-linux-x64.flatpak.part*
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error

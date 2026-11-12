@@ -2036,7 +2036,8 @@ test('decision routing uses the selected connection and never sends subscription
     provider: 'openai' | 'openrouter' | 'anthropic' | 'compatible';
     method: 'api_key' | 'oauth' | 'subscription';
     key: string;
-  } = { provider: 'openai', method: 'api_key', key: 'fixture-owner-one-key' };
+    region?: 'eu';
+  } = { provider: 'openai', method: 'api_key', key: 'fixture-owner-one-key', region: 'eu' };
   let reads = 0;
   Object.defineProperty(models, 'configured', { get: () => true });
   models.resolve = async () => {
@@ -2066,7 +2067,7 @@ test('decision routing uses the selected connection and never sends subscription
               clientId: 'fixture-client',
               idToken: 'fixture-id-token',
             }
-          : { type: 'api_key', key: current.key };
+          : { type: 'api_key', key: current.key, region: current.region };
       },
     };
   };
@@ -2095,7 +2096,7 @@ test('decision routing uses the selected connection and never sends subscription
   }
   assert.equal(reads, count);
   assert.deepEqual(requests, [
-    { url: 'https://api.openai.com/v1/decisions', key: 'Bearer fixture-owner-one-key' },
+    { url: 'https://eu.api.openai.com/v1/decisions', key: 'Bearer fixture-owner-one-key' },
     { url: 'https://openrouter.ai/api/alpha/decisions', key: 'Bearer fixture-owner-two-key' },
     { url: 'https://api.openai.com/v1/decisions', key: 'Bearer fixture-rotated-key' },
   ]);
@@ -2165,6 +2166,10 @@ test('trust mode selects available Jev, Decider and OpenAI before the small LLM'
   ]);
   adapters.models!.hasApiKey = (provider) => keys.has(provider);
   adapters.models!.apiKey = async (provider) => keys.get(provider);
+  adapters.models!.apiCredential = async (provider) => {
+    const key = keys.get(provider);
+    return key ? { type: 'api_key', key, region: 'eu' } : undefined;
+  };
   adapters.models!.resolve = async () =>
     assert.fail('Trust routing must not read subscription credentials.');
   const check = (target = adapters) =>
@@ -2192,6 +2197,7 @@ test('trust mode selects available Jev, Decider and OpenAI before the small LLM'
   keys.set('openrouter', 'fixture-router-no-decider');
   await check();
   assert.equal(requests.at(-1)?.model, 'gpt-6-luna');
+  assert.equal(requests.at(-1)?.url, 'https://eu.api.openai.com/v1/decisions');
   keys.delete('openai');
   await check();
   assert.equal(requests.at(-1)?.model, 'openai/gpt-6-luna-decisions');
@@ -3719,6 +3725,108 @@ test('a turn that crosses the compaction line answers first, then compacts at th
   assert.ok(answered >= 0 && answered < compactions[0]);
 });
 
+test('model requests repair incomplete assistant blocks for both OpenRouter APIs', async (t) => {
+  const { createPiModelRuntime } = await import('../src/providers/pi/models.ts');
+  for (const api of ['anthropic-messages', 'openai-completions'] as const)
+    for (const type of ['text', 'thinking'] as const)
+      await t.test(`${api}: ${type}`, async () => {
+        const access = smallContextAccess('openrouter', 'fixture-recovery', 200_000);
+        access.definition.spec = { ...access.definition.spec, api };
+        const { runtime, model } = await createPiModelRuntime(access);
+        const previous = {
+          ...fauxAssistantMessage('Earlier answer.'),
+          provider: model.provider,
+          api: model.api,
+          model: model.id,
+          stopReason: 'toolUse' as const,
+          usage: { ...fauxAssistantMessage('').usage, input: 10, totalTokens: 10 },
+          content: [
+            { type: 'text', text: 'Earlier answer.' },
+            { type, ...(type === 'thinking' ? { thinkingSignature: 'incomplete-signature' } : {}) },
+            { type: 'toolCall', id: 'inspect', name: 'inspect_fixture', arguments: {} },
+          ] as AssistantMessage['content'],
+        };
+        const original = structuredClone(previous);
+        const bodies: unknown[] = [];
+        const result = await runtime.completeSimple(
+          model,
+          {
+            messages: [
+              { role: 'user', content: 'Inspect the fixture.', timestamp: 1 },
+              previous,
+              {
+                role: 'toolResult',
+                toolCallId: 'inspect',
+                toolName: 'inspect_fixture',
+                content: [{ type: 'text', text: 'Inspected.' }],
+                isError: false,
+                timestamp: 2,
+              },
+            ],
+            tools: [
+              {
+                name: 'inspect_fixture',
+                description: 'Inspect a fixture.',
+                parameters: Type.Object({}),
+              },
+            ],
+          },
+          {
+            fetch: async (_input, init) => {
+              bodies.push(JSON.parse(String(init?.body)));
+              const events =
+                api === 'anthropic-messages'
+                  ? [
+                      {
+                        type: 'message_start',
+                        message: {
+                          id: 'recovered',
+                          type: 'message',
+                          role: 'assistant',
+                          model: model.id,
+                          content: [],
+                          usage: { input_tokens: 10, output_tokens: 0 },
+                        },
+                      },
+                      {
+                        type: 'content_block_start',
+                        index: 0,
+                        content_block: { type: 'text', text: '' },
+                      },
+                      {
+                        type: 'content_block_delta',
+                        index: 0,
+                        delta: { type: 'text_delta', text: 'Recovered.' },
+                      },
+                      { type: 'content_block_stop', index: 0 },
+                      {
+                        type: 'message_delta',
+                        delta: { stop_reason: 'end_turn', stop_sequence: null },
+                        usage: { output_tokens: 2 },
+                      },
+                      { type: 'message_stop' },
+                    ]
+                      .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+                      .join('')
+                  : `data: ${JSON.stringify({ id: 'recovered', choices: [{ index: 0, delta: { role: 'assistant', content: 'Recovered.' }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 2 } })}\n\ndata: [DONE]\n\n`;
+              return new Response(events, { headers: { 'content-type': 'text/event-stream' } });
+            },
+          },
+        );
+        assert.equal(result.stopReason, 'stop', result.errorMessage);
+        assert.equal(bodies.length, 1);
+        assert.deepEqual(result.content, [{ type: 'text', text: 'Recovered.' }]);
+        const sent = JSON.stringify(bodies[0]);
+        assert.ok(
+          sent.includes('Earlier answer.') &&
+            sent.includes('inspect_fixture') &&
+            sent.includes('Inspected.'),
+        );
+        assert.ok(!sent.includes('incomplete-signature'));
+        assert.deepEqual(previous, original);
+      });
+});
+
 test('Pi repairs assistant blocks before post-turn compaction', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-pi-complete-blocks-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -4300,6 +4408,131 @@ test('Anthropic cache boundaries preserve the shared text, workspace suffix, lif
   assert.deepEqual(bodies[4].system, [bodies[0].system[0]]);
 });
 
+test('native OpenAI model discovery and requests keep each connection in its region', async () => {
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const { modelKeyCredential } = await import('../src/server/models.ts');
+  const { openAIBaseUrl } = await import('../src/providers/openai/api.ts');
+  const geography = 'Attempted to access resource from outside project geography EU';
+  const backend = createPiModelBackend({
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      const region = url.hostname === 'api.openai.com' ? 'global' : url.hostname.split('.')[0];
+      assert.equal(url.pathname, '/v1/models');
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer fixture-${region}`);
+      assert.equal(init?.redirect, 'error');
+      return Response.json({
+        data: ['gpt-6.1-sol', 'gpt-6-luna', 'gpt-audio-1.5'].map((id) => ({ id })),
+      });
+    },
+  });
+  await Promise.all(
+    (['global', 'eu', 'us'] as const).map(async (region) => {
+      const credential = modelKeyCredential('openai', `fixture-${region}`, { region });
+      const definitions = await backend.catalog('openai', 'api_key', credential);
+      assert.equal(definitions.length, 3);
+      for (const definition of definitions) {
+        assert.equal(definition.spec.baseUrl, openAIBaseUrl(region));
+        assert.equal(definition.spec.provider, 'openai');
+        const audio = definition.choice.id === 'gpt-audio-1.5';
+        assert.equal(definition.spec.api, audio ? 'openai-completions' : 'openai-responses');
+        assert.ok((definition.spec.cost as { input: number }).input > 0);
+        if (!audio) assert.ok(definition.choice.efforts.includes('low'));
+        const { runtime, model } = await createPiModelRuntime({
+          provider: 'openai',
+          method: 'api_key',
+          definition,
+          effort: audio ? 'off' : 'low',
+          read: async () => credential,
+        });
+        let calls = 0;
+        const result = await runtime.completeSimple(
+          model,
+          { messages: [{ role: 'user', content: 'Synthetic request.', timestamp: 1 }] },
+          {
+            maxRetries: 5,
+            fetch: async (input, init) => {
+              calls++;
+              assert.equal(init?.redirect, 'error');
+              assert.equal(
+                String(input),
+                `${openAIBaseUrl(region)}/${audio ? 'chat/completions' : 'responses'}`,
+              );
+              assert.equal(
+                new Headers(init?.headers).get('authorization'),
+                `Bearer fixture-${region}`,
+              );
+              return Response.json({ error: { message: geography } }, { status: 401 });
+            },
+          },
+        );
+        assert.equal(calls, 1);
+        assert.equal(result.stopReason, 'error');
+        assert.match(result.errorMessage!, /outside project geography EU/);
+      }
+    }),
+  );
+});
+
+test('OpenAI discovery keeps the provider reason and only permits the model-list scope exception', async () => {
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const { openAIBaseUrl, openAIRequestError } = await import('../src/providers/openai/api.ts');
+  const geography = 'Attempted to access resource from outside project geography EU';
+  const key = 'fixture-"error-key';
+  for (const status of [401, 403, 429, 503]) {
+    let calls = 0;
+    const backend = createPiModelBackend({
+      fetch: async () => {
+        calls++;
+        return Response.json(
+          { error: { message: `${geography} ${key}`, code: 'synthetic_code', param: 'model' } },
+          { status },
+        );
+      },
+    });
+    await assert.rejects(
+      backend.catalog('openai', 'api_key', { type: 'api_key', key, region: 'eu' }),
+      (error: Error) => {
+        assert.match(error.message, /outside project geography EU/);
+        assert.ok(error.message.includes(String(status)));
+        assert.match(error.message, /synthetic_code/);
+        assert.ok(!error.message.includes(key));
+        assert.ok(!error.message.includes(JSON.stringify(key).slice(1, -1)));
+        return true;
+      },
+    );
+    assert.equal(calls, 1);
+  }
+  for (const scopes of ['api.model.read', 'api.model.read api.responses.write']) {
+    const backend = createPiModelBackend({
+      fetch: async () =>
+        Response.json({ error: { message: `Missing scopes: ${scopes}` } }, { status: 403 }),
+    });
+    const models = backend.catalog('openai', 'api_key', { type: 'api_key', key, region: 'eu' });
+    if (scopes === 'api.model.read')
+      assert.ok((await models).every(({ spec }) => spec.baseUrl === openAIBaseUrl('eu')));
+    else await assert.rejects(models, /api.responses.write/);
+  }
+  let cancelled = false;
+  const failure = await openAIRequestError(
+    new Response(
+      new ReadableStream({
+        start(stream) {
+          stream.enqueue(Buffer.alloc(16_385, 65));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+      { status: 401, headers: { 'content-type': 'application/json' } },
+    ),
+    key,
+  );
+  assert.equal(cancelled, true);
+  assert.match(failure.message, /401/);
+  assert.ok(failure.message.length < 100);
+});
+
 test('OpenAI-compatible servers get tool models, a system message and one attempt without the key', async (t) => {
   const { createServer } = await import('node:http');
   const { createPiModelBackend, createPiModelRuntime } =
@@ -4328,7 +4561,7 @@ test('OpenAI-compatible servers get tool models, a system message and one attemp
         return send(200, { data: Object.keys(shows).map((id) => ({ id })) });
       if (request.url === '/api/version') return send(200, { version: '0.0.0' });
       if (request.url === '/api/show') return send(200, shows[JSON.parse(text).model]);
-      if (request.url === '/moved/v1/chat/completions') {
+      if (request.url === '/moved/v1/chat/completions' || request.url === '/moved/v1/responses') {
         response.writeHead(307, { location: '/v1/chat/completions' });
         return response.end();
       }
@@ -4416,6 +4649,26 @@ test('OpenAI-compatible servers get tool models, a system message and one attemp
     {},
   );
   assert.equal(redirected.stopReason, 'error');
+  assert.equal(bodies.length, 2);
+  const definition = (await createPiModelBackend().catalog('openai', 'api_key')).find(
+    ({ choice }) => choice.id === 'gpt-6-luna',
+  )!;
+  const native = await createPiModelRuntime({
+    provider: 'openai',
+    method: 'api_key',
+    effort: 'low',
+    definition: {
+      ...definition,
+      spec: { ...definition.spec, baseUrl: `http://127.0.0.1:${address.port}/moved/v1` },
+    },
+    read: async () => ({ type: 'api_key', key: 'fixture-eu-key', region: 'eu' }),
+  });
+  const nativeRedirect = await native.runtime.completeSimple(
+    native.model,
+    { messages: [{ role: 'user', content: 'Synthetic fixture', timestamp: 1 }] },
+    {},
+  );
+  assert.equal(nativeRedirect.stopReason, 'error');
   assert.equal(bodies.length, 2);
 });
 
@@ -5168,6 +5421,7 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
   )!;
   const directory = await mkdtemp(join(tmpdir(), 'nod-model-switch-'));
   const requests: Array<{ provider: string; effort: string; history: string }> = [];
+  const errors: string[] = [];
   let selected: import('../src/ports/models.ts').ModelAccess = {
     provider: 'openai',
     method: 'api_key',
@@ -5195,7 +5449,18 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
           api: model.api,
         };
         const stream = createAssistantMessageEventStream();
-        stream.push({ type: 'done', reason: 'stop', message });
+        if (JSON.stringify(context.messages).includes('Synthetic switched provider failure'))
+          stream.push({
+            type: 'error',
+            reason: 'error',
+            error: {
+              ...message,
+              stopReason: 'error',
+              errorMessage:
+                '413 Request too large for fixture-model on tokens per minute (TPM): Limit 6000, Requested 12000',
+            },
+          });
+        else stream.push({ type: 'done', reason: 'stop', message });
         return stream;
       };
       return result;
@@ -5210,7 +5475,9 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
       tools: [],
       ephemeral: background,
       shouldStop: () => false,
-      onEvent() {},
+      onEvent(event) {
+        if (event.type === 'error') errors.push(event.message);
+      },
     });
   try {
     const first = await open();
@@ -5255,6 +5522,19 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
     assert.equal(requests[3].effort, 'high');
     assert.ok(requests[3].history.includes('Remember the synthetic blue label.'));
     assert.ok(!requests[3].history.includes(chatgptFixtureCredential().access));
+    selected = {
+      provider: 'anthropic',
+      method: 'api_key',
+      definition: anthropic,
+      effort: 'medium',
+      read: async () => ({ type: 'api_key', key: 'fixture-anthropic-key' }),
+    };
+    const failed = await open();
+    await failed.prompt('Synthetic switched provider failure', []);
+    await failed.dispose();
+    assert.equal(requests[4].provider, 'anthropic');
+    assert.match(errors.at(-1) ?? '', /^anthropic \/ claude-opus-5-5: 413 Request too large/);
+    assert.doesNotMatch(errors.at(-1) ?? '', /openai/);
   } finally {
     await agent.dispose();
     await rm(directory, { recursive: true, force: true });
@@ -5420,6 +5700,82 @@ test('task classification has a small request budget and never retries or record
       assert.equal(usage.length, 1);
       assert.equal(traces, 0);
     });
+});
+
+test('action review failures identify the task, model, provider, and bounded provider reason', async (t) => {
+  const { createServer } = await import('node:http');
+  const { InMemoryCredentialStore } = await import('@earendil-works/pi-ai');
+  let calls = 0;
+  const sessions: Array<string | string[] | undefined> = [];
+  const server = createServer((request, response) => {
+    calls++;
+    sessions.push(request.headers['x-opencode-session']);
+    request.resume();
+    request.on('end', () => {
+      response.writeHead(400, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          error: {
+            message: `Model Not Exist ${'x'.repeat(400)}`,
+            type: 'invalid_request_error',
+          },
+        }),
+      );
+    });
+  });
+  t.after(
+    () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  );
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const credentials = new InMemoryCredentialStore();
+  await credentials.modify('opencode-go', async () => ({ type: 'api_key', key: 'fixture' }));
+  const runtime = await ModelRuntime.create({
+    credentials,
+    modelsPath: null,
+    refreshOnCreate: false,
+    allowModelNetwork: false,
+  });
+  runtime.registerProvider('opencode-go', {
+    models: [
+      {
+        id: 'deepseek-v4.1-flash',
+        name: 'DeepSeek V4.1 Flash',
+        api: 'openai-completions',
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        reasoning: true,
+        input: ['text'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 1_000_000,
+        maxTokens: 384_000,
+      },
+    ],
+  });
+  await runtime.refresh({ allowNetwork: false });
+  const curator = createPiMemoryCurator({
+    provider: 'opencode-go',
+    model: 'deepseek-v4.1-flash',
+    runtime,
+  });
+  await assert.rejects(
+    curator.curate({ task: 'review', instructions: 'Check the synthetic action', input: {} }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /\breview\b/);
+      assert.ok(error.message.includes('opencode-go/deepseek-v4.1-flash'));
+      assert.ok(error.message.includes('Model Not Exist'));
+      const detail = error.message.split(' The provider said: ')[1];
+      assert.equal(detail?.length, 300);
+      return true;
+    },
+  );
+  assert.equal(calls, 3);
+  assert.ok(sessions[0]);
+  assert.equal(new Set(sessions).size, 1);
 });
 
 test('an unavailable classification resolver never loads a fallback model', async () => {
@@ -5708,6 +6064,8 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   let promptTokens = 110;
   let native = true;
   let rejectNative = false;
+  let redirectNative = false;
+  let redirects = 0;
   let contractRejections = 0;
   let smallCompanion = false;
   let jsonReply = false;
@@ -5716,6 +6074,11 @@ test('native audio reaches the selected Pi model with tools and survives a reope
     const parts: Buffer[] = [];
     request.on('data', (part) => parts.push(part));
     request.on('end', () => {
+      if (request.url === '/moved/v1/chat/completions') {
+        redirects++;
+        response.writeHead(307, { location: '/v1/chat/completions' });
+        return response.end();
+      }
       bodies.push(JSON.parse(Buffer.concat(parts).toString()));
       const body = bodies.at(-1)!;
       if (
@@ -5853,7 +6216,7 @@ test('native audio reaches the selected Pi model with tools and survives a reope
           ...definition,
           spec: {
             ...definition.spec,
-            baseUrl: `http://127.0.0.1:${address.port}/v1`,
+            baseUrl: `http://127.0.0.1:${address.port}/${redirectNative ? 'moved/v1' : 'v1'}`,
             contextWindow: 128000,
           },
         }
@@ -6223,7 +6586,24 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   assert.ok(failedRequests.every((body) => body.model === 'gpt-audio-1.5'));
   assert.ok(failedRequests.every((body) => audio(body).length > 0));
   assert.equal(calls, 1);
-  assert.ok(events.some((event) => event.type === 'error' && event.message.includes('503')));
+  assert.ok(
+    events.some(
+      (event) =>
+        event.type === 'error' &&
+        event.message.includes('openai / gpt-audio-1.5:') &&
+        event.message.includes('503'),
+    ),
+  );
+  redirectNative = true;
+  const moved = await open(fakeExecution(randomUUID()));
+  const beforeRedirect = bodies.length;
+  await moved.prompt('A redirect must not send the recording to another path.', [], {
+    files: [{ id, mimeType: 'audio/wav' }],
+    fallback: 'Synthetic redirect transcript.',
+  });
+  await moved.dispose();
+  assert.ok(redirects > 0);
+  assert.equal(bodies.length, beforeRedirect);
 });
 
 test('the runtime sends a recording caption natively while retaining its trusted transcript and text-only fallback', async (t) => {

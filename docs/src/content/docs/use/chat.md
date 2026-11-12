@@ -103,10 +103,11 @@ The message box stays open while Nod works, so you can send another message at a
 | The line says                                  | What it means                                                                                                                                                             |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A rotating word, such as **Joining the dots…** | Nod is working but hasn't named a step yet. It appears the moment you send; Nod may be preparing your request or waiting on your model. Screen readers hear **Working…**. |
-| A step, such as "Comparing flight prices"      | What Nod is doing now. A website or app after it, such as **· skyscanner.net**, is where it's working.                                                                    |
+| A step, such as "Comparing flight prices"      | What Nod is doing now. A label after it, such as **· skyscanner.net**, names the app, website, MCP server, or local files involved.                                       |
+| **Using Gmail** or **Using Slack**             | A tool is active without a more specific step. Nod names the app, website, MCP server, or local files it is using.                                                        |
 | **· 3 min** at the end                         | Nothing new has happened for that long. Slow models and websites can take minutes; **Stop** ends it.                                                                      |
 
-The line describes the work, never tool names. It never counts seconds or guesses when Nod will finish. When Nod answers, the answer takes its place. It clears when Nod asks you something or stops, and hides while the app reconnects. A failed send clears the line and shows an error. Steps come from Nod's own short descriptions and, when your model shares a summary of its reasoning, from that summary's heading, such as "Researching Málaga travel ideas".
+The line describes the work instead of showing internal tool names. Its **Using ...** fallback shows the active tool's label when Nod hasn't named a step. It never counts seconds or guesses when Nod will finish. When Nod answers, the answer takes its place. It clears when Nod asks you something or stops, and hides while the app reconnects. A failed send clears the line and shows an error. Steps come from Nod's own short descriptions and, when your model shares a summary of its reasoning, from that summary's heading, such as "Researching Málaga travel ideas".
 
 The line follows only the work on your messages. A task shows its progress on its own card, so a step never appears twice. While anything works, the message box says **Send another message to Nod…**. While a task works, a small dot pulses just above the top-right corner of the message box. A task that needs your answer shows a slightly larger pink dot with a question mark. Hover over a dot or focus it to see which task it is. Select it to open the task's card with a soft highlight: if the card is already on screen, the chat stays where it is; otherwise the chat scrolls to it.
 
@@ -126,7 +127,7 @@ In the sidebar, the Chat item shows a moving dot while Nod works and a solid dot
 
 - **typing…** shows while Nod works on something you asked for, and stays on during slow steps.
 - A message you send while Nod works gets a 👀 reaction until Nod reads it.
-- Telegram also shows a quoted progress section in your language when its first message [supports live updates](/use/channels/#while-nod-works). A longer request has one short opening message so the progress has a place to update; a saved task uses its start message.
+- Telegram also shows a quoted progress section when its first message [supports live updates](/use/channels/#while-nod-works). Named steps use your conversation language; the **Using** fallback is in English. A longer request has one short opening message so the progress has a place to update; a saved task uses its start message.
 - WhatsApp Business Cloud connections stop typing when the 24-hour reply window closes. QR connections have no such limit.
 
 None of these send a notification. See [Message cadence](/how-it-works/agent-runtime/#message-cadence). A file Nod shares is attached to its next answer, or sent on its own when none follows.
@@ -181,7 +182,11 @@ A request you stop, or one you started whose model request fails at the provider
 
 You can also tell Nod in the main chat, from any app, for example "stop everything" or "stop the flight search". Nod stops every task, scheduled run and app check, or only the task you name, and tells you what it stopped. Nod reads your message after its current step, or after its current reply if you write from another app. For an immediate stop, use the Stop control, or `/stop` in Telegram.
 
-When a run you started stops on an error or on your spending limit, Nod tells you what failed in the main chat or as a reply to the affected task. If an agent model request fails with a recognizable quota or rate limit, Nod gives you a short explanation instead of the provider's raw response. For a temporary limit, Nod includes an approximate wait time when it can read a provider retry delay of up to two minutes. For an account or workspace usage cap, wait for the limit to reset or check its settings; a workspace admin may need to raise it. Other errors still include safe details, such as a rejected model key. Nod's next turn knows what went wrong. If Nod restarts during a run you started, that run fails and Nod posts an interruption notice. Nod never repeats failed or interrupted work on its own. Saved tasks and waiting questions survive a restart.
+When a run you started stops on an error or on your spending limit, Nod tells you what failed in the main chat or as a reply to the affected task. For a failed agent model request, Nod shows the provider and model that handled it, the service's specific reason and status, and useful details after removing secrets.
+
+If the service reports an oversized tokens-per-minute request, the error keeps its requested and allowed token counts and suggests shortening the conversation or choosing a model with a higher limit. If a daily quota error includes a retry delay, Nod gives you an approximate wait time. For an account or workspace usage cap, wait for the limit to reset or check its settings; a workspace admin may need to raise it. Nod's next turn knows what went wrong.
+
+If Nod restarts during a run you started, that run fails and Nod posts an interruption notice. Nod never repeats failed or interrupted work on its own. Saved tasks and waiting questions survive a restart.
 
 If Nod may have sent or changed something, verify the result yourself or ask Nod to inspect it before continuing. Don't make a new attempt while the result is unclear.
 
@@ -195,7 +200,7 @@ On a wide screen, move your pointer near the sidebar's right edge to reveal its 
 
 ## Desktop shortcuts
 
-In the desktop app, hold Command on a Mac or Ctrl on Windows and Linux to reveal the navigation tooltips. These are the same tooltips shown on hover. Use that key with 1–6 for Chat, Scheduled, Apps, Channels, Usage and Vault; B expands or collapses the sidebar, and comma opens Settings. Web browsers keep their own shortcuts.
+In the desktop app, hold Command on a Mac or Ctrl on Windows and Linux to reveal the navigation tooltips. These are the same tooltips shown on hover. Use that key with 1–6 for Chat, Scheduled, Apps, Channels, Usage and Vault, including while the chat message box is focused; B expands or collapses the sidebar, and comma opens Settings. Web browsers keep their own shortcuts.
 
 ## React to messages
 

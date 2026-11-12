@@ -2016,26 +2016,68 @@ test(
       });
 
       await t.test('a task resumes its own session when its next check is due', async (t) => {
-        const id = randomUUID();
-        const turnId = randomUUID();
-        await db.pool.query(
-          "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,background) VALUES($1,$2,$3,$4,'task','Synthetic tracked work','running',true)",
-          [turnId, ownerId, threadId, id],
-        );
-        await db.pool.query(
-          "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text,applied_revision) VALUES($1,$2,$3,$1,'Synthetic tracked work','Synthetic reply arrived','Waiting',1)",
-          [id, ownerId, turnId],
-        );
-        await db.pool.query('UPDATE turns SET task_id=$2 WHERE id=$1', [turnId, id]);
+        const previousObserver = inspectObserver;
+        const prompt = 'Track a synthetic reply after connecting its source.';
+        let task: Task | undefined;
+        let due = '';
+        let takeUpdate = Promise.resolve();
+        inspectObserver = async (context) => {
+          if (context.prompt === prompt && !context.background) {
+            task = (await context.task!({
+              action: 'start',
+              title: 'Synthetic tracked work',
+              message: 'Checking the synthetic reply.',
+              doneWhen: 'Synthetic reply arrived',
+              now: 'Connect the synthetic source.',
+            })) as Task;
+            return { status: 'succeeded' };
+          }
+          if (context.taskContext?.id !== task?.id || !task) return;
+          if (context.prompt === prompt)
+            return { status: 'waiting_user', message: 'Connect the synthetic source.' };
+          if (context.prompt.startsWith('The Synthetic connection is ready.')) {
+            due = new Date(Date.now() + 1_000).toISOString();
+            await context.task!({ action: 'update', id: task.id, nextCheck: due });
+          }
+          if (context.prompt.startsWith('Synthetic continued task')) {
+            await takeUpdate;
+            assert.equal((await context.takeMessages!())[0]?.text, 'Synthetic task update');
+            due = new Date(Date.now() + 1_000).toISOString();
+            await context.task!({ action: 'update', id: task.id, nextCheck: due });
+          }
+          return { status: 'succeeded' };
+        };
+        t.after(() => {
+          inspectObserver = previousObserver;
+        });
+        const request = await userMessages.submit(prompt);
+        await waitFor(settled(request.turnId));
+        assert.ok(task);
+        const id = task.id;
+        const connectionQuestion = (
+          await db.pool.query<{ id: string }>(
+            "SELECT id FROM turns WHERE session_id=$1 AND source='task'",
+            [id],
+          )
+        ).rows[0]!.id;
+        await waitFor(async () => (await turnStatus(connectionQuestion)) === 'waiting');
         t.after(async () => {
+          await db.pool.query(
+            "UPDATE turns SET status='cancelled',finished_at=now() WHERE session_id=$1 AND status='waiting'",
+            [id],
+          );
           await db.pool.query('UPDATE turns SET task_id=NULL WHERE session_id=$1', [id]);
           await db.pool.query('DELETE FROM tasks WHERE id=$1', [id]);
         });
-        const due = new Date(Date.now() + 1_000).toISOString();
-        await tasks.execute({ turnId, threadId }, { action: 'update', id, nextCheck: due }, null);
-        await db.pool.query("UPDATE turns SET status='succeeded',finished_at=now() WHERE id=$1", [
-          turnId,
-        ]);
+        await thread.resumeAfterConnection(connectionQuestion, 'Synthetic');
+        const turnId = (
+          await db.pool.query<{ id: string }>('SELECT id FROM turns WHERE source_id=$1', [
+            `connection:${connectionQuestion}`,
+          ])
+        ).rows[0]!.id;
+        await waitFor(settled(turnId));
+        assert.equal(await turnStatus(connectionQuestion), 'waiting');
+        assert.equal(await turnStatus(turnId), 'succeeded');
         assert.equal((await tasks.read()).find((task) => task.id === id)?.status, 'scheduled');
         const check = async () =>
           (
@@ -2048,6 +2090,44 @@ test(
         const resumed = (await check())!;
         assert.equal(resumed.parent_turn_id, turnId);
         await waitFor(settled(resumed.id));
+        await Promise.all([tasks.resumeDue(threadId), tasks.resumeDue(threadId)]);
+        assert.equal(
+          (
+            await db.pool.query(
+              "SELECT count(*)::int AS n FROM turns WHERE session_id=$1 AND source_id LIKE 'task-check:%'",
+              [id],
+            )
+          ).rows[0].n,
+          1,
+        );
+        let releaseUpdate!: () => void;
+        takeUpdate = new Promise<void>((resolve) => {
+          releaseUpdate = resolve;
+        });
+        t.after(() => releaseUpdate());
+        await thread.resumeTurn(
+          resumed.id,
+          `synthetic-continued:${id}`,
+          'Synthetic continued task',
+        );
+        const continuing = (
+          await db.pool.query<{ id: string }>('SELECT id FROM turns WHERE source_id=$1', [
+            `synthetic-continued:${id}`,
+          ])
+        ).rows[0]!.id;
+        await waitFor(() => Boolean(ran(continuing)));
+        const update = await userMessages.submit('Synthetic task update', [], {
+          replyToMessageId: task.messageId!,
+        });
+        releaseUpdate();
+        await waitFor(settled(continuing));
+        assert.equal(
+          (await db.pool.query('SELECT started_at FROM turns WHERE id=$1', [update.turnId])).rows[0]
+            .started_at,
+          null,
+        );
+        await waitFor(async () => (await check())?.parent_turn_id === continuing, 20_000);
+        await waitFor(settled((await check())!.id));
         const started = randomUUID();
         const startedTurn = randomUUID();
         await db.pool.query(
@@ -2077,6 +2157,188 @@ test(
         ]);
         await tasks.resumeDue(threadId);
         await waitFor(async () => (await followUps()) === 1, 20_000);
+        const asking = randomUUID();
+        const askingTurn = randomUUID();
+        await db.pool.query(
+          "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,waiting_reason,background,started_at) VALUES($1,$2,$3,$4,'task','Synthetic waiting work','waiting','approval',true,now())",
+          [askingTurn, ownerId, threadId, asking],
+        );
+        await db.pool.query(
+          "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text,applied_revision,next_check) VALUES($1,$2,$3,$1,'Synthetic waiting work','Synthetic reply arrived','Waiting',1,date_trunc('milliseconds',now())-interval '1 minute')",
+          [asking, ownerId, askingTurn],
+        );
+        t.after(async () => {
+          await db.pool.query(
+            "UPDATE turns SET status='cancelled',finished_at=now() WHERE id=$1 AND status='waiting'",
+            [askingTurn],
+          );
+          await db.pool.query('DELETE FROM tasks WHERE id=$1', [asking]);
+        });
+        await tasks.resumeDue(threadId);
+        assert.equal(
+          (
+            await db.pool.query(
+              "SELECT count(*)::int AS n FROM turns WHERE session_id=$1 AND source='resume'",
+              [asking],
+            )
+          ).rows[0].n,
+          0,
+        );
+      });
+
+      await t.test('task checks read committed changes before they start work', async (t) => {
+        await waitFor(settledThread);
+        const previousChecks = dependencies.taskChecks;
+        dependencies.taskChecks = undefined;
+        t.after(() => {
+          dependencies.taskChecks = previousChecks;
+        });
+        const applicationName = `synthetic-task-check-${randomUUID()}`;
+        const checkPool = new pg.Pool({
+          ...db.pool.options,
+          application_name: applicationName,
+          max: 1,
+        });
+        const checker = createTasks({ pool: checkPool, ownerId });
+        t.after(() => checkPool.end());
+        for (const change of ['stop', 'owner input', 'question', 'pause']) {
+          await t.test(change, async () => {
+            const id = randomUUID();
+            const turnId = randomUUID();
+            await db.pool.query(
+              "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,background,started_at,finished_at) VALUES($1,$2,$3,$4,'task','Synthetic tracked work','succeeded',true,now()-interval '1 minute',now())",
+              [turnId, ownerId, threadId, id],
+            );
+            await db.pool.query(
+              "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text,activity_key,next_check) VALUES($1,$2,$3,$1,'Synthetic tracked work','Synthetic reply arrived','Waiting',$4,date_trunc('milliseconds',now())-interval '1 minute')",
+              [id, ownerId, turnId, change === 'pause' ? `${threadId}:${id}` : null],
+            );
+            await db.pool.query('UPDATE turns SET task_id=$1 WHERE id=$2', [id, turnId]);
+            const blocker = await db.pool.connect();
+            let checking: Promise<void> | undefined;
+            try {
+              await blocker.query('BEGIN');
+              await thread.lockThread(blocker);
+              if (change === 'stop') await thread.cancelTurns(blocker, threadId, { sessionId: id });
+              else if (change === 'pause')
+                await blocker.query(
+                  'UPDATE preferences SET proactive_paused=true WHERE owner_id=$1',
+                  [ownerId],
+                );
+              else {
+                const next = await thread.enqueueTurn('Synthetic owner update', {
+                  source: 'task',
+                  sessionId: id,
+                  parentTurnId: turnId,
+                  background: true,
+                  client: blocker,
+                });
+                if (change === 'question')
+                  await blocker.query(
+                    "UPDATE turns SET status='waiting',waiting_reason='question',started_at=now(),finished_at=now() WHERE id=$1",
+                    [next],
+                  );
+              }
+              checking = checker.resumeDue(threadId);
+              await waitFor(async () =>
+                Boolean(
+                  (
+                    await admin.query(
+                      "SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock'",
+                      [applicationName],
+                    )
+                  ).rowCount,
+                ),
+              );
+              await blocker.query('COMMIT');
+              await checking;
+              assert.equal(
+                (
+                  await db.pool.query(
+                    "SELECT count(*)::int AS n FROM turns WHERE session_id=$1 AND source_id LIKE 'task-check:%'",
+                    [id],
+                  )
+                ).rows[0].n,
+                0,
+              );
+              assert.ok(
+                (await db.pool.query('SELECT next_check FROM tasks WHERE id=$1', [id])).rows[0]
+                  .next_check,
+              );
+            } finally {
+              await blocker.query('ROLLBACK');
+              blocker.release();
+              await checking?.catch(() => {});
+              await request('POST', `/api/tasks/${id}/stop`);
+              await db.pool.query('UPDATE turns SET task_id=NULL WHERE session_id=$1', [id]);
+              await db.pool.query('DELETE FROM tasks WHERE id=$1', [id]);
+              await db.pool.query(
+                'UPDATE preferences SET proactive_paused=false WHERE owner_id=$1',
+                [ownerId],
+              );
+            }
+          });
+        }
+      });
+
+      await t.test('a failed task check enqueue keeps its planned time', async (t) => {
+        await waitFor(settledThread);
+        const previousChecks = dependencies.taskChecks;
+        dependencies.taskChecks = undefined;
+        t.after(() => {
+          dependencies.taskChecks = previousChecks;
+        });
+        const id = randomUUID();
+        const turnId = randomUUID();
+        await db.pool.query(
+          "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,background,started_at,finished_at) VALUES($1,$2,$3,$4,'task','Synthetic tracked work','succeeded',true,now(),now())",
+          [turnId, ownerId, threadId, id],
+        );
+        await db.pool.query(
+          "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text,next_check) VALUES($1,$2,$3,$1,'Synthetic tracked work','Synthetic reply arrived','Waiting',date_trunc('milliseconds',now())-interval '1 minute')",
+          [id, ownerId, turnId],
+        );
+        t.after(async () => {
+          await request('POST', `/api/tasks/${id}/stop`);
+          await db.pool.query('UPDATE turns SET task_id=NULL WHERE session_id=$1', [id]);
+          await db.pool.query('DELETE FROM tasks WHERE id=$1', [id]);
+        });
+        const due = (
+          await db.pool.query<{ next_check: Date }>('SELECT next_check FROM tasks WHERE id=$1', [
+            id,
+          ])
+        ).rows[0]!.next_check;
+        const send = thread.boss.send.bind(thread.boss);
+        t.mock.method(thread.boss, 'send', async (...args: Parameters<typeof send>) => {
+          if (args[0] === 'thread-drain' && args[2]?.db)
+            throw new Error('Synthetic task check enqueue failed.');
+          return send(...args);
+        });
+        await assert.rejects(tasks.resumeDue(threadId), /Synthetic task check enqueue failed/);
+        assert.deepEqual(
+          (await db.pool.query('SELECT next_check FROM tasks WHERE id=$1', [id])).rows[0]
+            .next_check,
+          due,
+        );
+        assert.equal(
+          (
+            await db.pool.query(
+              "SELECT count(*)::int AS n FROM turns WHERE session_id=$1 AND source_id LIKE 'task-check:%'",
+              [id],
+            )
+          ).rows[0].n,
+          0,
+        );
+        t.mock.restoreAll();
+        await Promise.all([tasks.resumeDue(threadId), tasks.resumeDue(threadId)]);
+        const checks = (
+          await db.pool.query<{ id: string }>(
+            "SELECT id FROM turns WHERE session_id=$1 AND source_id LIKE 'task-check:%'",
+            [id],
+          )
+        ).rows;
+        assert.equal(checks.length, 1);
+        await waitFor(settled(checks[0]!.id));
       });
 
       await t.test('consecutive messages run as turns on the same thread', async (t) => {
@@ -8541,12 +8803,17 @@ test(
       });
 
       await t.test(
-        'model provider limits show concise recovery guidance in failed turns',
+        'model failures retain provider reasons and codes without unrelated response fields',
         async () => {
           const previousPresenter = presentInterruption;
-          presentInterruption = async () => '';
+          const presentedFailures: string[] = [];
+          presentInterruption = async (_threadId, input) => {
+            if (input.kind === 'failed') presentedFailures.push(input.error);
+            return '';
+          };
+          const prefix = 'The model request failed: openrouter / anthropic/fixture-model: ';
           const nestedQuota =
-            'The model request failed: ' +
+            prefix +
             JSON.stringify({
               error: {
                 code: 429,
@@ -8569,24 +8836,78 @@ test(
               },
             });
           const usageCap = (error: Record<string, unknown>) =>
-            'The model request failed: 429 Too Many Requests: ' +
+            prefix +
+            '429 Too Many Requests: ' +
             JSON.stringify({ error: { ...error, detail: 'synthetic-private-provider-detail' } });
           const cases: Array<{
             prompt: string;
             error: string;
-            guidance?: RegExp;
-            terminal?: 'account' | 'workplace';
+            reason: RegExp;
+            code?: RegExp;
+            advice?: RegExp;
           }> = [
-            { prompt: 'model-gemini-quota-fixture', error: nestedQuota, guidance: /quota/i },
+            {
+              prompt: 'model-gemini-quota-fixture',
+              error: nestedQuota,
+              reason: /You exceeded your current quota\. Please retry in 14s\./,
+              code: /HTTP 429.*GenerateContentInputTokensPerModelPerMinute-FreeTier/,
+            },
+            {
+              prompt: 'model-oversized-tpm-fixture',
+              error:
+                prefix +
+                '413 ' +
+                JSON.stringify({
+                  error: {
+                    type: 'tokens',
+                    code: 'rate_limit_exceeded',
+                    message:
+                      'Request too large for fixture-model on tokens per minute (TPM): Limit 6000, Requested 12000; please reduce your message size.',
+                    detail: 'synthetic-private-provider-detail',
+                  },
+                }),
+              reason: /Request too large.*Limit 6000, Requested 12000/,
+              code: /rate_limit_exceeded/,
+              advice:
+                /Shorten the conversation or choose a model with a higher tokens-per-minute limit\./,
+            },
+            {
+              prompt: 'model-daily-quota-fixture',
+              error:
+                prefix +
+                JSON.stringify({
+                  error: {
+                    code: 429,
+                    status: 'Too Many Requests',
+                    message: {
+                      error: {
+                        code: 429,
+                        status: 'RESOURCE_EXHAUSTED',
+                        message: 'You exceeded your current quota. Please retry in 23h0m0s.',
+                        details: [
+                          {
+                            quotaId: 'GenerateRequestsPerDay-FreeTier',
+                            retryDelay: '82800s',
+                            detail: 'synthetic-private-provider-detail',
+                          },
+                        ],
+                      },
+                    },
+                  },
+                }),
+              reason: /You exceeded your current quota\. Please retry in 23h0m0s\./,
+              code: /HTTP 429.*GenerateRequestsPerDay-FreeTier.*retryDelay: 82800s/,
+              advice: /Try again in about 23 hours\./,
+            },
             {
               prompt: 'model-plain-rate-limit-fixture',
-              error: 'The model request failed: 429 Too Many Requests',
-              guidance: /rate limit/i,
+              error: prefix + '429 Too Many Requests',
+              reason: /429 Too Many Requests/,
             },
             {
               prompt: 'model-rate-limit-code-fixture',
-              error: 'The model request failed: rate_limit_error',
-              guidance: /rate limit/i,
+              error: prefix + 'rate_limit_error',
+              reason: /rate_limit_error/,
             },
             {
               prompt: 'model-go-usage-cap-fixture',
@@ -8594,8 +8915,8 @@ test(
                 type: 'GoUsageLimitError',
                 message: 'Monthly usage limit reached',
               }),
-              guidance: /quota/i,
-              terminal: 'account',
+              reason: /Monthly usage limit reached/,
+              code: /GoUsageLimitError/,
             },
             {
               prompt: 'model-free-usage-cap-fixture',
@@ -8603,8 +8924,8 @@ test(
                 type: 'FreeUsageLimitError',
                 message: 'Free usage allowance exhausted',
               }),
-              guidance: /quota/i,
-              terminal: 'account',
+              reason: /Free usage allowance exhausted/,
+              code: /FreeUsageLimitError/,
             },
             {
               prompt: 'model-subscription-usage-cap-fixture',
@@ -8612,8 +8933,8 @@ test(
                 code: 'subscription_sharing_usage_limit_exceeded',
                 message: 'Shared subscription allowance exhausted',
               }),
-              guidance: /quota/i,
-              terminal: 'account',
+              reason: /Shared subscription allowance exhausted/,
+              code: /subscription_sharing_usage_limit_exceeded/,
             },
             {
               prompt: 'model-workplace-usage-cap-fixture',
@@ -8621,19 +8942,97 @@ test(
                 code: 'subscription_sharing_workplace_individual_usage_limit_exceeded',
                 message: 'Workspace allowance exhausted',
               }),
-              guidance: /usage limit/i,
-              terminal: 'workplace',
+              reason: /Workspace allowance exhausted/,
+              code: /subscription_sharing_workplace_individual_usage_limit_exceeded/,
             },
             {
               prompt: 'model-zai-usage-cap-fixture',
               error: usageCap({ code: 1308, message: 'Plan allowance exhausted' }),
-              guidance: /quota/i,
-              terminal: 'account',
+              reason: /Plan allowance exhausted/,
+              code: /1308/,
+            },
+            {
+              prompt: 'model-upstream-quota-fixture',
+              error:
+                prefix +
+                JSON.stringify({
+                  error: {
+                    code: 429,
+                    message: 'Provider returned error',
+                    metadata: {
+                      provider_name: 'Anthropic',
+                      raw: JSON.stringify({
+                        error: {
+                          type: 'rate_limit_error',
+                          message: 'Input token limit reached. Please retry in 60s.',
+                        },
+                        detail: 'synthetic-private-provider-detail',
+                      }),
+                    },
+                  },
+                }),
+              reason: /Input token limit reached\. Please retry in 60s\./,
+              code: /provider_name: Anthropic.*rate_limit_error/,
+            },
+            {
+              prompt: 'model-key-credit-limit-fixture',
+              error:
+                prefix +
+                JSON.stringify({
+                  error: {
+                    code: 402,
+                    message: 'The API key has reached its daily credit limit.',
+                    metadata: {
+                      limit_source: 'openrouter_key_limit',
+                      reason: 'key_limit_exceeded',
+                      remedy_hint: 'Raise the key limit or wait for its daily reset.',
+                      detail: 'synthetic-private-provider-detail',
+                    },
+                  },
+                }),
+              reason: /The API key has reached its daily credit limit\./,
+              code: /HTTP 402.*limit_source: openrouter_key_limit.*key_limit_exceeded.*Raise the key limit/,
+            },
+            {
+              prompt: 'model-request-credit-limit-fixture',
+              error:
+                prefix +
+                JSON.stringify({
+                  error: {
+                    code: 402,
+                    message:
+                      'This request requires more credits, or fewer max_tokens. You requested 65536 tokens, but can only afford 2048.',
+                    metadata: {
+                      limit_source: 'openrouter_credits',
+                      reason: 'weight_exceeds_budget',
+                    },
+                  },
+                }),
+              reason: /You requested 65536 tokens, but can only afford 2048\./,
+              code: /HTTP 402.*weight_exceeds_budget/,
+            },
+            {
+              prompt: 'model-plain-quota-fixture',
+              error: prefix + 'quota_exceeded',
+              reason: /quota_exceeded/,
+            },
+            {
+              prompt: 'model-secret-error-fixture',
+              error:
+                prefix +
+                JSON.stringify({
+                  error: {
+                    code: 401,
+                    message: 'Invalid credential: password=synthetic-fixture-secret',
+                  },
+                }),
+              reason: /Invalid credential: \[redacted\]/,
+              code: /HTTP 401/,
             },
             {
               prompt: 'model-unavailable-fixture',
-              error: 'The model request failed: 503 Service Unavailable',
-              guidance: undefined,
+              error: prefix + '503 Service Unavailable',
+              reason: /503 Service Unavailable/,
             },
           ];
           try {
@@ -8663,33 +9062,19 @@ test(
                 )
               ).rows[0].text as string;
               assert.equal(turn.status, 'failed');
+              assert.equal(presentedFailures.at(-1), turn.error);
               assert.ok(shown.endsWith(turn.error));
-              if (item.guidance) {
-                assert.ok(turn.error.length < 240);
-                assert.match(turn.error, item.guidance);
-                if (item.prompt === 'model-gemini-quota-fixture') {
-                  assert.match(turn.error, /HTTP 429/);
-                  assert.match(turn.error, /14 seconds/);
-                }
-                if (item.terminal) {
-                  assert.match(turn.error, /HTTP 429/);
-                  assert.doesNotMatch(
-                    turn.error,
-                    /try again shortly|try again in about \d+ seconds/i,
-                  );
-                  if (item.terminal === 'workplace') {
-                    assert.match(turn.error, /admin/i);
-                    assert.doesNotMatch(turn.error, /billing/i);
-                  } else assert.match(turn.error, /check|reset|billing|upgrade|enable/i);
-                } else assert.match(turn.error, /wait|retry|try again/i);
-                for (const text of [turn.error, shown])
-                  assert.doesNotMatch(
-                    text,
-                    /RESOURCE_EXHAUSTED|quotaMetric|synthetic-private-provider-detail/,
-                  );
-              } else {
-                assert.equal(turn.error, item.error);
-              }
+              assert.ok(turn.error.length <= 2000);
+              assert.ok(turn.error.startsWith(prefix));
+              assert.match(turn.error, item.reason);
+              if (item.code) assert.match(turn.error, item.code);
+              if (item.advice) assert.match(turn.error, item.advice);
+              for (const text of [turn.error, shown])
+                assert.doesNotMatch(
+                  text,
+                  /synthetic-private-provider-detail|synthetic-fixture-secret|usage limits and billing/,
+                );
+              if (!item.error.includes('{')) assert.equal(turn.error, item.error);
             }
           } finally {
             for (const item of cases) modelErrors.delete(item.prompt);
@@ -10586,7 +10971,7 @@ test('a first task stays open after its chat turn ends and follows its own saved
 });
 
 test(
-  'the live line drops a step from before a follow-up and keeps work Nod started apart',
+  'the live line uses an active tool label, drops old steps, and keeps work Nod started apart',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async () => {
     const schema = `test_activity_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
@@ -10634,14 +11019,48 @@ test(
       assert.deepEqual(item.receivedMessageIds, [message]);
       assert.equal(item.doing, 'model');
       assert.ok(Date.parse(item.quietSince) <= Date.now() - 3 * 60_000);
+      const firstCall = randomUUID();
       await pool.query(
-        "INSERT INTO turn_events(turn_id,type,summary,site,call_id) VALUES($1,'tool_start','Open page','example.test',$2)",
-        [chat, randomUUID()],
+        "INSERT INTO turn_events(turn_id,type,summary,site,call_id,created_at) VALUES($1,'tool_start','Open page','example.test',$2,now()-interval '3 seconds')",
+        [chat, firstCall],
       );
       item = await live();
       assert.equal(item.doing, 'tool');
       assert.equal(item.site, 'example.test');
       assert.ok(Date.parse(item.quietSince) > Date.now() - 60_000);
+      const secondCall = randomUUID();
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,site,call_id,created_at) VALUES($1,'tool_start','Read app','another.example',$2,now()-interval '2 seconds')",
+        [chat, secondCall],
+      );
+      assert.equal((await live()).site, 'another.example');
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,site,call_id,created_at) VALUES($1,'tool_complete','Read app','another.example',$2,now()-interval '1 second')",
+        [chat, secondCall],
+      );
+      item = await live();
+      assert.equal(item.doing, 'tool');
+      assert.equal(item.site, 'example.test');
+      const unlabeledCall = randomUUID();
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,call_id) VALUES($1,'tool_start','Wait for result',$2)",
+        [chat, unlabeledCall],
+      );
+      assert.equal((await live()).site, 'example.test');
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,site,call_id) VALUES($1,'tool_complete','Open page','example.test',$2)",
+        [chat, firstCall],
+      );
+      item = await live();
+      assert.equal(item.doing, 'tool');
+      assert.equal(item.site, null);
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,call_id) VALUES($1,'tool_complete','Wait for result',$2)",
+        [chat, unlabeledCall],
+      );
+      item = await live();
+      assert.equal(item.doing, 'model');
+      assert.equal(item.site, null);
       await pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [followUp]);
       await pool.query("INSERT INTO turn_events(turn_id,type) VALUES($1,'steered')", [chat]);
       item = await live();

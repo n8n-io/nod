@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { createRemoteJWKSet, customFetch, jwtVerify } from 'jose';
 import { ModelAuthError, ModelWorkspaceSelectionError } from '../../ports/models.ts';
 import { ElevenLabsConnectionError, readElevenLabsVoices } from '../elevenlabs/speech.ts';
+import { openAIBaseUrl, openAIRequestError } from '../openai/api.ts';
 import type {
   ModelAccess,
   ModelBackend,
@@ -34,6 +35,7 @@ import type { AgentSessionOptions } from '../../ports/agent.ts';
 import type { ProviderUsageEvent } from '../../ports/provider-usage.ts';
 import { piUsageMetrics } from './usage.ts';
 import { audioUsage, nativeAudioRequest, readsNativeAudio } from './audio.ts';
+import { completeAssistantMessage } from './checkpoint.ts';
 import {
   antLingModel,
   nativeAudioModel,
@@ -158,30 +160,9 @@ function entries<T>(value: unknown, schema: z.ZodType<T>) {
     });
 }
 
-async function modelListRestricted(response: Response) {
-  const reader = response.body?.getReader();
-  if (!reader) return false;
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      bytes += value.length;
-      if (bytes > 4096) return false;
-      chunks.push(value);
-    }
-    const body = z
-      .object({ error: z.union([z.string(), z.object({ message: z.string() })]) })
-      .parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-    const message = typeof body.error === 'string' ? body.error : body.error.message;
-    const scopes = [...message.matchAll(/\bMissing scopes:\s*([\s\S]*?)(?:\.(?=\s|$)|$)/g)];
-    return scopes.length === 1 && scopes[0][1].trim() === 'api.model.read';
-  } catch {
-    return false;
-  } finally {
-    await reader.cancel().catch(() => {});
-  }
+function modelListRestricted(message = '') {
+  const scopes = [...message.matchAll(/\bMissing scopes:\s*([\s\S]*?)(?:\.(?=\s|$)|$)/g)];
+  return scopes.length === 1 && scopes[0][1].trim() === 'api.model.read';
 }
 
 const levels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
@@ -765,10 +746,15 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       if (!modelProviders.includes(provider))
         throw new Error('This model provider is unavailable.');
       if (provider === 'compatible') return endpointCatalog(credential);
-      const local = assistantModels(
+      let local = assistantModels(
         provider === 'ant-ling' ? [antLingModel] : (await runtime()).getModels(provider),
       );
-      if (provider === 'openai' && method === 'api_key') local.push(nativeAudioModel);
+      if (provider === 'openai' && method === 'api_key') {
+        const baseUrl = openAIBaseUrl(
+          credential?.type === 'api_key' ? credential.region : undefined,
+        );
+        local = [...local, nativeAudioModel].map((model) => ({ ...model, baseUrl }));
+      }
       if (!credential) return local.map(definition);
       if (provider === 'amazon-bedrock') return bedrockCatalog(local, credential);
       if (provider === 'google-vertex') return vertexCatalog(local, credential);
@@ -784,7 +770,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
           ? 'https://openrouter.ai/api/v1/models'
           : provider === 'anthropic'
             ? 'https://api.anthropic.com/v1/models?limit=1000'
-            : `${resource}/models`;
+            : `${method === 'api_key' && credential.type === 'api_key' ? openAIBaseUrl(credential.region) : resource}/models`;
       const headers: Record<string, string> =
         provider === 'anthropic'
           ? {
@@ -796,6 +782,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
             }
           : { Authorization: `Bearer ${key}` };
       const accepted = async (response: Response) => {
+        if (provider === 'openai' && method === 'api_key') return response;
         if (provider === 'anthropic' && response.status === 400) {
           await response.body?.cancel();
           throw new AnthropicBadRequest(
@@ -845,14 +832,12 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
           redirect: 'error',
         }),
       );
-      if (
-        provider === 'openai' &&
-        method === 'api_key' &&
-        credential.type === 'api_key' &&
-        response.status === 403 &&
-        (await modelListRestricted(response))
-      )
-        return local.map(definition);
+      if (provider === 'openai' && method === 'api_key' && !response.ok) {
+        const error = await openAIRequestError(response, key);
+        if (response.status === 403 && modelListRestricted(error.reason))
+          return local.map(definition);
+        throw new ModelAuthError(error.message);
+      }
       const data = await jsonResponse(response);
       if (provider !== 'openrouter') {
         const list = entries(
@@ -1141,6 +1126,12 @@ export async function createPiModelRuntime(
     throw new Error('The text companion is unavailable. Refresh the model list.');
   const stream = runtime.streamSimple.bind(runtime);
   runtime.streamSimple = (model, context, options) => {
+    context = {
+      ...context,
+      messages: context.messages.map((message) =>
+        message.role === 'assistant' ? completeAssistantMessage(message) : message,
+      ),
+    };
     const audio = readsNativeAudio(model) ? nativeAudioRequest(context, readAudio) : undefined;
     const target = audio && !audio.active && textModel ? textModel : model;
     const usage = audio?.active ? audioUsage() : undefined;
@@ -1157,13 +1148,15 @@ export async function createPiModelRuntime(
       ...(access.provider === 'compatible' ||
       access.provider === 'radius' ||
       access.provider === 'cloudflare-workers-ai' ||
-      access.provider === 'cloudflare-ai-gateway'
+      access.provider === 'cloudflare-ai-gateway' ||
+      (access.provider === 'openai' && !subscription) ||
+      usage
         ? {
-            fetch: (input: string | URL | Request, init?: RequestInit) => {
+            fetch: async (input: string | URL | Request, init?: RequestInit) => {
               const headers = new Headers(init?.headers);
               if (headers.get('authorization') === `Bearer ${keyless}`)
                 headers.delete('authorization');
-              return (options?.fetch ?? fetch)(input, {
+              const response = await (options?.fetch ?? fetch)(input, {
                 ...init,
                 headers,
                 redirect: 'error',
@@ -1178,13 +1171,8 @@ export async function createPiModelRuntime(
                     }
                   : {}),
               } as RequestInit);
+              return usage ? usage.response(response) : response;
             },
-          }
-        : {}),
-      ...(usage
-        ? {
-            fetch: async (input: string | URL | Request, init?: RequestInit) =>
-              usage.response(await (options?.fetch ?? fetch)(input, init)),
           }
         : {}),
       onPayload: async (payload, target) => {

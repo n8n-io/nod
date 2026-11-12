@@ -375,9 +375,9 @@ test('OpenAI previews preserve configured voices and enforce the selected speech
   ] as const) {
     await t.test(`${model} (${configuredVoice || 'empty default'})`, async () => {
       const provider = createOpenAISpeechProvider({
-        apiKey: async () => {
+        connection: async () => {
           keyRequests++;
-          return 'synthetic-speech-key';
+          return { key: 'synthetic-speech-key' };
         },
         speechModel: model,
         voice: configuredVoice,
@@ -883,7 +883,7 @@ test(
             instructions: 'Check the synthetic owner request.',
             input: { request: 'Read the synthetic record.' },
           }),
-          /memory model is unavailable/i,
+          /action review model is unavailable/i,
         );
         assert.equal(checks.length, 3);
         assert.ok(checks.every((request) => request.model === 'gpt-6.1-sol'));

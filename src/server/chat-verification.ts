@@ -5,8 +5,7 @@ import type { SubmitMessageResponse, VerificationRequest } from '../shared/contr
 import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
 import { lockThread } from './thread.ts';
 import { transaction } from './transaction.ts';
-import { supersededSql } from './turn-chain.ts';
-import { waitingTurnSql } from './vault.ts';
+import { supersededSql, waitingTurnSql } from './turn-chain.ts';
 
 interface VerificationInput {
   clientMessageId: string;

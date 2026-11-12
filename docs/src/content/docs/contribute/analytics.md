@@ -132,6 +132,8 @@ Task-category views answer five further questions: which purposes appear, how th
 
 All insights filter `analytics_schema=v4` and `environment=production` and include internal and external usage. New-event charts have no rows until their capturing release is used and any cohort window matures. Don't mix old schema history into them. The Onboarding answers board shows the five About you distributions, including skipped answers.
 
+Official Mac, Windows and Linux desktop releases use `production`. Pull request and manual preview builds use `development` and stay outside these dashboard filters.
+
 Internal/test exclusions are off for these dashboards. The production sample intentionally includes staff using release builds. A separate project for internal use is deferred; don't describe this mixed sample as external users.
 
 ### Denominators and limits
