@@ -5,6 +5,18 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { linuxReleaseFiles, packageLinuxBundle } from '../scripts/linux-release.mjs';
+import { desktopBuildOptions } from '../scripts/release-tools.mjs';
+
+test('desktop release metadata keeps the trace token and release flag together', () => {
+  const tracesToken = 'a'.repeat(64);
+  assert.deepEqual(desktopBuildOptions({}), {});
+  assert.deepEqual(desktopBuildOptions({ NOD_TRACES_TOKEN: tracesToken }), { tracesToken });
+  assert.deepEqual(
+    desktopBuildOptions({ NOD_TRACES_TOKEN: tracesToken, NOD_RELEASE_BUILD: 'true' }),
+    { tracesToken, release: true },
+  );
+  assert.throws(() => desktopBuildOptions({ NOD_TRACES_TOKEN: 'invalid token' }), /URL-safe/);
+});
 
 test('Linux release parts preserve the bundle and reject missing, changed or unrelated files', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'nod-linux-release-'));

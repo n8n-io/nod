@@ -277,6 +277,8 @@ The Flatpak gets KVM, network, display, audio, notification, tray and Secret Ser
 
 Release builds export a `stable` Flatpak bundle with Flathub as its desktop runtime source. They install it, check the engine, and divide the bundle into release parts. Publication verifies the source, Flatpak commit, each part, and the joined bundle. Linux files use the same release provenance checks as the other platforms. Recovery requires the Linux build to pass and keeps its original files.
 
+Official Linux builds use the `release` environment on `main`. Like Mac and Windows builds, they include its `NOD_TRACES_TOKEN` for opt-in conversation traces and mark the build as a release. Pull request and manual preview builds use the separate `linux-preview` environment. Their build metadata keeps usage data in the development environment.
+
 The published bundles have no Nod update repository and are not on Flathub. Users install the next bundle to update Nod. `flatpak update` can update the shared desktop runtime, but it does not fetch new Nod bundles.
 
 ## Signing limits

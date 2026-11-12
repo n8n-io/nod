@@ -6,7 +6,7 @@ import { packager } from '@electron/packager';
 import { copyEngineSource, verifyApplicationRuntime } from './engine-source.mjs';
 import { copyBundleSource as copy, copyEngineDependencies } from './engine-dependencies.mjs';
 import { buildDesktopUI } from './build-ui.mjs';
-import { hardenElectron, run, sourceRevision } from './release-tools.mjs';
+import { desktopBuildOptions, hardenElectron, run, sourceRevision } from './release-tools.mjs';
 
 if (process.platform !== 'linux' || !['arm64', 'x64'].includes(process.arch))
   throw new Error('This desktop build requires a 64-bit Linux computer.');
@@ -21,6 +21,7 @@ const runtimeAssets = resolve(
   process.env.NOD_RUNTIME_ASSETS || join(root, '.local', 'desktop-runtime-assets'),
 );
 const platform = `linux-${process.arch}`;
+const buildOptions = desktopBuildOptions();
 
 const manifest = JSON.parse(await readFile(join(runtimeAssets, 'manifest.json'), 'utf8'));
 if (manifest.platform !== platform)
@@ -51,6 +52,7 @@ configuration.nodBuild = {
   source: await sourceRevision(),
   builtAt: new Date().toISOString(),
   modified: Boolean(await run('/usr/bin/git', ['-C', root, 'status', '--porcelain'])),
+  ...buildOptions,
 };
 delete configuration.devDependencies;
 delete configuration.scripts;

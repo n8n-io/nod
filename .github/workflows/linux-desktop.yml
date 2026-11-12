@@ -40,6 +40,9 @@ jobs:
     name: Linux x64 Flatpak
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 90
+    environment:
+      name: ${{ github.ref == 'refs/heads/main' && inputs.source != '' && 'release' || 'linux-preview' }}
+      deployment: false
     env:
       NOD_DESKTOP_TARGET: linux-x64
       NOD_RUNTIME_REFRESH: ${{ inputs.runtime_refresh || 'local' }}
@@ -106,6 +109,11 @@ jobs:
           pnpm run desktop:test
           pnpm run build
           node desktop/scripts/prepare-runtime.mjs --prebuilt-images
+      - name: Package the Linux app
+        env:
+          NOD_RELEASE_BUILD: ${{ github.ref == 'refs/heads/main' && inputs.source != '' }}
+          NOD_TRACES_TOKEN: ${{ github.ref == 'refs/heads/main' && inputs.source != '' && secrets.NOD_TRACES_TOKEN || '' }}
+        run: |
           pnpm run desktop:linux:build
       - name: Build and install the Flatpak bundle
         run: |
