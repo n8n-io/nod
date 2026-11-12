@@ -37,7 +37,9 @@ test('confirmation repair keeps action facts fixed and requires a new independen
     action: 'SEND_REPORT',
     args: { recipient: 'recipient@example.test', title: 'Synthetic report' },
   };
-  for (const invalid of ['format', 'facts', 'twice'] as const) {
+  for (const invalid of ['format', 'facts', 'twice', 'format_then_facts'] as const) {
+    const badFormat = invalid === 'format' || invalid === 'format_then_facts';
+    const badSecond = invalid === 'twice' || invalid === 'format_then_facts';
     const calls: Array<Record<string, any>> = [];
     let drafts = 0;
     const communication = createCommunication({
@@ -56,32 +58,30 @@ test('confirmation repair keeps action facts fixed and requires a new independen
         drafts++;
         if (drafts === 1) {
           assert.equal(request.repair, undefined);
-          return invalid === 'format'
+          return badFormat
             ? { message: 'Send the report?' }
             : { text: 'Send Synthetic report to another@example.test?' };
         }
         assert.equal(drafts, 2);
-        if (invalid === 'format') assert.match(request.repair.issue, /text/);
+        if (badFormat) assert.match(request.repair.issue, /text/);
         else {
           assert.equal(request.repair.draft, 'Send Synthetic report to another@example.test?');
           assert.equal(request.repair.issue, 'The recipient does not match args.recipient.');
         }
         return {
-          text:
-            invalid === 'twice'
-              ? 'Send Synthetic report to another@example.test?'
-              : 'Send Synthetic report to recipient@example.test?',
+          text: badSecond
+            ? 'Send Synthetic report to another@example.test?'
+            : 'Send Synthetic report to recipient@example.test?',
         };
       },
     });
     const result = communication.present(null, data);
-    if (invalid === 'twice')
-      await assert.rejects(result, /could not write an accurate confirmation/);
+    if (badSecond) await assert.rejects(result, /could not write an accurate confirmation/);
     else assert.equal(await result, 'Send Synthetic report to recipient@example.test?');
     assert.equal(drafts, 2);
     assert.equal(
       calls.filter(({ purpose }) => purpose === 'confirmation_review').length,
-      invalid === 'format' ? 1 : 2,
+      badFormat ? 1 : 2,
     );
   }
 });
