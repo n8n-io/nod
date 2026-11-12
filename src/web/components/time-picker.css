@@ -73,6 +73,8 @@
 }
 .settings-time-control > .settings-time-segment:focus,
 .settings-time-control > .settings-time-segment:focus-visible,
+.settings-time-control .settings-time-period.button:focus,
+.settings-time-control .settings-time-period.button:focus-visible,
 .settings-time-control .settings-time-toggle.button:focus,
 .settings-time-control .settings-time-toggle.button:focus-visible {
   box-shadow: none;
@@ -92,6 +94,16 @@
   font-size: 14px;
   color: var(--muted-foreground);
   user-select: none;
+}
+.settings-time-control .settings-time-period.button {
+  flex: none;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 2px;
+  border-radius: 5px;
+  color: var(--foreground);
+  font-size: 12px;
 }
 .settings-time-control > .action-menu-root {
   flex: none;
@@ -137,6 +149,12 @@
     width: 44px;
     height: 44px;
     min-height: 44px;
+  }
+  .settings-time-control .settings-time-period.button {
+    min-width: 40px;
+    height: 44px;
+    min-height: 44px;
+    font-size: 14px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

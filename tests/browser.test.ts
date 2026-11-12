@@ -7627,6 +7627,17 @@ test('Settings saves only reviewed draft revisions and retains failed edits', as
           account, open: true, initialTab: 'General', openRequest: 0, onOpenChange() {},
         })));
         await settle();
+        await click(button('12-hour'));
+        assert.equal(preferences.hourCycle, 'h12');
+        assert.equal(document.querySelector('[aria-label="From hours"]').value, '10');
+        assert.equal(document.querySelector('[aria-label="Until hours"]').value, '8');
+        assert.equal(document.querySelector('[aria-label^="From period:"]').textContent.trim().toUpperCase(), 'PM');
+        await click(document.querySelector('[aria-label^="From period:"]'));
+        await save();
+        assert.equal(preferences.quietStart, '10:00');
+        await click(button('24-hour'));
+        assert.equal(document.querySelector('[aria-label="From hours"]').value, '10');
+        assert.equal(document.querySelector('[aria-label^="From period:"]'), null);
         const firstQuietTime = await startDrafts('Synthetic first edit');
         failMemory = true;
         await save();
