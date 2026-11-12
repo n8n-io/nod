@@ -831,6 +831,9 @@ test('local file rules match each platform', () => {
   assert.equal(linux.root('/run/media/ada/Stick/Photos'), false);
   assert.equal(linux.privatePath('/home/ada/nod/.local/keys'), true);
   assert.equal(linux.holdsData('/home/ada/nod'), true);
+  for (const suffix of ['flatpak', 'flatpakref', 'flatpakrepo'])
+    assert.equal(linux.executable(`/home/ada/Downloads/Nod.${suffix}`, 0o644), true);
+  assert.equal(linux.executable('/home/ada/Downloads/notes.txt', 0o644), false);
 });
 
 test('local files stay in home, skip secrets and kept-out folders, and never overwrite', async () => {

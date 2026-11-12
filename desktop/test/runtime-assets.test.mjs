@@ -1746,6 +1746,8 @@ test('all four checked bundles publish together as one regular Nod release', asy
         'nod-x64.zip',
         win.installer.file,
         win.runtime.file,
+        'nod-linux-x64.flatpak.part00',
+        'nod-linux-x64.flatpak.part01',
       ]) {
         await f.writeState({ ...(await f.readState()), corruptDownload: name });
         await assert.rejects(f.invoke('draft-all'), /failed its checksum/);

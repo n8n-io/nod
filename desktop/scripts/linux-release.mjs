@@ -27,12 +27,12 @@ export async function packageLinuxBundle({
 }) {
   if (!Number.isSafeInteger(partBytes) || partBytes <= 0 || partBytes > partLimit)
     throw new Error('The Linux bundle part size is invalid.');
+  const bytes = (await stat(bundle)).size;
+  if (bytes <= 0 || Math.ceil(bytes / partBytes) > 2)
+    throw new Error('The Linux bundle must fit in two release parts.');
   const directory = join(root, 'dist/desktop/linux-x64');
   await rm(directory, { recursive: true, force: true });
   await mkdir(directory, { recursive: true });
-  const bytes = (await stat(bundle)).size;
-  if (bytes <= 0 || Math.ceil(bytes / partBytes) > 32)
-    throw new Error('The Linux bundle size is invalid.');
   const parts = [];
   for (let start = 0; start < bytes; start += partBytes) {
     const file = `${bundleName}.part${String(parts.length).padStart(2, '0')}`;
@@ -73,7 +73,7 @@ export async function linuxReleaseFiles(root, { version, source }) {
     manifest.bundle.bytes <= 0 ||
     !Array.isArray(manifest.parts) ||
     !manifest.parts.length ||
-    manifest.parts.length > 32
+    manifest.parts.length > 2
   )
     throw new Error('The Linux release does not match its source or Flatpak commit.');
   const whole = createHash('sha256');

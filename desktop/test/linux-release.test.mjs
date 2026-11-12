@@ -13,10 +13,10 @@ test('Linux release parts preserve the bundle and reject missing, changed or unr
   const bytes = Buffer.from('Synthetic Flatpak bundle with several parts.');
   await writeFile(bundle, bytes);
   const expected = { version: '0.6.3', source: 'a'.repeat(40) };
-  await packageLinuxBundle({ root, bundle, ...expected, commit: 'b'.repeat(64), partBytes: 10 });
+  await packageLinuxBundle({ root, bundle, ...expected, commit: 'b'.repeat(64), partBytes: 24 });
   const files = await linuxReleaseFiles(root, expected);
   const manifest = JSON.parse(await readFile(files[0], 'utf8'));
-  assert.equal(manifest.parts.length, 5);
+  assert.equal(manifest.parts.length, 2);
   assert.deepEqual(
     Buffer.concat(await Promise.all(files.slice(2).map((file) => readFile(file)))),
     bytes,
@@ -33,10 +33,14 @@ test('Linux release parts preserve the bundle and reject missing, changed or unr
     await assert.rejects(linuxReleaseFiles(root, expected));
   }
   await writeFile(files[0], original);
-  await writeFile(files[2], Buffer.alloc(10));
+  await writeFile(files[2], Buffer.alloc(24));
   await assert.rejects(linuxReleaseFiles(root, expected), /checksum/);
   await rm(files[2]);
   await assert.rejects(linuxReleaseFiles(root, expected), { code: 'ENOENT' });
+  await assert.rejects(
+    packageLinuxBundle({ root, bundle, ...expected, commit: 'b'.repeat(64), partBytes: 10 }),
+    /two release parts/,
+  );
 });
 
 test('Linux download links lead supported desktops to installation instructions', async () => {

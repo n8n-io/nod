@@ -36,7 +36,7 @@ Each release is named **Nod v0.x.x** and links these installers:
 
 Mac ZIP files, runtime packs, checksums, the public certificate, update metadata and the Terminal and PowerShell install scripts stay on the same release as supporting assets.
 
-Linux bundles include the runtime pack. The build divides them into parts of at most 1900 MiB to stay below GitHub's 2 GiB limit per file. `release-linux-x64.json` records the version, source commit, Flatpak commit, sizes, and hashes. `SHA256SUMS-linux-x64` covers every part and the joined bundle. Releases keep at most 30 assets so older installed apps can still read them. See [Linux installation](/get-started/install-desktop/#linux).
+Linux bundles include the runtime pack. The build allows at most two parts, each at most 1900 MiB, to stay below GitHub's 2 GiB limit per file. `release-linux-x64.json` records the version, source commit, Flatpak commit, sizes, and hashes. `SHA256SUMS-linux-x64` covers every part and the joined bundle. Releases keep at most 30 assets so older installed apps can still read them. See [Linux installation](/get-started/install-desktop/#linux).
 
 Desktop builds include the server source, built web files, production dependencies, required runtime files, and licenses. The server runs TypeScript through `tsx`.
 
@@ -254,7 +254,7 @@ This is an ad-hoc signed local app, not a release. It reuses the cached workspac
 
 ## Build a Linux Flatpak
 
-The Linux app is a Flatpak preview with the runtime pack inside it. **Build Linux desktop** builds and checks the x64 package. The desktop release workflow calls it and includes its files in the release. You can also run it separately from **Actions** to get the `desktop-linux-x64` artifact. Changes to the Flatpak manifest, Linux package scripts, or that workflow run the package check on pull requests.
+The Linux app is a Flatpak preview with the runtime pack inside it. **Build Linux desktop** builds and checks the x64 package. The desktop release workflow calls it and includes its files in the release. You can also run it separately from **Actions** to get the `desktop-linux-x64` artifact. Changes to desktop, application, and build inputs run the package check on pull requests.
 
 CI installs the bundle and checks its server imports and native image library inside Flatpak. It does not verify a complete chat, secure storage, desktop integration, or KVM startup. Check those on a Linux desktop before wider distribution. Linux ARM builds are not published.
 
