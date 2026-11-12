@@ -130,6 +130,7 @@ export function BrowserScreen({
                 variant="ghost"
                 size="icon"
                 aria-label="Enlarge browser screen"
+                title="Enlarge browser screen"
                 onClick={() => setEnlarged(true)}
               >
                 <Maximize2 size={16} />

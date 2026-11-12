@@ -772,26 +772,31 @@ export function MessageBubble({
             {!streaming && (
               <>
                 {canOpenMenu && (
-                  <button
-                    ref={menuTrigger}
-                    type="button"
-                    className="message-trigger message-menu-trigger"
-                    aria-label="Message actions"
-                    aria-haspopup="menu"
-                    aria-expanded={
-                      panel?.kind === 'menu' ||
-                      (panel?.kind === 'reactions' && panel.fromMenu === true)
-                    }
-                    onClick={() => openMenu()}
-                    onKeyDown={(event) => {
-                      if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
-                        event.preventDefault();
-                        openMenu();
+                  <Tooltip content="More message actions">
+                    <button
+                      ref={menuTrigger}
+                      type="button"
+                      className="message-trigger message-menu-trigger"
+                      aria-label="More message actions"
+                      aria-haspopup="menu"
+                      aria-expanded={
+                        panel?.kind === 'menu' ||
+                        (panel?.kind === 'reactions' && panel.fromMenu === true)
                       }
-                    }}
-                  >
-                    <Ellipsis size={17} aria-hidden="true" />
-                  </button>
+                      onClick={() => openMenu()}
+                      onKeyDown={(event) => {
+                        if (
+                          event.key === 'ContextMenu' ||
+                          (event.shiftKey && event.key === 'F10')
+                        ) {
+                          event.preventDefault();
+                          openMenu();
+                        }
+                      }}
+                    >
+                      <Ellipsis size={17} aria-hidden="true" />
+                    </button>
+                  </Tooltip>
                 )}
                 <Tooltip content={formatFullDateTime(message.createdAt, dateFormat)}>
                   <time className="message-time" dateTime={message.createdAt}>

@@ -335,7 +335,7 @@ export function AccountSettings({
                   <ActionMenu
                     label="Settings options"
                     trigger={
-                      <Button variant="ghost" size="icon">
+                      <Button variant="ghost" size="icon" title="Settings options">
                         <Ellipsis size={18} />
                       </Button>
                     }

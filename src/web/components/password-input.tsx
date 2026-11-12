@@ -8,6 +8,7 @@ import {
 } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { Tooltip } from './tooltip';
 
 export const PasswordInput = forwardRef<
   HTMLInputElement,
@@ -43,19 +44,21 @@ export const PasswordInput = forwardRef<
         data-secret-input
         data-analytics-private
       />
-      <button
-        type="button"
-        className="button button-ghost button-icon password-input-toggle"
-        disabled={disabled}
-        aria-label={`${visible ? 'Hide' : 'Show'} ${label}`}
-        aria-pressed={visible}
-        onClick={(event) => {
-          event.preventDefault();
-          setVisible((current) => !current);
-        }}
-      >
-        {visible ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
-      </button>
+      <Tooltip content={`${visible ? 'Hide' : 'Show'} ${label}`}>
+        <button
+          type="button"
+          className="button button-ghost button-icon password-input-toggle"
+          disabled={disabled}
+          aria-label={`${visible ? 'Hide' : 'Show'} ${label}`}
+          aria-pressed={visible}
+          onClick={(event) => {
+            event.preventDefault();
+            setVisible((current) => !current);
+          }}
+        >
+          {visible ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
+        </button>
+      </Tooltip>
     </span>
   );
 });

@@ -96,6 +96,7 @@ function Player({ item, selected = false, onDuration }: AudioPlayerProps) {
     setCurrent(element.currentTime);
   };
   const progress = duration ? Math.min(1, current / duration) : 0;
+  const playLabel = failed ? 'Retry audio' : playing ? 'Pause audio' : 'Play audio';
   const bars = peaks ? (
     peaks.map((peak, index) => (
       <rect key={index} x={index * 5} y={24 - peak * 16} width="3" height={peak * 32} rx="1.5" />
@@ -141,39 +142,41 @@ function Player({ item, selected = false, onDuration }: AudioPlayerProps) {
           setFailed(true);
         }}
       />
-      <button
-        type="button"
-        className="audio-player-play"
-        disabled={!visible}
-        aria-label={failed ? 'Retry audio' : playing ? 'Pause audio' : 'Play audio'}
-        onClick={() => {
-          const element = audio.current;
-          if (!element) return;
-          if (failed) {
-            setFailed(false);
-            setCurrent(0);
-            setDuration(0);
-            setPeaks(null);
-            element.load();
-            element.playbackRate = rate;
-          }
-          if (element.paused)
-            void element.play().catch(() => {
-              if (element.error) setFailed(true);
-            });
-          else element.pause();
-        }}
-      >
-        {failed ? (
-          <RotateCcw size={20} aria-hidden="true" />
-        ) : waiting && playing ? (
-          <LoaderCircle size={20} className="audio-player-loading" aria-hidden="true" />
-        ) : playing ? (
-          <Pause size={20} fill="currentColor" aria-hidden="true" />
-        ) : (
-          <Play size={20} solid aria-hidden="true" />
-        )}
-      </button>
+      <Tooltip content={playLabel}>
+        <button
+          type="button"
+          className="audio-player-play"
+          disabled={!visible}
+          aria-label={playLabel}
+          onClick={() => {
+            const element = audio.current;
+            if (!element) return;
+            if (failed) {
+              setFailed(false);
+              setCurrent(0);
+              setDuration(0);
+              setPeaks(null);
+              element.load();
+              element.playbackRate = rate;
+            }
+            if (element.paused)
+              void element.play().catch(() => {
+                if (element.error) setFailed(true);
+              });
+            else element.pause();
+          }}
+        >
+          {failed ? (
+            <RotateCcw size={20} aria-hidden="true" />
+          ) : waiting && playing ? (
+            <LoaderCircle size={20} className="audio-player-loading" aria-hidden="true" />
+          ) : playing ? (
+            <Pause size={20} fill="currentColor" aria-hidden="true" />
+          ) : (
+            <Play size={20} solid aria-hidden="true" />
+          )}
+        </button>
+      </Tooltip>
       <div className="audio-player-track" data-waveform-ready={Boolean(peaks)}>
         <svg viewBox="0 0 320 48" preserveAspectRatio="none" aria-hidden="true">
           <defs>
@@ -228,7 +231,13 @@ function Player({ item, selected = false, onDuration }: AudioPlayerProps) {
             {rate}×
           </button>
         </Tooltip>
-        <Button variant="ghost" size="icon" className="audio-player-download" asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="audio-player-download"
+          title="Download audio"
+          asChild
+        >
           <a href={item.url} download={item.name} aria-label={`Download ${item.name}`}>
             <Download size={16} aria-hidden="true" />
           </a>

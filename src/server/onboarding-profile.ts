@@ -171,7 +171,7 @@ export function createOnboardingProfile(options: {
         if (!saved && enabled)
           return response.code(502).send({
             error:
-              'Nod couldn’t add your choices to analytics. Try again, or continue without sharing them.',
+              'Nod couldn’t confirm your choices reached analytics. Try again, or continue without retrying.',
           });
         shared = saved && enabled && version === options.profileAnalytics.version();
       }

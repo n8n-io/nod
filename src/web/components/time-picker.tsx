@@ -281,6 +281,7 @@ export function TimePicker({
               variant="ghost"
               size="icon"
               className="settings-time-toggle"
+              title={disabled ? undefined : `Choose ${label.toLowerCase()} time`}
               disabled={disabled}
             >
               <ChevronDown size={14} aria-hidden="true" />

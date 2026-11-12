@@ -858,6 +858,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       : canRecord && !hasRecording
         ? 'Press and hold to record\nRight-click for microphone settings'
         : `${microphoneLabel}\nRight-click for microphone settings`);
+  const sendLabel = showStop
+    ? 'Stop all work'
+    : sendingAudio
+      ? 'Sending audio'
+      : hasRecording
+        ? 'Send audio message'
+        : 'Send message';
+  const sendDisabled = showStop
+    ? stopping
+    : !ready ||
+      pendingUploads > 0 ||
+      recordingPending ||
+      sendingAudio ||
+      (!text.trim() && !attachments.length && !hasRecording);
   function retryAudio() {
     recorder.clearError();
     setShowAudioSetup(false);
@@ -897,6 +911,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             size="icon"
             onClick={clearReply}
             aria-label="Cancel reply"
+            title="Cancel reply"
           >
             <X size={16} />
           </Button>
@@ -1022,14 +1037,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                       </button>
                     </Tooltip>
                   )}
-                  <button
-                    type="button"
-                    className="composer-file-remove"
-                    onClick={() => removeAttachment(item)}
-                    aria-label={`Remove ${item.name}`}
-                  >
-                    <X size={14} />
-                  </button>
+                  <Tooltip content={`Remove ${item.name}`}>
+                    <button
+                      type="button"
+                      className="composer-file-remove"
+                      onClick={() => removeAttachment(item)}
+                      aria-label={`Remove ${item.name}`}
+                    >
+                      <X size={14} />
+                    </button>
+                  </Tooltip>
                   {uploading && (
                     <span
                       className={`composer-file-progress${item.state === 'queued' ? ' is-queued' : ''}`}
@@ -1180,25 +1197,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               size="icon"
               className={`send-button${hasRecording ? ' send-audio-button' : ''}`}
               onClick={showStop ? onStop : undefined}
-              title={showStop ? 'Stop Nod' : undefined}
-              aria-label={
-                showStop
-                  ? 'Stop all work'
-                  : sendingAudio
-                    ? 'Sending audio'
-                    : hasRecording
-                      ? 'Send audio message'
-                      : 'Send message'
-              }
-              disabled={
-                showStop
-                  ? stopping
-                  : !ready ||
-                    pendingUploads > 0 ||
-                    recordingPending ||
-                    sendingAudio ||
-                    (!text.trim() && !attachments.length && !hasRecording)
-              }
+              title={sendDisabled ? undefined : sendLabel}
+              aria-label={sendLabel}
+              disabled={sendDisabled}
             >
               {showStop ? (
                 <Square size={14} solid />

@@ -134,13 +134,14 @@ test('OpenAI decision failures keep the region and provider reason without expos
   assert.equal(calls, 1);
 });
 
-test('About records only confirmed shared choices and clears them on failure', async (t) => {
+test('About accepts multiple choices and records only confirmed sharing', async (t) => {
   const { JSDOM } = await import('jsdom');
   const { act, createElement } = await import('react');
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     url: 'https://nod.example.test/onboarding',
   });
   dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+  Object.defineProperty(dom.window, 'matchMedia', { value: () => ({ matches: true }) });
   const globals = {
     window: dom.window,
     document: dom.window.document,
@@ -156,7 +157,7 @@ test('About records only confirmed shared choices and clears them on failure', a
   for (const [key, value] of Object.entries(globals))
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   const { createRoot } = await import('react-dom/client');
-  const root = createRoot(dom.window.document.getElementById('root')!);
+  let root = createRoot(dom.window.document.getElementById('root')!);
   t.after(async () => {
     await act(async () => root.unmount());
     dom.window.close();
@@ -165,23 +166,15 @@ test('About records only confirmed shared choices and clears them on failure', a
       else Reflect.deleteProperty(globalThis, key);
   });
   const { About } = await import('../src/web/pages/onboarding/steps/about.tsx');
-  const { readStored, writeStored } = await import('../src/web/pages/onboarding/storage.ts');
-  const profile = {
-    scope: 'work',
-    roles: ['engineering'],
-    companySize: '11_100',
-    jobs: ['research'],
-  };
-  writeStored('about', {
-    current: 'done',
-    seen: ['scope', 'roles', 'size', 'jobs'],
-    profile,
-    editing: null,
-  });
+  const { readStored } = await import('../src/web/pages/onboarding/storage.ts');
+  const { profileScopes, profileRoles, profileWhoFor, profileCompanySizes, profileJobs } =
+    await import('../src/shared/onboarding.ts');
   let status = 200;
   let shared = true;
-  t.mock.method(globalThis, 'fetch', async (path: RequestInfo | URL) => {
+  const submissions: { roles: string[]; jobs: string[] }[] = [];
+  t.mock.method(globalThis, 'fetch', async (path: RequestInfo | URL, options?: RequestInit) => {
     assert.equal(String(path), '/api/onboarding/profile');
+    submissions.push(JSON.parse(String(options?.body)));
     return Response.json(
       status === 200 ? { ok: true, shared } : { error: 'Could not share your choices.' },
       { status },
@@ -191,7 +184,7 @@ test('About records only confirmed shared choices and clears them on failure', a
   await act(async () =>
     root.render(
       createElement(About, {
-        arrived: 'back',
+        arrived: 'forward',
         quiet: true,
         onNext: () => completed++,
         onBack() {},
@@ -199,32 +192,90 @@ test('About records only confirmed shared choices and clears them on failure', a
       }),
     ),
   );
-  const next = dom.window.document.querySelector<HTMLButtonElement>('.ob-next');
-  assert.ok(next);
-  await act(async () => next.click());
+  const clickChoice = async (options: readonly { id: string }[], id: string) => {
+    const index = options.findIndex((option) => option.id === id);
+    assert.notEqual(index, -1);
+    const button = dom.window.document.querySelectorAll<HTMLButtonElement>(
+      '.ob-chips .ob-chip[aria-pressed]',
+    )[index];
+    assert.ok(button, id);
+    await act(async () => button.click());
+  };
+  const primary = async () => {
+    const button = dom.window.document.querySelector<HTMLButtonElement>('.ob-next');
+    assert.ok(button);
+    await act(async () => button.click());
+  };
+  const remount = async () => {
+    await act(async () => root.unmount());
+    root = createRoot(dom.window.document.getElementById('root')!);
+    await act(async () =>
+      root.render(
+        createElement(About, {
+          arrived: 'back',
+          quiet: true,
+          onNext: () => completed++,
+          onBack() {},
+          usageShared: true,
+        }),
+      ),
+    );
+  };
+  const workRoles = profileRoles.filter((option) => !('personal' in option));
+  await clickChoice(profileScopes, 'work');
+  await clickChoice(workRoles, 'agency');
+  await clickChoice(workRoles, 'engineering');
+  await primary();
+  await clickChoice(profileWhoFor, 'clients');
+  await clickChoice(profileCompanySizes, '2_10');
+  await clickChoice(profileJobs, 'email');
+  await clickChoice(profileJobs, 'meetings');
+  await primary();
+  assert.deepEqual(submissions[0]?.roles, ['agency', 'engineering']);
+  assert.deepEqual(submissions[0]?.jobs, ['email', 'meetings']);
+  assert.equal(submissions.length, 1);
   assert.equal(completed, 1);
-  assert.deepEqual(readStored('about-shared'), {
+  const sharedChoices = {
     onboarding_profile_completed: true,
     onboarding_scope: 'work',
-    onboarding_roles: ['engineering'],
-    onboarding_who_for: 'not_asked',
-    onboarding_company_size: '11_100',
-    onboarding_jobs: ['research'],
-  });
-  shared = false;
-  await act(async () => next.click());
-  assert.equal(readStored('about-shared'), null);
+    onboarding_roles: ['agency', 'engineering'],
+    onboarding_who_for: 'clients',
+    onboarding_company_size: '2_10',
+    onboarding_jobs: ['email', 'meetings'],
+  };
+  assert.deepEqual(readStored('about-shared'), sharedChoices);
+  assert.equal(readStored<{ current: string }>('about')?.current, 'done');
+  await remount();
+  await primary();
   assert.equal(completed, 2);
-  status = 502;
-  await act(async () => next.click());
-  assert.equal(readStored('about-shared'), null);
-  const continueAnyway = dom.window.document.querySelector<HTMLButtonElement>(
-    '.ob-footer-end button:not(.ob-next)',
-  );
-  assert.ok(continueAnyway);
-  await act(async () => continueAnyway.click());
+  assert.equal(submissions.length, 2);
+  assert.deepEqual(readStored('about-shared'), sharedChoices);
+  shared = false;
+  await primary();
   assert.equal(readStored('about-shared'), null);
   assert.equal(completed, 3);
+  status = 502;
+  await primary();
+  assert.equal(readStored('about-shared'), null);
+  const retry = dom.window.document.querySelector<HTMLButtonElement>(
+    '.ob-footer-end button:not(.ob-next)',
+  );
+  assert.ok(retry);
+  await act(async () => retry.click());
+  assert.equal(completed, 3);
+  assert.equal(submissions.length, 5);
+  await primary();
+  assert.equal(readStored('about-shared'), null);
+  assert.equal(completed, 4);
+  assert.equal(submissions.length, 5);
+  assert.equal(readStored<{ current: string }>('about')?.current, 'done');
+  status = 200;
+  shared = true;
+  await remount();
+  await primary();
+  assert.equal(completed, 5);
+  assert.equal(submissions.length, 5);
+  assert.equal(readStored('about-shared'), null);
 });
 
 test('Join sends fixed answers only with a matching confirmed share', async (t) => {

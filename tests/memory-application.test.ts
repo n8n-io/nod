@@ -1713,7 +1713,7 @@ test('onboarding answers update memory and profile analytics while the updates e
     payload: { scope: 'work', roles: [], jobs: [] },
   });
   assert.equal(failedAnalytics.statusCode, 502);
-  assert.match(failedAnalytics.json().error, /continue without sharing them/);
+  assert.match(failedAnalytics.json().error, /continue without retrying/);
   assert.equal(profiles.length, 6);
   profileAnalyticsFail = false;
   const retriedAnalytics = await app.inject({
