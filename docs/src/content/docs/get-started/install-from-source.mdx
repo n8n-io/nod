@@ -37,7 +37,13 @@ flowchart LR
 
 The workspace is where Nod runs commands and keeps files. The browser is where it visits websites. Neither of them receives your provider keys. The workspace reaches the network only through its [firewall](/deploy/self-host/#what-runs-on-the-server), which blocks private addresses.
 
-`pnpm start` sets the browser and workspace CPU limits to fit the CPUs available to Docker. To check a Docker VM's allocation, run `docker info --format '{{.NCPU}}'`. If Nod runs slowly, raise the VM's CPU or memory allocation and restart it.
+`pnpm start` sets the browser and workspace CPU limits to fit the CPUs available to Docker. To check a Docker VM's allocation, run `docker info --format '{{.NCPU}}'`. If Nod runs slowly, stop Nod, raise the VM's CPU or memory allocation, then run `pnpm start` again to recalculate the limits. For example, to give an existing Colima VM four CPUs and 8 GB of memory:
+
+```sh title="Terminal"
+colima stop
+colima start --cpu 4 --memory 8
+pnpm start
+```
 
 ## Get the code
 

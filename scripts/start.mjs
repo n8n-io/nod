@@ -41,6 +41,12 @@ try {
     throw new Error('Docker did not report a usable CPU count.');
   const environment = await withLocalDatabase(process.cwd(), async (database) => {
     const settings = parseEnv(await readFile('.env', 'utf8'));
+    const cpuLimit = (name, fallback) => {
+      const requested = Number(process.env[name] ?? settings[name] ?? fallback);
+      if (!Number.isFinite(requested) || requested < 0.01)
+        throw new Error(`${name} must be at least 0.01 CPUs.`);
+      return String(Math.min(requested, dockerCpus));
+    };
     const appVersion = await sourceAnalyticsVersion(
       process.cwd(),
       production,
@@ -49,8 +55,8 @@ try {
     );
     const environment = {
       ...localDatabaseEnvironment(database),
-      NOD_BROWSER_CPUS: String(Math.min(6, dockerCpus)),
-      NOD_WORKSPACE_CPUS: String(Math.min(4, dockerCpus)),
+      NOD_BROWSER_CPUS: cpuLimit('NOD_BROWSER_CPUS', 6),
+      NOD_WORKSPACE_CPUS: cpuLimit('NOD_WORKSPACE_CPUS', 4),
       NOD_DATA_ROOT: resolve(process.env.NOD_DATA_ROOT || settings.NOD_DATA_ROOT || '.local'),
       ...(appVersion !== undefined ? { NOD_APP_VERSION: appVersion } : {}),
     };
