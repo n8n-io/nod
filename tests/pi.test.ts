@@ -4453,6 +4453,7 @@ test('native OpenAI model discovery and requests keep each connection in its reg
             maxRetries: 5,
             fetch: async (input, init) => {
               calls++;
+              assert.equal(init?.redirect, 'error');
               assert.equal(
                 String(input),
                 `${openAIBaseUrl(region)}/${audio ? 'chat/completions' : 'responses'}`,
@@ -4560,7 +4561,7 @@ test('OpenAI-compatible servers get tool models, a system message and one attemp
         return send(200, { data: Object.keys(shows).map((id) => ({ id })) });
       if (request.url === '/api/version') return send(200, { version: '0.0.0' });
       if (request.url === '/api/show') return send(200, shows[JSON.parse(text).model]);
-      if (request.url === '/moved/v1/chat/completions') {
+      if (request.url === '/moved/v1/chat/completions' || request.url === '/moved/v1/responses') {
         response.writeHead(307, { location: '/v1/chat/completions' });
         return response.end();
       }
@@ -4648,6 +4649,26 @@ test('OpenAI-compatible servers get tool models, a system message and one attemp
     {},
   );
   assert.equal(redirected.stopReason, 'error');
+  assert.equal(bodies.length, 2);
+  const definition = (await createPiModelBackend().catalog('openai', 'api_key')).find(
+    ({ choice }) => choice.id === 'gpt-6-luna',
+  )!;
+  const native = await createPiModelRuntime({
+    provider: 'openai',
+    method: 'api_key',
+    effort: 'low',
+    definition: {
+      ...definition,
+      spec: { ...definition.spec, baseUrl: `http://127.0.0.1:${address.port}/moved/v1` },
+    },
+    read: async () => ({ type: 'api_key', key: 'fixture-eu-key', region: 'eu' }),
+  });
+  const nativeRedirect = await native.runtime.completeSimple(
+    native.model,
+    { messages: [{ role: 'user', content: 'Synthetic fixture', timestamp: 1 }] },
+    {},
+  );
+  assert.equal(nativeRedirect.stopReason, 'error');
   assert.equal(bodies.length, 2);
 });
 
@@ -6043,6 +6064,8 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   let promptTokens = 110;
   let native = true;
   let rejectNative = false;
+  let redirectNative = false;
+  let redirects = 0;
   let contractRejections = 0;
   let smallCompanion = false;
   let jsonReply = false;
@@ -6051,6 +6074,11 @@ test('native audio reaches the selected Pi model with tools and survives a reope
     const parts: Buffer[] = [];
     request.on('data', (part) => parts.push(part));
     request.on('end', () => {
+      if (request.url === '/moved/v1/chat/completions') {
+        redirects++;
+        response.writeHead(307, { location: '/v1/chat/completions' });
+        return response.end();
+      }
       bodies.push(JSON.parse(Buffer.concat(parts).toString()));
       const body = bodies.at(-1)!;
       if (
@@ -6188,7 +6216,7 @@ test('native audio reaches the selected Pi model with tools and survives a reope
           ...definition,
           spec: {
             ...definition.spec,
-            baseUrl: `http://127.0.0.1:${address.port}/v1`,
+            baseUrl: `http://127.0.0.1:${address.port}/${redirectNative ? 'moved/v1' : 'v1'}`,
             contextWindow: 128000,
           },
         }
@@ -6566,6 +6594,16 @@ test('native audio reaches the selected Pi model with tools and survives a reope
         event.message.includes('503'),
     ),
   );
+  redirectNative = true;
+  const moved = await open(fakeExecution(randomUUID()));
+  const beforeRedirect = bodies.length;
+  await moved.prompt('A redirect must not send the recording to another path.', [], {
+    files: [{ id, mimeType: 'audio/wav' }],
+    fallback: 'Synthetic redirect transcript.',
+  });
+  await moved.dispose();
+  assert.ok(redirects > 0);
+  assert.equal(bodies.length, beforeRedirect);
 });
 
 test('the runtime sends a recording caption natively while retaining its trusted transcript and text-only fallback', async (t) => {

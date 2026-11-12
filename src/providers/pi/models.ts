@@ -1148,13 +1148,15 @@ export async function createPiModelRuntime(
       ...(access.provider === 'compatible' ||
       access.provider === 'radius' ||
       access.provider === 'cloudflare-workers-ai' ||
-      access.provider === 'cloudflare-ai-gateway'
+      access.provider === 'cloudflare-ai-gateway' ||
+      (access.provider === 'openai' && !subscription) ||
+      usage
         ? {
-            fetch: (input: string | URL | Request, init?: RequestInit) => {
+            fetch: async (input: string | URL | Request, init?: RequestInit) => {
               const headers = new Headers(init?.headers);
               if (headers.get('authorization') === `Bearer ${keyless}`)
                 headers.delete('authorization');
-              return (options?.fetch ?? fetch)(input, {
+              const response = await (options?.fetch ?? fetch)(input, {
                 ...init,
                 headers,
                 redirect: 'error',
@@ -1169,13 +1171,8 @@ export async function createPiModelRuntime(
                     }
                   : {}),
               } as RequestInit);
+              return usage ? usage.response(response) : response;
             },
-          }
-        : {}),
-      ...(usage
-        ? {
-            fetch: async (input: string | URL | Request, init?: RequestInit) =>
-              usage.response(await (options?.fetch ?? fetch)(input, init)),
           }
         : {}),
       onPayload: async (payload, target) => {
