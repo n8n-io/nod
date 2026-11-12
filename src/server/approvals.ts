@@ -570,13 +570,16 @@ export async function createApprovals(
   ): Promise<ChatConfirmationResult> {
     if (!input.answer) return undefined;
     const approval = (
-      await client.query(`${chatConfirmationSql('a.id=$1')} FOR UPDATE OF a`, [
-        input.answer.approvalId,
-        ownerId,
-        input.threadId,
-        input.channel,
-        input.replyToMessageId ?? null,
-      ])
+      await client.query(
+        `${chatConfirmationSql(input.clicked ? 'a.id=$1 AND a.confirmation_message_id=$5' : 'a.id=$1')} FOR UPDATE OF a`,
+        [
+          input.answer.approvalId,
+          ownerId,
+          input.threadId,
+          input.channel,
+          input.replyToMessageId ?? null,
+        ],
+      )
     ).rows[0];
     if (approval?.status !== 'pending') return undefined;
     const { approved } = input.answer;

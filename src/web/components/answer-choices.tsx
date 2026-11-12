@@ -179,7 +179,7 @@ export function AnswerChoices({
               <ChoiceBadge index={index} on={on}>
                 {on ? <Check size={14} /> : undefined}
               </ChoiceBadge>
-              <ChoiceCopy label={option.label} />
+              <ChoiceCopy label={choiceAnswerText([option])} />
             </button>
           );
         })}
@@ -263,7 +263,7 @@ export function ChoiceAnswer({
             answer.choiceIds.includes(option.id) && (
               <div key={option.id} className="choice-card-row choice-card-chosen">
                 <ChoiceBadge index={index} on />
-                <ChoiceCopy label={option.label} />
+                <ChoiceCopy label={choiceAnswerText([option])} />
               </div>
             ),
         )}

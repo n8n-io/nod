@@ -645,7 +645,17 @@ test(
           assert.equal(answer.rows[0]?.approval_answer, true);
           assert.equal((await listed(accepted.json().messageId)).cardAnswer, true);
           ownerWords.length = 0;
-          await propose('GMAIL_SEND_EMAIL', email('after-click@example.test'), 'apps');
+          const afterClick = await propose(
+            'GMAIL_SEND_EMAIL',
+            email('after-click@example.test'),
+            'apps',
+          );
+          assert.doesNotMatch(prompts.get(afterClick) ?? '', /"role":"user","text":"Send"/);
+          assert.ok(
+            !(await application.personal.recall('Send', undefined, null)).some(
+              (message) => message.id === accepted.json().messageId,
+            ),
+          );
           assert.ok(ownerWords.length > 0);
           assert.ok(!ownerWords.includes('Send'));
           const again = await click(clickCard.id);

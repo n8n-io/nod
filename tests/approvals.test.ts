@@ -332,7 +332,7 @@ test('approval cards shorten long recipients and bodies, skip blank bodies and t
       is_html: true,
       body: '<scr<script>x</script>ipt>y</script>Hi there',
     }).body,
-    'Hi there',
+    'xipt>yHi there',
   );
   const started = performance.now();
   const nested = approvalContent('GMAIL_SEND_EMAIL', {
@@ -359,6 +359,35 @@ test('approval cards shorten long recipients and bodies, skip blank bodies and t
   }
   assert.equal(approvalTitle('mcp__synthetic_server__create_page').title, 'Create page');
   assert.equal(approvalTitle('mcp__synthetic__').title, 'Run an action');
+});
+
+test('HTML approval previews show the actual link destination', () => {
+  for (const [attributes, address] of [
+    [
+      'data-href="https://safe.example.test" href="https://actual.example.test"',
+      'https://actual.example.test',
+    ],
+    [
+      'title=" href=\'https://safe.example.test\' " href="https://actual.example.test"',
+      'https://actual.example.test',
+    ],
+    ['href="https://actual.example.test?a=1&copy=2"', 'https://actual.example.test?a=1&copy=2'],
+    ['href="https://actual.example.test?a=1&amp;b=2"', 'https://actual.example.test?a=1&b=2'],
+  ]) {
+    const preview = approvalContent('GMAIL_SEND_EMAIL', {
+      to: 'recipient@example.test',
+      is_html: true,
+      body: `<p>Hi</p><a ${attributes}>Pay here</a>`,
+    });
+    assert.equal(preview.body, `Hi\nPay here (${address})`);
+  }
+  const preview = approvalContent('GMAIL_SEND_EMAIL', {
+    to: 'recipient@example.test',
+    is_html: true,
+    body: `<p>${'x'.repeat(3985)}</p><a href="https://actual.example.test">Pay here</a>`,
+  });
+  assert.equal(preview.body, 'x'.repeat(3985));
+  assert.equal(preview.bodyCut, true);
 });
 
 test(
@@ -2606,6 +2635,68 @@ test(
           await db.pool.query(
             "UPDATE turns SET status='succeeded',finished_at=now() WHERE status IN ('queued','running')",
           );
+        },
+      );
+
+      await t.test(
+        'approval clicks bind the card, action, and client retry to the same approval',
+        async () => {
+          const first = await begin('Synthetic first approval');
+          const firstId = await propose(first, 'GMAIL_SEND_EMAIL', {
+            recipient_email: 'first@example.test',
+            subject: 'First',
+            body: 'First synthetic message.',
+          });
+          await finish(first.turnId);
+          const second = await begin('Synthetic second approval');
+          const secondId = await propose(second, 'GMAIL_SEND_EMAIL', {
+            recipient_email: 'second@example.test',
+            subject: 'Second',
+            body: 'Second synthetic message.',
+          });
+          await finish(second.turnId);
+          const firstCard = await stored(firstId);
+          const input = {
+            text: 'Send',
+            threadId: first.threadId,
+            replyToMessageId: firstCard.confirmation_message_id,
+            clientMessageId: randomUUID(),
+            approvalAnswer: { approvalId: secondId, approved: true },
+          };
+          const refused = await request('POST', '/api/messages', input);
+          assert.equal(refused.statusCode, 409, refused.body);
+          assert.equal((await stored(firstId)).status, 'pending');
+          assert.equal((await stored(secondId)).status, 'pending');
+          assert.equal(
+            (await db.pool.query('SELECT 1 FROM messages WHERE id=$1', [input.clientMessageId]))
+              .rowCount,
+            0,
+          );
+          const valid = { ...input, approvalAnswer: { approvalId: firstId, approved: true } };
+          const accepted = await request('POST', '/api/messages', valid);
+          assert.equal(accepted.statusCode, 200, accepted.body);
+          assert.deepEqual((await request('POST', '/api/messages', valid)).json(), accepted.json());
+          const changed = await request('POST', '/api/messages', input);
+          assert.equal(changed.statusCode, 409, changed.body);
+          assert.equal((await stored(secondId)).status, 'pending');
+          const shownState = async () =>
+            (await request('GET', `/api/messages/around/${firstCard.confirmation_message_id}`))
+              .json()
+              .find((message: { id: string }) => message.id === firstCard.confirmation_message_id)
+              .approval.state;
+          assert.equal(await shownState(), 'working');
+          await finish(first.turnId, 'cancelled');
+          await finish(second.turnId, 'cancelled');
+          await finish(accepted.json().turnId, 'cancelled');
+          const before = calls.length;
+          await assert.rejects(
+            approvals.executeConfirmed(accepted.json().turnId, new AbortController().signal),
+          );
+          assert.equal(calls.length, before);
+          assert.equal(await shownState(), 'expired');
+          await db.pool.query("UPDATE approvals SET status='executing' WHERE id=$1", [firstId]);
+          assert.equal(await shownState(), 'uncertain');
+          await db.pool.query("UPDATE approvals SET status='confirmed' WHERE id=$1", [firstId]);
         },
       );
 

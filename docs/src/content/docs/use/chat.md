@@ -34,7 +34,7 @@ Select **Search chat** to search stored messages in the current conversation. Se
 
 Nod loads earlier messages automatically as you scroll toward the top and keeps your reading position. Select **Back to latest** above the message box to return to the newest message.
 
-Action confirmations show the question without extra status labels. [Usage](/use/spending/) shows the recorded action results.
+Action confirmation cards show the action status after you answer. [Usage](/use/spending/) shows the recorded action results.
 
 ## Send an audio message
 

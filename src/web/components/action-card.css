@@ -279,9 +279,7 @@ button.choice-card-row[aria-disabled='true'] {
 .choice-card-copy {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .choice-card-chosen {
   color: var(--muted-foreground);

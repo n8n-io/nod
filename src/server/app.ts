@@ -64,8 +64,9 @@ const messageFields = `m.id,m.role,m.text,CASE WHEN m.role='user' THEN m.display
  (m.role='user' AND (m.approval_answer IS NOT NULL OR (m.question_answer IS NOT NULL AND m.text<>'' AND jsonb_array_length(m.attachments)=0))) AS "cardAnswer",
  CASE WHEN m.role='assistant' AND m.answer_choices IS NOT NULL THEN (SELECT json_build_object('answer',a.question_answer,'text',a.text) FROM messages a
    WHERE a.reply_to_message_id=m.id AND a.owner_id=m.owner_id AND a.role='user' AND a.question_answer IS NOT NULL AND a.text<>'' AND jsonb_array_length(a.attachments)=0 ORDER BY a.created_at,a.id LIMIT 1) END AS "choiceAnswer",
- CASE WHEN m.role='assistant' THEN (SELECT json_build_object('id',a.id,'status',a.status,'action',a.action,'args',a.args,'active',u.status IN ('running','waiting')) FROM approvals a
-   JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id WHERE a.confirmation_message_id=m.id AND a.owner_id=m.owner_id LIMIT 1) END AS "approval",
+ CASE WHEN m.role='assistant' THEN (SELECT json_build_object('id',a.id,'status',a.status,'action',a.action,'args',a.args,'active',u.status IN ('running','waiting'),'executionActive',e.status IN ('queued','running','waiting')) FROM approvals a
+   JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id LEFT JOIN turns e ON e.id=a.execution_turn_id AND e.owner_id=a.owner_id
+   WHERE a.confirmation_message_id=m.id AND a.owner_id=m.owner_id LIMIT 1) END AS "approval",
  CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',COALESCE(m.reply_quote,''),'isQuote',m.reply_quote IS NOT NULL) END AS "replyTo"`;
 const textMessageOptions = {
   bodyLimit: 8 * 1024 * 1024,
@@ -82,12 +83,14 @@ type ApprovalRow = {
   action: string;
   args: unknown;
   active: boolean;
+  executionActive: boolean | null;
 };
 type ChoiceAnswerRow = { answer: unknown; text: string };
 
 function approvalState(row: ApprovalRow): ApprovalState {
   if (row.status === 'pending') return row.active ? 'pending' : 'expired';
-  if (row.status === 'confirmed' || row.status === 'executing') return 'working';
+  if (row.status === 'confirmed') return row.executionActive ? 'working' : 'expired';
+  if (row.status === 'executing') return row.executionActive ? 'working' : 'uncertain';
   if (row.status === 'completed') return 'done';
   if (row.status === 'declined' || row.status === 'uncertain') return row.status;
   return 'expired';

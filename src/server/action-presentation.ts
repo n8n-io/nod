@@ -1,3 +1,5 @@
+import { parseFragment, type DefaultTreeAdapterMap } from 'parse5';
+
 const apps: Record<string, string> = {
   GMAIL: 'Gmail',
   GOOGLECALENDAR: 'Google Calendar',
@@ -85,69 +87,46 @@ function listed(values: string[]) {
   return rest ? `${text} and ${rest} more` : text;
 }
 
-const entities: Record<string, string> = {
-  amp: '&',
-  lt: '<',
-  gt: '>',
-  quot: '"',
-  apos: "'",
-  nbsp: ' ',
-};
-
-function character(code: number, fallback: string) {
-  return Number.isInteger(code) && code > 0 && code <= 0x10ffff
-    ? String.fromCodePoint(code)
-    : fallback;
-}
-
-function without(text: string, pattern: RegExp) {
-  for (let pass = 0; pass < 8; pass++) {
-    const next = text.replace(pattern, '');
-    if (next === text) return text;
-    text = next;
-  }
-  return text.replaceAll('<', '');
-}
-
-const hidden = /<(style|script|head|title)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
-const tag = /<[^>]+>/g;
-
-function start(html: string) {
-  if (html.length <= 20_000) return html;
-  let part = html.slice(0, 20_000);
-  const open = new Map<string, number>();
-  for (const match of part.matchAll(/<(\/?)(style|script|head|title|a)\b/gi)) {
-    const name = match[2]!.toLowerCase();
-    if (match[1]) open.delete(name);
-    else if (!open.has(name)) open.set(name, match.index);
-  }
-  if (open.size) part = part.slice(0, Math.min(...open.values()));
-  const tagStart = part.lastIndexOf('<');
-  return tagStart > part.lastIndexOf('>') ? part.slice(0, tagStart) : part;
-}
-
 function plainText(html: string) {
-  return without(
-    without(html, hidden)
-      .replace(
-        /<a\b[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a\s*>/gi,
-        (_, double, single, bare, label) => {
-          const address = String(double ?? single ?? bare ?? '').trim();
-          const shown = without(String(label), tag).trim();
-          return !address || shown === address ? shown || address : `${shown} (${address})`;
-        },
+  const bounded = html.length > 20_000;
+  let cut = bounded;
+  const document = parseFragment(html.slice(0, 20_000), { sourceCodeLocationInfo: true });
+  function read(nodes: DefaultTreeAdapterMap['node'][], links: boolean): string {
+    const pending: Array<DefaultTreeAdapterMap['node'] | string> = [...nodes].reverse();
+    let text = '';
+    while (pending.length) {
+      const node = pending.pop()!;
+      if (typeof node === 'string') text += node;
+      else if ('value' in node) text += node.value;
+      else if (
+        'tagName' in node &&
+        ['style', 'script', 'head', 'title', 'template'].includes(node.tagName)
       )
-      .replace(/<br\s*\/?>|<\/(p|div|li|tr|h[1-6])\s*>/gi, '\n'),
-    tag,
-  )
-    .replace(/&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi, (match, decimal, hex, name) =>
-      decimal
-        ? character(Number(decimal), match)
-        : hex
-          ? character(Number.parseInt(hex, 16), match)
-          : (entities[String(name).toLowerCase()] ?? match),
-    )
-    .replace(/\n{3,}/g, '\n\n');
+        continue;
+      else if ('tagName' in node && node.tagName === 'a' && links) {
+        if (bounded && !node.sourceCodeLocation?.endTag) continue;
+        const address = node.attrs.find((attribute) => attribute.name === 'href')?.value.trim();
+        const shown = read(node.childNodes, false).trim();
+        const link =
+          !address || shown === address ? shown || address || '' : `${shown} (${address})`;
+        if (text.length + link.length > 4000) {
+          cut = true;
+          break;
+        }
+        text += link;
+      } else if ('childNodes' in node) {
+        if ('tagName' in node && /^(br|p|div|li|tr|h[1-6])$/.test(node.tagName)) pending.push('\n');
+        for (let index = node.childNodes.length - 1; index >= 0; index--)
+          pending.push(node.childNodes[index]!);
+      }
+      if (links && text.length > 4000) {
+        cut = true;
+        break;
+      }
+    }
+    return text;
+  }
+  return { text: read(document.childNodes, true).replace(/\n{3,}/g, '\n\n'), cut };
 }
 
 export function approvalContent(
@@ -172,8 +151,9 @@ export function approvalContent(
     .find((value) => typeof value === 'string' && value.trim());
   if (typeof raw !== 'string') return { fields };
   const html = input.is_html === true;
-  const text = (html ? plainText(start(raw)) : raw).trim();
-  const cut = text.length > 4000 || (html && raw.length > 20_000);
+  const preview = html ? plainText(raw) : { text: raw, cut: false };
+  const text = preview.text.trim();
+  const cut = preview.cut || text.length > 4000;
   return {
     fields,
     ...(text ? { body: text.slice(0, 4000) } : {}),
