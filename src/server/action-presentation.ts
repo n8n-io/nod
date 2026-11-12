@@ -94,12 +94,16 @@ export function gmailMessageTarget(result: unknown, expectedId: string) {
   const subject = field(300, message.subject, header('subject'));
   const from = field(320, message.from, message.sender, header('from'));
   const to = field(320, message.to, message.recipient, header('to'));
-  if (!subject && !from && !to) return;
+  const cc = field(320, message.cc, header('cc'));
+  const bcc = field(320, message.bcc, header('bcc'));
+  if (!subject && !from && !to && !cc && !bcc) return;
   return {
     messageId: expectedId,
     ...(subject ? { subject } : {}),
     ...(from ? { from } : {}),
     ...(to ? { to } : {}),
+    ...(cc ? { cc } : {}),
+    ...(bcc ? { bcc } : {}),
   };
 }
 
@@ -117,7 +121,9 @@ export function gmailDraftTarget(result: unknown, expectedId: string) {
   const messageId = message?.id ?? message?.messageId;
   if (typeof messageId !== 'string' || !messageId.trim()) return;
   const target = gmailMessageTarget(message, messageId);
-  return target && (target.subject || target.to) ? { draftId: expectedId, ...target } : undefined;
+  return target && (target.subject || target.to || target.cc || target.bcc)
+    ? { draftId: expectedId, ...target }
+    : undefined;
 }
 
 const fieldKeys: Array<[string, string[]]> = [

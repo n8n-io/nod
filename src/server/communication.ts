@@ -189,15 +189,17 @@ export function createCommunication(options: {
       return text.length > 120 ? `${text.slice(0, 108)} [truncated]` : text;
     };
     const draftSubject = shortField(draftTarget?.subject);
-    const draftRecipient = shortField(draftTarget?.to);
-    const draftContext = [
-      contextTitle ? `While working on “${contextTitle}”, Nod proposes` : 'Nod proposes',
-      'to permanently delete an unsent Gmail draft',
-      draftSubject ? `with subject “${draftSubject}”` : '',
-      draftRecipient ? `${draftSubject ? 'and' : 'with'} recipient ${draftRecipient}` : '',
-    ]
-      .filter(Boolean)
-      .join(' ');
+    const draftFields = [
+      draftSubject ? `subject “${draftSubject}”` : '',
+      ...(['to', 'cc', 'bcc'] as const).map((field) => {
+        const value = shortField(draftTarget?.[field]);
+        return value ? `${field[0].toUpperCase()}${field.slice(1)} ${value}` : '';
+      }),
+    ].filter(Boolean);
+    const draftIntro = contextTitle
+      ? `While working on “${contextTitle}”, Nod proposes`
+      : 'Nod proposes';
+    const draftContext = `${draftIntro} to permanently delete an unsent Gmail draft${draftFields.length ? `: ${draftFields.join('; ')}` : ''}`;
     const fields = JSON.stringify(visible, null, 2)
       .split('\n')
       .map((line) => `    ${line}`)

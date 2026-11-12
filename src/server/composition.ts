@@ -1407,7 +1407,15 @@ async function initializeApplication(
                             'GMAIL_GET_DRAFT',
                             readVerdict.basis,
                           );
-                          if (gmailDraftTarget(current, draftId)?.messageId !== savedMessageId)
+                          const currentTarget = gmailDraftTarget(current, draftId);
+                          if (!currentTarget)
+                            throw Object.assign(
+                              new Error(
+                                'Nod could not verify the Gmail draft before deletion. Ask again before deleting it.',
+                              ),
+                              { notRun: true },
+                            );
+                          if (currentTarget.messageId !== savedMessageId)
                             throw Object.assign(
                               new Error(
                                 'The Gmail draft changed after confirmation. Ask again before deleting it.',
@@ -2326,7 +2334,14 @@ async function initializeApplication(
         const path = account?.accessPaths?.find((item) => item.id === prepared.pathId);
         let target:
           | ReturnType<typeof gmailMessageTarget>
-          | { draftId: string; subject?: string; from?: string; to?: string };
+          | {
+              draftId: string;
+              subject?: string;
+              from?: string;
+              to?: string;
+              cc?: string;
+              bcc?: string;
+            };
         let deleteBinding: string | undefined;
         let verifiedDraftMessageId: string | undefined;
         const deletingDraft = action === 'GMAIL_DELETE_DRAFT';

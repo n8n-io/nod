@@ -140,6 +140,20 @@ test('confirmation escapes visual format controls and hides the internal account
   assert.match(draft, /Synthetic team summary/);
   assert.match(draft, /cleanup@example.test/);
   assert.doesNotMatch(draft, /synthetic-internal-draft-message/);
+  const ccOnly = await communication.describe({
+    turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
+    action: 'GMAIL_DELETE_DRAFT',
+    args: { draft_id: 'synthetic-cc-draft' },
+    details: {
+      target: {
+        draftId: 'synthetic-cc-draft',
+        cc: 'cc@example.test',
+        bcc: 'bcc@example.test',
+      },
+    },
+  });
+  assert.match(ccOnly, /Cc cc@example\.test/);
+  assert.match(ccOnly, /Bcc bcc@example\.test/);
 });
 
 test('confirmation stops on cancellation and rejects an unbound presentation', async () => {
@@ -240,6 +254,29 @@ test('Gmail draft target requires the bound draft and its current message', () =
     subject: 'Synthetic team summary',
     to: 'cleanup@example.test',
   });
+  assert.deepEqual(
+    gmailDraftTarget(
+      {
+        id: 'synthetic-draft',
+        message: {
+          id: 'synthetic-draft-message',
+          payload: {
+            headers: [
+              { name: 'Cc', value: 'cc@example.test' },
+              { name: 'Bcc', value: 'bcc@example.test' },
+            ],
+          },
+        },
+      },
+      'synthetic-draft',
+    ),
+    {
+      draftId: 'synthetic-draft',
+      messageId: 'synthetic-draft-message',
+      cc: 'cc@example.test',
+      bcc: 'bcc@example.test',
+    },
+  );
   assert.equal(gmailDraftTarget(observed, 'another-draft'), undefined);
   assert.equal(
     gmailDraftTarget(
