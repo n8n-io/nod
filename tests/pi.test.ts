@@ -5422,6 +5422,82 @@ test('task classification has a small request budget and never retries or record
     });
 });
 
+test('action review failures identify the task, model, provider, and bounded provider reason', async (t) => {
+  const { createServer } = await import('node:http');
+  const { InMemoryCredentialStore } = await import('@earendil-works/pi-ai');
+  let calls = 0;
+  const sessions: Array<string | string[] | undefined> = [];
+  const server = createServer((request, response) => {
+    calls++;
+    sessions.push(request.headers['x-opencode-session']);
+    request.resume();
+    request.on('end', () => {
+      response.writeHead(400, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          error: {
+            message: `Model Not Exist ${'x'.repeat(400)}`,
+            type: 'invalid_request_error',
+          },
+        }),
+      );
+    });
+  });
+  t.after(
+    () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  );
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const credentials = new InMemoryCredentialStore();
+  await credentials.modify('opencode-go', async () => ({ type: 'api_key', key: 'fixture' }));
+  const runtime = await ModelRuntime.create({
+    credentials,
+    modelsPath: null,
+    refreshOnCreate: false,
+    allowModelNetwork: false,
+  });
+  runtime.registerProvider('opencode-go', {
+    models: [
+      {
+        id: 'deepseek-v4.1-flash',
+        name: 'DeepSeek V4.1 Flash',
+        api: 'openai-completions',
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        reasoning: true,
+        input: ['text'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 1_000_000,
+        maxTokens: 384_000,
+      },
+    ],
+  });
+  await runtime.refresh({ allowNetwork: false });
+  const curator = createPiMemoryCurator({
+    provider: 'opencode-go',
+    model: 'deepseek-v4.1-flash',
+    runtime,
+  });
+  await assert.rejects(
+    curator.curate({ task: 'review', instructions: 'Check the synthetic action', input: {} }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /\breview\b/);
+      assert.ok(error.message.includes('opencode-go/deepseek-v4.1-flash'));
+      assert.ok(error.message.includes('Model Not Exist'));
+      const detail = error.message.split(' The provider said: ')[1];
+      assert.equal(detail?.length, 300);
+      return true;
+    },
+  );
+  assert.equal(calls, 3);
+  assert.ok(sessions[0]);
+  assert.equal(new Set(sessions).size, 1);
+});
+
 test('an unavailable classification resolver never loads a fallback model', async () => {
   let fallbackLoads = 0;
   const curator = createPiMemoryCurator({

@@ -17,6 +17,10 @@ Choose **Connect to a server** on first launch. After setup, choose **Replay onb
 
 Nod checks the connection before saving it. The operating system's secure storage protects the token. The app restarts into the remote assistant without starting its local runtime. Loopback HTTP addresses work for an SSH tunnel.
 
+For a private certificate authority (CA), first trust its certificate in your operating system's certificate store. Restart Nod after you change that store. Nod adds system CAs to Node's default certificates at startup. It keeps bundled certificates and any certificates loaded through `NODE_EXTRA_CA_CERTS`.
+
+This applies to all Node HTTPS requests in the desktop main thread. It includes server checks, later API calls, file downloads, update checks, and analytics. Certificate and hostname checks stay enabled. This uses Node's certificate verification rules, which can differ from the app window's Chromium rules. An operating system distrust setting does not remove a certificate that Node trusts from another source.
+
 Your conversations, files, memories, model connections, and connected accounts stay on the server. The server also owns the encrypted Composio installation identity: connecting another desktop app or browser uses those same accounts, as do Telegram and WhatsApp. The desktop client does not create a separate integration identity or need a local Vault key to connect.
 
 App sign-in opens in your system browser. The completion page names the connected app; close it and return to Nod. The connected account stays on the server.
