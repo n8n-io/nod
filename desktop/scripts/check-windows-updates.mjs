@@ -265,6 +265,7 @@ app.whenReady().then(async () => {
         `/DAPP_DIR=${application}`,
         `/DOUTPUT=${installers[version]}`,
         `/DVERSION=${version}`,
+        `/DICON=${join(repository, 'desktop/assets/nod.ico')}`,
         join(repository, 'desktop/scripts/windows-installer.nsi'),
       ],
       { timeout: 600_000 },

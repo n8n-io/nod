@@ -11,6 +11,8 @@ SetCompressor /SOLID zlib
   !uninstfinalize '"${NODE}" "${SIGNER}" "%1"' = 0
 !endif
 ShowInstDetails show
+!define MUI_ICON "${ICON}"
+!define MUI_UNICON "${ICON}"
 !define MUI_ABORTWARNING
 !define MUI_FINISHPAGE_RUN "$INSTDIR\nod.exe"
 !insertmacro MUI_PAGE_WELCOME

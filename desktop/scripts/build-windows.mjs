@@ -93,6 +93,7 @@ const [application] = await packager({
   platform: 'win32',
   arch: 'x64',
   win32metadata: { CompanyName: 'n8n GmbH', ProductName: 'Nod', FileDescription: 'Nod' },
+  icon: join(root, 'desktop/assets/nod.ico'),
   asar: false,
   prune: false,
   overwrite: true,
@@ -119,6 +120,7 @@ await run(
     `/DAPP_DIR=${application}`,
     `/DOUTPUT=${installer}`,
     `/DVERSION=${configuration.version}`,
+    `/DICON=${join(root, 'desktop/assets/nod.ico')}`,
     ...(signed
       ? [
           `/DNODE=${process.execPath}`,
