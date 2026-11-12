@@ -6675,6 +6675,23 @@ test(
           };
           assert.equal(turnContext.messages.find(({ id }) => id === long)?.text, whole.text);
           assert.equal(turnContext.messages.find(({ id }) => id === long)?.shortened, false);
+          const hiddenAnchor = await add('Synthetic hidden anchor', minute(15));
+          const visibleAnchor = await add('Synthetic visible anchor', minute(16));
+          const visibleTurn = randomUUID();
+          await db.pool.query(
+            "INSERT INTO turns(id,owner_id,thread_id,session_id,prompt,source,status) VALUES($1,$2,$3,$3,'Synthetic visible turn','user','succeeded')",
+            [visibleTurn, ownerId, freshThread],
+          );
+          await db.pool.query('UPDATE messages SET turn_id=$1 WHERE id=ANY($2::uuid[])', [
+            visibleTurn,
+            [hiddenAnchor, visibleAnchor],
+          ]);
+          await db.pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [hiddenAnchor]);
+          const visibleContext = await shown({ around: visibleTurn });
+          assert.ok(visibleContext.some(({ id }) => id === visibleAnchor));
+          assert.ok(!visibleContext.some(({ id }) => id === hiddenAnchor));
+          await db.pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [visibleAnchor]);
+          await assert.rejects(search({ around: visibleTurn }), /unavailable/);
           for (const [owner, threadId] of [
             ['history-other-owner', foreignThread],
             [ownerId, firstThreadId],
