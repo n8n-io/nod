@@ -2642,8 +2642,10 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       });
       for (const [type, provider] of [
         ['api_key', 'openai'],
+        ['endpoint', 'compatible'],
         ['bedrock', 'amazon-bedrock'],
         ['cloudflare', 'cloudflare-workers-ai'],
+        ['azure', 'azure'],
       ] as const)
         for (const key of [undefined, null, 42])
           state.connections.push({
@@ -2659,8 +2661,42 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
               key,
             } as unknown as import('../src/ports/models.ts').ModelCredential,
           });
+      for (const [provider, credential] of [
+        [
+          'compatible',
+          { type: 'endpoint', url: 'http://127.0.0.1:1/v1', key: 'fixture-endpoint-key-ab12' },
+        ],
+        [
+          'azure',
+          {
+            type: 'azure',
+            url: 'https://fixture.example.test/openai/v1',
+            model: 'fixture-model',
+            deployment: 'fixture-deployment',
+            key: 'fixture-azure-key-cd34',
+          },
+        ],
+      ] as const)
+        state.connections.push({
+          id: randomUUID(),
+          provider,
+          method: 'api_key',
+          label: `Synthetic keyed ${credential.type}`,
+          status: 'reconnect',
+          models: [],
+          managed: false,
+          credential,
+        });
     });
     const restored = await f.create(ownerId);
+    for (const [label, ending] of [
+      ['Synthetic keyed endpoint', 'ab12'],
+      ['Synthetic keyed azure', 'cd34'],
+    ])
+      assert.equal(
+        restored.view().connections.find((row) => row.label === label)?.keyEnding,
+        ending,
+      );
     const secrets: string[] = [];
     restored.onSecrets((values) => secrets.push(...values));
     assert.equal(

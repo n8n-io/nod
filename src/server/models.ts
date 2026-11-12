@@ -349,10 +349,7 @@ export function createModelService(options: {
     const state = await store.read();
     rows = state.connections.map(({ credential: saved, ...row }) => {
       const value = row.managed ? options.bootstrap?.credentials[row.provider] : saved;
-      return (value?.type === 'api_key' ||
-        value?.type === 'bedrock' ||
-        value?.type === 'cloudflare') &&
-        typeof value.key === 'string'
+      return value && typeof value === 'object' && 'key' in value && typeof value.key === 'string'
         ? { ...row, keyEnding: value.key.slice(-4) }
         : row;
     });
