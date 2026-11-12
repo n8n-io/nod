@@ -83,6 +83,8 @@ export interface Activity {
   since: string;
   doing: 'queued' | 'model' | 'tool';
   quietSince: string;
+  tool?: string;
+  model?: string;
   received?: true;
   background?: true;
 }

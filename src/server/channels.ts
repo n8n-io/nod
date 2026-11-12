@@ -1442,7 +1442,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     closed || replacing || options.admission?.paused || options.admission?.closed;
   const activityStatus = (item?: LiveWork) => {
     const site = item?.doing === 'tool' ? item.site : null;
-    return [item?.title, item?.step?.trim() || (site && `Using ${site}`)]
+    const tool = item?.doing === 'tool' ? item.tool : null;
+    return [item?.title, item?.step?.trim() || (site && `Using ${site}`) || tool]
       .filter(Boolean)
       .join(': ');
   };

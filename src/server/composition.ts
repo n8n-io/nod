@@ -1007,7 +1007,11 @@ async function initializeApplication(
     clearBrowser: (id) => adapters.computer.clear(id),
   });
   await tasks.initialize();
-  const activity = createActivity({ pool, ownerId });
+  const activity = createActivity({
+    pool,
+    ownerId,
+    model: () => adapters.models?.current.label,
+  });
   const observedSource = (catalog: ObservationSource[], id: string) =>
     catalog.find((source) => source.id === id) ??
     catalog.find((source) => source.id === `${connectionSources}:${id}`);

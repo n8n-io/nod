@@ -954,6 +954,13 @@ export function createPiAgent(options: {
           input.onEvent({ type: 'message_start' });
         }
         if (event.type === 'turn_start') input.onEvent({ type: 'turn_start' });
+        if (event.type === 'auto_retry_start')
+          input.onEvent({
+            type: 'retry',
+            model: (session.model ?? model).name,
+            attempt: event.attempt,
+            attempts: event.maxAttempts,
+          });
         if (event.type === 'message_update') {
           const update = event.assistantMessageEvent;
           if (update.type === 'text_start' || update.type === 'text_delta') {
@@ -962,6 +969,11 @@ export function createPiAgent(options: {
               input.onEvent({ type: 'message_start' });
             }
             textBlock = update.contentIndex;
+          }
+          if (update.type === 'toolcall_start' && textBlock !== undefined) {
+            input.onEvent({ type: 'message_end' });
+            input.onEvent({ type: 'message_start' });
+            textBlock = undefined;
           }
           if (update.type === 'text_delta')
             input.onEvent({ type: 'text_delta', text: update.delta });

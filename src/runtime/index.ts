@@ -1024,9 +1024,17 @@ export function createAgentRuntime(dependencies: {
             );
             void pendingReplies.catch(() => {});
           }
+          if (event.type === 'retry' && !stopped) {
+            const retry = `${event.model} failed, trying again (${event.attempt} of ${event.attempts})`;
+            pendingReplies = pendingReplies.then(() =>
+              context.emit('retry', retry, { execution }).catch(() => {}),
+            );
+            void pendingReplies.catch(() => {});
+          }
           if (event.type === 'message_start') {
             completeStream();
             streamId = randomUUID();
+            modelError = undefined;
           }
           if (event.type === 'message_end') {
             if (event.status === 'succeeded') {

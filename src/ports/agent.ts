@@ -310,6 +310,7 @@ export type AgentEvent =
     }
   | { type: 'text_delta'; text: string }
   | { type: 'thinking'; title: string }
+  | { type: 'retry'; model: string; attempt: number; attempts: number }
   | { type: 'final'; text: string }
   | ModelUsageObservation
   | { type: 'error'; message: string };

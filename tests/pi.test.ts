@@ -4266,6 +4266,119 @@ test('full 32k Pi sessions distinguish context exhaustion from output truncation
   }
 });
 
+test('the live line shows a model retry and the text before a tool call while the call streams', async (t) => {
+  const { createServer } = await import('node:http');
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-live-line-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const preamble = 'Checking the synthetic notes.';
+  let stepShown!: () => void;
+  const shown = new Promise<'step'>((resolve) => (stepShown = () => resolve('step')));
+  let released: 'step' | 'timeout' | undefined;
+  let requests = 0;
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on('end', async () => {
+      const send = (delta: object, finish?: string) =>
+        response.write(
+          `data: ${JSON.stringify({
+            id: `fixture-live-${requests}`,
+            choices: [{ index: 0, delta, ...(finish ? { finish_reason: finish } : {}) }],
+            ...(finish
+              ? { usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }
+              : {}),
+          })}\n\n`,
+        );
+      if (request.url === '/v1/models')
+        return response.end(
+          JSON.stringify({ data: [{ id: 'fixture-qwen', context_length: 32_768 }] }),
+        );
+      if (request.url !== '/v1/chat/completions') {
+        response.writeHead(404);
+        return response.end('{}');
+      }
+      if (++requests === 1) {
+        response.writeHead(503, { 'content-type': 'application/json' });
+        return response.end(
+          JSON.stringify({ error: { message: 'The synthetic model is overloaded.' } }),
+        );
+      }
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      if (requests > 2) {
+        send({ role: 'assistant', content: 'The synthetic notes are read.' });
+        send({}, 'stop');
+        return response.end('data: [DONE]\n\n');
+      }
+      send({ role: 'assistant', content: preamble });
+      send({
+        tool_calls: [
+          {
+            index: 0,
+            id: 'fixture-notes',
+            type: 'function',
+            function: { name: 'bash', arguments: '' },
+          },
+        ],
+      });
+      let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+      released = await Promise.race([
+        shown,
+        new Promise<'timeout'>(
+          (resolve) => (timer = globalThis.setTimeout(() => resolve('timeout'), 5000)),
+        ),
+      ]);
+      clearTimeout(timer);
+      send({
+        tool_calls: [
+          { index: 0, function: { arguments: JSON.stringify({ command: 'fixture-read-notes' }) } },
+        ],
+      });
+      send({}, 'tool_calls');
+      response.end('data: [DONE]\n\n');
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const { port } = server.address() as import('node:net').AddressInfo;
+  const credential = { type: 'endpoint' as const, url: `http://127.0.0.1:${port}/v1` };
+  const [definition] = await createPiModelBackend().catalog('compatible', 'api_key', credential);
+  const agent = createPiAgent({
+    provider: 'compatible',
+    sessionRoot: join(directory, 'sessions'),
+    resolve: async () => ({
+      provider: 'compatible',
+      method: 'api_key',
+      definition,
+      effort: 'off',
+      read: async () => credential,
+    }),
+  });
+  const { workspace, scripts } = recordingWorkspace();
+  const runtime = createAgentRuntime({
+    agent,
+    computer: fakeComputer(),
+    workspace: fakeWorkspace({ open: () => workspace }),
+  });
+  t.after(() => runtime.dispose());
+  const emitted: Array<[string, string]> = [];
+  await runtime.runTurn({
+    ...context(directory),
+    sessionId: 'fixture-live-line',
+    turnId: randomUUID(),
+    prompt: 'Read the synthetic notes.',
+    emit: async (type, summary) => {
+      emitted.push([type, summary]);
+      if (type === 'step' && summary === preamble) stepShown();
+    },
+  });
+  assert.equal(released, 'step');
+  assert.ok(scripts.some((script) => script.includes('fixture-read-notes')));
+  assert.deepEqual(
+    emitted.find(([type]) => type === 'retry'),
+    ['retry', `${definition.choice.name} failed, trying again (1 of 3)`],
+  );
+});
+
 test('OpenAI cache boundaries cover shared instructions and keep task paths outside them', async () => {
   const { createPiModelBackend, createPiModelRuntime } =
     await import('../src/providers/pi/models.ts');
