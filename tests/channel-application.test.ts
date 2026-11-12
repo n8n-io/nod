@@ -375,9 +375,9 @@ test('OpenAI previews preserve configured voices and enforce the selected speech
   ] as const) {
     await t.test(`${model} (${configuredVoice || 'empty default'})`, async () => {
       const provider = createOpenAISpeechProvider({
-        apiKey: async () => {
+        connection: async () => {
           keyRequests++;
-          return 'synthetic-speech-key';
+          return { key: 'synthetic-speech-key' };
         },
         speechModel: model,
         voice: configuredVoice,

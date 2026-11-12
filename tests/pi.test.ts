@@ -2165,6 +2165,10 @@ test('trust mode selects available Jev, Decider and OpenAI before the small LLM'
   ]);
   adapters.models!.hasApiKey = (provider) => keys.has(provider);
   adapters.models!.apiKey = async (provider) => keys.get(provider);
+  adapters.models!.apiCredential = async (provider) => {
+    const key = keys.get(provider);
+    return key ? { type: 'api_key', key } : undefined;
+  };
   adapters.models!.resolve = async () =>
     assert.fail('Trust routing must not read subscription credentials.');
   const check = (target = adapters) =>

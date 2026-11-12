@@ -3,9 +3,14 @@ import type { SpeechProvider } from '../../ports/speech.ts';
 import type { ProviderUsageEvent } from '../../ports/provider-usage.ts';
 import { readSpeechResponse } from '../speech.ts';
 import { speechVoices } from '../../shared/speech.ts';
+import type { OpenAIRegion } from '../../shared/models.ts';
+import { SpeechProviderError } from '../../ports/speech.ts';
+import { openAIBaseUrl, openAIRequestError } from './api.ts';
+
+type SpeechConnection = { key: string; region?: OpenAIRegion };
 
 export function createOpenAISpeechProvider(options: {
-  apiKey?: string | (() => Promise<string | undefined>);
+  connection: SpeechConnection | (() => Promise<SpeechConnection | undefined>);
   configured?: () => boolean;
   speechModel?: string;
   transcriptionModel?: string;
@@ -31,10 +36,11 @@ export function createOpenAISpeechProvider(options: {
         ].includes(voice.id)),
   );
   const defaultVoice = `openai:${options.voice || 'coral'}`;
-  async function headers() {
-    const key = typeof options.apiKey === 'function' ? await options.apiKey() : options.apiKey;
-    if (!key) throw new Error('Speech is not configured.');
-    return { Authorization: `Bearer ${key}` };
+  async function connection() {
+    const value =
+      typeof options.connection === 'function' ? await options.connection() : options.connection;
+    if (!value?.key) throw new Error('Speech is not configured.');
+    return { ...value, url: openAIBaseUrl(value.region) };
   }
   async function measured<T>(
     model: string,
@@ -70,7 +76,7 @@ export function createOpenAISpeechProvider(options: {
     voices,
     defaultVoice,
     get configured() {
-      return options.configured?.() ?? Boolean(options.apiKey);
+      return options.configured?.() ?? Boolean(options.connection);
     },
     async transcribe(audio, signal, report) {
       signal?.throwIfAborted();
@@ -86,13 +92,16 @@ export function createOpenAISpeechProvider(options: {
           new Blob([Uint8Array.from(audio.bytes)], { type: audio.mimeType }),
           audio.name,
         );
-        const response = await request('https://api.openai.com/v1/audio/transcriptions', {
+        const { key, url } = await connection();
+        const response = await request(`${url}/audio/transcriptions`, {
           method: 'POST',
           redirect: 'error',
-          headers: await headers(),
+          headers: { Authorization: `Bearer ${key}` },
           body,
           signal: AbortSignal.any([AbortSignal.timeout(120_000), ...(signal ? [signal] : [])]),
         });
+        if (!response.ok)
+          throw new SpeechProviderError((await openAIRequestError(response, key)).message);
         const result = JSON.parse(
           (await readSpeechResponse(response, 1024 * 1024, 'OpenAI')).toString(),
         ) as {
@@ -149,13 +158,13 @@ export function createOpenAISpeechProvider(options: {
       const voice = selected.id.split(':')[1];
       const model = speechModel;
       return measured(model, 'synthesize', signal, report, async (usage) => {
-        const authorization = await headers();
+        const { key, url } = await connection();
         signal?.throwIfAborted();
-        const response = await request('https://api.openai.com/v1/audio/speech', {
+        const response = await request(`${url}/audio/speech`, {
           method: 'POST',
           redirect: 'error',
           signal: AbortSignal.any([AbortSignal.timeout(600_000), ...(signal ? [signal] : [])]),
-          headers: { ...authorization, 'Content-Type': 'application/json' },
+          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             model,
             input: text,
@@ -163,6 +172,8 @@ export function createOpenAISpeechProvider(options: {
             response_format: 'opus',
           }),
         });
+        if (!response.ok)
+          throw new SpeechProviderError((await openAIRequestError(response, key)).message);
         const bytes = await readSpeechResponse(response, 50 * 1024 * 1024, 'OpenAI');
         if (model === 'tts-1' || model === 'tts-1-hd') {
           usage.costUsd = (Array.from(text).length * (model === 'tts-1' ? 15 : 30)) / 1e6;

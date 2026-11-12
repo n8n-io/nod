@@ -50,6 +50,9 @@ export function keyConnection(provider: ModelProvider, key: string, settings: Ke
   return {
     provider,
     key,
+    ...(provider === 'openai' && settings.region && settings.region !== 'global'
+      ? { region: settings.region }
+      : {}),
     ...(provider === 'anthropic' && settings.workspaceId.trim()
       ? { workspaceId: settings.workspaceId.trim() }
       : {}),

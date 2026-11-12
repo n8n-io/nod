@@ -46,6 +46,22 @@ export type ModelProvider = (typeof apiKeyConnectionProviders)[number] | 'compat
 export type ModelMethod = 'api_key' | 'subscription' | 'oauth';
 export type ModelEffort = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
+export const openAIRegions = {
+  global: 'Global',
+  eu: 'Europe (EEA + Switzerland)',
+  us: 'United States',
+  au: 'Australia',
+  ca: 'Canada',
+  in: 'India',
+  jp: 'Japan',
+  sg: 'Singapore',
+  kr: 'South Korea',
+  ae: 'United Arab Emirates',
+  gb: 'United Kingdom',
+} as const;
+
+export type OpenAIRegion = keyof typeof openAIRegions;
+
 export function lightestEffort(efforts: ModelEffort[]) {
   return efforts.find((level) => ['off', 'minimal', 'low', 'medium'].includes(level)) ?? efforts[0];
 }

@@ -4,10 +4,11 @@ import type {
   ModelMethod,
   ModelEffort,
   ModelWorkspace,
+  OpenAIRegion,
 } from '../shared/models.ts';
 
 export type ModelCredential =
-  | { type: 'api_key'; key: string; workspaceId?: string }
+  | { type: 'api_key'; key: string; workspaceId?: string; region?: OpenAIRegion }
   | { type: 'endpoint'; url: string; key?: string }
   | { type: 'bedrock'; key: string; region: string }
   | { type: 'cloudflare'; key: string; accountId: string; gatewayId?: string }

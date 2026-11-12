@@ -20,6 +20,7 @@ import {
   modelProviderNames,
   modelProviders,
   modelSource,
+  openAIRegions,
 } from '../../shared/models';
 import { analyticsForCurrentSession } from '../lib/analytics';
 import {
@@ -241,6 +242,23 @@ export function CloudKeyFields({
   useEffect(() => {
     if (showWorkspace) setWorkspaceFallback(true);
   }, [showWorkspace, provider]);
+  if (provider === 'openai')
+    return (
+      <Field label="API region" hint="Match the region of your OpenAI API project.">
+        <select
+          className="input"
+          value={value.region || 'global'}
+          disabled={disabled}
+          onChange={(event) => onChange({ ...value, region: event.target.value })}
+        >
+          {Object.entries(openAIRegions).map(([region, name]) => (
+            <option key={region} value={region}>
+              {name}
+            </option>
+          ))}
+        </select>
+      </Field>
+    );
   if (provider === 'anthropic')
     return showWorkspace || workspaceFallback || workspaces.length > 0 ? (
       <>

@@ -1346,7 +1346,7 @@ test('speech uses a bounded transcription request and generates Ogg voice output
   const usage: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
   let key: string | undefined;
   const provider = createOpenAISpeechProvider({
-    apiKey: async () => key,
+    connection: async () => (key ? { key } : undefined),
     configured: () => Boolean(key),
     fetch: async (input, init) => {
       assert.equal(init?.redirect, 'error');
@@ -1404,7 +1404,7 @@ test('speech uses a bounded transcription request and generates Ogg voice output
   await assert.rejects(speech.synthesize('Synthetic removed key'));
   let cancelled = 0;
   const failed = createOpenAISpeechProvider({
-    apiKey: 'fixture-never-live',
+    connection: { key: 'fixture-never-live' },
     fetch: async () =>
       new Response(
         new ReadableStream({
@@ -1439,7 +1439,10 @@ test('speech uses a bounded transcription request and generates Ogg voice output
       };
       const provider =
         engine === 'openai'
-          ? createOpenAISpeechProvider(options)
+          ? createOpenAISpeechProvider({
+              ...options,
+              connection: async () => ({ key: await options.apiKey() }),
+            })
           : {
               ...createOpenRouterSpeechProvider(options),
               transcribe: createOpenRouterTranscriptionProvider(options).transcribe,
@@ -1461,7 +1464,7 @@ test('speech uses a bounded transcription request and generates Ogg voice output
   }
   const silent = createSpeech(
     createOpenAISpeechProvider({
-      apiKey: 'fixture-never-live',
+      connection: { key: 'fixture-never-live' },
       fetch: async () => Response.json({ text: '  ' }),
     }),
   );
@@ -1474,7 +1477,7 @@ test('speech honors the selected OpenAI voice and refuses voices from another en
   const requests: Record<string, unknown>[] = [];
   const service = createSpeech(
     createOpenAISpeechProvider({
-      apiKey: 'fixture-never-live',
+      connection: { key: 'fixture-never-live' },
       fetch: async (_url, init) => {
         requests.push(JSON.parse(String(init?.body)));
         return new Response(Buffer.from('synthetic speech'));
