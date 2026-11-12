@@ -676,6 +676,109 @@ test('codemode app calls keep untrusted output and stop after an approval', asyn
     });
 });
 
+test('a new Pi request follows refreshed owner context after an approval pause', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-approval-next-'));
+  const requests: string[] = [];
+  const replies: string[] = [];
+  let round = 0;
+  const runtime = createAgentRuntime({
+    agent: createPiAgent({
+      provider: 'openai',
+      apiKey: 'fixture-key',
+      sessionRoot: join(directory, 'sessions'),
+      createSession: async (options) => {
+        const result = await createAgentSession(options);
+        result.session.agent.streamFunction = (_model, request) => {
+          requests.push(JSON.stringify(request.messages));
+          const first = round++ === 0;
+          const message = fauxAssistantMessage(
+            first
+              ? [
+                  {
+                    type: 'toolCall',
+                    id: 'approval-call',
+                    name: 'codemode',
+                    arguments: {
+                      code: 'await tools.apps({action:"SYNTHETIC_SEND",args:{}});',
+                    },
+                  },
+                ]
+              : `Answer ${round - 1}.`,
+            { stopReason: first ? 'toolUse' : 'stop' },
+          );
+          const stream = createAssistantMessageEventStream();
+          stream.push({ type: 'start', partial: message });
+          stream.push({ type: 'done', reason: first ? 'toolUse' : 'stop', message });
+          return stream;
+        };
+        return result;
+      },
+    }),
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  const initial: RuntimeContext = {
+    ...context(directory),
+    turnId: randomUUID(),
+    prompt: 'Send the synthetic item.',
+    memory: 'Initial synthetic owner context.',
+    integration: async () => ({ [appConfirmation]: 'Synthetic approval question.' }),
+    reply: async (text) => {
+      replies.push(text);
+    },
+  };
+  try {
+    const paused = await runtime.runTurn(initial);
+    assert.equal(paused.status, 'waiting_user');
+    assert.equal(paused.waitingFor, 'approval');
+    assert.equal(requests.length, 1);
+    const batches = [
+      [{ id: randomUUID(), text: 'First separate fixture question.', attachments: [] }],
+      [{ id: randomUUID(), text: 'Second separate fixture question.', attachments: [] }],
+    ];
+    const next = await runtime.runTurn({
+      ...initial,
+      turnId: randomUUID(),
+      prompt: 'Answer a new fixture question.',
+      memory: 'Refreshed synthetic owner context.',
+      takeMessages: async () => batches.shift() ?? [],
+    });
+    assert.equal(next.status, 'succeeded');
+    assert.equal(requests.length, 4);
+    assert.ok(requests[1]!.includes('Send the synthetic item.'));
+    assert.ok(requests[1]!.includes('Initial synthetic owner context.'));
+    assert.ok(requests[1]!.includes('Answer a new fixture question.'));
+    assert.ok(requests[1]!.includes('Refreshed synthetic owner context.'));
+    const replay = JSON.parse(requests[1]!) as Array<{
+      role: string;
+      content: unknown;
+      toolCallId?: string;
+    }>;
+    assert.ok(
+      replay.some(
+        (message) => message.role === 'toolResult' && message.toolCallId === 'approval-call',
+      ),
+    );
+    assert.equal(replay.at(-1)?.role, 'user');
+    assert.ok(JSON.stringify(replay.at(-1)?.content).includes('Answer a new fixture question.'));
+    assert.ok(
+      requests[1]!.lastIndexOf('Initial synthetic owner context.') <
+        requests[1]!.lastIndexOf('Refreshed synthetic owner context.'),
+    );
+    assert.ok(
+      requests[1]!.lastIndexOf('Refreshed synthetic owner context.') <
+        requests[1]!.lastIndexOf('Answer a new fixture question.'),
+    );
+    assert.ok(requests[2]!.includes('First separate fixture question.'));
+    assert.equal(requests[2]!.includes('Second separate fixture question.'), false);
+    assert.ok(requests[3]!.includes('Second separate fixture question.'));
+    assert.deepEqual(replies, ['Answer 1.', 'Answer 2.', 'Answer 3.']);
+  } finally {
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('real Pi sessions persist a credential pause and resume without replaying chat history', async (t) => {
   for (const kind of ['chat', 'background', 'task'] as const)
     await t.test(`${kind} session`, async () => {
@@ -1045,15 +1148,13 @@ test('a restarted proactive check within the hour reads its stable context from 
   }
 });
 
-test('messages taken after a Pi turn reach the next request together and not after a question', async () => {
+test('messages taken after a Pi turn each reach a new request and not after a question', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-pi-steer-'));
   const requests: string[] = [];
   const replies: string[] = [];
   const batches = [
-    [
-      { id: randomUUID(), text: 'Also check the second fixture', attachments: [] },
-      { id: randomUUID(), text: 'And the third fixture', attachments: [] },
-    ],
+    [{ id: randomUUID(), text: 'Also check the second fixture', attachments: [] }],
+    [{ id: randomUUID(), text: 'And the third fixture', attachments: [] }],
   ];
   let takes = 0;
   let question = false;
@@ -1138,23 +1239,23 @@ test('messages taken after a Pi turn reach the next request together and not aft
   });
   try {
     assert.equal((await runtime.runTurn(context)).status, 'succeeded');
-    assert.equal(requests.length, 2);
-    assert.equal(takes, 2);
+    assert.equal(requests.length, 3);
+    assert.equal(takes, 3);
     assert.equal(requests[0].includes('second fixture'), false);
-    const later = requests[1];
-    assert.ok(later.indexOf('Answer 1.') < later.indexOf('Also check the second fixture'));
-    assert.ok(
-      later.indexOf('Also check the second fixture') < later.indexOf('And the third fixture'),
-    );
-    assert.deepEqual(replies, ['Answer 1.', 'Answer 2.']);
+    const second = requests[1];
+    assert.ok(second.indexOf('Answer 1.') < second.indexOf('Also check the second fixture'));
+    assert.equal(second.includes('And the third fixture'), false);
+    const later = requests[2];
+    assert.ok(later.indexOf('Answer 2.') < later.indexOf('And the third fixture'));
+    assert.deepEqual(replies, ['Answer 1.', 'Answer 2.', 'Answer 3.']);
 
     question = true;
     batches.push([{ id: randomUUID(), text: 'Sent while asking', attachments: [] }]);
     const asked = await runtime.runTurn({ ...context, turnId: randomUUID(), prompt: 'Ask me' });
     assert.equal(asked.status, 'waiting_user');
     assert.equal(asked.message, 'Which fixture?');
-    assert.deepEqual(replies, ['Answer 1.', 'Answer 2.']);
-    assert.equal(takes, 2);
+    assert.deepEqual(replies, ['Answer 1.', 'Answer 2.', 'Answer 3.']);
+    assert.equal(takes, 3);
     assert.equal(batches.length, 1);
   } finally {
     await runtime.dispose();
@@ -3484,6 +3585,10 @@ test('owner context stays out of the system prompt and compaction summaries and 
   promptTokens = 100;
   const six = await turn(forgotten, 6);
   assert.equal(copies(six), 1);
+  assert.ok(
+    JSON.stringify(six.messages).lastIndexOf(header) <
+      JSON.stringify(six.messages).lastIndexOf('Synthetic request 6'),
+  );
   assert.ok(!JSON.stringify(six).includes('Jordi Fixture'));
 
   assert.ok(recorded.length >= 6);
@@ -5317,6 +5422,82 @@ test('task classification has a small request budget and never retries or record
     });
 });
 
+test('action review failures identify the task, model, provider, and bounded provider reason', async (t) => {
+  const { createServer } = await import('node:http');
+  const { InMemoryCredentialStore } = await import('@earendil-works/pi-ai');
+  let calls = 0;
+  const sessions: Array<string | string[] | undefined> = [];
+  const server = createServer((request, response) => {
+    calls++;
+    sessions.push(request.headers['x-opencode-session']);
+    request.resume();
+    request.on('end', () => {
+      response.writeHead(400, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          error: {
+            message: `Model Not Exist ${'x'.repeat(400)}`,
+            type: 'invalid_request_error',
+          },
+        }),
+      );
+    });
+  });
+  t.after(
+    () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  );
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const credentials = new InMemoryCredentialStore();
+  await credentials.modify('opencode-go', async () => ({ type: 'api_key', key: 'fixture' }));
+  const runtime = await ModelRuntime.create({
+    credentials,
+    modelsPath: null,
+    refreshOnCreate: false,
+    allowModelNetwork: false,
+  });
+  runtime.registerProvider('opencode-go', {
+    models: [
+      {
+        id: 'deepseek-v4.1-flash',
+        name: 'DeepSeek V4.1 Flash',
+        api: 'openai-completions',
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        reasoning: true,
+        input: ['text'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 1_000_000,
+        maxTokens: 384_000,
+      },
+    ],
+  });
+  await runtime.refresh({ allowNetwork: false });
+  const curator = createPiMemoryCurator({
+    provider: 'opencode-go',
+    model: 'deepseek-v4.1-flash',
+    runtime,
+  });
+  await assert.rejects(
+    curator.curate({ task: 'review', instructions: 'Check the synthetic action', input: {} }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /\breview\b/);
+      assert.ok(error.message.includes('opencode-go/deepseek-v4.1-flash'));
+      assert.ok(error.message.includes('Model Not Exist'));
+      const detail = error.message.split(' The provider said: ')[1];
+      assert.equal(detail?.length, 300);
+      return true;
+    },
+  );
+  assert.equal(calls, 3);
+  assert.ok(sessions[0]);
+  assert.equal(new Set(sessions).size, 1);
+});
+
 test('an unavailable classification resolver never loads a fallback model', async () => {
   let fallbackLoads = 0;
   const curator = createPiMemoryCurator({
@@ -6118,7 +6299,14 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   assert.ok(failedRequests.every((body) => body.model === 'gpt-audio-1.5'));
   assert.ok(failedRequests.every((body) => audio(body).length > 0));
   assert.equal(calls, 1);
-  assert.ok(events.some((event) => event.type === 'error' && event.message.includes('503')));
+  assert.ok(
+    events.some(
+      (event) =>
+        event.type === 'error' &&
+        event.message.includes('openai / gpt-audio-1.5:') &&
+        event.message.includes('503'),
+    ),
+  );
 });
 
 test('the runtime sends a recording caption natively while retaining its trusted transcript and text-only fallback', async (t) => {

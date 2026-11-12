@@ -6,6 +6,7 @@ import {
   pbkdf2Sync,
   randomBytes,
   randomUUID,
+  X509Certificate,
 } from 'node:crypto';
 import {
   appendFile,
@@ -22,10 +23,13 @@ import {
 } from 'node:fs/promises';
 import { EventEmitter } from 'node:events';
 import { execFile } from 'node:child_process';
+import { createServer as createHttpsServer } from 'node:https';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { getCACertificates, setDefaultCACertificates } from 'node:tls';
+import { promisify } from 'node:util';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { JSDOM } from 'jsdom';
@@ -45,6 +49,7 @@ import { createDesktopLifecycle, startupErrorDetails } from '../main/lifecycle.m
 import { createMacEncryption } from '../main/mac-encryption.mjs';
 import { waitFor } from '../runtime/index.mjs';
 import { appOpenPath } from '../main/app-links.mjs';
+import { trustSystemCertificates } from '../main/system-certificates.mjs';
 import appPages from '../../src/shared/app-pages.json' with { type: 'json' };
 import posthogHost from '../../src/shared/posthog-host.json' with { type: 'json' };
 
@@ -435,6 +440,7 @@ async function runningDesktop(
     buildMetadata,
     nativeMetadataRead = () => {},
     nativeAnalyticsResponse = () => Response.json({ status: 'Ok' }),
+    trustCertificates = () => {},
     version = '0.0.0-test',
     argv = [],
     prompt = () => assert.fail('No restart prompt is needed.'),
@@ -511,6 +517,7 @@ async function runningDesktop(
     readFileSync: (path) =>
       JSON.stringify(path.endsWith('posthog-host.json') ? posthogHost : appPages),
     appOpenPath,
+    trustSystemCertificates: trustCertificates,
     app: {
       on: (name, listener) => appEvents.on(name, listener),
       once: (name, listener) => appEvents.once(name, listener),
@@ -828,9 +835,13 @@ async function runningDesktop(
   )
     .replace(/^import[\s\S]*?;\n/gm, '')
     .replace('export function', 'function');
+  const loginItem = (await readFile(new URL('../main/login-item.mjs', import.meta.url), 'utf8'))
+    .replace(/^import[\s\S]*?;\n/gm, '')
+    .replaceAll('export function', 'function');
   await runInNewContext(
     `(async () => {
     ${artifactHandlers}
+    ${loginItem}
     ${source}
     appLinksReady = true;
     engine = {};
@@ -4408,6 +4419,175 @@ test('the remote desktop starts without a local runtime and fences tokens to its
   } finally {
     await f.close();
   }
+});
+
+test('server connections trust private CAs without accepting invalid certificates', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-server-tls-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const defaults = getCACertificates('default');
+  t.after(() => setDefaultCACertificates(defaults));
+  const execute = promisify(execFile);
+  const openssl = (...args) =>
+    execute('openssl', args, { cwd: directory, timeout: 10_000, windowsHide: true });
+  await writeFile(
+    join(directory, 'ca.cnf'),
+    `[req]
+distinguished_name = dn
+[dn]
+[root]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
+[server]
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature
+extendedKeyUsage = serverAuth
+subjectAltName = IP:127.0.0.1
+subjectKeyIdentifier = hash
+[ca]
+default_ca = local
+[local]
+database = index
+new_certs_dir = .
+certificate = ca.pem
+private_key = ca.key
+serial = serial
+default_md = sha256
+default_days = 1
+unique_subject = no
+policy = policy
+[policy]
+commonName = supplied
+`,
+  );
+  const extensions = (host) =>
+    `basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\nsubjectAltName=${host}\n`;
+  await writeFile(join(directory, 'valid.ext'), extensions('IP:127.0.0.1'));
+  await writeFile(join(directory, 'wrong-host.ext'), extensions('DNS:other.example.test'));
+  await writeFile(join(directory, 'index'), '');
+  await writeFile(join(directory, 'serial'), '01\n');
+  const keyOptions = [
+    '-newkey',
+    'ec',
+    '-pkeyopt',
+    'ec_paramgen_curve:P-256',
+    '-pkeyopt',
+    'ec_param_enc:named_curve',
+    '-nodes',
+  ];
+  for (const name of ['ca', 'untrusted'])
+    await openssl(
+      'req',
+      '-x509',
+      '-sha256',
+      ...keyOptions,
+      '-keyout',
+      `${name}.key`,
+      '-out',
+      `${name}.pem`,
+      '-days',
+      '1',
+      '-subj',
+      `/CN=Nod test ${name}`,
+      '-config',
+      'ca.cnf',
+      '-extensions',
+      name === 'ca' ? 'root' : 'server',
+    );
+  await openssl(
+    'req',
+    '-new',
+    ...keyOptions,
+    '-keyout',
+    'server.key',
+    '-out',
+    'server.csr',
+    '-subj',
+    '/CN=Nod test server',
+    '-config',
+    'ca.cnf',
+  );
+  for (const name of ['valid', 'wrong-host', 'expired'])
+    await openssl(
+      'ca',
+      '-batch',
+      '-notext',
+      '-config',
+      'ca.cnf',
+      '-in',
+      'server.csr',
+      '-out',
+      `${name}.pem`,
+      '-extfile',
+      name === 'wrong-host' ? 'wrong-host.ext' : 'valid.ext',
+      ...(name === 'expired'
+        ? ['-startdate', '20000101000000Z', '-enddate', '20000102000000Z']
+        : []),
+    );
+  const token = randomBytes(32).toString('base64url');
+  const requests = [];
+  async function serve(name) {
+    const server = createHttpsServer(
+      {
+        key: await readFile(join(directory, name === 'untrusted' ? 'untrusted.key' : 'server.key')),
+        cert: await readFile(join(directory, `${name}.pem`)),
+      },
+      (request, response) => {
+        requests.push({ name, path: request.url, authorization: request.headers.authorization });
+        response.setHeader('Content-Type', 'application/json');
+        response.end(
+          JSON.stringify({
+            user: { id: 'server-owner' },
+            settings: { onboardingCompleted: true },
+          }),
+        );
+      },
+    );
+    t.after(() => {
+      server.closeAllConnections();
+      return new Promise((resolve) => server.close(resolve));
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    return `https://127.0.0.1:${server.address().port}`;
+  }
+  const url = await serve('valid');
+  await assert.rejects(
+    fetch(url),
+    (error) => error.cause?.code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  );
+  const ca = await readFile(join(directory, 'ca.pem'), 'utf8');
+  const f = await runningDesktop(t, fetch, {
+    initialState: 'fresh',
+    trustCertificates: () =>
+      trustSystemCertificates({
+        getCACertificates: (type) => (type === 'system' ? [ca] : getCACertificates(type)),
+        setDefaultCACertificates,
+      }),
+  });
+  t.after(() => f.close());
+  await f.startRemote({ url, token });
+  assert.equal((await (await f.engineRequest('/api/preferences')).json()).user.id, 'server-owner');
+  assert.deepEqual(requests, [
+    { name: 'valid', path: '/api/session', authorization: `Bearer ${token}` },
+    { name: 'valid', path: '/api/preferences', authorization: `Bearer ${token}` },
+  ]);
+  const trusted = new Set(
+    getCACertificates('default').map((cert) => new X509Certificate(cert).fingerprint256),
+  );
+  assert.ok(defaults.every((cert) => trusted.has(new X509Certificate(cert).fingerprint256)));
+  for (const [name, code] of [
+    ['wrong-host', /^ERR_TLS_CERT_ALTNAME_INVALID$/],
+    ['expired', /^CERT_HAS_EXPIRED$/],
+    ['untrusted', /^(DEPTH_ZERO_SELF_SIGNED_CERT|UNABLE_TO_VERIFY_LEAF_SIGNATURE)$/],
+  ]) {
+    const invalid = await serve(name);
+    await assert.rejects(fetch(invalid), (error) => {
+      assert.match(error.cause?.code, code, name);
+      return true;
+    });
+    await assert.rejects(f.checkRemoteConnection({ url: invalid, token }));
+  }
+  assert.equal(requests.length, 2);
 });
 
 test('remote setup remains visible and navigable while the encrypted server token waits for macOS storage', async (t) => {

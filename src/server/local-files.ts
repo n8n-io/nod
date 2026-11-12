@@ -101,7 +101,7 @@ const programs: Partial<Record<NodeJS.Platform, RegExp>> = {
     /\.(exe|com|bat|cmd|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|msi|msp|msc|msix|msixbundle|appx|appxbundle|appinstaller|application|lnk|pif|scr|cpl|hta|reg|dll|xll|inf|sct|url|appref-ms|jar|chm|scf|iso|img|vhd|vhdx|library-ms|searchconnector-ms|settingcontent-ms)$/i,
   darwin:
     /\.(command|tool|terminal|app|pkg|mpkg|dmg|mobileconfig|workflow|scpt|scptd|applescript|sh|bash|zsh|jar|webloc|inetloc|fileloc)$/i,
-  linux: /\.(sh|bash|desktop|run|appimage|jar)$/i,
+  linux: /\.(sh|bash|desktop|run|appimage|jar|flatpak|flatpakref|flatpakrepo)$/i,
 };
 const run = promisify(execFile);
 const maybeLstat = (path: string) => lstat(path).catch(() => undefined);
@@ -158,6 +158,11 @@ export function localFileRules(
       key(target.slice(0, 2)) !== key(systemDrive)
     )
       return target.slice(0, 3);
+    if (platform === 'linux')
+      for (const mounts of ['/media', '/run/media']) {
+        const [user, drive] = path.relative(mounts, target).split(path.sep);
+        if (inside(mounts, target) && user && drive) return path.join(mounts, user, drive);
+      }
   }
   return {
     inside,

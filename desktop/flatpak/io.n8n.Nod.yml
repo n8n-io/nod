@@ -1,0 +1,116 @@
+id: io.n8n.Nod
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+base: org.electronjs.Electron2.BaseApp
+base-version: '25.08'
+command: nod
+separate-locales: false
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --device=dri
+  - --device=kvm
+  - --filesystem=home
+  - --filesystem=/media
+  - --filesystem=/run/media
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.kde.kwalletd5
+  - --talk-name=org.kde.kwalletd6
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --env=ELECTRON_OZONE_PLATFORM_HINT=auto
+modules:
+  - name: libslirp
+    buildsystem: meson
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+    sources:
+      - type: git
+        url: https://gitlab.freedesktop.org/slirp/libslirp.git
+        tag: v4.9.7
+        commit: ce12dcddf710a71dc0de6450ec95edbadf8e9f66
+
+  - name: dtc
+    buildsystem: meson
+    config-opts:
+      - -Dtools=false
+      - -Dpython=disabled
+      - -Dtests=false
+      - -Dyaml=disabled
+      - -Dvalgrind=disabled
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+    sources:
+      - type: archive
+        url: https://mirrors.edge.kernel.org/pub/software/utils/dtc/dtc-1.8.1.tar.xz
+        sha256: 23526015a6f1550e0541a53fe7acea1b5a11e3697cdf3a3bdc076abc38f6045d
+
+  - name: qemu
+    buildsystem: simple
+    cleanup:
+      - /include
+      - /libexec
+      - /share/applications
+      - /share/icons
+      - /share/doc
+      - /share/man
+    build-commands:
+      - >-
+        ./configure --prefix=/app --target-list="$(uname -m)-softmmu"
+        --enable-kvm --enable-slirp --enable-tools
+        --disable-docs --disable-gtk --disable-sdl --disable-vnc --disable-spice
+        --disable-opengl --disable-virglrenderer --disable-xen --disable-gio
+        --disable-guest-agent --disable-werror
+      - make -j"${FLATPAK_BUILDER_N_JOBS}"
+      - make install
+    sources:
+      - type: archive
+        url: https://download.qemu.org/qemu-11.1.3.tar.xz
+        sha256: 5a8289c7940dc77d3873c81a6c29ba3afe1446fc9d36e77fa1658cdbecb84b22
+
+  - name: openssh
+    buildsystem: simple
+    build-commands:
+      - ./configure --prefix=/app --sysconfdir=/app/etc/ssh --without-openssl-header-check
+      - make -j"${FLATPAK_BUILDER_N_JOBS}" ssh ssh-keygen
+      - install -Dm755 ssh /app/bin/ssh
+      - install -Dm755 ssh-keygen /app/bin/ssh-keygen
+    sources:
+      - type: archive
+        url: https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-10.6p2.tar.gz
+        sha256: 9ae44872090cf2f06b3cf9ff147e7f16f309671340763ed2f99248398ae29d5b
+
+  - name: nod
+    buildsystem: simple
+    build-commands:
+      - cp -a application /app/nod
+      - install -Dm755 nod.sh /app/bin/nod
+      - install -Dm644 io.n8n.Nod.desktop /app/share/applications/io.n8n.Nod.desktop
+      - install -Dm644 io.n8n.Nod.metainfo.xml /app/share/metainfo/io.n8n.Nod.metainfo.xml
+      - install -Dm644 nod.svg /app/share/icons/hicolor/scalable/apps/io.n8n.Nod.svg
+    sources:
+      - type: dir
+        path: ../../dist/desktop/Nod-linux-x64
+        dest: application
+        only-arches:
+          - x86_64
+      - type: dir
+        path: ../../dist/desktop/Nod-linux-arm64
+        dest: application
+        only-arches:
+          - aarch64
+      - type: file
+        path: nod.sh
+      - type: file
+        path: io.n8n.Nod.desktop
+      - type: file
+        path: io.n8n.Nod.metainfo.xml
+      - type: file
+        path: ../assets/nod-macos.svg
+        dest-filename: nod.svg

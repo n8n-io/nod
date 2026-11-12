@@ -19,9 +19,9 @@ If your problem isn't here, [send feedback with a diagnostic report](#send-feedb
 
 Docker isn't running, or Compose is too old. Start Docker (on a Mac, open Docker Desktop) and check that `docker compose version` reports v2.
 
-### Run npm run dev to prepare the local database
+### NOD_POSTGRES_PASSWORD is missing a value
 
-You ran `docker compose` yourself before Nod created the database password. Run `pnpm start` once. It generates `NOD_POSTGRES_PASSWORD` and starts the containers for you.
+You ran `docker compose` yourself before Nod created the database password. Run `pnpm start` from the repository root. It generates `NOD_POSTGRES_PASSWORD`, starts the containers, and starts Nod.
 
 ### Configure NOD_VAULT_KEY in server settings before saving a connection.
 
@@ -43,6 +43,22 @@ For a local source install without `NOD_AUTH_TOKEN`, Nod prints a link with `#ac
 
 ## Desktop app
 
+### Linux cannot start its private computer
+
+A local Linux desktop assistant requires hardware virtualization and access to `/dev/kvm`. Check that virtualization is enabled in your firmware and that your Linux account can use KVM. On distributions with a `kvm` group, your account must belong to it. Sign out and back in after a group change, then reopen Nod. Nod does not use software emulation as a fallback.
+
+### Linux cannot save or unlock keys
+
+Start and unlock your desktop's secret store, such as GNOME Keyring or KWallet, then reopen Nod. The Flatpak uses Secret Service for saved keys and server tokens. Nod refuses plain-text storage. Keep your existing profile and secret store entries.
+
+### Linux cannot move a file to the Trash
+
+The Flatpak uses `xdg-desktop-portal` for Trash. Check that your desktop's portal service is installed and running. Headless sessions can lack it. Nod keeps the original file when Trash fails.
+
+### Linux does not find an app update
+
+Nod's update checks are off on Linux. Download and install the next bundle with the [Linux install procedure](/get-started/install-desktop/#linux). The published bundles have no Nod update repository, so `flatpak update` alone does not update Nod.
+
 ### macOS blocks the first launch
 
 Every release is notarized by Apple. If macOS still blocks it, open **System Settings → Privacy & Security** and select **Open Anyway**. A managed Mac may need approval from your IT team.
@@ -51,7 +67,7 @@ Every release is notarized by Apple. If macOS still blocks it, open **System Set
 
 macOS can ask again after Nod is re-signed. Approve it in the macOS dialog. Never type your Mac password into the Nod chat.
 
-While the keychain unlocks, Nod keeps the startup screen and **Server connection** available. If it keeps waiting, check for a macOS prompt, unlock your keychain, then quit and reopen Nod.
+While the keychain unlocks, Nod keeps the startup screen and **Connect to a server** available. If it keeps waiting, check for a macOS prompt, unlock your keychain, then quit and reopen Nod.
 
 ### Nod could not unlock your saved server token
 

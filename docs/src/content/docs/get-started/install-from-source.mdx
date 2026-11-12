@@ -7,7 +7,7 @@ sidebar:
 
 import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
-Run Nod from its source code on macOS or Linux. Choose this if you use Linux or want to change Nod's code. On a Mac or Windows PC, the [desktop app](/get-started/install-desktop/) is quicker.
+Run Nod from its source code on macOS or Linux. Choose this to change Nod's code or use a source installation. The [desktop app](/get-started/install-desktop/) is quicker to install on Mac and Windows. Linux x64 also has a [Flatpak preview](/get-started/install-desktop/#linux).
 
 To run Nod on a VPS, cloud VM, or Mac mini and reach it from other devices, use [Host your own server](/deploy/self-host/).
 
@@ -23,18 +23,19 @@ To run Nod on a VPS, cloud VM, or Mac mini and reach it from other devices, use 
 
 ## What `pnpm start` runs
 
-`pnpm start` installs dependencies when they changed, builds the web app and starts three Docker containers. Then it starts the Nod server, which serves the web app on `127.0.0.1`.
+`pnpm start` installs dependencies when they changed, builds the web app and starts four Docker containers: PostgreSQL, the workspace, the workspace's firewall and the browser. Then it starts the Nod server, which serves the web app on `127.0.0.1`.
 
 ```mermaid
 flowchart LR
   you([Your browser]):::accent -- access link --> server[Nod server<br/>and web app]:::accent
   server --> db[(PostgreSQL)]
   server --> ws[Workspace<br/>container]
+  ws -- network --> fw[Firewall<br/>container]
   server --> br[Browser<br/>container]
   server -.-> model[Your model<br/>provider]:::muted
 ```
 
-The workspace is where Nod runs commands and keeps files. The browser is where it visits websites. Neither of them receives your provider keys.
+The workspace is where Nod runs commands and keeps files. The browser is where it visits websites. Neither of them receives your provider keys. The workspace reaches the network only through its [firewall](/deploy/self-host/#what-runs-on-the-server), which blocks private addresses.
 
 ## Get the code
 

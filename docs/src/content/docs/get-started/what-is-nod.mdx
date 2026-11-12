@@ -48,12 +48,12 @@ Nod is designed to check with you before it sends, posts or deletes anything you
 
 ## Where Nod runs
 
-|          | Local desktop assistant                  | Local source install                       | Self-hosted server                                              |
-| -------- | ---------------------------------------- | ------------------------------------------ | --------------------------------------------------------------- |
-| Best for | Using Nod on your own computer           | Running Nod on Linux, or changing its code | Reaching one assistant from several devices                     |
-| Runs on  | Mac (Apple silicon or Intel), Windows 11 | macOS or Linux with Docker                 | A machine with Docker Compose                                   |
-| You need | Nothing else installed                   | Node.js, pnpm, Docker and Git              | [Server setup](/deploy/self-host/) and HTTPS for network access |
-| Updates  | Automatic                                | `git pull` and restart                     | [Update the server](/deploy/server-operations/)                 |
+|          | Local desktop assistant                                                                                                | Local source install                        | Self-hosted server                                              |
+| -------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------- |
+| Best for | Using Nod on your own computer                                                                                         | Running from source, or changing Nod's code | Reaching one assistant from several devices                     |
+| Runs on  | Mac (Apple silicon or Intel), Windows 11, Linux x64 preview                                                            | macOS or Linux with Docker                  | A machine with Docker Compose                                   |
+| You need | Mac: macOS 14 or later. Windows local: WSL 2 and virtualization. Linux: Flatpak and a secret store; KVM for local use. | Node.js, pnpm, Docker and Git               | [Server setup](/deploy/self-host/) and HTTPS for network access |
+| Updates  | Automatic on Mac and Windows; install the next bundle on Linux                                                         | `git pull` and restart                      | [Update the server](/deploy/server-operations/)                 |
 
 The desktop app can also connect to a server. Its chat, files, model connections and connected apps then come from that server. Closing the client doesn't stop the assistant.
 
@@ -73,7 +73,7 @@ Each assistant needs a [model connection](/connect/models/): a supported service
   <LinkCard
     title="Install the desktop app"
     href="/get-started/install-desktop/"
-    description="The quickest way to start, on a Mac or Windows PC."
+    description="Install on Mac or Windows, or use the Linux x64 Flatpak preview."
   />
   <LinkCard
     title="Install from source"

@@ -28,11 +28,13 @@ const architecture = nodeArchitecture === 'x64' ? 'amd64' : 'arm64';
 if (imagesOnly && hostOnly) throw new Error('Choose either image preparation or host preparation.');
 if (
   !imagesOnly &&
-  (process.platform !== 'darwin' ||
-    platform !== `darwin-${nodeArchitecture}` ||
+  (!['darwin', 'linux'].includes(process.platform) ||
+    platform !== `${process.platform}-${nodeArchitecture}` ||
     process.arch !== nodeArchitecture)
 )
-  throw new Error('Host runtime preparation requires a Mac with the selected architecture.');
+  throw new Error(
+    'Host runtime preparation requires a Mac or Linux computer with the selected architecture.',
+  );
 if (hostOnly && prebuiltImages)
   throw new Error('Prebuilt image export cannot be combined with host-only preparation.');
 const input = await runtimeInputs();
@@ -45,7 +47,15 @@ const buildLock = JSON.parse(
 const pinnedDownloads = JSON.parse(
   await readFile(join(repository, 'desktop/runtime/downloads.json'), 'utf8'),
 );
-const downloads = nodeArchitecture === 'x64' ? pinnedDownloads.x64 : pinnedDownloads;
+const guestDownloads = nodeArchitecture === 'x64' ? pinnedDownloads.x64 : pinnedDownloads;
+const downloads =
+  process.platform === 'linux'
+    ? {
+        ...guestDownloads,
+        ...pinnedDownloads.linux[nodeArchitecture],
+        dockerHost: guestDownloads.dockerGuest,
+      }
+    : guestDownloads;
 await mkdir(assets, { recursive: true });
 await mkdir(cache, { recursive: true });
 await mkdir(join(assets, 'images'), { recursive: true });
@@ -290,17 +300,19 @@ if (!imagesOnly) {
     await cp(await download(file, item, file), join(assets, 'guest-packages', file));
   }
 
-  const sourceArchive = await download(
-    'Lima source',
-    buildLock.limaSource,
-    `lima-source-${buildLock.limaVersion}.tar.gz`,
-  );
-  const goArchive = await download(
-    'Pinned Go compiler',
-    nodeArchitecture === 'x64' ? buildLock.goX64 : buildLock.go,
-    basename(new URL((nodeArchitecture === 'x64' ? buildLock.goX64 : buildLock.go).url).pathname),
-  );
-  await buildLima(sourceArchive, goArchive, join(cache, 'build'), join(assets, 'lima'));
+  if (process.platform === 'darwin') {
+    const sourceArchive = await download(
+      'Lima source',
+      buildLock.limaSource,
+      `lima-source-${buildLock.limaVersion}.tar.gz`,
+    );
+    const goArchive = await download(
+      'Pinned Go compiler',
+      nodeArchitecture === 'x64' ? buildLock.goX64 : buildLock.go,
+      basename(new URL((nodeArchitecture === 'x64' ? buildLock.goX64 : buildLock.go).url).pathname),
+    );
+    await buildLima(sourceArchive, goArchive, join(cache, 'build'), join(assets, 'lima'));
+  }
   await cp(dockerGuest, join(assets, 'docker-guest.tar.gz'), { mode: constants.COPYFILE_FICLONE });
   await cp(guest, join(assets, 'guest.img'), { mode: constants.COPYFILE_FICLONE });
   for (const notice of buildLock.notices) {

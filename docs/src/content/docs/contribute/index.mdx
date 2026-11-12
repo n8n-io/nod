@@ -37,6 +37,8 @@ Agreeing on the approach first saves you from building something that can't merg
    pnpm run dev
    ```
 
+   Stop `pnpm start` with Ctrl-C before you run this. Both use the same port (4310 by default), so the second one fails with `EADDRINUSE`.
+
 4. Connect your own model key and accounts. Never use shared, production or customer credentials.
 
 </Steps>
@@ -109,6 +111,10 @@ For how a request moves through these parts, read [Architecture](/how-it-works/a
 ## Coding agents
 
 Coding agents follow [AGENTS.md](https://github.com/n8n-io/nod/blob/main/AGENTS.md), and so does everyone else. It holds the rules every change follows, including the safety invariants. The same checks and review apply whether you or an agent wrote the change.
+
+## Describe errors
+
+An error must state what failed and keep the service's specific reason, status and useful details. Identify the model and provider when a model request fails. Add a next step only when the error supports it. A quota or rate limit alone does not establish a billing problem. Remove secrets before an error is shown or stored.
 
 ## License
 

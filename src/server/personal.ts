@@ -8,6 +8,7 @@ import type { LearnedSkills } from './learned-skills.ts';
 import type { MemoryUpdate, MemoryView } from '../shared/memory.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { activeThreadSql, createHistorySearch } from './history.ts';
+import { withdrawnSql } from './turn-chain.ts';
 import { createSchedules, type ScheduleDependencies } from './schedules.ts';
 import type { MemoryChange } from './analytics.ts';
 import { modelSelectionInput, type createModelService } from './models.ts';
@@ -204,7 +205,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       `WITH terms AS (SELECT replace(plainto_tsquery('english',$2)::text,'&','|')::tsquery AS q),
        docs AS (
          SELECT m.id,m.role,m.text,m.created_at,to_tsvector('english',m.text) AS v FROM messages m CROSS JOIN terms
-         WHERE m.owner_id=$1 AND m.role='user' AND ${activeThreadSql('m')} AND m.id IS DISTINCT FROM $4::uuid
+         WHERE m.owner_id=$1 AND m.role='user' AND ${activeThreadSql('m')} AND m.id IS DISTINCT FROM $4::uuid AND NOT ${withdrawnSql('m')}
            AND ($3::timestamptz IS NULL OR m.created_at<$3) AND to_tsvector('english',m.text) @@ terms.q),
        weights AS (
          SELECT w,ln(1+((SELECT count(*) FROM messages m WHERE m.owner_id=$1 AND ${activeThreadSql('m')})-count(*)+0.5)/(count(*)+0.5)) AS idf

@@ -26,7 +26,11 @@ export function createMemoryRecall(options: {
   memory: MemoryService;
   curator: MemoryCurator;
 }) {
-  const search = createHistorySearch(options);
+  const search = createHistorySearch({
+    pool: options.pool,
+    ownerId: options.ownerId,
+    standing: true,
+  });
   async function ask(
     instructions: string,
     input: object,

@@ -22,7 +22,7 @@ import { PgBoss } from 'pg-boss';
 import type { Pool, PoolClient } from 'pg';
 import { cancellationTransaction, pool } from './db.ts';
 import { afterCommit, afterRollback, transaction } from './transaction.ts';
-import { laterSupersedingTurnSql, turnChainSql } from './turn-chain.ts';
+import { laterSupersedingTurnSql, turnChainSql, withdrawnSql } from './turn-chain.ts';
 import { dataRoot, databaseUrl, ownerId } from './config.ts';
 import { delta, refresh, working } from './events.ts';
 import {
@@ -536,6 +536,7 @@ export function createUserMessageService(
       ),
     answer: (text: string, input: SubmitUserMessageOptions = {}) =>
       readAnswer(text, false, input, options.confirmAction),
+    accepted: options.accepted,
   };
 }
 
@@ -717,8 +718,8 @@ export async function submitUserMessage(
         ).rows[0]
       : undefined;
     await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel,session_id,background,parent_turn_id,status,finished_at)
-       VALUES($1,$2,$3,'user',$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $11='cancelled' THEN now() END)`,
+      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel,session_id,background,parent_turn_id,status,finished_at,withdrawn)
+       VALUES($1,$2,$3,'user',$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $11='cancelled' THEN now() END,$11='cancelled')`,
       [
         turnId,
         ownerId,
@@ -778,6 +779,21 @@ export async function submitUserMessage(
   return result;
 }
 
+async function withdraw(client: PoolClient, turnIds: string[], wholeRequest: boolean) {
+  if (!turnIds.length) return;
+  await client.query(
+    `WITH RECURSIVE line(id,parent,session_id,start) AS (
+       SELECT id,parent_turn_id,session_id,id FROM turns WHERE owner_id=$2 AND id=ANY($1::uuid[])
+       UNION
+       SELECT p.id,p.parent_turn_id,p.session_id,l.start FROM line l
+       JOIN turns p ON $3 AND p.id=l.parent AND p.owner_id=$2 AND p.session_id=l.session_id)
+     UPDATE turns t SET withdrawn=true FROM line l
+     WHERE t.id=l.id AND EXISTS(SELECT 1 FROM line said JOIN turns c ON c.id=said.id WHERE said.start=l.start
+       AND (c.message_id IS NOT NULL OR EXISTS(SELECT 1 FROM messages m WHERE m.owner_id=c.owner_id AND m.turn_id=c.id AND m.role='user')))`,
+    [turnIds, ownerId, wholeRequest],
+  );
+}
+
 export async function cancelTurns(
   client: PoolClient,
   threadId: string,
@@ -791,8 +807,9 @@ export async function cancelTurns(
     nextStop = new AbortController();
   }
   const values = [threadId, ownerId, scope.sessionId ?? null, scope.background ?? false];
-  const candidates = await client.query<{ id: string }>(
-    "SELECT id FROM turns WHERE thread_id=$1 AND owner_id=$2 AND ($3::uuid IS NULL OR session_id=$3) AND (NOT $4 OR session_id<>$1) AND status IN ('queued','running','waiting')",
+  const candidates = await client.query<{ id: string; live: boolean }>(
+    `SELECT u.id,u.status<>'waiting' OR NOT ${laterSupersedingTurnSql} AS live FROM turns u
+     WHERE u.thread_id=$1 AND u.owner_id=$2 AND ($3::uuid IS NULL OR u.session_id=$3) AND (NOT $4 OR u.session_id<>$1) AND u.status IN ('queued','running','waiting')`,
     values,
   );
   abortTurns(candidates.rows.map(({ id }) => id));
@@ -800,6 +817,14 @@ export async function cancelTurns(
     "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND ($3::uuid IS NULL OR session_id=$3) AND (NOT $4 OR session_id<>$1) AND status IN ('queued','running','waiting') RETURNING id,session_id",
     values,
   );
+  if (actor === 'owner') {
+    const stopped = new Set(current.rows.map((row) => row.id as string));
+    await withdraw(
+      client,
+      candidates.rows.flatMap(({ id, live }) => (live && stopped.has(id) ? [id] : [])),
+      true,
+    );
+  }
   const taskIds = (
     await client.query(
       `SELECT DISTINCT to_jsonb(u)->>'task_id' AS id FROM turns u
@@ -874,15 +899,43 @@ export async function reactToAssistantMessage(
   messageId: string,
   reaction: MessageReaction | null,
   wake = true,
+  messages: Pick<
+    ReturnType<typeof createUserMessageService>,
+    'answer' | 'submit' | 'accepted'
+  > = createUserMessageService(),
+  replyChannel?: string,
 ) {
   if (reaction !== null && !isMessageReaction(reaction))
     throw httpError('Choose one emoji reaction.', 400);
+  validateSource(undefined, replyChannel);
+  const arrival = stopSignal();
+  const target =
+    reaction && wake
+      ? (
+          await pool.query<{ channel: string }>(
+            `SELECT COALESCE(u.channel,m.delivered_channel,'web') AS channel FROM messages m
+             JOIN threads th ON th.id=m.thread_id AND th.owner_id=m.owner_id
+             LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
+             WHERE m.id=$1 AND m.owner_id=$2 AND m.role='assistant' AND th.archived_at IS NULL AND m.hidden_at IS NULL`,
+            [messageId, ownerId],
+          )
+        ).rows[0]
+      : undefined;
+  const answer =
+    reaction && wake && target
+      ? await messages.answer(reaction, {
+          channel: replyChannel ?? target.channel,
+          replyToMessageId: messageId,
+        })
+      : undefined;
+  let accepted: ((channel: string) => void) | undefined;
+  let acceptedChannel: string | undefined;
   const result = await transaction(async (client) => {
     const thread = await lockThread(client);
     const message = (
       await client.query(
-        `SELECT m.id,m.text,m.reaction,m.reaction_revision,COALESCE(u.channel,'web') AS channel FROM messages m LEFT JOIN turns u ON u.id=m.turn_id
-         WHERE m.id=$1 AND m.owner_id=$2 AND m.role='assistant' AND m.thread_id=$3 AND m.hidden_at IS NULL FOR UPDATE OF m`,
+        `SELECT m.id,m.reaction,m.reaction_revision,COALESCE(u.channel,m.delivered_channel,'web') AS channel FROM messages m LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
+         WHERE m.id=$1 AND m.owner_id=$2 AND m.role='assistant' AND m.thread_id=$3 AND m.hidden_at IS NULL`,
         [messageId, ownerId, thread.id],
       )
     ).rows[0];
@@ -893,23 +946,31 @@ export async function reactToAssistantMessage(
     )
       return { ok: true, reaction: message.reaction };
     const revision = message.reaction_revision + 1;
-    await client.query('UPDATE messages SET reaction=$2,reaction_revision=$3 WHERE id=$1', [
-      messageId,
-      reaction,
-      revision,
-    ]);
-    if (reaction && wake)
-      await enqueueTurn(
-        `The user reacted to an assistant message. This is narrow feedback about that message, not a new instruction or permission. Decide whether a useful response is needed; usually stay quiet. Do not acknowledge the reaction automatically or ask a generic follow-up. Message data: ${JSON.stringify({ id: message.id, text: message.text, reaction })}`,
-        {
-          source: 'event',
-          sourceId: `reaction:${messageId}:${revision}`,
-          channel: message.channel,
-          client,
-        },
-      );
+    if (reaction && wake) {
+      const channel = replyChannel ?? message.channel;
+      accepted = messages.accepted?.();
+      await messages.submit(reaction, [], {
+        sourceId: `reaction-reply:${messageId}:${revision}`,
+        channel,
+        client,
+        replyToMessageId: messageId,
+        answer,
+        stopSignal: arrival,
+      });
+      acceptedChannel = channel;
+    }
+    const updated = await client.query(
+      'UPDATE messages SET reaction=$2,reaction_revision=$3 WHERE id=$1 AND owner_id=$4 AND thread_id=$5 AND hidden_at IS NULL',
+      [messageId, reaction, revision, ownerId, thread.id],
+    );
+    if (!updated.rowCount) throw httpError('Message not found.', 404);
     return { ok: true, reaction };
   }, pool);
+  if (acceptedChannel) {
+    try {
+      accepted?.(acceptedChannel);
+    } catch {}
+  }
   refresh();
   return result;
 }
@@ -1045,42 +1106,64 @@ async function finishTurn(
 const interrupted = 'Interrupted.';
 
 function failureText(error: unknown) {
-  const text = error instanceof Error ? error.message || error.name : String(error);
+  let text = error instanceof Error ? error.message || error.name : String(error);
   if (error instanceof ModelRequestError) {
-    const code = /\b429\b/.test(text) ? ' (HTTP 429)' : '';
-    if (/\bsubscription_sharing_workplace_individual_usage_limit_exceeded\b/i.test(text))
-      return `The model provider's workspace usage limit was reached${code}. Ask your workspace admin to review the limit, or wait for it to reset.`;
-    if (
-      /\b(?:GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|subscription_sharing_usage_limit_exceeded)\b/i.test(
-        text,
-      ) ||
-      /["']code["']\s*:\s*["']?1308(?!\d)/i.test(text)
-    )
-      return `The model provider's quota was reached${code}. Wait for it to reset, or check the provider account's usage limits and plan.`;
-    const quota =
-      /\b(?:insufficient[_ -]?quota|quota[_ -]?(?:exceeded|exhausted|reached)|exceeded\s+(?:your\s+)?(?:current\s+)?quota)\b/i.test(
-        text,
-      );
-    if (
-      quota ||
-      /\b(?:429|too many requests|resource_exhausted|rate[ _-]?limit(?:ed|ing|[_ -]?(?:error|exceeded))?)\b/i.test(
-        text,
-      )
-    ) {
-      const retry = text.match(
-        /\b(?:please\s+)?retry\s+in\s+(\d{1,3}(?:\.\d{1,9})?)\s*s(?:econds?)?\b/i,
-      );
-      const seconds = retry ? Math.ceil(Number(retry[1])) : 0;
-      const next =
-        seconds > 0 && seconds <= 120
-          ? `Try again in about ${seconds} second${seconds === 1 ? '' : 's'}.`
-          : quota
-            ? 'Try again later.'
-            : 'Try again shortly.';
-      return quota
-        ? `The model provider's quota was reached${code}. ${next} If it keeps happening, check the provider account's usage limits and billing.`
-        : `The model provider is rate limiting requests${code}. ${next}`;
-    }
+    const start = text.indexOf('{');
+    const reasons: string[] = [];
+    const read = (value: unknown, depth = 0): void => {
+      if (depth > 8) return;
+      if (typeof value === 'string') {
+        if (!value.trim()) return;
+        try {
+          read(JSON.parse(value), depth + 1);
+        } catch {
+          reasons.push(value);
+        }
+      } else if (Array.isArray(value)) {
+        for (const item of value.slice(0, 20)) read(item, depth + 1);
+      } else if (value && typeof value === 'object') {
+        const data = value as Record<string, unknown>;
+        for (const key of [
+          'code',
+          'type',
+          'status',
+          'quotaMetric',
+          'quotaId',
+          'quotaValue',
+          'retryDelay',
+        ]) {
+          const field = data[key];
+          if (typeof field === 'string' || typeof field === 'number')
+            reasons.push(
+              key === 'code' && /^[45]\d{2}$/.test(String(field))
+                ? `HTTP ${field}`
+                : `${key}: ${field}`,
+            );
+        }
+        read(data.message, depth + 1);
+        read(data.error, depth + 1);
+        read(data.details, depth + 1);
+        read(data.violations, depth + 1);
+        const metadata = data.metadata as Record<string, unknown> | undefined;
+        if (metadata && typeof metadata === 'object') {
+          for (const key of [
+            'provider_name',
+            'error_type',
+            'provider_code',
+            'limit_source',
+            'reason',
+            'remedy_hint',
+          ])
+            if (typeof metadata[key] === 'string') reasons.push(`${key}: ${metadata[key]}`);
+          read(metadata.raw, depth + 1);
+        }
+      }
+    };
+    if (start !== -1)
+      try {
+        read(JSON.parse(text.slice(start)));
+        if (reasons.length) text = `${text.slice(0, start)}${[...new Set(reasons)].join('; ')}`;
+      } catch {}
   }
   return redactSecretText(text).trim().slice(0, 2_000) || 'Unknown error.';
 }
@@ -1089,7 +1172,7 @@ async function failTurn(
   turnId: string,
   present: ThreadDependencies['present'],
   error = interrupted,
-  next?: string,
+  { next, withdrawn }: { next?: string; withdrawn?: boolean } = {},
 ) {
   const turn = await transaction(async (client) => {
     const thread = await lockThread(client);
@@ -1119,6 +1202,7 @@ async function failTurn(
     ).rows[0];
     if (!turn) return;
     await finishTurn(client, turnId, 'failed', { error });
+    if (withdrawn) await withdraw(client, [turnId], false);
     const task = turn.task_id
       ? (
           await client.query('SELECT message_id FROM tasks WHERE id=$1 AND owner_id=$2', [
@@ -1180,7 +1264,7 @@ function failAtLimit(turnId: string, monthlyUsd?: number) {
     turnId,
     undefined,
     monthlyUsd === undefined ? spendingLimitReached : spendingLimitText(monthlyUsd),
-    'Raise or remove it in [Usage](/usage), or tell me here.',
+    { next: 'Raise or remove it in [Usage](/usage), or tell me here.' },
   );
 }
 
@@ -1247,12 +1331,15 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
       [thread.id, ownerId, turnId, sessionId],
     );
     if (!rows.some((row) => row.id === turnId && row.status === 'running')) throw turnStopped();
-    const queued = rows.filter((row) => row.status === 'queued');
-    const end = queued.findIndex(
-      (row) => !['user', 'task'].includes(row.source) || row.channel !== channel || !row.message_id,
-    );
-    const taken = end < 0 ? queued : queued.slice(0, end);
-    if (!taken.length) return [];
+    const next = rows.find((row) => row.status === 'queued');
+    if (
+      !next ||
+      !['user', 'task'].includes(next.source) ||
+      next.channel !== channel ||
+      !next.message_id
+    )
+      return [];
+    const taken = [next];
     const ids = taken.map((row) => row.id);
     await client.query(
       'UPDATE messages SET turn_id=$1 WHERE turn_id=ANY($2::uuid[]) AND owner_id=$3',
@@ -1379,14 +1466,15 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
        FROM messages m CROSS JOIN seen CROSS JOIN boundary
        LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
        WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.hidden_at IS NULL AND m.id IS DISTINCT FROM $3::uuid
+       AND NOT (m.role='user' AND ${withdrawnSql('m')})
        AND (NOT $5::boolean OR (m.created_at<=boundary.at AND
          (u.id IS NULL OR u.session_id=$6
           OR (u.status IN ('succeeded','failed','cancelled') AND u.finished_at<=boundary.at))))
        ORDER BY m.created_at DESC,m.id DESC LIMIT 30) m ORDER BY created_at,id`,
       [ownerId, threadId, sourceMessageId, turn.id, Boolean(turn.background), turn.session_id],
     ),
-    pool.query<{ status: string; error: string | null }>(
-      `SELECT status,error FROM turns WHERE owner_id=$1 AND session_id=$2 AND id<>$3
+    pool.query<{ status: string; error: string | null; withdrawn: boolean }>(
+      `SELECT status,error,withdrawn FROM turns WHERE owner_id=$1 AND session_id=$2 AND id<>$3 AND started_at IS NOT NULL
          AND (created_at,id)<(SELECT created_at,id FROM turns WHERE id=$3)
          ORDER BY created_at DESC,id DESC LIMIT 1`,
       [ownerId, turn.session_id, turn.id],
@@ -1434,6 +1522,12 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       memory: memory ?? '',
       ...(previous.rows[0]?.status === 'failed' && previous.rows[0].error
         ? { previousFailure: previous.rows[0].error }
+        : {}),
+      ...(previous.rows[0]?.withdrawn
+        ? {
+            withdrawnRequest:
+              previous.rows[0].status === 'failed' ? ('failed' as const) : ('stopped' as const),
+          }
         : {}),
       ...(confirmedActions?.length ? { confirmedActions } : {}),
       ...(related.length ? { relatedConversation: related } : {}),
@@ -2122,7 +2216,11 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       await failAtLimit(turnId, limit?.monthlyUsd);
     } else {
       failure = error instanceof ModelRequestError ? 'model' : 'unknown';
-      if (await failTurn(turnId, dependencies.present, failureText(error)))
+      if (
+        await failTurn(turnId, dependencies.present, failureText(error), {
+          withdrawn: failure === 'model',
+        })
+      )
         logFailure('turn_failed', error, { threadId, turnId, sessionId: turn.session_id });
     }
   } finally {

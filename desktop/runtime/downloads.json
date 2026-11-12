@@ -92,5 +92,27 @@
         "sha256": "facfd45a7cf6bab8ef30adbe693d6486f22e5253263f9d53b4e70b53f768970e"
       }
     ]
+  },
+  "linux": {
+    "arm64": {
+      "lima": {
+        "url": "https://github.com/lima-vm/lima/releases/download/v2.2.0/lima-2.2.0-Linux-aarch64.tar.gz",
+        "sha256": "7c6a09c6844f55f811e9b7b2b60a6070a512c696c8ec752dfdb3c8ed50ed0364"
+      },
+      "guestagents": {
+        "url": "https://github.com/lima-vm/lima/releases/download/v2.2.0/lima-additional-guestagents-2.2.0-Linux-aarch64.tar.gz",
+        "sha256": "e6dc519fce67d016a70fef652f75ace3f8e46f2e92210116c01c5bffdc055b04"
+      }
+    },
+    "x64": {
+      "lima": {
+        "url": "https://github.com/lima-vm/lima/releases/download/v2.2.0/lima-2.2.0-Linux-x86_64.tar.gz",
+        "sha256": "a0ea1ccf6b7335a900adb5f8d2b8384457965fecb1ba72f09b4e3e46d12f424a"
+      },
+      "guestagents": {
+        "url": "https://github.com/lima-vm/lima/releases/download/v2.2.0/lima-additional-guestagents-2.2.0-Linux-x86_64.tar.gz",
+        "sha256": "8d03b82a456e299813276c6ff532fce1848fee5e50527433fe3374cde9183175"
+      }
+    }
   }
 }

@@ -1713,6 +1713,12 @@ async function initializeApplication(
       return submittedMessages.submit(...args);
     },
   };
+  const reactToMessage = (
+    messageId: string,
+    reaction: Parameters<typeof reactToAssistantMessage>[1],
+    wake = adapters.model.configured,
+    replyChannel?: string,
+  ) => reactToAssistantMessage(messageId, reaction, wake, userMessages, replyChannel);
   if (options.workers !== false) {
     if (options.heartbeat !== false) await triage.initializeHeartbeat();
     await initializeMemoryLearning({
@@ -1802,7 +1808,20 @@ async function initializeApplication(
       browserStep: async (turn, request, signal) => {
         const args = browserStepArgs(request);
         const verdict = await trust.check(turn, 'NOD_browser', args, signal);
-        if (!verdict.confirm) return 'run';
+        if (!verdict.confirm) {
+          if (!verdict.chatRevision || verdict.basis.kind === 'read') return 'run';
+          const handoff = await approvals.request(turn, 'NOD_browser', args, {
+            allowed: true,
+            expectedChatRevision: verdict.chatRevision,
+            signal,
+            run: async () => 'run',
+          });
+          return handoff === 'run'
+            ? 'run'
+            : handoff && typeof handoff === 'object' && appConfirmation in handoff
+              ? handoff
+              : { result: handoff };
+        }
         if (
           request.step.action === 'click' &&
           request.step.x !== undefined &&
@@ -1840,6 +1859,7 @@ async function initializeApplication(
             ));
         const result = await approvals.request(turn, 'NOD_browser', args, {
           signal,
+          expectedChatRevision: verdict.chatRevision,
           details: {
             reason: verdict.reason,
             ...(typeof visible === 'string' && visible.trim()
@@ -1894,6 +1914,7 @@ async function initializeApplication(
           return approvals.request(turn, 'NOD_limits_update', input, {
             ...provenance,
             allowed: !verdict.confirm,
+            expectedChatRevision: verdict.chatRevision,
             admit,
             details: {
               current: await ledger.limits(),
@@ -1959,6 +1980,7 @@ async function initializeApplication(
           return approvals.request(turn, `NOD_${action}`, input, {
             ...provenance,
             allowed: !verdict.confirm,
+            expectedChatRevision: verdict.chatRevision,
             admit,
             expectedRevision: schedule?.revision,
             validate: schedule
@@ -1996,6 +2018,7 @@ async function initializeApplication(
           return approvals.request(turn, `NOD_${action}`, input, {
             ...provenance,
             allowed: !verdict.confirm,
+            expectedChatRevision: verdict.chatRevision,
             admit,
             details: verdict.confirm ? { reason: verdict.reason } : {},
           });
@@ -2150,6 +2173,8 @@ async function initializeApplication(
         const path = account?.accessPaths?.find((item) => item.id === prepared.pathId);
         const result = await approvals.request(turn, action, prepared, {
           allowed: !verdict.confirm,
+          expectedChatRevision:
+            verdict.confirm || verdict.basis.kind !== 'read' ? verdict.chatRevision : undefined,
           signal: options.signal,
           run: async () => {
             const result = await integrations.execute(
@@ -2195,6 +2220,7 @@ async function initializeApplication(
     admission,
     artifacts,
     submitMessage: userMessages.submit,
+    reactToMessage,
     speech,
     attributeAudioUsage: ledger.attributeMediaUsage,
     verification: chatVerification,
@@ -2355,8 +2381,7 @@ async function initializeApplication(
       isRetirableScheduleConfirmation: approvals.isRetirableScheduleConfirmation,
       classifyRetiredReply: trust.classifyRetiredReply,
       acceptVerification: (text, input) => chatVerification.accept(text, input),
-      reacted: (messageId, reaction) =>
-        reactToAssistantMessage(messageId, reaction, adapters.model.configured),
+      reacted: (messageId, reaction) => reactToMessage(messageId, reaction),
       activeThread: (client) => lockThread(client),
       activity: activity.read,
       taskCommand: tasks.chatCommand,

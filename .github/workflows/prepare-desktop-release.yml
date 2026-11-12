@@ -43,7 +43,7 @@ jobs:
       - name: Prepare the release PR description
         run: |
           cat > "$RUNNER_TEMP/release-pr.md" <<'TEXT'
-          Merge this PR after review and CI. CI on the merge commit then builds Mac Intel, Mac ARM and Windows installers. It checks all three builds and publishes one regular Nod GitHub release. The release notes have three installer links and three runtime pack links.
+          Merge this PR after review and CI. CI on the merge commit builds Mac Intel, Mac ARM, Windows x64 and Linux x64 packages. It checks all four bundles and publishes one regular Nod GitHub release. Linux is a Flatpak preview. Its bundle includes the runtime and arrives in numbered parts with checksums.
 
           If main changes before merge, run Release desktop again to update this PR.
 

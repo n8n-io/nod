@@ -128,7 +128,7 @@ export function createHostedIntegrationBrowser(origin: string): IntegrationConne
           )
             return unavailable();
           if (request.method === 'GET') {
-            if (attempt.bootstrapped) return unavailable();
+            if (attempt.starting) return unavailable();
             attempt.bootstrapped = true;
             return reply
               .type('text/html; charset=utf-8')

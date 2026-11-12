@@ -16,6 +16,7 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { automaticRelease, configuredRelease, isReleaseMerge } from './prepare-desktop-release.mjs';
+import { linuxReleaseFiles } from '../../desktop/scripts/linux-release.mjs';
 
 const root = process.cwd();
 const runtimeDirectory = join(root, '.local/desktop-runtime-release');
@@ -919,6 +920,8 @@ async function draftAll({ stageOnly = false } = {}) {
   if (!shaPattern.test(source) || run('git', ['rev-parse', 'HEAD']) !== source)
     throw new Error('Invalid source revision.');
   const windows = join(root, 'dist/desktop/win32-x64');
+  const linuxFiles = await linuxReleaseFiles(root, { version, source });
+  const linux = JSON.parse(await readFile(linuxFiles[0], 'utf8'));
   const metadata = JSON.parse(await readFile(join(windows, 'release-win32-x64.json'), 'utf8'));
   const receipt = JSON.parse(await readFile(join(windows, 'windows-check.json'), 'utf8'));
   const appRepo = api(`repos/${releaseRepository}`, releaseRepository);
@@ -1013,6 +1016,7 @@ async function draftAll({ stageOnly = false } = {}) {
   await copyFile(join(root, 'deployment/n8n/install.ps1'), join(installers, 'nod-install.ps1'));
   const files = [
     ...appFiles.values(),
+    ...linuxFiles,
     ...['nod-Setup-x64.exe', 'nod-Runtime-win32-x64.tar.gz', 'release-win32-x64.json'].map((name) =>
       join(windows, name),
     ),
@@ -1033,7 +1037,9 @@ async function draftAll({ stageOnly = false } = {}) {
   const verifiedFiles = await withProvenance(files);
   const download = (file) =>
     `https://github.com/${releaseRepository}/releases/download/${tag}/${file}`;
-  const notes = `### Downloads\n\n- [Mac Intel](${download('nod-x64.dmg')})\n- [Mac ARM](${download('nod-arm64.dmg')})\n- [Windows](${download('nod-Setup-x64.exe')})\n\nMac requires macOS 14 or later. Windows requires Windows 11 with WSL 2. To install with one Terminal or PowerShell command, follow the [install guide](https://nod.n8n.io/docs/get-started/install-desktop/). Installed apps update themselves. The first launch downloads the runtime.\n\nMac builds use ${signingMode === 'self-signed' ? 'the internal signing certificate' : 'Developer ID signing and Apple notarization'}. Windows builds are signed by n8n GmbH.\n\n${prepared.notes.trimEnd()}\n\n${marker}\n`;
+  if (verifiedFiles.length > 30)
+    throw new Error('A desktop release must keep at most 30 assets for installed app updates.');
+  const notes = `### Downloads\n\n- [Mac Intel](${download('nod-x64.dmg')})\n- [Mac ARM](${download('nod-arm64.dmg')})\n- [Windows](${download('nod-Setup-x64.exe')})\n- [Linux x64 Flatpak (preview)](https://nod.n8n.io/docs/get-started/install-desktop/#linux)\n\nMac requires macOS 14 or later. Windows requires Windows 11 with WSL 2. Linux needs Flatpak and a desktop secret store. A local Linux assistant also needs KVM. To install, follow the [install guide](https://nod.n8n.io/docs/get-started/install-desktop/). Mac and Windows apps update themselves and download their runtime on first launch. Linux includes the runtime; install the next bundle to update. Join all nod-linux-x64.flatpak.partNN files before installation, then check SHA256SUMS-linux-x64.\n\nMac builds use ${signingMode === 'self-signed' ? 'the internal signing certificate' : 'Developer ID signing and Apple notarization'}. Windows builds are signed by n8n GmbH. Linux bundle parts have checksums. Public releases include build provenance.\n\n${prepared.notes.trimEnd()}\n\n${marker}\n`;
   let release = await uploadDraft({
     repository: releaseRepository,
     tag,
@@ -1043,6 +1049,7 @@ async function draftAll({ stageOnly = false } = {}) {
     files: verifiedFiles,
   });
   const expected = [
+    ...linuxFiles.map((file) => basename(file)),
     'nod-arm64.dmg',
     'nod-x64.dmg',
     'nod-Setup-x64.exe',
@@ -1061,7 +1068,7 @@ async function draftAll({ stageOnly = false } = {}) {
     'nod-install.ps1',
   ];
   if (expected.some((name) => release.assets.filter((asset) => asset.name === name).length !== 1))
-    throw new Error('All three platform bundles are required before publication.');
+    throw new Error('All four platform bundles are required before publication.');
   if (
     !isDeepStrictEqual(
       release.assets.map((asset) => asset.name).sort(),
@@ -1069,7 +1076,7 @@ async function draftAll({ stageOnly = false } = {}) {
     )
   )
     throw new Error('The release draft contains assets outside the checked build.');
-  await verifyDownloads(tag, [...appAssets, metadata.installer, metadata.runtime]);
+  await verifyDownloads(tag, [...appAssets, metadata.installer, metadata.runtime, ...linux.parts]);
   if (process.env.NOD_PUBLISH_RELEASE === 'true') {
     requireUpdateSourceVisibility(process.env.NOD_DESKTOP_UPDATE_SOURCE_URL);
     publishRelease(releaseRepository, tag);

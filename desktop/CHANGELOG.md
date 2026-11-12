@@ -2,6 +2,84 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.7.0 - 2026-11-12
+
+### Features
+
+- **desktop:** Add Linux Flatpak builds to desktop releases. [commit](https://github.com/n8n-io/nod/commit/a9b054be54c26042f482a8037d04224adc6e1676) (a9b054b)
+- **traces:** Group traces into conversations cut after 30 idle minutes. [#746](https://github.com/n8n-io/nod/pull/746) (8f3ccd8)
+- **desktop:** Package Nod for Linux as a Flatpak. [#721](https://github.com/n8n-io/nod/pull/721) (f63cc2f)
+- **trust:** Let owners change a reached spending limit from any channel. [#703](https://github.com/n8n-io/nod/pull/703) (ac2d13a)
+- **analytics:** Measure verified desktop server connections. [#702](https://github.com/n8n-io/nod/pull/702) (8551a11)
+- **trust:** Add a default monthly spending cap for safety. [#691](https://github.com/n8n-io/nod/pull/691) (0e1d6e5)
+- **landing:** Add a Product Hunt launch banner. [#690](https://github.com/n8n-io/nod/pull/690) (1ed16f6)
+- **landing:** Animate the On your machine panels. [#687](https://github.com/n8n-io/nod/pull/687) (126358d)
+- Open local files by who started the work instead of a folder list. [commit](https://github.com/n8n-io/nod/commit/7e9123c9681f50c6b1d131424e64b728a7142fb6) (7e9123c)
+- Show Handling local files while a local file action runs. [commit](https://github.com/n8n-io/nod/commit/f10653bcd76c28c74de322ae2eebb1c8b55a78b7) (f10653b)
+- **web:** Show Local files among connected or available apps. [commit](https://github.com/n8n-io/nod/commit/027c7b2742d1b027ac82a53b5aa67837e6825233) (027c7b2)
+- Make local files production-ready. [commit](https://github.com/n8n-io/nod/commit/fdbffd7c3fd1c9184d257dfeccc50fea168548d1) (fdbffd7)
+- Share local folders with Nod (spike). [commit](https://github.com/n8n-io/nod/commit/ffdb2025e1c3af6abddc6f35dc6b9b9113c7c2ee) (ffdb202)
+
+### Fixes
+
+- **tasks:** Dispatch planned checks under the thread lock. [#745](https://github.com/n8n-io/nod/pull/745) (f4fe0e3)
+- **tasks:** Start a task's planned check after an answered question. [#736](https://github.com/n8n-io/nod/pull/736) (8609e5f)
+- **models:** Preserve provider error details. [commit](https://github.com/n8n-io/nod/commit/ea44d88caf35d8e208048f94fd58644984f299b2) (ea44d88)
+- **desktop:** Trust operating system certificates for server connections. [commit](https://github.com/n8n-io/nod/commit/33a7f99b3c85307ccaa83545608deaff7c940918) (33a7f99)
+- **backend:** Add OpenCode curator session IDs. [#740](https://github.com/n8n-io/nod/pull/740) (d1e4e35)
+- **chat:** Interpret reactions and answer each follow-up. [#730](https://github.com/n8n-io/nod/pull/730) (079f534)
+- **thread:** Keep a stopped or provider-failed request out of later model input. [#729](https://github.com/n8n-io/nod/pull/729) (736bef1)
+- **apps:** Keep sign-in links available through browser previews. [#727](https://github.com/n8n-io/nod/pull/727) (dd21029)
+- **desktop:** Rename startup server link. [#725](https://github.com/n8n-io/nod/pull/725) (22de1a9)
+- **approvals:** Answer only the confirmation a reply was read against. [#723](https://github.com/n8n-io/nod/pull/723) (d1461f4)
+- **setup:** Point the database password hint at pnpm start. [commit](https://github.com/n8n-io/nod/commit/6c56a0c7f7101fa05f9a4b91a2c3a3d29fa71f0d) (6c56a0c)
+- **pi:** Keep a failed request's input out of later turns. [#714](https://github.com/n8n-io/nod/pull/714) (520c742)
+- **approvals:** Tell the session a confirmed action's outcome after Stop. [#712](https://github.com/n8n-io/nod/pull/712) (7cf3856)
+- **thread:** Order messages in flight before a later Stop. [#715](https://github.com/n8n-io/nod/pull/715) (0f7a605)
+- **vault:** Submit a chat sign-in code only when it is sent by itself. [#711](https://github.com/n8n-io/nod/pull/711) (ec4fd19)
+- **channels:** Send every Telegram text message with link previews off. [#709](https://github.com/n8n-io/nod/pull/709) (0d9ac34)
+- **landing:** Load the hero video on click and fix audit findings. [#708](https://github.com/n8n-io/nod/pull/708) (ed50741)
+- **runtime:** Refine workspace networking. [#707](https://github.com/n8n-io/nod/pull/707) (837d3f7)
+- **desktop:** Make Windows updates install. [#704](https://github.com/n8n-io/nod/pull/704) (a472ecc)
+- **apps:** Keep Gmail inbox polling going past a message with no labels. [commit](https://github.com/n8n-io/nod/commit/8cb9efc2ac9556197fb025a7c435825ad409ece6) (8cb9efc)
+- **landing:** Point the help FAQ to the n8n community forum. [#700](https://github.com/n8n-io/nod/pull/700) (35447b5)
+- **landing:** Use Legal's wording for where usage data goes. [#689](https://github.com/n8n-io/nod/pull/689) (dc6438e)
+- **desktop:** Read the release redirect in Windows PowerShell 5.1. [commit](https://github.com/n8n-io/nod/commit/d2fb868bf6d6cdb402d3f1cc66c046d0fd00cf26) (d2fb868)
+- **landing:** Name the ChatGPT plans that work in the models FAQ. [commit](https://github.com/n8n-io/nod/commit/daab586c261bca5bcd17b14e9783092a211bbd0f) (daab586)
+- **landing:** Tone down claims, clarify the benchmarks and rebalance the Nod wordmark. [commit](https://github.com/n8n-io/nod/commit/8b03180df8051d32f8b59f315c51dc9df7170bf5) (8b03180)
+- Export local files after approval validation. [commit](https://github.com/n8n-io/nod/commit/4aa1c5e3858de80f95b7ff8f465da5e93240023b) (4aa1c5e)
+- Refuse Windows short names for local items Nod changes. [commit](https://github.com/n8n-io/nod/commit/2c23a2cc802ca3cff496a8181aa4c55e8c98288c) (2c23a2c)
+- **docs:** Follow GitHub theme for README images. [#688](https://github.com/n8n-io/nod/pull/688) (2ff45ec)
+- Address self-review on local files gating, moves, Trash and keep-out. [commit](https://github.com/n8n-io/nod/commit/2542ecb87d0e095aaa949e328de8cfb876029ac3) (2542ecb)
+- Confirm the opened local file is the checked one and keep card errors readable. [commit](https://github.com/n8n-io/nod/commit/52149e11e0016d8abf5fe571a974d582d47a5f83) (52149e1)
+- Address review on local files moves, limits, search and docs. [commit](https://github.com/n8n-io/nod/commit/0cf5190632345891f7546ce4cea43c331e9aabc9) (0cf5190)
+- Check local paths as text first, trash old versions in place and fix workspace copies. [commit](https://github.com/n8n-io/nod/commit/570da84d6385888fa97454f3621991765477151b) (570da84)
+- **web:** Keep the Local files card in the apps grid. [commit](https://github.com/n8n-io/nod/commit/e8627a7799c86895a84200bb902d0a55bb71b1e1) (e8627a7)
+- Refuse program names, bind approved paths and keep imports to owner work. [commit](https://github.com/n8n-io/nod/commit/8d93bde9a8ce5bddd79647fe029e52f1222af228) (8d93bde)
+
+### Documentation
+
+- Add a community deployment guide for boxd. [#733](https://github.com/n8n-io/nod/pull/733) (90f6114)
+- Count four local containers and note the dev port clash. [#734](https://github.com/n8n-io/nod/pull/734) (5c6db55)
+- Point Settings paths at the current sections. [#696](https://github.com/n8n-io/nod/pull/696) (5751454)
+
+<details>
+<summary>Maintenance (1 changes)</summary>
+
+- **apps:** Verify previewed sign-in in Windows Edge. [#732](https://github.com/n8n-io/nod/pull/732) (d82e06e)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.6.2...a9b054be54c26042f482a8037d04224adc6e1676)
+
+<details>
+<summary>Build details</summary>
+
+Source: `a9b054be54c26042f482a8037d04224adc6e1676`
+Previous release: `nod-v0.6.2`
+
+</details>
+
 ## 0.6.2 - 2026-11-11
 
 ### Features

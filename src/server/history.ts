@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Pool } from 'pg';
+import { withdrawnSql } from './turn-chain.ts';
 export function activeThreadSql(alias = 'm') {
   return `${alias}.thread_id=(SELECT th.id FROM threads th WHERE th.owner_id=${alias}.owner_id AND th.archived_at IS NULL)`;
 }
@@ -33,10 +34,14 @@ export interface HistoryMessage {
 export function createHistorySearch({
   pool,
   ownerId,
+  standing = false,
 }: {
   pool: Pick<Pool, 'query'>;
   ownerId: string;
+  standing?: boolean;
 }) {
+  const kept = (alias: string) =>
+    standing ? ` AND NOT (${alias}.role='user' AND ${withdrawnSql(alias)})` : '';
   return async function search(raw: unknown) {
     const { query, before, cursor, from, to, around, order } = inputSchema.parse(raw);
     if (around) {
@@ -88,9 +93,9 @@ export function createHistorySearch({
     );
     const page = await pool.query<HistoryMessage & { place: string; total: number }>(
       `${terms}, corpus AS (
-         SELECT m.id,m.role,m.text,m.created_at,to_tsvector('english',m.text) AS v
+         SELECT m.id,m.owner_id,m.turn_id,m.role,m.text,m.created_at,to_tsvector('english',m.text) AS v
          FROM messages m CROSS JOIN terms WHERE ${scope('m')} AND m.hidden_at IS NULL),
-       docs AS (SELECT corpus.* FROM corpus CROSS JOIN terms WHERE $2::text IS NULL OR corpus.v @@ terms.q),
+       docs AS (SELECT corpus.* FROM corpus CROSS JOIN terms WHERE ($2::text IS NULL OR corpus.v @@ terms.q)${kept('corpus')}),
        weights AS (
          SELECT w,ln(1+((SELECT count(*) FROM corpus)-count(*)+0.5)/(count(*)+0.5)) AS idf
          FROM (SELECT DISTINCT lexeme AS w FROM unnest(tsvector_to_array(to_tsvector('english',coalesce($2,'')))) lexeme) words
@@ -109,7 +114,7 @@ export function createHistorySearch({
     );
     if (cursor && !page.rows.length) {
       const { rows } = await pool.query(
-        `${terms} SELECT m.id FROM messages m CROSS JOIN terms WHERE ${where('m', 'm.text')} AND m.hidden_at IS NULL AND m.id=$7::uuid`,
+        `${terms} SELECT m.id FROM messages m CROSS JOIN terms WHERE ${where('m', 'm.text')} AND m.hidden_at IS NULL${kept('m')} AND m.id=$7::uuid`,
         [...values, cursor],
       );
       if (!rows.length) throw new Error('This history cursor does not match the search.');
@@ -119,17 +124,18 @@ export function createHistorySearch({
     const { rows: messages } = await pool.query<HistoryMessage>(
       `WITH terms AS (SELECT replace(plainto_tsquery('english',coalesce($4,''))::text,'&','|')::tsquery AS q),
        thread AS (
-         SELECT m.id,m.role,m.text,m.turn_id,m.created_at,row_number() OVER (ORDER BY m.created_at,m.id) AS n
+         SELECT m.id,m.owner_id,m.role,m.text,m.turn_id,m.created_at,row_number() OVER (ORDER BY m.created_at,m.id) AS n
          FROM messages m WHERE m.owner_id=$1 AND m.hidden_at IS NULL AND ${activeThreadSql('m')}),
        picked AS (SELECT t.n,ids.place,t.id FROM unnest($2::uuid[]) WITH ORDINALITY ids(id,place) JOIN thread t ON t.id=ids.id),
        shown AS (
          SELECT t.*,bool_or(p.id=t.id) AS match,min(p.place) AS place FROM thread t
-         JOIN picked p ON t.n BETWEEN p.n-$3 AND p.n+$3 GROUP BY t.id,t.role,t.text,t.turn_id,t.created_at,t.n)
+         JOIN picked p ON t.n BETWEEN p.n-$3 AND p.n+$3 GROUP BY t.id,t.owner_id,t.role,t.text,t.turn_id,t.created_at,t.n)
        SELECT s.id,s.role,CASE WHEN length(s.text)<=1200 THEN s.text
          ELSE ts_headline('english',s.text,terms.q,'StartSel="",StopSel="",MaxWords=60,MinWords=20,MaxFragments=3,FragmentDelimiter=" … "') END AS text,
          length(s.text)>1200 AS shortened,s.turn_id,s.created_at,
          split_part(COALESCE(u.channel,'web'),':',1) AS channel,s.match
-       FROM shown s CROSS JOIN terms LEFT JOIN turns u ON u.id=s.turn_id AND u.owner_id=$1 ORDER BY s.place,s.n`,
+       FROM shown s CROSS JOIN terms LEFT JOIN turns u ON u.id=s.turn_id AND u.owner_id=$1
+       WHERE TRUE${kept('s')} ORDER BY s.place,s.n`,
       [ownerId, picked.map((row) => row.id), query ? 1 : 0, query ?? null],
     );
     return {

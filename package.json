@@ -13,6 +13,7 @@
     "desktop:dev": "node desktop/scripts/build-ui.mjs && pnpm --dir desktop start",
     "desktop:prepare": "node desktop/scripts/prepare-runtime.mjs",
     "desktop:build": "pnpm --dir desktop run build",
+    "desktop:linux:build": "node desktop/scripts/build-linux.mjs",
     "desktop:windows:prepare": "node desktop/scripts/prepare-windows-runtime.mjs",
     "desktop:windows:build": "node desktop/scripts/build-windows.mjs",
     "desktop:test": "pnpm --dir desktop test",

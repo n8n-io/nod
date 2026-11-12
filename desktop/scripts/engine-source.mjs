@@ -31,8 +31,14 @@ export async function copyEngineSource({ root, target, platform = 'darwin' }) {
   await writeFile(join(target, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
-export async function verifyApplicationRuntime(application, electronVersion) {
-  const engine = join(application, 'Contents/Resources/engine');
+export async function verifyApplicationRuntime(
+  application,
+  electronVersion,
+  {
+    engine = join(application, 'Contents/Resources/engine'),
+    executable = join(application, 'Contents/MacOS/nod'),
+  } = {},
+) {
   const environment = Object.fromEntries(
     ['HOME', 'TMPDIR', 'PATH', 'LANG']
       .filter((name) => process.env[name])
@@ -53,14 +59,20 @@ await pool.end();
 const sharp = (await import('sharp')).default;
 const image = await sharp({ create: { width: 2, height: 2, channels: 4, background: '#ff0000' } }).png().toBuffer();
 assert.equal((await sharp(image).metadata()).width, 2);
-const native = await import(pathToFileURL(resolve('node_modules/@earendil-works/pi-tui/dist/native-platform.js')).href);
-assert(native.getNativePlatformHelper());
+if (process.platform === 'linux') {
+  const { createRequire } = await import('node:module');
+  const clipboard = createRequire(import.meta.url)(resolve(\`node_modules/@earendil-works/pi-tui/native/linux/prebuilds/linux-\${process.arch}/linux-platform-x11.node\`));
+  assert.equal(typeof clipboard.getText, 'function');
+} else {
+  const native = await import(pathToFileURL(resolve('node_modules/@earendil-works/pi-tui/dist/native-platform.js')).href);
+  assert(native.getNativePlatformHelper());
+}
 console.log('Nod engine imports verified.');`;
-  const result = await run(
-    join(application, 'Contents/MacOS/nod'),
-    ['--input-type=module', '-e', script],
-    { cwd: engine, env: { ...environment, ELECTRON_RUN_AS_NODE: '1' } },
-  );
+  const result = await run(executable, ['--input-type=module', '-e', script], {
+    cwd: engine,
+    env: { ...environment, ELECTRON_RUN_AS_NODE: '1' },
+    output: 'stdout',
+  });
   if (result !== 'Nod engine imports verified.')
     throw new Error('The signed Electron engine import check failed.');
 }

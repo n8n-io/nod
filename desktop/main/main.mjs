@@ -48,6 +48,10 @@ import { createMacEncryption } from './mac-encryption.mjs';
 import { createDesktopUpdater, createUpdateSource, startDesktopUpdateChecks } from './updates.mjs';
 import { startWindowsInstall } from './windows-update.mjs';
 import { appOpenPath } from './app-links.mjs';
+import { trustSystemCertificates } from './system-certificates.mjs';
+import { opensAtLogin, setOpenAtLogin } from './login-item.mjs';
+
+trustSystemCertificates();
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const engineRoot = app.isPackaged
@@ -1924,7 +1928,7 @@ async function removeAllData() {
     const { removeProfile } = await import(
       pathToFileURL(join(engineRoot, 'desktop', 'runtime', 'index.mjs')).href
     );
-    app.setLoginItemSettings({ openAtLogin: false });
+    setOpenAtLogin(false);
     const browser = session.fromPartition('persist:nod-app');
     await browser.clearStorageData();
     await browser.clearCache();
@@ -2561,14 +2565,9 @@ else {
         let previousLogin;
         if (loginChanged) {
           try {
-            previousLogin = app.getLoginItemSettings().openAtLogin;
-            app.setLoginItemSettings({ openAtLogin: value.launchAtLogin });
-            const login = app.getLoginItemSettings();
-            if (
-              (process.platform === 'win32'
-                ? login.executableWillLaunchAtLogin
-                : login.openAtLogin) !== value.launchAtLogin
-            )
+            previousLogin = opensAtLogin();
+            setOpenAtLogin(value.launchAtLogin);
+            if (opensAtLogin() !== value.launchAtLogin)
               throw new Error(
                 'Open at login could not be updated. Check Nod in your computer’s login items, then try again.',
               );
@@ -2577,7 +2576,7 @@ else {
               throw error;
             if (typeof previousLogin === 'boolean') {
               try {
-                app.setLoginItemSettings({ openAtLogin: previousLogin });
+                setOpenAtLogin(previousLogin);
               } catch {}
             }
             value = { ...value };
@@ -2591,7 +2590,7 @@ else {
         } catch (error) {
           if (loginChanged) {
             try {
-              app.setLoginItemSettings({ openAtLogin: previousLogin });
+              setOpenAtLogin(previousLogin);
             } catch {}
           }
           throw error;

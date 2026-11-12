@@ -152,7 +152,7 @@ export function createIntegrationBrowser(options?: {
               ))
           )
             return send(403, { error: 'This app connection is unavailable.' });
-          if (request.method === 'GET' && request.url === `/${capability}` && !bootstrapped) {
+          if (request.method === 'GET' && request.url === `/${capability}` && !starting) {
             bootstrapped = true;
             response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
             response.end(renderIntegrationBrowser(brokerOrigin, nonce, bridgeKey, { expiresAt }));

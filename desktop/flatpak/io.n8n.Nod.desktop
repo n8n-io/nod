@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Nod
+Comment=The open source personal agent from n8n
+Exec=nod %U
+Icon=io.n8n.Nod
+Terminal=false
+Categories=Office;Utility;
+MimeType=x-scheme-handler/nod;
+StartupWMClass=Nod

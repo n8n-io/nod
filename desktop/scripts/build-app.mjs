@@ -21,6 +21,7 @@ import { buildDesktopUI } from './build-ui.mjs';
 import { checkRelease } from '../../.github/scripts/prepare-desktop-release.mjs';
 import {
   assess,
+  desktopBuildOptions,
   exportCertificate,
   hardenElectron,
   minimumSystemVersion as supportedMinimumSystemVersion,
@@ -83,9 +84,7 @@ configuration.version = version;
 const repository = process.env.GITHUB_REPOSITORY || 'n8n-io/nod';
 if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository))
   throw new Error('The desktop release repository is invalid.');
-const tracesToken = process.env.NOD_TRACES_TOKEN;
-if (tracesToken && !/^[A-Za-z0-9_-]{32,128}$/.test(tracesToken))
-  throw new Error('NOD_TRACES_TOKEN must be 32 to 128 URL-safe characters.');
+const buildOptions = desktopBuildOptions();
 const updateSourceUrl = process.env.NOD_DESKTOP_UPDATE_SOURCE_URL;
 if (updateSourceUrl) {
   if (!URL.canParse(updateSourceUrl))
@@ -160,8 +159,7 @@ configuration.nodBuild = {
   modified: Boolean(await run('/usr/bin/git', ['-C', root, 'status', '--porcelain'])),
   ...(release ? { runtime: release.id } : {}),
   ...(updateSourceUrl ? { updateSourceUrl } : {}),
-  ...(tracesToken ? { tracesToken } : {}),
-  ...(process.env.NOD_RELEASE_BUILD === 'true' ? { release: true } : {}),
+  ...buildOptions,
 };
 delete configuration.devDependencies;
 delete configuration.scripts;

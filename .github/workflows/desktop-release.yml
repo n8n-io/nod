@@ -11,7 +11,7 @@ on:
         type: boolean
         default: false
       publish:
-        description: Publish one checked Nod release with all three installers
+        description: Publish one checked Nod release with all four platform bundles
         type: boolean
         default: false
 
@@ -624,10 +624,22 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
+  linux:
+    name: Package and check Linux Flatpak
+    needs: plan
+    if: needs.plan.outputs.release_needed == 'true'
+    uses: ./.github/workflows/linux-desktop.yml
+    secrets:
+      NOD_TRACES_TOKEN: ${{ secrets.NOD_TRACES_TOKEN }}
+    with:
+      source: ${{ needs.plan.outputs.source }}
+      version: ${{ needs.plan.outputs.version }}
+      runtime_refresh: ${{ needs.plan.outputs.runtime_refresh }}
+
   release:
     name: Verify uploaded assets and prepare the release
-    needs: [plan, images, mac, mac-checks, windows, windows-checks]
-    if: ${{ !cancelled() && needs.plan.result == 'success' && (needs.images.result == 'success' || needs.images.result == 'skipped') && needs.mac.result == 'success' && needs.mac-checks.result == 'success' && needs.windows.result == 'success' && needs.windows-checks.result == 'success' }}
+    needs: [plan, images, mac, mac-checks, windows, windows-checks, linux]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && (needs.images.result == 'success' || needs.images.result == 'skipped') && needs.mac.result == 'success' && needs.mac-checks.result == 'success' && needs.windows.result == 'success' && needs.windows-checks.result == 'success' && needs.linux.result == 'success' }}
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 30
     environment: release
@@ -658,7 +670,7 @@ jobs:
       - name: Download the release assets in parallel
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          pattern: desktop-@(macos-*|runtime-pack-*|windows-x64)
+          pattern: desktop-@(macos-*|runtime-pack-*|windows-x64|linux-x64)
           path: .local/desktop-release-artifacts
       - name: Place the release assets in their platform directories
         run: |
@@ -666,6 +678,7 @@ jobs:
           mv .local/desktop-release-artifacts/desktop-macos-arm64 dist/desktop/arm64
           mv .local/desktop-release-artifacts/desktop-macos-x64 dist/desktop/x64
           mv .local/desktop-release-artifacts/desktop-windows-x64 dist/desktop/win32-x64
+          mv .local/desktop-release-artifacts/desktop-linux-x64 dist/desktop/linux-x64
           for arch in arm64 x64; do
             if [ -d ".local/desktop-release-artifacts/desktop-runtime-pack-$arch" ]; then
               mv ".local/desktop-release-artifacts/desktop-runtime-pack-$arch" ".local/desktop-runtime-release/$arch"

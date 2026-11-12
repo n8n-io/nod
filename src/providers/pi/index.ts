@@ -984,7 +984,7 @@ export function createPiAgent(options: {
           if (event.message.stopReason === 'error')
             input.onEvent({
               type: 'error',
-              message: event.message.errorMessage?.trim() || 'The provider gave no reason.',
+              message: `${event.message.provider} / ${event.message.model}: ${event.message.errorMessage?.trim() || 'The provider gave no reason.'}`,
             });
           if (event.message.stopReason === 'stop') {
             const blocks = event.message.content.filter((item) => item.type === 'text');
@@ -1053,7 +1053,7 @@ export function createPiAgent(options: {
           if (owner && (copy as { content?: unknown } | undefined)?.content !== owner)
             await session.sendCustomMessage(
               { customType: ownerContextType, content: owner, display: false },
-              input.restartable && prior.length ? undefined : { deliverAs: 'nextTurn' },
+              prior.length ? undefined : { deliverAs: 'nextTurn' },
             );
           if (audio && readsNativeAudio(model))
             await session.sendCustomMessage(audioMessage(text, images, audio), {

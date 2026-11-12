@@ -883,7 +883,7 @@ test(
             instructions: 'Check the synthetic owner request.',
             input: { request: 'Read the synthetic record.' },
           }),
-          /memory model is unavailable/i,
+          /action review model is unavailable/i,
         );
         assert.equal(checks.length, 3);
         assert.ok(checks.every((request) => request.model === 'gpt-6.1-sol'));

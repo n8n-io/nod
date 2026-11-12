@@ -6,7 +6,7 @@ import { packager } from '@electron/packager';
 import { assetHash } from '../runtime/assets.mjs';
 import { copyBundleSource, copyEngineDependencies } from './engine-dependencies.mjs';
 import { buildDesktopUI } from './build-ui.mjs';
-import { hardenElectron, run } from './release-tools.mjs';
+import { desktopBuildOptions, hardenElectron, run } from './release-tools.mjs';
 import { signWindowsFiles, windowsCodeFiles } from './windows-signing.mjs';
 
 if (process.platform !== 'win32' || process.arch !== 'x64')
@@ -24,9 +24,7 @@ const electronChecksums = JSON.parse(
   await readFile(join(root, 'desktop/node_modules/electron/checksums.json')),
 );
 const signed = process.env.NOD_RELEASE_BUILD === 'true';
-const tracesToken = process.env.NOD_TRACES_TOKEN;
-if (tracesToken && !/^[A-Za-z0-9_-]{32,128}$/.test(tracesToken))
-  throw new Error('NOD_TRACES_TOKEN must be 32 to 128 URL-safe characters.');
+const buildOptions = desktopBuildOptions();
 const updateSourceUrl = process.env.NOD_DESKTOP_UPDATE_SOURCE_URL;
 if (
   updateSourceUrl &&
@@ -79,8 +77,7 @@ configuration.nodBuild = {
   builtAt: new Date().toISOString(),
   platform: 'win32-x64',
   ...(updateSourceUrl ? { updateSourceUrl } : {}),
-  ...(tracesToken ? { tracesToken } : {}),
-  ...(process.env.NOD_RELEASE_BUILD === 'true' ? { release: true } : {}),
+  ...buildOptions,
 };
 delete configuration.devDependencies;
 delete configuration.scripts;

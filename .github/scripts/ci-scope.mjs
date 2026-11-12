@@ -58,7 +58,11 @@ else {
     }
     if (/^(src|public|tests)\//.test(path)) {
       core();
-      if (path === 'src/server/vault-crypto.ts' || path === 'src/server/local-files.ts')
+      if (
+        path === 'src/server/vault-crypto.ts' ||
+        path === 'src/server/local-files.ts' ||
+        path === 'src/server/integration-browser.ts'
+      )
         scope.windows = true;
       continue;
     }

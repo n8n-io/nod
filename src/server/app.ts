@@ -101,6 +101,12 @@ export interface AppDependencies {
   speech?: SpeechService;
   attributeAudioUsage?: (client: PoolClient, ids: string[], turnId: string) => Promise<void>;
   submitMessage?: typeof submitUserMessage;
+  reactToMessage?: (
+    messageId: string,
+    reaction: MessageReaction | null,
+    wake: boolean,
+    replyChannel: string,
+  ) => ReturnType<typeof reactToAssistantMessage>;
   verification?: Awaited<ReturnType<typeof createChatVerification>>;
   computer?: Pick<
     Computer,
@@ -390,10 +396,15 @@ export async function createApp(dependencies: AppDependencies = {}) {
       .object({ reaction: z.string().max(64).refine(isMessageReaction).nullable() })
       .strict()
       .parse(request.body);
-    return reactToAssistantMessage(
+    const react =
+      dependencies.reactToMessage ??
+      ((id: string, value: MessageReaction | null, wake: boolean, channel: string) =>
+        reactToAssistantMessage(id, value, wake, undefined, channel));
+    return react(
       z.uuid().parse(request.params.id),
       reaction,
       publicConfiguration().llmReady,
+      'web',
     );
   });
   app.post('/api/conversation/reset', async (request, reply) => {

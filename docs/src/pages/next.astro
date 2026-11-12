@@ -22,7 +22,7 @@ const benchmarkGuide = `${base}how-it-works/benchmarks/`;
 const fonts = 'https://n8n.io/assets/fonts/baumer/variable';
 const title = 'Nod · Your personal agent';
 const description =
-  'Nod is a personal agent that gets real-world jobs done. Open source, runs on your Mac, Windows PC or your own server, with the model provider you choose.';
+  'Nod is a personal agent that gets real-world jobs done. Open source, runs on Mac, Windows, Linux or your own server, with the model provider you choose.';
 const url = 'https://nod.n8n.io/';
 const image = new URL(socialImage.src, Astro.site);
 const photo = { formats: ['webp'], fallbackFormat: 'jpg', quality: 80, alt: '', class: 'bg' } as const;
@@ -139,7 +139,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
               </div>
             </div>
             <p class="lp-platforms">
-              macOS 14+ · Win 11 preview · Apache 2.0 · free · use ChatGPT Plus/Pro or any AI key
+              macOS 14+ · Win 11 preview · <a href={`${installGuide}#linux`}>Linux x64 preview</a> · Apache 2.0 · free · use ChatGPT Plus/Pro or any AI key
             </p>
           </div>
         </div>
@@ -558,7 +558,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
         <details class="lp-faq">
           <summary>Which computers?</summary>
           <p>
-            Mac with macOS 14 or later, Windows 11 in preview, or <a href={`${base}deploy/self-host/`} target="_blank" rel="noopener">your own server</a> for one
+            Mac with macOS 14 or later, Windows 11 in preview, <a href={`${installGuide}#linux`}>Linux x64 as a Flatpak preview</a>, or <a href={`${base}deploy/self-host/`} target="_blank" rel="noopener">your own server</a> for one
             person.
           </p>
         </details>
