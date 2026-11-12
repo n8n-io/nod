@@ -27,7 +27,7 @@ A turn is one run of the agent. Each turn is a row in the `turns` table with a `
 | `event`    | A source batch or observer task                                                                                        | The observer or the task                     |
 | `resume`   | A completed secure form, payment approval, app connection, or your reply or reaction confirming or declining an action | The session that asked                       |
 
-A recurring schedule skips a firing while an earlier run of it is still queued, running or waiting on you, and a schedule run can't create schedules.
+A recurring schedule skips a firing while an earlier run is queued, running or still needs your answer. An earlier waiting turn no longer holds a firing after a later turn starts in that run's session. A schedule run can't create schedules.
 
 Creating a turn also queues a `thread-drain` job in the same transaction. Unless the turn waits for a start time, such as a task held until quiet hours end, the worker is woken as soon as that transaction commits instead of waiting for its next poll.
 
@@ -95,7 +95,7 @@ A question, an approval, or a credential request ends the turn as `waiting`. The
 
 Some steps finish outside the Pi session: a completed secure form, a payment approval, a new app connection or your yes or no to a confirmation. Each of these queues a `resume` turn in the session that asked, so a background task's confirmation continues that task. A confirmed action runs once, in that resume turn. If Stop or a failure ends the resume turn before it finishes, each later turn of the session is told whether the approved action ran, may have run or did not run, until a turn of that session succeeds or waits for you. A resume turn records the turn it continues, so the trust check and approvals trace it back to the work that started it. A completed secure form or payment code queues its resume turn in the same transaction that records the entry.
 
-The earlier turn keeps its `waiting` outcome. It no longer blocks a planned task check after a later turn starts in the same session. Queued turns, running turns and questions that still need an answer block the check. Task checks, recurring schedules and secure forms use the same rule to identify a current waiting turn.
+A resume can leave the earlier turn with its `waiting` outcome. It no longer blocks a planned task check after a later turn starts in the same session. Queued turns and running turns block the check. So do questions, approvals and credential requests that still need an answer. Task checks, recurring schedules and secure forms use the same rule to identify a current waiting turn.
 
 A planned task check takes the thread lock before it reads the task and its session. It clears the planned time and queues the resume in one transaction. A Stop or owner update that completes first is read before the check starts. If the transaction fails, the planned time stays saved. The resume continues the last turn that started in the session; a later message absorbed by that turn does not replace it.
 
