@@ -2050,6 +2050,16 @@ test(
         t.after(() => {
           inspectObserver = previousObserver;
         });
+        const removeTask = (id: string) =>
+          transaction(async (client) => {
+            await thread.lockThread(client);
+            await thread.cancelTurns(client, threadId, { sessionId: id }, undefined, 'agent');
+            await client.query("UPDATE tasks SET state='cancelled',next_check=NULL WHERE id=$1", [
+              id,
+            ]);
+            await client.query('UPDATE turns SET task_id=NULL WHERE task_id=$1', [id]);
+            await client.query('DELETE FROM tasks WHERE id=$1', [id]);
+          }, db.pool);
         const request = await userMessages.submit(prompt);
         await waitFor(settled(request.turnId));
         assert.ok(task);
@@ -2061,14 +2071,7 @@ test(
           )
         ).rows[0]!.id;
         await waitFor(async () => (await turnStatus(connectionQuestion)) === 'waiting');
-        t.after(async () => {
-          await db.pool.query(
-            "UPDATE turns SET status='cancelled',finished_at=now() WHERE session_id=$1 AND status='waiting'",
-            [id],
-          );
-          await db.pool.query('UPDATE turns SET task_id=NULL WHERE session_id=$1', [id]);
-          await db.pool.query('DELETE FROM tasks WHERE id=$1', [id]);
-        });
+        t.after(() => removeTask(id));
         await thread.resumeAfterConnection(connectionQuestion, 'Synthetic');
         const turnId = (
           await db.pool.query<{ id: string }>('SELECT id FROM turns WHERE source_id=$1', [
@@ -2128,6 +2131,10 @@ test(
         );
         await waitFor(async () => (await check())?.parent_turn_id === continuing, 20_000);
         await waitFor(settled((await check())!.id));
+        await db.pool.query(
+          'INSERT INTO preferences(owner_id,proactive_paused) VALUES($1,true) ON CONFLICT(owner_id) DO UPDATE SET proactive_paused=true',
+          [ownerId],
+        );
         const started = randomUUID();
         const startedTurn = randomUUID();
         await db.pool.query(
@@ -2138,11 +2145,7 @@ test(
           "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text,applied_revision,activity_key,next_check) VALUES($1,$2,$3,$1,'Synthetic prepared follow-up','Synthetic reply arrived','Waiting',1,$4,date_trunc('milliseconds',now())-interval '1 minute')",
           [started, ownerId, startedTurn, `${threadId}:synthetic`],
         );
-        t.after(() => db.pool.query('DELETE FROM tasks WHERE id=$1', [started]));
-        await db.pool.query(
-          'INSERT INTO preferences(owner_id,proactive_paused) VALUES($1,true) ON CONFLICT(owner_id) DO UPDATE SET proactive_paused=true',
-          [ownerId],
-        );
+        t.after(() => removeTask(started));
         const followUps = async () =>
           (
             await db.pool.query(
@@ -2167,13 +2170,7 @@ test(
           "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text,applied_revision,next_check) VALUES($1,$2,$3,$1,'Synthetic waiting work','Synthetic reply arrived','Waiting',1,date_trunc('milliseconds',now())-interval '1 minute')",
           [asking, ownerId, askingTurn],
         );
-        t.after(async () => {
-          await db.pool.query(
-            "UPDATE turns SET status='cancelled',finished_at=now() WHERE id=$1 AND status='waiting'",
-            [askingTurn],
-          );
-          await db.pool.query('DELETE FROM tasks WHERE id=$1', [asking]);
-        });
+        t.after(() => removeTask(asking));
         await tasks.resumeDue(threadId);
         assert.equal(
           (
@@ -2210,7 +2207,7 @@ test(
               [turnId, ownerId, threadId, id],
             );
             await db.pool.query(
-              "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text,activity_key,next_check) VALUES($1,$2,$3,$1,'Synthetic tracked work','Synthetic reply arrived','Waiting',$4,date_trunc('milliseconds',now())-interval '1 minute')",
+              "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text,activity_key,next_check) VALUES($1,$2,$3,$1,'Synthetic tracked work','Synthetic reply arrived','Waiting',$4,now()+interval '1 hour')",
               [id, ownerId, turnId, change === 'pause' ? `${threadId}:${id}` : null],
             );
             await db.pool.query('UPDATE turns SET task_id=$1 WHERE id=$2', [id, turnId]);
@@ -2219,6 +2216,10 @@ test(
             try {
               await blocker.query('BEGIN');
               await thread.lockThread(blocker);
+              await db.pool.query(
+                "UPDATE tasks SET next_check=date_trunc('milliseconds',now())-interval '1 minute' WHERE id=$1",
+                [id],
+              );
               if (change === 'stop') await thread.cancelTurns(blocker, threadId, { sessionId: id });
               else if (change === 'pause')
                 await blocker.query(
@@ -2244,7 +2245,7 @@ test(
                 Boolean(
                   (
                     await admin.query(
-                      "SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock'",
+                      "SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock' AND query LIKE 'SELECT 1 FROM nod_locks%'",
                       [applicationName],
                     )
                   ).rowCount,
@@ -2269,13 +2270,20 @@ test(
               await blocker.query('ROLLBACK');
               blocker.release();
               await checking?.catch(() => {});
-              await request('POST', `/api/tasks/${id}/stop`);
-              await db.pool.query('UPDATE turns SET task_id=NULL WHERE session_id=$1', [id]);
-              await db.pool.query('DELETE FROM tasks WHERE id=$1', [id]);
-              await db.pool.query(
-                'UPDATE preferences SET proactive_paused=false WHERE owner_id=$1',
-                [ownerId],
-              );
+              await transaction(async (client) => {
+                await thread.lockThread(client);
+                await thread.cancelTurns(client, threadId, { sessionId: id }, undefined, 'agent');
+                await client.query(
+                  "UPDATE tasks SET state='cancelled',next_check=NULL WHERE id=$1",
+                  [id],
+                );
+                await client.query('UPDATE turns SET task_id=NULL WHERE task_id=$1', [id]);
+                await client.query('DELETE FROM tasks WHERE id=$1', [id]);
+                await client.query(
+                  'UPDATE preferences SET proactive_paused=false WHERE owner_id=$1',
+                  [ownerId],
+                );
+              }, db.pool);
             }
           });
         }
