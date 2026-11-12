@@ -86,6 +86,33 @@ test('confirmation repair keeps action facts fixed and requires a new independen
   }
 });
 
+test('confirmation repair stops on cancellation and never accepts an invalid review', async () => {
+  for (const cancel of [false, true]) {
+    const controller = new AbortController();
+    let calls = 0;
+    const communication = createCommunication({
+      pool: {} as pg.Pool,
+      ownerId: 'synthetic-owner',
+      review: async (_instructions, input) => {
+        calls++;
+        if (!('purpose' in input) || input.purpose !== 'confirmation_review')
+          return { text: 'Synthetic question' };
+        if (cancel) controller.abort(new Error('Synthetic stop'));
+        return { valid: 'true' };
+      },
+    });
+    await assert.rejects(
+      communication.present(
+        null,
+        { kind: 'confirmation', action: 'SYNTHETIC_ACTION', args: {} },
+        controller.signal,
+      ),
+      cancel ? /Synthetic stop/ : /could not write an accurate confirmation/,
+    );
+    assert.equal(calls, cancel ? 2 : 4);
+  }
+});
+
 test('server configuration refuses remote exposure without a valid token and an exact secure public origin', () => {
   const key = randomBytes(32).toString('base64url');
   for (const environment of [
