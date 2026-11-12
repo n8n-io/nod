@@ -63,6 +63,8 @@ The owner's sharing choice still applies. Nod disables IP geolocation. Ordinary 
 | `onboarding_company_size` | Fixed choice, `skipped`, or `not_asked`                              |
 | `onboarding_jobs`         | Array of fixed choices, `other` for a typed answer, or `['skipped']` |
 
+With **Mostly personal life**, Nod still asks about occupation but skips who-for and company size. Both properties use `not_asked` in the event and on the person profile.
+
 The typed **Something else** text stays out of PostHog and Customer.io. The `onboarding_profile_answered` event keeps per-option booleans for event-time analysis. A new About submission removes any old per-option person properties; existing profiles keep them until resubmitted. Separate consent lets Nod add `email` and the consent flag, time, version, exact checkbox wording, and privacy policy link to the same PostHog profile. The fixed choices accompany the Customer.io signup only after they were shared successfully.
 
 Packaged release builds with a plain `x.y.z` version report `production`. Local and prerelease desktop builds report `development`. A production source launch with `pnpm start` sets `app_version` to its Git revision when its working directory is the clean Nod repository root and no version is configured. Private self-host bundles report their verified source revision. Other source installs can set `NOD_APP_VERSION` to a release version or source revision. Source installs report `production` when `NODE_ENV=production` and `NOD_APP_VERSION` isn't a prerelease, unless overridden. Dashboards filter to production and include both staff and external usage. Internal/test exclusions are off; separating internal use into another project is deferred.

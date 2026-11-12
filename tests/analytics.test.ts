@@ -387,7 +387,8 @@ test('About you keeps event choices independent and groups person answers by que
   assert.equal(person.onboarding_profile_completed, true);
   assert.equal(person.onboarding_scope, 'personal');
   assert.deepEqual(person.onboarding_roles, [...profileRoles.map(({ id }) => id), 'other']);
-  assert.equal(person.onboarding_who_for, 'both');
+  assert.equal(event.who_for, 'not_asked');
+  assert.equal(person.onboarding_who_for, 'not_asked');
   assert.equal(person.onboarding_company_size, 'not_asked');
   assert.deepEqual(person.onboarding_jobs, [...profileJobs.map(({ id }) => id), 'other']);
   assert.ok(!JSON.stringify({ event, person }).includes('SYNTHETIC_PRIVATE'));

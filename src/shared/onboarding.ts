@@ -58,6 +58,12 @@ export type OnboardingProfile = {
   jobs: ProfileJob[];
   jobsText?: string;
 };
+export function profileAsksWhoFor(
+  scope: ProfileScope | 'skipped' | undefined,
+  roles: readonly string[],
+) {
+  return scope !== 'personal' && profileBusinessRoles.some((role) => roles.includes(role));
+}
 export const communityLinks = {
   discord: 'https://discord.gg/n8n',
   forum: 'https://community.n8n.io/c/n8n-labs/48',

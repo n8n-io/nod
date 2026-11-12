@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from 'react';
 import {
-  profileBusinessRoles,
+  profileAsksWhoFor,
   profileCompanySizes,
   profileJobs,
   profileRoles,
@@ -58,7 +58,7 @@ const fresh: State = {
 
 function questions(profile: OnboardingProfile): Question[] {
   const items: Question[] = ['scope', 'roles'];
-  if (profile.roles.some((role) => profileBusinessRoles.includes(role))) items.push('whoFor');
+  if (profileAsksWhoFor(profile.scope, profile.roles)) items.push('whoFor');
   if (profile.scope !== 'personal') items.push('size');
   items.push('jobs');
   return items;
@@ -72,7 +72,7 @@ function applicable(profile: OnboardingProfile): OnboardingProfile {
   return {
     ...profile,
     roles,
-    whoFor: roles.some((role) => profileBusinessRoles.includes(role)) ? profile.whoFor : undefined,
+    whoFor: profileAsksWhoFor(profile.scope, roles) ? profile.whoFor : undefined,
     companySize: profile.scope === 'personal' ? undefined : profile.companySize,
   };
 }
@@ -322,7 +322,7 @@ export function About({ arrived, quiet, onNext, onBack, usageShared }: StepProps
       });
       return {
         ...value,
-        seen: profile.roles.some((item) => profileBusinessRoles.includes(item))
+        seen: profileAsksWhoFor(profile.scope, profile.roles)
           ? value.seen
           : value.seen.filter((item) => item !== 'whoFor'),
         profile,

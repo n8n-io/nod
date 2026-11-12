@@ -1663,6 +1663,7 @@ test('onboarding answers update memory and profile analytics while the updates e
     { roles: ['astronaut'], jobs: [] },
     { scope: 'work', roles: ['student'], jobs: [] },
     { scope: 'personal', roles: [], companySize: '2_10', jobs: [] },
+    { scope: 'personal', roles: ['agency'], whoFor: 'clients', jobs: [] },
     { scope: 'work', roles: [], whoFor: 'clients', jobs: [] },
     { scope: 'work', roles: ['agency', 'agency'], jobs: [] },
     { scope: 'work', roles: [], jobs: ['email', 'email'] },
@@ -1847,6 +1848,16 @@ test('onboarding answers update memory and profile analytics while the updates e
     ).statusCode,
     200,
   );
+  const personalBusiness = await app.inject({
+    method: 'POST',
+    url: '/api/onboarding/profile',
+    payload: { scope: 'personal', roles: ['agency'], jobs: [] },
+  });
+  assert.equal(personalBusiness.statusCode, 200);
+  assert.deepEqual(
+    (await notes()).map((entry) => entry.text),
+    ['Where they want Nod’s help: Mostly personal life. What they do: Agency.'],
+  );
 });
 
 test('updates email keeps fixed answers scoped to each submission across route instances', async (t) => {
@@ -1920,9 +1931,25 @@ test('updates email keeps fixed answers scoped to each submission across route i
     { ...fixed, roleText: 'Private synthetic role' },
     { ...fixed, onboarding_roles: ['engineering', 'engineering'] },
     { ...fixed, onboarding_who_for: 'clients' },
+    {
+      ...fixed,
+      onboarding_scope: 'personal',
+      onboarding_roles: ['agency'],
+      onboarding_who_for: 'clients',
+      onboarding_company_size: 'not_asked',
+    },
     { ...fixed, onboarding_company_size: 'not_asked' },
     { ...fixed, onboarding_scope: 'private answer' },
   ])
     assert.notEqual((await signup(invalid)).statusCode, 200);
   assert.equal(sent.length, 2);
+  const personalBusiness = {
+    ...fixed,
+    onboarding_scope: 'personal',
+    onboarding_roles: ['agency'],
+    onboarding_who_for: 'not_asked',
+    onboarding_company_size: 'not_asked',
+  };
+  assert.equal((await signup(personalBusiness)).statusCode, 200);
+  assert.deepEqual(sent[2], personalBusiness);
 });
