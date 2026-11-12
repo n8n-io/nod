@@ -127,7 +127,7 @@ In the sidebar, the Chat item shows a moving dot while Nod works and a solid dot
 
 - **typing…** shows while Nod works on something you asked for, and stays on during slow steps.
 - A message you send while Nod works gets a 👀 reaction until Nod reads it.
-- Telegram also shows a quoted progress section in your language when its first message [supports live updates](/use/channels/#while-nod-works). A longer request has one short opening message so the progress has a place to update; a saved task uses its start message.
+- Telegram also shows a quoted progress section when its first message [supports live updates](/use/channels/#while-nod-works). Named steps use your conversation language; the **Using** fallback is in English. A longer request has one short opening message so the progress has a place to update; a saved task uses its start message.
 - WhatsApp Business Cloud connections stop typing when the 24-hour reply window closes. QR connections have no such limit.
 
 None of these send a notification. See [Message cadence](/how-it-works/agent-runtime/#message-cadence). A file Nod shares is attached to its next answer, or sent on its own when none follows.
