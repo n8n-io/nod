@@ -14,9 +14,13 @@ import { sourceAnalyticsVersion } from './source-version.ts';
 
 process.chdir(fileURLToPath(new URL('..', import.meta.url)));
 const production = process.argv.includes('--production');
+const launch = (command, args, options) =>
+  process.platform === 'win32'
+    ? spawn([command, ...args].join(' '), { ...options, shell: true })
+    : spawn(command, args, options);
 const run = (command, args, env = process.env) =>
   new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: 'inherit', env });
+    const child = launch(command, args, { stdio: 'inherit', env });
     child.on('error', reject);
     child.on('exit', (code) =>
       code === 0 ? resolve() : reject(new Error(`${command} failed (${code}).`)),
@@ -56,7 +60,7 @@ try {
     return environment;
   });
   console.log('\nNod is starting. Open the link it prints when it is ready.\n');
-  const child = spawn(
+  const child = launch(
     'pnpm',
     ['exec', 'tsx', ...(production ? [] : ['watch']), 'src/server/index.ts'],
     {
