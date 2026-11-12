@@ -15,7 +15,13 @@ import { execFileSync } from 'node:child_process';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { automaticRelease, configuredRelease, isReleaseMerge } from './prepare-desktop-release.mjs';
+import {
+  automaticRelease,
+  configuredRelease,
+  isReleaseMerge,
+  publicReleaseNotes,
+  releaseHighlights,
+} from './prepare-desktop-release.mjs';
 import { linuxReleaseFiles } from '../../desktop/scripts/linux-release.mjs';
 
 const root = process.cwd();
@@ -325,6 +331,7 @@ async function plan() {
           .filter(Boolean)
           .map((line) => JSON.parse(line)),
         sourceRepository,
+        releaseHighlights(process.env.NOD_RELEASE_HIGHLIGHTS),
       )
     : await configuredRelease(root);
   if (process.env.APPLE_CONFIGURED !== 'true')
@@ -807,8 +814,13 @@ async function draftApp({ stageOnly = false } = {}) {
     Object.keys(feed).sort().join(',') !== 'name,pub_date,url'
   )
     throw new Error('The native update feed does not match the packaged release.');
+  const installer = `[${arch === 'arm64' ? 'Mac ARM' : 'Mac Intel'}](https://github.com/${releaseRepository}/releases/download/${tag}/${disk})`;
   const releaseNotes = () =>
-    `[${arch === 'arm64' ? 'Mac ARM' : 'Mac Intel'}](https://github.com/${releaseRepository}/releases/download/${tag}/${disk})\n\n${changes}\n\n${marker}\n`;
+    publicReleaseNotes(
+      prepared,
+      `${installer}\n\n${changes}\n\n${marker}\n`,
+      `## Get ${version}\n\n${installer}`,
+    );
   const files = [...runtimeFiles];
   for (const name of names) {
     if (
@@ -1039,7 +1051,12 @@ async function draftAll({ stageOnly = false } = {}) {
     `https://github.com/${releaseRepository}/releases/download/${tag}/${file}`;
   if (verifiedFiles.length > 30)
     throw new Error('A desktop release must keep at most 30 assets for installed app updates.');
-  const notes = `### Downloads\n\n- [Mac Intel](${download('nod-x64.dmg')})\n- [Mac ARM](${download('nod-arm64.dmg')})\n- [Windows](${download('nod-Setup-x64.exe')})\n- [Linux x64 Flatpak (preview)](https://nod.n8n.io/docs/get-started/install-desktop/#linux)\n\nMac requires macOS 14 or later. Windows requires Windows 11 with WSL 2. Linux needs Flatpak and a desktop secret store. A local Linux assistant also needs KVM. To install, follow the [install guide](https://nod.n8n.io/docs/get-started/install-desktop/). Mac and Windows apps update themselves and download their runtime on first launch. Linux includes the runtime; install the next bundle to update. Join all nod-linux-x64.flatpak.partNN files before installation, then check SHA256SUMS-linux-x64.\n\nMac builds use ${signingMode === 'self-signed' ? 'the internal signing certificate' : 'Developer ID signing and Apple notarization'}. Windows builds are signed by n8n GmbH. Linux bundle parts have checksums. Public releases include build provenance.\n\n${prepared.notes.trimEnd()}\n\n${marker}\n`;
+  const details = `### Downloads\n\n- [Mac Intel](${download('nod-x64.dmg')})\n- [Mac ARM](${download('nod-arm64.dmg')})\n- [Windows](${download('nod-Setup-x64.exe')})\n- [Linux x64 Flatpak (preview)](https://nod.n8n.io/docs/get-started/install-desktop/#linux)\n\nMac requires macOS 14 or later. Windows requires Windows 11 with WSL 2. Linux needs Flatpak and a desktop secret store. A local Linux assistant also needs KVM. To install, follow the [install guide](https://nod.n8n.io/docs/get-started/install-desktop/). Mac and Windows apps update themselves and download their runtime on first launch. Linux includes the runtime; install the next bundle to update. Join all nod-linux-x64.flatpak.partNN files before installation, then check SHA256SUMS-linux-x64.\n\nMac builds use ${signingMode === 'self-signed' ? 'the internal signing certificate' : 'Developer ID signing and Apple notarization'}. Windows builds are signed by n8n GmbH. Linux bundle parts have checksums. Public releases include build provenance.\n\n${prepared.notes.trimEnd()}\n\n${marker}\n`;
+  const notes = publicReleaseNotes(
+    prepared,
+    details,
+    `## Get ${version}\n\n[Mac · Apple silicon](${download('nod-arm64.dmg')}) · [Mac · Intel](${download('nod-x64.dmg')}) · [Windows](${download('nod-Setup-x64.exe')}) · [Linux preview](https://nod.n8n.io/docs/get-started/install-desktop/#linux)`,
+  );
   let release = await uploadDraft({
     repository: releaseRepository,
     tag,
