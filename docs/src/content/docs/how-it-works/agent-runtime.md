@@ -59,7 +59,7 @@ Pi validates tool arguments as JSON Schema with `@earendil-works/pi-schema`. It 
 
 Nod applies provider settings when it opens a model connection. Groq Qwen uses the system message role. OpenRouter MiMo V2.6 Flash uses tools without optional strict sampling, so tools with different sampling settings can share a request. A tool that requires strict sampling still refuses a model that cannot supply it. OpenRouter's free route keeps reasoning enabled because a routed model can require it. Its picker does not offer Off; a saved Off choice uses the lowest supported effort. Ollama models with on or off thinking use boolean controls instead of a named effort. OpenCode helper calls get a separate session ID for each helper request, shared by that request's model retries.
 
-After a model list refresh, an unsupported saved effort changes to the lowest supported effort. A supported choice stays unchanged.
+After a model list refresh or a connection is saved again, an unsupported saved effort changes to a supported effort for the same model. A supported choice stays unchanged.
 
 If Ollama does not report its thinking controls, Nod uses the server's default instead of sending an effort value.
 

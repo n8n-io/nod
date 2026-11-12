@@ -8859,7 +8859,8 @@ test(
                 }),
               reason: /You exceeded your current quota\. Please retry in 23h0m0s\./,
               code: /HTTP 429.*GenerateRequestsPerDay-FreeTier.*retryDelay: 82800s/,
-              advice: /Try again in about 23 hours\./,
+              advice:
+                /retry delay is about 23 hours\. Check its daily limit or choose another model\./,
             },
             {
               prompt: 'model-plain-rate-limit-fixture',
@@ -8903,7 +8904,8 @@ test(
                   },
                 }),
               reason: /Quota exceeded\./,
-              advice: /Try again in about 24 hours\./,
+              advice:
+                /retry delay is about 24 hours\. Check its daily limit or choose another model\./,
             },
             {
               prompt: 'model-rate-limit-code-fixture',
@@ -9078,7 +9080,7 @@ test(
               if (item.code) assert.match(turn.error, item.code);
               if (item.advice) assert.match(turn.error, item.advice);
               if (item.prompt === 'model-zero-quota-fixture')
-                assert.doesNotMatch(turn.error, /Try again in about/);
+                assert.doesNotMatch(turn.error, /retry delay is about/);
               for (const text of [turn.error, shown])
                 assert.doesNotMatch(
                   text,

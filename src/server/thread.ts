@@ -1131,7 +1131,7 @@ function modelRecoveryAdvice(text: string) {
           : Math.ceil(seconds / 86400);
   const unit =
     seconds < 60 ? 'second' : seconds < 3600 ? 'minute' : seconds < 172800 ? 'hour' : 'day';
-  return `Try again in about ${amount} ${unit}${amount === 1 ? '' : 's'}.`;
+  return `The provider's retry delay is about ${amount} ${unit}${amount === 1 ? '' : 's'}. Check its daily limit or choose another model.`;
 }
 
 function failureText(error: unknown) {
