@@ -51,10 +51,12 @@ Pi's native tools (`read`, `bash`, `edit`, `write`, `find` and `ls`) run inside 
 
 Both the workspace and browser containers drop all capabilities, set `no-new-privileges` and have these limits:
 
-| Container | Source install (`compose.yaml`)                      | Local desktop runtime                              | Self-hosted server defaults                                |
-| --------- | ---------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------- |
-| Workspace | 8 GB memory, 4 CPUs, 4,096 processes                 | 2 GB memory, 2 CPUs, 1,024 processes               | 2 GB memory, no CPU limit, 512 processes                   |
-| Browser   | 8 GB memory, 6 CPUs, 4,096 processes, read-only root | 2 GB memory, 2 CPUs, 768 processes, read-only root | 3 GB memory, no CPU limit, 1,024 processes, read-only root |
+| Container | Source install (`compose.yaml`)                            | Local desktop runtime                              | Self-hosted server defaults                                |
+| --------- | ---------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------- |
+| Workspace | 8 GB memory, up to 4 CPUs, 4,096 processes                 | 2 GB memory, 2 CPUs, 1,024 processes               | 2 GB memory, no CPU limit, 512 processes                   |
+| Browser   | 8 GB memory, up to 6 CPUs, 4,096 processes, read-only root | 2 GB memory, 2 CPUs, 768 processes, read-only root | 3 GB memory, no CPU limit, 1,024 processes, read-only root |
+
+For source installs, `pnpm start` uses the Docker daemon's CPU count when it is lower than these caps. Direct Compose commands default to two CPUs per container unless `NOD_WORKSPACE_CPUS` or `NOD_BROWSER_CPUS` is set.
 
 The self-hosted server reaches Docker through a restricted proxy for its workspace and browser containers. Its Compose configuration allows separate memory limits through `NOD_WORKSPACE_MEMORY` and `NOD_BROWSER_MEMORY`.
 
