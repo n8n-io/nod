@@ -1,13 +1,13 @@
 ---
 title: Install from source
-description: Run Nod from its source code on macOS or Linux, open it with your access link and keep it updated.
+description: Run Nod from its source code on macOS, Linux or Windows, open it with your access link and keep it updated.
 sidebar:
   order: 3
 ---
 
 import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
-Run Nod from its source code on macOS or Linux. Choose this to change Nod's code or use a source installation. The [desktop app](/get-started/install-desktop/) is quicker to install on Mac and Windows. Linux x64 also has a [Flatpak preview](/get-started/install-desktop/#linux).
+Run Nod from its source code on macOS, Linux or Windows. Choose this to change Nod's code or use a source installation. The [desktop app](/get-started/install-desktop/) is quicker to install on Mac and Windows. Linux x64 also has a [Flatpak preview](/get-started/install-desktop/#linux).
 
 To run Nod on a VPS, cloud VM, or Mac mini and reach it from other devices, use [Host your own server](/deploy/self-host/).
 
@@ -17,7 +17,7 @@ To run Nod on a VPS, cloud VM, or Mac mini and reach it from other devices, use 
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Node.js          | 24.21.0 or newer                                                                                                                                                     |
 | pnpm             | 10.34.5, enabled through Corepack                                                                                                                                    |
-| Docker           | With Compose v2, running, for example Docker Desktop on a Mac                                                                                                        |
+| Docker           | With Compose v2, running, for example Docker Desktop on a Mac or Windows                                                                                             |
 | Git              | Any recent version                                                                                                                                                   |
 | Model connection | A [supported model service](/connect/models/) with its required credentials, a ChatGPT plan that supports sign-in, or a [local model](/connect/local-models/) server |
 
@@ -61,6 +61,17 @@ Nothing to do for a fresh install. Nod creates a private key at `NOD_DATA_ROOT/v
 You can instead set `NOD_VAULT_KEY` yourself. If encrypted data already exists, restore its original key rather than generating a new one. See [Vault configuration](/deploy/configuration/#vault).
 
 </TabItem>
+<TabItem label="Windows" icon="seti:windows">
+
+Create a key and add it as `NOD_VAULT_KEY=<key>` to `.env` in the `nod` folder. Create the file if it doesn't exist.
+
+```powershell title="PowerShell"
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+Keep the key with your backup; saved credentials can't be read without it. If encrypted data already exists, restore its original key rather than generating a new one. See [Vault configuration](/deploy/configuration/#vault).
+
+</TabItem>
 </Tabs>
 
 ## Start Nod
@@ -86,13 +97,13 @@ This source setup listens on your computer's loopback interface. For network acc
 
 ## Run Nod day to day
 
-| To             | Do this                                                                                                                                                                            |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Stop Nod       | Press Ctrl-C, then run `docker compose stop` to stop the containers.                                                                                                               |
-| Update Nod     | Stop it, run `git pull`, then `pnpm start`.                                                                                                                                        |
-| Get a new link | Delete `access-key` in your data folder (`.local/` by default) and restart. Otherwise the key stays the same across restarts.                                                      |
-| Find your data | `.local/` (or `NOD_DATA_ROOT`) and the Docker volumes. The Vault key is in `vault/master-key` on Linux, the macOS Keychain item `dev.nod.vault`, or your explicit `NOD_VAULT_KEY`. |
-| Back up        | Stop Nod, then copy your data folder (`.local/` or `NOD_DATA_ROOT`), the Docker volumes and the Vault key.                                                                         |
+| To             | Do this                                                                                                                                                                                                 |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stop Nod       | Press Ctrl-C, then run `docker compose stop` to stop the containers.                                                                                                                                    |
+| Update Nod     | Stop it, run `git pull`, then `pnpm start`.                                                                                                                                                             |
+| Get a new link | Delete `access-key` in your data folder (`.local/` by default) and restart. Otherwise the key stays the same across restarts.                                                                           |
+| Find your data | `.local/` (or `NOD_DATA_ROOT`) and the Docker volumes. The Vault key is in `vault/master-key` on Linux, the macOS Keychain item `dev.nod.vault`, or your explicit `NOD_VAULT_KEY`, which Windows needs. |
+| Back up        | Stop Nod, then copy your data folder (`.local/` or `NOD_DATA_ROOT`), the Docker volumes and the Vault key.                                                                                              |
 
 :::caution
 There's no tested restore procedure yet. Keep your Vault key with your backup, or your saved credentials can't be read.
