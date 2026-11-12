@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import type { ModelTrace, ModelTraceDelivery, ModelTraces } from '../ports/traces.ts';
+import { analyticsVersion } from './analytics-events.ts';
 import {
   createPersonalDataRedactor,
   withoutPersonalFields,
@@ -27,7 +28,8 @@ function structured(value: string, text: (value: string) => string) {
   return JSON.stringify(withoutPersonalFields(withoutSecretKeys(parsed), text));
 }
 
-export function createModelTraces(deliver?: ModelTraceDelivery) {
+export function createModelTraces(deliver?: ModelTraceDelivery, appVersion?: string) {
+  const version = analyticsVersion.safeParse(appVersion).data;
   let enabled = false;
   let secrets: string[] = [];
   let secretText = createTextRedactor(secrets);
@@ -113,6 +115,7 @@ export function createModelTraces(deliver?: ModelTraceDelivery) {
             ),
           ),
           ...(thread ? { thread_id: thread } : {}),
+          ...(version ? { app_version: version } : {}),
         },
       },
       signal,

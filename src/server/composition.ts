@@ -356,6 +356,7 @@ export function createDefaultAdapters(
       url: env.NOD_TRACES_URL ?? 'https://internal.users.n8n.cloud/webhook/nod/traces',
       token: env.NOD_TRACES_TOKEN,
     }),
+    env.NOD_APP_VERSION,
   );
   const modelCurator = createPiMemoryCurator({
     get provider() {

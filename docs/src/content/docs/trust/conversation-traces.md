@@ -37,6 +37,8 @@ While the switch is on, each request Nod makes to your model becomes one trace, 
 |                                                                                                                                 | Its attention and review tasks, and any codemode step                                   |
 | Whether it came from chat, a task, a helper or a background check                                                               | Your usage analytics, which have their own switch                                       |
 
+Each trace includes the Nod version as `app_version` metadata when a valid release version or source revision is available.
+
 n8n's service sees the sending machine's IP address when it receives a trace. For a self-hosted assistant, that is the server's address. It doesn't add the address to the trace.
 
 ## What Nod removes first
