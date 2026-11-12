@@ -2647,7 +2647,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
         ['cloudflare', 'cloudflare-workers-ai'],
         ['azure', 'azure'],
       ] as const)
-        for (const key of [undefined, null, 42])
+        for (const key of [undefined, null, 42, '', 'a', 'ab', 'abc', 'abcd'])
           state.connections.push({
             id: randomUUID(),
             provider,
@@ -2689,6 +2689,12 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
         });
     });
     const restored = await f.create(ownerId);
+    assert.ok(
+      restored
+        .view()
+        .connections.filter((row) => row.label === 'Synthetic incomplete key')
+        .every((row) => row.keyEnding === undefined),
+    );
     for (const [label, ending] of [
       ['Synthetic keyed endpoint', 'ab12'],
       ['Synthetic keyed azure', 'cd34'],
