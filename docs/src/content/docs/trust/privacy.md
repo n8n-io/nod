@@ -50,7 +50,7 @@ Nod:    Sends to [email]:
         anything is missing. [owner]
 ```
 
-The trace also includes Nod's instructions, the model name, token counts, and cost. Its ID changes every day and whenever Nod restarts.
+The trace also includes Nod's instructions, the model name, token counts, and cost. Its conversation ID changes after 30 minutes without a request to the model and whenever Nod restarts.
 
 "Jordi" is still there. Nod spots details by their shape, such as email addresses, phone numbers, and bank accounts. It also knows your name from your connected accounts. It can't spot every name in a sentence, so traces are pseudonymised, not anonymous.
 

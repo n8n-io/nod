@@ -1651,12 +1651,12 @@ describe('account routes', () => {
         ...(payload ? { payload } : {}),
       });
     const turnId = '3f2a9c4e-8b1d-4f6a-9e2b-7c5d1a0f4e83';
-    const trace = (content: string): ModelTrace => ({
+    const trace = (content: string, minute = 0): ModelTrace => ({
       id: 'e2f062ac-4a2b-466b-9fe6-b85c4e49a3d9',
       name: 'marta.vidal@example.com',
       provider: 'fixture-model-key-8c41f2',
-      startedAt: '2026-10-19T10:00:00.000Z',
-      endedAt: '2026-10-19T10:00:01.000Z',
+      startedAt: `2026-10-19T10:${String(minute).padStart(2, '0')}:00.000Z`,
+      endedAt: `2026-10-19T10:${String(minute).padStart(2, '0')}:01.000Z`,
       messages: [
         { role: 'user', content },
         {
@@ -1707,7 +1707,7 @@ describe('account routes', () => {
     await settle(1);
     assert.equal(delivered.length, 1);
     const sent = JSON.stringify(delivered[0]);
-    const privateContent = [delivered[0].metadata.session_id, delivered[0].metadata.turn_id].reduce(
+    const privateContent = [delivered[0].metadata.thread_id, delivered[0].metadata.turn_id].reduce(
       (text, id) => text.replaceAll(id, '[id]'),
       sent,
     );
@@ -1733,19 +1733,22 @@ describe('account routes', () => {
       assert.ok(!privateContent.includes(value), value);
     assert.match(sent, /order 123456 on 2026-10-19/);
     assert.match(sent, /192\.168\.1\.1\.example/);
-    assert.deepEqual(Object.keys(delivered[0].metadata), ['session_id', 'turn_id']);
-    assert.match(delivered[0].metadata.session_id, /^[0-9a-f]{32}$/);
+    assert.deepEqual(Object.keys(delivered[0].metadata), ['turn_id', 'thread_id']);
+    assert.match(delivered[0].metadata.thread_id, /^[0-9a-f]{32}$/);
     assert.match(delivered[0].metadata.turn_id, /^[0-9a-f]{32}$/);
     assert.ok(!sent.includes('fixture-session') && !sent.toLowerCase().includes(turnId));
     assert.ok(sent.includes(`task ${delivered[0].metadata.turn_id}`));
     assert.ok(!sent.includes(homedir()) && sent.includes('~/Library/nod.json'));
-    traces.record(trace('A second request in the same conversation'));
+    traces.record(trace('A second request in the same conversation', 25));
     await settle(2);
-    assert.equal(delivered[1].metadata.session_id, delivered[0].metadata.session_id);
+    traces.record(trace('A request after a long pause', 57));
+    await settle(3);
+    assert.equal(delivered[1].metadata.thread_id, delivered[0].metadata.thread_id);
+    assert.notEqual(delivered[2].metadata.thread_id, delivered[1].metadata.thread_id);
     await request({ traces: false });
     traces.record(trace('After opting out'));
-    await settle(3);
-    assert.equal(delivered.length, 2);
+    await settle(4);
+    assert.equal(delivered.length, 3);
   });
 
   test('account changes require the same origin and owner and never accept provider or owner input', async (t) => {

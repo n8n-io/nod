@@ -43,21 +43,21 @@ n8n's service sees the sending machine's IP address when it receives a trace. Fo
 
 Every trace passes through these layers on the machine running your assistant before it's sent.
 
-| Layer                       | What it removes                                                                                     | How it decides                                                      |
-| --------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Known secrets               | Keys you saved, model and app keys, Nod's own tokens, and text shaped like a key, token or password | The exact values Nod knows, plus known key formats                  |
-| Secret fields               | The value of fields such as `password`, `token` or `api_key` in tool arguments and app data         | The field name                                                      |
-| Your name                   | The name on each app account you connected, such as Gmail or Slack, in full or in part              | An exact match                                                      |
-| Your home folder            | The path of your user folder, which often contains your name, becomes `~`                           | An exact match                                                      |
-| Nod's IDs                   | Task, message, connection and file IDs in messages and tool results                                 | The ID format; each gets the same keyed hash as the conversation ID |
-| Email addresses             | Every address, and the name written beside one, as in `Jane Doe <jane@example.com>`                 | The address format                                                  |
-| Phone numbers               | Numbers that are valid in a country's numbering plan, using your region for local formats           | Google's libphonenumber rules                                       |
-| Payment cards               | Card numbers from Visa, Mastercard, American Express and other issuers                              | The issuer prefix and the Luhn checksum                             |
-| Bank accounts               | IBANs                                                                                               | The country's length and the IBAN checksum                          |
-| Crypto wallets              | Bitcoin and Ethereum addresses                                                                      | The Bitcoin address checksum, or the Ethereum address format        |
-| ID numbers                  | US Social Security, Spanish DNI and NIE, UK National Insurance, Brazilian CPF and Indian Aadhaar    | Each format's check digit or rules                                  |
-| Network addresses           | IPv4, IPv6 and MAC addresses                                                                        | Address validation                                                  |
-| Personal fields in app data | The value of fields such as `first_name`, `displayName`, `birthday`, `address` or `phone`           | The field name, whatever the value's type                           |
+| Layer                       | What it removes                                                                                     | How it decides                                               |
+| --------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Known secrets               | Keys you saved, model and app keys, Nod's own tokens, and text shaped like a key, token or password | The exact values Nod knows, plus known key formats           |
+| Secret fields               | The value of fields such as `password`, `token` or `api_key` in tool arguments and app data         | The field name                                               |
+| Your name                   | The name on each app account you connected, such as Gmail or Slack, in full or in part              | An exact match                                               |
+| Your home folder            | The path of your user folder, which often contains your name, becomes `~`                           | An exact match                                               |
+| Nod's IDs                   | Task, message, connection and file IDs in messages and tool results                                 | The ID format; each gets a keyed hash that changes daily     |
+| Email addresses             | Every address, and the name written beside one, as in `Jane Doe <jane@example.com>`                 | The address format                                           |
+| Phone numbers               | Numbers that are valid in a country's numbering plan, using your region for local formats           | Google's libphonenumber rules                                |
+| Payment cards               | Card numbers from Visa, Mastercard, American Express and other issuers                              | The issuer prefix and the Luhn checksum                      |
+| Bank accounts               | IBANs                                                                                               | The country's length and the IBAN checksum                   |
+| Crypto wallets              | Bitcoin and Ethereum addresses                                                                      | The Bitcoin address checksum, or the Ethereum address format |
+| ID numbers                  | US Social Security, Spanish DNI and NIE, UK National Insurance, Brazilian CPF and Indian Aadhaar    | Each format's check digit or rules                           |
+| Network addresses           | IPv4, IPv6 and MAC addresses                                                                        | Address validation                                           |
+| Personal fields in app data | The value of fields such as `first_name`, `displayName`, `birthday`, `address` or `phone`           | The field name, whatever the value's type                    |
 
 Here's a synthetic request before and after scrubbing, for an owner called Marta in Spain:
 
@@ -80,7 +80,7 @@ Nod removes what it can recognize. A trace can still contain personal details wr
 ## How traces are pseudonymised
 
 - **No account or device ID.** A trace carries no account, installation or device identifier, and no analytics ID.
-- **IDs that expire.** The traces of one conversation are grouped under a random ID so the team can read them in order. The ID is a keyed hash that changes every day and whenever Nod restarts. Its key stays with the assistant, so the ID alone doesn't link traces to you, to other days or to other Nod data such as feedback reports. Nod's own IDs inside messages and tool results get the same keyed hash. Other content can still connect traces, such as a website address, a document link or an account handle.
+- **IDs that expire.** The traces of one conversation are grouped under a random ID so the team can read them in order. A conversation is one chat, task or background check, and it gets a new ID after 30 minutes without a request to the model or when Nod restarts. Nod's own IDs on a trace and inside messages and tool results get a keyed hash that changes every day and whenever Nod restarts. Its key stays with the assistant, so these IDs alone don't link traces to you, to other conversations or to other Nod data such as feedback reports. Other content can still connect traces, such as a website address, a document link or an account handle.
 - **No owner context.** Nod replaces your saved memory, learned skills and format preferences with `[owner context omitted]`, including memory notes and learned skills it reads with a tool. Those reads keep only their action, such as `memory_read`, not the note path, search words or skill name. The attention and review tasks that read your saved memory are not traced at all, and a codemode step keeps neither its script nor its result, because a script can read memory or a connected account.
 - **No images.** Images are replaced with `[image]`.
 
