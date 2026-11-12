@@ -437,6 +437,7 @@ test('release gate rejects malformed metadata, uncommitted notes and source drif
         env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` },
       },
     ),
+    { code: 1, stderr: /release highlights/i },
   );
   await assert.rejects(prepareRelease(f.root, '0.1.0-alpha'));
   for (const highlights of ['', '   ', 'x'.repeat(8193), null])
