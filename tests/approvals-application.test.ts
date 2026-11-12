@@ -1553,30 +1553,7 @@ test(
           ).rows[0];
           assert.ok(primary?.account_id);
           const session = await integrationFixture.provider.createSession(ownerId, {});
-          const secondary = await session.authorize(
-            'gmail',
-            `http://localhost:${port}/api/apps/callback?state=synthetic`,
-          );
-          const consent = await application.app.inject({
-            method: 'POST',
-            url: `/e2e/connect/${secondary.accountId}`,
-            headers,
-          });
-          assert.equal(consent.statusCode, 302);
-          const alternate = await integrationFixture.provider.inspectAccount(
-            secondary.accountId,
-            ownerId,
-          );
-          assert.equal(alternate.active, true);
-          const draft = (await session.execute(
-            'GMAIL_CREATE_EMAIL_DRAFT',
-            {
-              recipient_email: 'alternate@example.test',
-              subject: 'Synthetic alternate draft',
-              body: 'Synthetic unsent draft.',
-            },
-            secondary.accountId,
-          )) as { id: string };
+          let secondaryAccountId: string | undefined;
           const originalQuery = pool.query.bind(pool) as (...args: any[]) => Promise<any>;
           const restore = () =>
             originalQuery(
@@ -1591,6 +1568,31 @@ test(
               ],
             );
           try {
+            const secondary = await session.authorize(
+              'gmail',
+              `http://localhost:${port}/api/apps/callback?state=synthetic`,
+            );
+            secondaryAccountId = secondary.accountId;
+            const consent = await application.app.inject({
+              method: 'POST',
+              url: `/e2e/connect/${secondary.accountId}`,
+              headers,
+            });
+            assert.equal(consent.statusCode, 302);
+            const alternate = await integrationFixture.provider.inspectAccount(
+              secondary.accountId,
+              ownerId,
+            );
+            assert.equal(alternate.active, true);
+            const draft = (await session.execute(
+              'GMAIL_CREATE_EMAIL_DRAFT',
+              {
+                recipient_email: 'alternate@example.test',
+                subject: 'Synthetic alternate draft',
+                body: 'Synthetic unsent draft.',
+              },
+              secondary.accountId,
+            )) as { id: string };
             for (const [action, target] of [
               ['GMAIL_DELETE_MESSAGE', { message_id: 'fixture-mail-1' }],
               ['GMAIL_DELETE_DRAFT', { draft_id: draft.id }],
@@ -1658,9 +1660,16 @@ test(
             }
           } finally {
             pool.query = originalQuery as typeof pool.query;
-            await restore();
-            await integrationFixture.provider.deleteAccount(secondary.accountId, ownerId);
-            await integrationFixture.provider.deleteSession(session.id);
+            try {
+              await restore();
+            } finally {
+              try {
+                if (secondaryAccountId)
+                  await integrationFixture.provider.deleteAccount(secondaryAccountId, ownerId);
+              } finally {
+                await integrationFixture.provider.deleteSession(session.id);
+              }
+            }
           }
         },
       );

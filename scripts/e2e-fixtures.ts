@@ -545,6 +545,7 @@ const spendingCsv = [
   '2026-09-28,Software,Figma,20.00,60.00,subscription',
   '2026-09-28,Software,Notion,20.00,60.00,subscription',
 ].join('\n');
+const draftFormats = ['minimal', 'full', 'raw', 'metadata'];
 const toolDefinitions = [
   {
     name: 'GMAIL_LIST_LABELS',
@@ -699,7 +700,7 @@ const toolDefinitions = [
       type: 'object',
       properties: {
         draft_id: { type: 'string' },
-        format: { type: 'string', enum: ['minimal', 'full', 'raw', 'metadata'] },
+        format: { type: 'string', enum: draftFormats },
         user_id: { type: 'string', enum: ['me'] },
       },
       required: ['draft_id'],
@@ -1099,6 +1100,12 @@ export function createIntegrationFixture(
               ))
           )
             throw new Error('The mailbox query fields are invalid.');
+          if (
+            action === 'GMAIL_GET_DRAFT' &&
+            args.format !== undefined &&
+            (typeof args.format !== 'string' || !draftFormats.includes(args.format))
+          )
+            throw new Error('The synthetic draft format is invalid.');
           const sent =
             action === 'GMAIL_FETCH_EMAILS' &&
             (/(?:^|\s)(?:in|label):sent(?:\s|$)/i.test(String(args.query ?? '')) ||
