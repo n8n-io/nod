@@ -1,5 +1,5 @@
 {
-  "version": "0.7.2",
+  "version": "0.7.1",
   "previousTag": "nod-v0.7.0",
   "source": "e28a6e9fac34f9f352a48c4ad39ee2ccf8d5d4ca",
   "highlights": "## 🩹 Chats and tasks keep going\n\nSome chats and tasks stopped with “Cannot read properties of undefined (reading 'trim')”, often in the middle of longer work. Nod now repairs an incomplete earlier reply before each model request, so the work continues. If a task stopped with this error, reply to it to continue.\n\n## 🇪🇺 OpenAI projects with a data region\n\nOpenAI connections now have an **API region**. Set it to your OpenAI project's region, such as the EU, when you connect with an API key. Existing connections stay on **Global**. [Connect OpenAI](https://nod.n8n.io/docs/connect/models/)\n\n## Also in this release\n\n- **Model errors:** When a provider refuses a request, Nod keeps its specific reason, such as a request that's too large or a used-up daily quota, and suggests a next step only when one helps.\n- **Shortcuts:** Command/Ctrl+1–6 switch sections in the desktop app even while you type in chat.\n- **Activity:** Live status says what Nod is doing, such as “Using Gmail”.\n- **Sign-in:** After you connect an app, the page shows one clear way back to Nod."

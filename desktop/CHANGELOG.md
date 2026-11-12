@@ -2,7 +2,7 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
-## 0.7.2 - 2026-11-12
+## 0.7.1 - 2026-11-12
 
 ### Features
 
