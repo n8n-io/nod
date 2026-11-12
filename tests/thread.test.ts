@@ -2015,35 +2015,68 @@ test(
       });
 
       await t.test('a task resumes its own session when its next check is due', async (t) => {
-        const id = randomUUID();
-        const turnId = randomUUID();
-        const answered = randomUUID();
-        await db.pool.query(
-          "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,waiting_reason,background,created_at,started_at) VALUES($1,$2,$3,$4,'task','Synthetic tracked work','waiting','approval',true,now()-interval '2 minutes',now()-interval '2 minutes')",
-          [answered, ownerId, threadId, id],
-        );
-        await db.pool.query(
-          "INSERT INTO turns(id,owner_id,thread_id,session_id,parent_turn_id,source,prompt,status,background,started_at) VALUES($1,$2,$3,$4,$5,'task','Synthetic tracked work','running',true,now())",
-          [turnId, ownerId, threadId, id, answered],
-        );
-        await db.pool.query(
-          "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text,applied_revision) VALUES($1,$2,$3,$1,'Synthetic tracked work','Synthetic reply arrived','Waiting',1)",
-          [id, ownerId, turnId],
-        );
-        await db.pool.query('UPDATE turns SET task_id=$2 WHERE id=$1', [turnId, id]);
+        const previousObserver = inspectObserver;
+        const prompt = 'Track a synthetic reply after connecting its source.';
+        let task: Task | undefined;
+        let due = '';
+        let takeUpdate = Promise.resolve();
+        inspectObserver = async (context) => {
+          if (context.prompt === prompt && !context.background) {
+            task = (await context.task!({
+              action: 'start',
+              title: 'Synthetic tracked work',
+              message: 'Checking the synthetic reply.',
+              doneWhen: 'Synthetic reply arrived',
+              now: 'Connect the synthetic source.',
+            })) as Task;
+            return { status: 'succeeded' };
+          }
+          if (context.taskContext?.id !== task?.id || !task) return;
+          if (context.prompt === prompt)
+            return { status: 'waiting_user', message: 'Connect the synthetic source.' };
+          if (context.prompt.startsWith('The Synthetic connection is ready.')) {
+            due = new Date(Date.now() + 1_000).toISOString();
+            await context.task!({ action: 'update', id: task.id, nextCheck: due });
+          }
+          if (context.prompt.startsWith('Synthetic continued task')) {
+            await takeUpdate;
+            assert.equal((await context.takeMessages!())[0]?.text, 'Synthetic task update');
+            due = new Date(Date.now() + 1_000).toISOString();
+            await context.task!({ action: 'update', id: task.id, nextCheck: due });
+          }
+          return { status: 'succeeded' };
+        };
+        t.after(() => {
+          inspectObserver = previousObserver;
+        });
+        const request = await userMessages.submit(prompt);
+        await waitFor(settled(request.turnId));
+        assert.ok(task);
+        const id = task.id;
+        const connectionQuestion = (
+          await db.pool.query<{ id: string }>(
+            "SELECT id FROM turns WHERE session_id=$1 AND source='task'",
+            [id],
+          )
+        ).rows[0]!.id;
+        await waitFor(async () => (await turnStatus(connectionQuestion)) === 'waiting');
         t.after(async () => {
           await db.pool.query(
-            "UPDATE turns SET status='cancelled',finished_at=now() WHERE id=$1 AND status='waiting'",
-            [answered],
+            "UPDATE turns SET status='cancelled',finished_at=now() WHERE session_id=$1 AND status='waiting'",
+            [id],
           );
           await db.pool.query('UPDATE turns SET task_id=NULL WHERE session_id=$1', [id]);
           await db.pool.query('DELETE FROM tasks WHERE id=$1', [id]);
         });
-        const due = new Date(Date.now() + 1_000).toISOString();
-        await tasks.execute({ turnId, threadId }, { action: 'update', id, nextCheck: due }, null);
-        await db.pool.query("UPDATE turns SET status='succeeded',finished_at=now() WHERE id=$1", [
-          turnId,
-        ]);
+        await thread.resumeAfterConnection(connectionQuestion, 'Synthetic');
+        const turnId = (
+          await db.pool.query<{ id: string }>('SELECT id FROM turns WHERE source_id=$1', [
+            `connection:${connectionQuestion}`,
+          ])
+        ).rows[0]!.id;
+        await waitFor(settled(turnId));
+        assert.equal(await turnStatus(connectionQuestion), 'waiting');
+        assert.equal(await turnStatus(turnId), 'succeeded');
         assert.equal((await tasks.read()).find((task) => task.id === id)?.status, 'scheduled');
         const check = async () =>
           (
@@ -2056,6 +2089,44 @@ test(
         const resumed = (await check())!;
         assert.equal(resumed.parent_turn_id, turnId);
         await waitFor(settled(resumed.id));
+        await Promise.all([tasks.resumeDue(threadId), tasks.resumeDue(threadId)]);
+        assert.equal(
+          (
+            await db.pool.query(
+              "SELECT count(*)::int AS n FROM turns WHERE session_id=$1 AND source_id LIKE 'task-check:%'",
+              [id],
+            )
+          ).rows[0].n,
+          1,
+        );
+        let releaseUpdate!: () => void;
+        takeUpdate = new Promise<void>((resolve) => {
+          releaseUpdate = resolve;
+        });
+        t.after(() => releaseUpdate());
+        await thread.resumeTurn(
+          resumed.id,
+          `synthetic-continued:${id}`,
+          'Synthetic continued task',
+        );
+        const continuing = (
+          await db.pool.query<{ id: string }>('SELECT id FROM turns WHERE source_id=$1', [
+            `synthetic-continued:${id}`,
+          ])
+        ).rows[0]!.id;
+        await waitFor(() => Boolean(ran(continuing)));
+        const update = await userMessages.submit('Synthetic task update', [], {
+          replyToMessageId: task.messageId!,
+        });
+        releaseUpdate();
+        await waitFor(settled(continuing));
+        assert.equal(
+          (await db.pool.query('SELECT started_at FROM turns WHERE id=$1', [update.turnId])).rows[0]
+            .started_at,
+          null,
+        );
+        await waitFor(async () => (await check())?.parent_turn_id === continuing, 20_000);
+        await waitFor(settled((await check())!.id));
         const started = randomUUID();
         const startedTurn = randomUUID();
         await db.pool.query(
@@ -2112,6 +2183,161 @@ test(
           ).rows[0].n,
           0,
         );
+      });
+
+      await t.test('task checks read committed changes before they start work', async (t) => {
+        await waitFor(settledThread);
+        const previousChecks = dependencies.taskChecks;
+        dependencies.taskChecks = undefined;
+        t.after(() => {
+          dependencies.taskChecks = previousChecks;
+        });
+        const applicationName = `synthetic-task-check-${randomUUID()}`;
+        const checkPool = new pg.Pool({
+          ...db.pool.options,
+          application_name: applicationName,
+          max: 1,
+        });
+        const checker = createTasks({ pool: checkPool, ownerId });
+        t.after(() => checkPool.end());
+        for (const change of ['stop', 'owner input', 'question', 'pause']) {
+          await t.test(change, async () => {
+            const id = randomUUID();
+            const turnId = randomUUID();
+            await db.pool.query(
+              "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,background,started_at,finished_at) VALUES($1,$2,$3,$4,'task','Synthetic tracked work','succeeded',true,now()-interval '1 minute',now())",
+              [turnId, ownerId, threadId, id],
+            );
+            await db.pool.query(
+              "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text,activity_key,next_check) VALUES($1,$2,$3,$1,'Synthetic tracked work','Synthetic reply arrived','Waiting',$4,date_trunc('milliseconds',now())-interval '1 minute')",
+              [id, ownerId, turnId, change === 'pause' ? `${threadId}:${id}` : null],
+            );
+            await db.pool.query('UPDATE turns SET task_id=$1 WHERE id=$2', [id, turnId]);
+            const blocker = await db.pool.connect();
+            let checking: Promise<void> | undefined;
+            try {
+              await blocker.query('BEGIN');
+              await thread.lockThread(blocker);
+              if (change === 'stop') await thread.cancelTurns(blocker, threadId, { sessionId: id });
+              else if (change === 'pause')
+                await blocker.query(
+                  'UPDATE preferences SET proactive_paused=true WHERE owner_id=$1',
+                  [ownerId],
+                );
+              else {
+                const next = await thread.enqueueTurn('Synthetic owner update', {
+                  source: 'task',
+                  sessionId: id,
+                  parentTurnId: turnId,
+                  background: true,
+                  client: blocker,
+                });
+                if (change === 'question')
+                  await blocker.query(
+                    "UPDATE turns SET status='waiting',waiting_reason='question',started_at=now(),finished_at=now() WHERE id=$1",
+                    [next],
+                  );
+              }
+              checking = checker.resumeDue(threadId);
+              await waitFor(async () =>
+                Boolean(
+                  (
+                    await admin.query(
+                      "SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock'",
+                      [applicationName],
+                    )
+                  ).rowCount,
+                ),
+              );
+              await blocker.query('COMMIT');
+              await checking;
+              assert.equal(
+                (
+                  await db.pool.query(
+                    "SELECT count(*)::int AS n FROM turns WHERE session_id=$1 AND source_id LIKE 'task-check:%'",
+                    [id],
+                  )
+                ).rows[0].n,
+                0,
+              );
+              assert.ok(
+                (await db.pool.query('SELECT next_check FROM tasks WHERE id=$1', [id])).rows[0]
+                  .next_check,
+              );
+            } finally {
+              await blocker.query('ROLLBACK');
+              blocker.release();
+              await checking?.catch(() => {});
+              await request('POST', `/api/tasks/${id}/stop`);
+              await db.pool.query('UPDATE turns SET task_id=NULL WHERE session_id=$1', [id]);
+              await db.pool.query('DELETE FROM tasks WHERE id=$1', [id]);
+              await db.pool.query(
+                'UPDATE preferences SET proactive_paused=false WHERE owner_id=$1',
+                [ownerId],
+              );
+            }
+          });
+        }
+      });
+
+      await t.test('a failed task check enqueue keeps its planned time', async (t) => {
+        await waitFor(settledThread);
+        const previousChecks = dependencies.taskChecks;
+        dependencies.taskChecks = undefined;
+        t.after(() => {
+          dependencies.taskChecks = previousChecks;
+        });
+        const id = randomUUID();
+        const turnId = randomUUID();
+        await db.pool.query(
+          "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,background,started_at,finished_at) VALUES($1,$2,$3,$4,'task','Synthetic tracked work','succeeded',true,now(),now())",
+          [turnId, ownerId, threadId, id],
+        );
+        await db.pool.query(
+          "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text,next_check) VALUES($1,$2,$3,$1,'Synthetic tracked work','Synthetic reply arrived','Waiting',date_trunc('milliseconds',now())-interval '1 minute')",
+          [id, ownerId, turnId],
+        );
+        t.after(async () => {
+          await request('POST', `/api/tasks/${id}/stop`);
+          await db.pool.query('UPDATE turns SET task_id=NULL WHERE session_id=$1', [id]);
+          await db.pool.query('DELETE FROM tasks WHERE id=$1', [id]);
+        });
+        const due = (
+          await db.pool.query<{ next_check: Date }>('SELECT next_check FROM tasks WHERE id=$1', [
+            id,
+          ])
+        ).rows[0]!.next_check;
+        const send = thread.boss.send.bind(thread.boss);
+        t.mock.method(thread.boss, 'send', async (...args: Parameters<typeof send>) => {
+          if (args[0] === 'thread-drain' && args[2]?.db)
+            throw new Error('Synthetic task check enqueue failed.');
+          return send(...args);
+        });
+        await assert.rejects(tasks.resumeDue(threadId), /Synthetic task check enqueue failed/);
+        assert.deepEqual(
+          (await db.pool.query('SELECT next_check FROM tasks WHERE id=$1', [id])).rows[0]
+            .next_check,
+          due,
+        );
+        assert.equal(
+          (
+            await db.pool.query(
+              "SELECT count(*)::int AS n FROM turns WHERE session_id=$1 AND source_id LIKE 'task-check:%'",
+              [id],
+            )
+          ).rows[0].n,
+          0,
+        );
+        t.mock.restoreAll();
+        await Promise.all([tasks.resumeDue(threadId), tasks.resumeDue(threadId)]);
+        const checks = (
+          await db.pool.query<{ id: string }>(
+            "SELECT id FROM turns WHERE session_id=$1 AND source_id LIKE 'task-check:%'",
+            [id],
+          )
+        ).rows;
+        assert.equal(checks.length, 1);
+        await waitFor(settled(checks[0]!.id));
       });
 
       await t.test('consecutive messages run as turns on the same thread', async (t) => {

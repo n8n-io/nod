@@ -95,6 +95,10 @@ A question, an approval, or a credential request ends the turn as `waiting`. The
 
 Some steps finish outside the Pi session: a completed secure form, a payment approval, a new app connection or your yes or no to a confirmation. Each of these queues a `resume` turn in the session that asked, so a background task's confirmation continues that task. A confirmed action runs once, in that resume turn. If Stop or a failure ends the resume turn before it finishes, each later turn of the session is told whether the approved action ran, may have run or did not run, until a turn of that session succeeds or waits for you. A resume turn records the turn it continues, so the trust check and approvals trace it back to the work that started it. A completed secure form or payment code queues its resume turn in the same transaction that records the entry.
 
+The earlier turn keeps its `waiting` outcome. It no longer blocks a planned task check after a later turn starts in the same session. Queued turns, running turns and questions that still need an answer block the check. Task checks, recurring schedules and secure forms use the same rule to identify a current waiting turn.
+
+A planned task check takes the thread lock before it reads the task and its session. It clears the planned time and queues the resume in one transaction. A Stop or owner update that completes first is read before the check starts. If the transaction fails, the planned time stays saved. The resume continues the last turn that started in the session; a later message absorbed by that turn does not replace it.
+
 A secure form closes when a newer turn starts in its session, and a payment request when you send a newer message there. A chat message is in the chat session, so it never closes a background task's form or payment.
 
 ## Sessions

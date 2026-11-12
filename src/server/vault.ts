@@ -32,7 +32,7 @@ import {
 import { ownerId as owner } from './config.ts';
 import { logFailure } from './failure-log.ts';
 import type { TurnRef } from './thread.ts';
-import { browserOf, supersededSql, turnChainSql } from './turn-chain.ts';
+import { browserOf, turnChainSql, waitingTurnSql } from './turn-chain.ts';
 import { loopbackHost } from '../shared/loopback.ts';
 import type { CaptureAnalytics } from './analytics.ts';
 import { lockKey, lockSetup, locksTable } from './locks.ts';
@@ -257,12 +257,6 @@ export async function sealedDataExists(pool: Pick<Pool, 'query'>) {
     )
       return true;
   return false;
-}
-
-export function waitingTurnSql(alias: string, reason?: 'credentials' | 'question') {
-  return `${alias}.status='waiting'${reason ? ` AND ${alias}.waiting_reason='${reason}'` : ''}
-    AND EXISTS(SELECT 1 FROM threads wt WHERE wt.id=${alias}.thread_id AND wt.owner_id=${alias}.owner_id AND wt.archived_at IS NULL)
-    AND NOT ${supersededSql(alias, `newer.started_at>=${alias}.started_at`)}`;
 }
 
 const keyCheck = { id: 'key-check', owner_id: owner, origin: 'nod:vault' };

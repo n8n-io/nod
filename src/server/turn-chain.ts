@@ -7,6 +7,12 @@ export function supersededSql(alias: string, newer: string) {
     AND newer.id<>${alias}.id AND ${newer})`;
 }
 
+export function waitingTurnSql(alias: string, reason?: 'credentials' | 'question') {
+  return `${alias}.status='waiting'${reason ? ` AND ${alias}.waiting_reason='${reason}'` : ''}
+    AND EXISTS(SELECT 1 FROM threads wt WHERE wt.id=${alias}.thread_id AND wt.owner_id=${alias}.owner_id AND wt.archived_at IS NULL)
+    AND NOT ${supersededSql(alias, `newer.started_at>=${alias}.started_at`)}`;
+}
+
 export const laterSupersedingTurnSql = `EXISTS(SELECT 1 FROM turns n WHERE n.owner_id=u.owner_id AND n.session_id=u.session_id
   AND (n.created_at,n.id)>(u.created_at,u.id)
   AND NOT (n.status='succeeded' AND n.started_at IS NULL AND n.message_id IS NOT NULL

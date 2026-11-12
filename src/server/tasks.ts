@@ -24,7 +24,7 @@ import { snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
 import { createPreferencesStore, deliveryTime, isQuietTime } from './preferences.ts';
 import { personalSecret } from './memory-tree.ts';
 import { texts as codeTexts } from './chat-verification.ts';
-import { supersededSql, withdrawnSql } from './turn-chain.ts';
+import { waitingTurnSql, withdrawnSql } from './turn-chain.ts';
 
 const now = z.string().trim().min(1);
 const waits = z.array(
@@ -517,34 +517,33 @@ export function createTasks(options: {
   }
 
   async function resumeDue(threadId: string) {
-    const { rows } = await pool.query<{ id: string; turn_id: string; next_check: Date }>(
-      `SELECT t.id,t.next_check,(SELECT u.id FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id
-         ORDER BY u.created_at DESC,u.id DESC LIMIT 1) AS turn_id
-       FROM tasks t WHERE t.owner_id=$1 AND t.state='open' AND t.next_check<=now()
-         AND (t.activity_key IS NULL OR NOT EXISTS (SELECT 1 FROM preferences p WHERE p.owner_id=t.owner_id AND p.proactive_paused))
-         AND EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id AND u.thread_id=$2)
-         AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id
-           AND (u.status IN ('queued','running')
-             OR (u.status='waiting' AND NOT ${supersededSql('u', 'newer.started_at>=u.started_at')})))`,
-      [ownerId, threadId],
-    );
-    for (const row of rows)
-      await transaction(async (client) => {
-        const due = await client.query(
-          `UPDATE tasks t SET next_check=NULL WHERE t.id=$1 AND t.owner_id=$2 AND t.next_check=$3
-           AND (t.activity_key IS NULL OR NOT EXISTS (SELECT 1 FROM preferences p WHERE p.owner_id=t.owner_id AND p.proactive_paused))`,
-          [row.id, ownerId, row.next_check],
+    const resumed = await transaction(async (client) => {
+      if ((await lockThread(client)).id !== threadId) return false;
+      const { rows } = await client.query<{ id: string; turn_id: string; next_check: Date }>(
+        `WITH due AS (
+           SELECT t.id,t.next_check,(SELECT u.id FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id
+             ORDER BY u.started_at DESC NULLS LAST,u.created_at DESC,u.id DESC LIMIT 1) AS turn_id
+           FROM tasks t WHERE t.owner_id=$1 AND t.state='open' AND t.next_check<=now()
+             AND (t.activity_key IS NULL OR NOT EXISTS (SELECT 1 FROM preferences p WHERE p.owner_id=t.owner_id AND p.proactive_paused))
+             AND EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id AND u.thread_id=$2)
+             AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id
+               AND (u.status IN ('queued','running') OR (${waitingTurnSql('u')})))
+         )
+         UPDATE tasks t SET next_check=NULL FROM due WHERE t.id=due.id AND t.owner_id=$1
+         RETURNING due.id,due.turn_id,due.next_check`,
+        [ownerId, threadId],
+      );
+      for (const row of rows)
+        await resumeTurn(
+          row.turn_id,
+          `task-check:${row.id}:${row.next_check.getTime()}`,
+          "This task's planned check is due. Check what changed, then update or finish the task.",
+          false,
+          client,
         );
-        if (due.rowCount)
-          await resumeTurn(
-            row.turn_id,
-            `task-check:${row.id}:${row.next_check.getTime()}`,
-            "This task's planned check is due. Check what changed, then update or finish the task.",
-            false,
-            client,
-          );
-      }, pool);
-    if (rows.length) refresh();
+      return rows.length > 0;
+    }, pool);
+    if (resumed) refresh();
   }
 
   async function wakeDue() {
