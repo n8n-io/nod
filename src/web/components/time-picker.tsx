@@ -205,6 +205,14 @@ export function TimePicker({
     const current =
       parseSegment(draftRef.current[segment], segment, twelveHour) ??
       Number(parts(committed.current, twelveHour)[segment]);
+    if (segment === 'hours' && twelveHour && ['ArrowUp', 'ArrowDown'].includes(event.key)) {
+      event.preventDefault();
+      const hour = (current % 12) + (periodOf(committed.current) === 'PM' ? 12 : 0);
+      const next = (hour + (event.key === 'ArrowUp' ? 1 : 23)) % 24;
+      accept(`${String(next).padStart(2, '0')}:${committed.current.slice(3)}`);
+      selectAfterRender(segment);
+      return;
+    }
     if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
       event.preventDefault();
       const next =

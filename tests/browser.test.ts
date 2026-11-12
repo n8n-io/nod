@@ -7525,6 +7525,132 @@ test('analytics follow visible Settings sections, Apps tabs and the Scheduled pa
   assert.equal(result.exitCode, 0, result.stdout + result.stderr);
 });
 
+test('Quiet hours follow the clock preference and preserve canonical values', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+        url: 'https://nod.fixture.invalid/settings', pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true, localStorage: dom.window.localStorage,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+      });
+      for (const name of ['Node', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLButtonElement',
+        'Event', 'CustomEvent', 'KeyboardEvent', 'MutationObserver', 'NodeFilter', 'DocumentFragment'])
+        globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      window.HTMLElement.prototype.getClientRects = function() { return [{ top: 0, bottom: 40, left: 0, right: 640 }]; };
+      let preferences = { quietHoursEnabled: true, quietStart: '22:00', quietEnd: '08:00',
+        locale: 'en-GB', timeZone: 'Europe/Lisbon', hourCycle: 'h23', speechReply: 'auto', speechVoice: null };
+      globalThis.fetch = async (path, options = {}) => {
+        if (path === '/api/preferences') {
+          if (options.method === 'PATCH') preferences = { ...preferences, ...JSON.parse(options.body) };
+          return Response.json(preferences);
+        }
+        if (path === '/api/models') return Response.json({ connections: [], selection: null });
+        if (path === '/api/speech') return Response.json({ transcription: false, synthesis: false,
+          voices: [], speechVoice: null, speechReply: 'auto' });
+        if (path === '/api/memory') return Response.json({ saving: false, sensitive: false,
+          notes: [], skills: [], archive: [] });
+        throw new Error('Unexpected request: ' + path);
+      };
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { AccountSettings } = await import('./src/web/components/account-settings.tsx');
+      const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
+      const root = createRoot(document.getElementById('root'));
+      const account = { user: { id: 'synthetic-owner', email: null, name: 'Synthetic owner', avatarUrl: null },
+        theme: 'system', usageData: false, saving: false, onSettings() {}, async onTheme() {},
+        async onUsageData() {}, async onTraces() {} };
+      const settle = () => act(async () => { await new Promise(resolve => requestAnimationFrame(resolve)); });
+      const button = (text, scope = document) => [...scope.querySelectorAll('button')]
+        .find(item => item.textContent.trim() === text);
+      const click = async element => {
+        assert.ok(element);
+        await act(async () => element.click());
+        await settle();
+      };
+      const field = label => document.querySelector('[aria-label="' + label + '"]');
+      const period = label => document.querySelector('[aria-label^="' + label + ' period:"]');
+      const assertTime = (label, hour, meridiem) => {
+        assert.equal(field(label + ' hours')?.value, hour);
+        assert.equal(period(label)?.textContent.trim().toUpperCase(), meridiem);
+      };
+      const replacePreferences = async changes => {
+        preferences = { ...preferences, ...changes };
+        await act(async () => pageDataCache.update('/api/preferences', () => preferences));
+        await settle();
+      };
+      const save = () => click(button('Save changes', document.querySelector('.settings-save-bar')));
+      const step = async (input, key) => {
+        assert.ok(input);
+        await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', {
+          key, bubbles: true, cancelable: true,
+        })));
+        await settle();
+      };
+      try {
+        await act(async () => root.render(createElement(AccountSettings, {
+          account, open: true, initialTab: 'General', openRequest: 0, onOpenChange() {},
+        })));
+        await settle();
+        assert.equal(field('From hours')?.value, '22');
+        await click(button('12-hour'));
+        assert.equal(preferences.hourCycle, 'h12');
+        assertTime('From', '10', 'PM');
+        assertTime('Until', '8', 'AM');
+        await click(period('From'));
+        await save();
+        assert.equal(preferences.quietStart, '10:00');
+        await replacePreferences({ quietStart: '00:00', quietEnd: '12:00' });
+        assertTime('From', '12', 'AM');
+        assertTime('Until', '12', 'PM');
+        await click(period('From'));
+        await click(period('Until'));
+        await save();
+        assert.equal(preferences.quietStart, '12:00');
+        assert.equal(preferences.quietEnd, '00:00');
+        await replacePreferences({ quietStart: '11:00', quietEnd: '23:00' });
+        await step(field('From hours'), 'ArrowUp');
+        await step(field('Until hours'), 'ArrowUp');
+        assertTime('From', '12', 'PM');
+        assertTime('Until', '12', 'AM');
+        await save();
+        assert.equal(preferences.quietStart, '12:00');
+        assert.equal(preferences.quietEnd, '00:00');
+        await step(field('From hours'), 'ArrowDown');
+        await step(field('Until hours'), 'ArrowDown');
+        assertTime('From', '11', 'AM');
+        assertTime('Until', '11', 'PM');
+        await save();
+        assert.equal(preferences.quietStart, '11:00');
+        assert.equal(preferences.quietEnd, '23:00');
+        await click(button('24-hour'));
+        assert.equal(field('From hours')?.value, '11');
+        assert.equal(period('From'), null);
+        await click(button('Automatic'));
+        assert.equal(field('Until hours')?.value, '23');
+        assert.equal(period('Until'), null);
+        await replacePreferences({ locale: 'en-US' });
+        assertTime('From', '11', 'AM');
+        assertTime('Until', '11', 'PM');
+      } finally {
+        await act(async () => root.unmount());
+        pageDataCache.clear();
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
+});
+
 test('Settings saves only reviewed draft revisions and retains failed edits', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
@@ -7627,17 +7753,6 @@ test('Settings saves only reviewed draft revisions and retains failed edits', as
           account, open: true, initialTab: 'General', openRequest: 0, onOpenChange() {},
         })));
         await settle();
-        await click(button('12-hour'));
-        assert.equal(preferences.hourCycle, 'h12');
-        assert.equal(document.querySelector('[aria-label="From hours"]').value, '10');
-        assert.equal(document.querySelector('[aria-label="Until hours"]').value, '8');
-        assert.equal(document.querySelector('[aria-label^="From period:"]').textContent.trim().toUpperCase(), 'PM');
-        await click(document.querySelector('[aria-label^="From period:"]'));
-        await save();
-        assert.equal(preferences.quietStart, '10:00');
-        await click(button('24-hour'));
-        assert.equal(document.querySelector('[aria-label="From hours"]').value, '10');
-        assert.equal(document.querySelector('[aria-label^="From period:"]'), null);
         const firstQuietTime = await startDrafts('Synthetic first edit');
         failMemory = true;
         await save();
