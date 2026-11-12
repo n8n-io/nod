@@ -7,6 +7,7 @@ Setup, use and how the system works are in the docs site, whose pages live in `d
 - Do not push, deploy or publish without explicit authorization.
 - Keep keys, credentials and private user content out of Git, logs, prompts, test fixtures and client configuration. No tool returns a saved password, code or card to Pi.
 - No code comments or JSDoc.
+- Errors must state what failed and keep the service's specific reason, status and useful details. Add a next step only when the error supports it. Never replace a specific cause with a generic warning or infer a billing problem from a quota or rate limit. Remove secrets before an error is shown or stored.
 - Prefer deleting to patching ceremony. Breaking changes are fine; keep the code small.
 - Keep prototypes, internal research, plans, review notes and validation artifacts outside the repository.
 - Use synthetic data and disposable database schemas. Never reset the normal local database, and never call a live model, connected account or real recipient from a test.

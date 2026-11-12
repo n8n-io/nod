@@ -8501,12 +8501,13 @@ test(
       });
 
       await t.test(
-        'model provider limits show concise recovery guidance in failed turns',
+        'model failures retain provider reasons and codes without unrelated response fields',
         async () => {
           const previousPresenter = presentInterruption;
           presentInterruption = async () => '';
+          const prefix = 'The model request failed: openrouter / anthropic/fixture-model: ';
           const nestedQuota =
-            'The model request failed: ' +
+            prefix +
             JSON.stringify({
               error: {
                 code: 429,
@@ -8529,24 +8530,30 @@ test(
               },
             });
           const usageCap = (error: Record<string, unknown>) =>
-            'The model request failed: 429 Too Many Requests: ' +
+            prefix +
+            '429 Too Many Requests: ' +
             JSON.stringify({ error: { ...error, detail: 'synthetic-private-provider-detail' } });
           const cases: Array<{
             prompt: string;
             error: string;
-            guidance?: RegExp;
-            terminal?: 'account' | 'workplace';
+            reason: RegExp;
+            code?: RegExp;
           }> = [
-            { prompt: 'model-gemini-quota-fixture', error: nestedQuota, guidance: /quota/i },
+            {
+              prompt: 'model-gemini-quota-fixture',
+              error: nestedQuota,
+              reason: /You exceeded your current quota\. Please retry in 14s\./,
+              code: /HTTP 429.*GenerateContentInputTokensPerModelPerMinute-FreeTier/,
+            },
             {
               prompt: 'model-plain-rate-limit-fixture',
-              error: 'The model request failed: 429 Too Many Requests',
-              guidance: /rate limit/i,
+              error: prefix + '429 Too Many Requests',
+              reason: /429 Too Many Requests/,
             },
             {
               prompt: 'model-rate-limit-code-fixture',
-              error: 'The model request failed: rate_limit_error',
-              guidance: /rate limit/i,
+              error: prefix + 'rate_limit_error',
+              reason: /rate_limit_error/,
             },
             {
               prompt: 'model-go-usage-cap-fixture',
@@ -8554,8 +8561,8 @@ test(
                 type: 'GoUsageLimitError',
                 message: 'Monthly usage limit reached',
               }),
-              guidance: /quota/i,
-              terminal: 'account',
+              reason: /Monthly usage limit reached/,
+              code: /GoUsageLimitError/,
             },
             {
               prompt: 'model-free-usage-cap-fixture',
@@ -8563,8 +8570,8 @@ test(
                 type: 'FreeUsageLimitError',
                 message: 'Free usage allowance exhausted',
               }),
-              guidance: /quota/i,
-              terminal: 'account',
+              reason: /Free usage allowance exhausted/,
+              code: /FreeUsageLimitError/,
             },
             {
               prompt: 'model-subscription-usage-cap-fixture',
@@ -8572,8 +8579,8 @@ test(
                 code: 'subscription_sharing_usage_limit_exceeded',
                 message: 'Shared subscription allowance exhausted',
               }),
-              guidance: /quota/i,
-              terminal: 'account',
+              reason: /Shared subscription allowance exhausted/,
+              code: /subscription_sharing_usage_limit_exceeded/,
             },
             {
               prompt: 'model-workplace-usage-cap-fixture',
@@ -8581,19 +8588,97 @@ test(
                 code: 'subscription_sharing_workplace_individual_usage_limit_exceeded',
                 message: 'Workspace allowance exhausted',
               }),
-              guidance: /usage limit/i,
-              terminal: 'workplace',
+              reason: /Workspace allowance exhausted/,
+              code: /subscription_sharing_workplace_individual_usage_limit_exceeded/,
             },
             {
               prompt: 'model-zai-usage-cap-fixture',
               error: usageCap({ code: 1308, message: 'Plan allowance exhausted' }),
-              guidance: /quota/i,
-              terminal: 'account',
+              reason: /Plan allowance exhausted/,
+              code: /1308/,
+            },
+            {
+              prompt: 'model-upstream-quota-fixture',
+              error:
+                prefix +
+                JSON.stringify({
+                  error: {
+                    code: 429,
+                    message: 'Provider returned error',
+                    metadata: {
+                      provider_name: 'Anthropic',
+                      raw: JSON.stringify({
+                        error: {
+                          type: 'rate_limit_error',
+                          message: 'Input token limit reached. Please retry in 60s.',
+                        },
+                        detail: 'synthetic-private-provider-detail',
+                      }),
+                    },
+                  },
+                }),
+              reason: /Input token limit reached\. Please retry in 60s\./,
+              code: /provider_name: Anthropic.*rate_limit_error/,
+            },
+            {
+              prompt: 'model-key-credit-limit-fixture',
+              error:
+                prefix +
+                JSON.stringify({
+                  error: {
+                    code: 402,
+                    message: 'The API key has reached its daily credit limit.',
+                    metadata: {
+                      limit_source: 'openrouter_key_limit',
+                      reason: 'key_limit_exceeded',
+                      remedy_hint: 'Raise the key limit or wait for its daily reset.',
+                      detail: 'synthetic-private-provider-detail',
+                    },
+                  },
+                }),
+              reason: /The API key has reached its daily credit limit\./,
+              code: /HTTP 402.*limit_source: openrouter_key_limit.*key_limit_exceeded.*Raise the key limit/,
+            },
+            {
+              prompt: 'model-request-credit-limit-fixture',
+              error:
+                prefix +
+                JSON.stringify({
+                  error: {
+                    code: 402,
+                    message:
+                      'This request requires more credits, or fewer max_tokens. You requested 65536 tokens, but can only afford 2048.',
+                    metadata: {
+                      limit_source: 'openrouter_credits',
+                      reason: 'weight_exceeds_budget',
+                    },
+                  },
+                }),
+              reason: /You requested 65536 tokens, but can only afford 2048\./,
+              code: /HTTP 402.*weight_exceeds_budget/,
+            },
+            {
+              prompt: 'model-plain-quota-fixture',
+              error: prefix + 'quota_exceeded',
+              reason: /quota_exceeded/,
+            },
+            {
+              prompt: 'model-secret-error-fixture',
+              error:
+                prefix +
+                JSON.stringify({
+                  error: {
+                    code: 401,
+                    message: 'Invalid credential: password=synthetic-fixture-secret',
+                  },
+                }),
+              reason: /Invalid credential: \[redacted\]/,
+              code: /HTTP 401/,
             },
             {
               prompt: 'model-unavailable-fixture',
-              error: 'The model request failed: 503 Service Unavailable',
-              guidance: undefined,
+              error: prefix + '503 Service Unavailable',
+              reason: /503 Service Unavailable/,
             },
           ];
           try {
@@ -8624,32 +8709,16 @@ test(
               ).rows[0].text as string;
               assert.equal(turn.status, 'failed');
               assert.ok(shown.endsWith(turn.error));
-              if (item.guidance) {
-                assert.ok(turn.error.length < 240);
-                assert.match(turn.error, item.guidance);
-                if (item.prompt === 'model-gemini-quota-fixture') {
-                  assert.match(turn.error, /HTTP 429/);
-                  assert.match(turn.error, /14 seconds/);
-                }
-                if (item.terminal) {
-                  assert.match(turn.error, /HTTP 429/);
-                  assert.doesNotMatch(
-                    turn.error,
-                    /try again shortly|try again in about \d+ seconds/i,
-                  );
-                  if (item.terminal === 'workplace') {
-                    assert.match(turn.error, /admin/i);
-                    assert.doesNotMatch(turn.error, /billing/i);
-                  } else assert.match(turn.error, /check|reset|billing|upgrade|enable/i);
-                } else assert.match(turn.error, /wait|retry|try again/i);
-                for (const text of [turn.error, shown])
-                  assert.doesNotMatch(
-                    text,
-                    /RESOURCE_EXHAUSTED|quotaMetric|synthetic-private-provider-detail/,
-                  );
-              } else {
-                assert.equal(turn.error, item.error);
-              }
+              assert.ok(turn.error.length <= 2000);
+              assert.ok(turn.error.startsWith(prefix));
+              assert.match(turn.error, item.reason);
+              if (item.code) assert.match(turn.error, item.code);
+              for (const text of [turn.error, shown])
+                assert.doesNotMatch(
+                  text,
+                  /synthetic-private-provider-detail|synthetic-fixture-secret|usage limits and billing/,
+                );
+              if (!item.error.includes('{')) assert.equal(turn.error, item.error);
             }
           } finally {
             for (const item of cases) modelErrors.delete(item.prompt);

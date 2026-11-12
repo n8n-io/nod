@@ -6299,7 +6299,14 @@ test('native audio reaches the selected Pi model with tools and survives a reope
   assert.ok(failedRequests.every((body) => body.model === 'gpt-audio-1.5'));
   assert.ok(failedRequests.every((body) => audio(body).length > 0));
   assert.equal(calls, 1);
-  assert.ok(events.some((event) => event.type === 'error' && event.message.includes('503')));
+  assert.ok(
+    events.some(
+      (event) =>
+        event.type === 'error' &&
+        event.message.includes('openai / gpt-audio-1.5:') &&
+        event.message.includes('503'),
+    ),
+  );
 });
 
 test('the runtime sends a recording caption natively while retaining its trusted transcript and text-only fallback', async (t) => {

@@ -112,6 +112,10 @@ For how a request moves through these parts, read [Architecture](/how-it-works/a
 
 Coding agents follow [AGENTS.md](https://github.com/n8n-io/nod/blob/main/AGENTS.md), and so does everyone else. It holds the rules every change follows, including the safety invariants. The same checks and review apply whether you or an agent wrote the change.
 
+## Describe errors
+
+An error must state what failed and keep the service's specific reason, status and useful details. Identify the model and provider when a model request fails. Add a next step only when the error supports it. A quota or rate limit alone does not establish a billing problem. Remove secrets before an error is shown or stored.
+
 ## License
 
 Nod is licensed under the [Apache License 2.0](https://github.com/n8n-io/nod/blob/main/LICENSE). Contributions you submit are licensed under the same terms, as section 5 of the license describes.
