@@ -45,7 +45,7 @@ For a local source install without `NOD_AUTH_TOKEN`, Nod prints a link with `#ac
 
 ### Linux cannot start its private computer
 
-Nod requires hardware virtualization and access to `/dev/kvm`. Check that virtualization is enabled in your firmware and that your Linux account can use KVM. On distributions with a `kvm` group, your account must belong to it. Sign out and back in after a group change, then reopen Nod. Nod does not use software emulation as a fallback.
+A local Linux desktop assistant requires hardware virtualization and access to `/dev/kvm`. Check that virtualization is enabled in your firmware and that your Linux account can use KVM. On distributions with a `kvm` group, your account must belong to it. Sign out and back in after a group change, then reopen Nod. Nod does not use software emulation as a fallback.
 
 ### Linux cannot save or unlock keys
 

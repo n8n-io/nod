@@ -176,7 +176,7 @@ The container images, Linux Flatpak, Windows runtime, Mac signing, Mac update ch
 
 Docker builds use Blacksmith's disk cache, with a separate cache for each Mac architecture, the Linux x64 runtime, and the Windows runtime. They do not export Docker layers to GitHub's cache service.
 
-Update checks run alongside the builds. App jobs can install dependencies and build the source while their runtimes are prepared. Each Mac job waits only for its own images. It then signs its runtime and app. The final job downloads platform artifacts in parallel. It checks all four platform bundles, then uploads their files together. It downloads the installers, Mac ZIPs, and Windows runtime together to check their bytes before publication.
+Update checks run alongside the builds. App jobs can install dependencies and build the source while their runtimes are prepared. Each Mac job waits only for its own images. It then signs its runtime and app. The final job downloads platform artifacts in parallel. It checks all four platform bundles, then uploads their files together. It downloads the installers, Mac ZIPs, Windows runtime, and Linux bundle parts to check their bytes before publication.
 
 Developer ID builds submit the signed app to Apple and attach its ticket before they create the disk image and update ZIP. The build then submits the signed disk image and attaches its ticket. It mounts the finished disk image, copies its app to a temporary folder, and checks the app's signature, attached ticket and Gatekeeper result. A failed check stops the release. Runtime host tools have a separate notarization check because the app downloads them separately. ZIP and disk image creation run in parallel.
 
