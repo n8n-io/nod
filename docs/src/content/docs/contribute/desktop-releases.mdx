@@ -155,7 +155,9 @@ Nod releases are tagged `nod-v*`. Releases built from this code download metadat
 
 There's no daily release. Only a merged release pull request, which changes `desktop/release.json`, starts **Build desktop release**; other merges to `main` don't run it. The [capability evals](/contribute/evals/) don't gate publication.
 
-Pull requests and normal merges to `main` run source checks and isolated native update fixtures on Windows and both Mac architectures when desktop files change. These fixtures check secure storage, installer failures and saved-profile preservation without publishing a release. Packaging the complete desktop apps and verifying their release assets runs in **Build desktop release**.
+Pull requests and normal merges to `main` run source checks and isolated native update fixtures on Windows and both Mac architectures when desktop files change. These fixtures check secure storage, installer failures and saved-profile preservation without publishing a release.
+
+Pull requests that change Linux build inputs also run **Build Linux desktop**. It builds and installs the Flatpak preview, checks its engine and bundle parts, and uploads the files. **Build desktop release** packages all desktop apps and verifies their release assets before publication.
 
 The required **Checks, tests and build** result waits for both Mac update checks. If either Mac check fails, that required result fails too.
 
