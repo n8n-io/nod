@@ -424,7 +424,24 @@ test('server release rejects conflicting or corrupt uploaded assets and never pu
 
 test('release gate rejects malformed metadata, uncommitted notes and source drift', async (t) => {
   const f = await releaseRepository(t);
+  await assert.rejects(
+    promisify(execFile)(
+      process.execPath,
+      [
+        fileURLToPath(
+          new URL('../../.github/scripts/prepare-desktop-release.mjs', import.meta.url),
+        ),
+      ],
+      {
+        cwd: f.root,
+        env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` },
+      },
+    ),
+    { code: 1, stderr: /release highlights/i },
+  );
   await assert.rejects(prepareRelease(f.root, '0.1.0-alpha'));
+  for (const highlights of ['', '   ', 'x'.repeat(8193), null])
+    await assert.rejects(prepareRelease(f.root, '0.1.0', highlights), /release highlights/);
   await prepareRelease(f.root, '0.1.0');
   const prepared = f.commit();
   const notes = join(f.root, 'desktop/CHANGELOG.md');
@@ -471,16 +488,32 @@ test('automatic patches release unchanged source and bind generated notes across
   const source = f.commit();
   f.git('tag', 'nod-v0.1.0');
   const releases = [{ tag_name: 'nod-v0.1.0', draft: false }];
-  const plan = automaticRelease(f.root, releases, 'synthetic/nod');
+  const highlights = '## Synthetic update\n\nTry the updated installer.';
+  const plan = automaticRelease(f.root, releases, 'synthetic/nod', highlights);
   assert.equal(plan.version, '0.1.1');
   assert.equal(plan.source, source);
   assert.equal(plan.previousTag, 'nod-v0.1.0');
+  assert.equal(plan.highlights, highlights);
   assert.equal(f.git('status', '--porcelain'), '');
   const path = join(f.root, 'release-plan.json');
   const bytes = JSON.stringify(plan);
   const digest = createHash('sha256').update(bytes).digest('hex');
   await writeFile(path, bytes);
   assert.deepEqual(await checkReleasePlan(f.root, plan.version, path, digest), plan);
+  const legacy = { ...plan };
+  delete legacy.highlights;
+  const legacyBytes = JSON.stringify(legacy);
+  await writeFile(path, legacyBytes);
+  assert.deepEqual(
+    await checkReleasePlan(
+      f.root,
+      plan.version,
+      path,
+      createHash('sha256').update(legacyBytes).digest('hex'),
+    ),
+    legacy,
+  );
+  await writeFile(path, bytes);
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 24 * 60 * 60 * 1000 });
   assert.deepEqual(await checkReleasePlan(f.root, plan.version, path, digest), plan);
   const nextDay = automaticRelease(f.root, releases, 'synthetic/nod');
@@ -836,6 +869,7 @@ async function releaseFixture(
     diskName = 'nod-arm64.dmg',
     updateSourceUrl,
     automatic = false,
+    highlights,
   } = {},
 ) {
   const f = await releaseRepository(t);
@@ -879,7 +913,7 @@ async function releaseFixture(
     }
   }
   f.commit();
-  await prepareRelease(root, '0.1.0');
+  await prepareRelease(root, '0.1.0', highlights);
   let source = f.commit();
   const baseline = source;
   if (automatic) {
@@ -1169,6 +1203,7 @@ globalThis.fetch = async (url, options = {}) => {
         NOD_EXPECTED_RUNTIME_FINGERPRINT: fingerprint,
         NOD_PUBLISH_RELEASE: String(requestPublish),
         NOD_AUTOMATIC_RELEASE: String(automatic),
+        NOD_RELEASE_HIGHLIGHTS: highlights ?? '## Synthetic update\n\nTry the updated installer.',
         ...(updateSourceUrl ? { NOD_DESKTOP_UPDATE_SOURCE_URL: updateSourceUrl } : {}),
         ...environment,
       },
@@ -1229,6 +1264,26 @@ test('public releases refuse missing or rejected provenance before uploading ass
   }
 });
 
+test('release publication uses the reviewed highlights instead of an environment override', async (t) => {
+  const highlights =
+    '## A synthetic feature\n\nTry it with example files.\n\n![Example](https://example.invalid/demo.png)';
+  const f = await releaseFixture(t, { publish: true, highlights });
+  await f.invoke('draft', true, { NOD_RELEASE_HIGHLIGHTS: 'Unreviewed replacement' });
+  const published = (await f.readState()).releases[f.appTag];
+  assert.equal(published.draft, false);
+  assert(published.body.startsWith(highlights + '\n\n'));
+  assert(!published.body.includes('Unreviewed replacement'));
+  assert(published.body.includes(`Source: https://github.com/synthetic/nod/commit/${f.source}`));
+  const legacy = await releaseFixture(t, { publish: true });
+  await legacy.invoke('draft');
+  const legacyBody = (await legacy.readState()).releases[legacy.appTag].body;
+  const legacyNotes = (await checkRelease(legacy.root, legacy.metadata.version)).notes.trimEnd();
+  assert.equal(
+    legacyBody,
+    `${legacyBody.split('\n\n')[0]}\n\n${legacyNotes}\n\nSource: https://github.com/synthetic/nod/commit/${legacy.source}\n`,
+  );
+});
+
 test('public desktop releases refuse broker-backed bundles before upload', async (t) => {
   const f = await releaseFixture(t, {
     isPublic: true,
@@ -1259,6 +1314,10 @@ test('private releases require provenance when attestations are enabled', async 
 
 test('automatic delivery requires current exact-main CI and publishes only its checked metadata', async (t) => {
   const f = await releaseFixture(t, { automatic: true, plan: true, publish: true });
+  await assert.rejects(
+    f.invoke('plan', true, { NOD_RELEASE_HIGHLIGHTS: '' }),
+    /release highlights/,
+  );
   const initial = await f.readState();
   const successful = initial.runs[0];
   for (const runs of [
@@ -1520,6 +1579,7 @@ test('one official release waits for verified runtime and downloaded app bytes',
 });
 
 test('all four checked bundles publish together as one regular Nod release', async (t) => {
+  const highlights = '## A synthetic feature\n\nTry it with example files.';
   for (const { isPublic, updateSourceUrl, rejectBroker = false, reusedRuntime = false } of [
     { isPublic: false, updateSourceUrl: 'https://releases.example.invalid/nod' },
     { isPublic: true },
@@ -1531,6 +1591,7 @@ test('all four checked bundles publish together as one regular Nod release', asy
       plan: true,
       publish: true,
       updateSourceUrl,
+      highlights,
     });
     const target = join(f.root, 'dist/desktop');
     const arm = join(target, 'arm64');
@@ -1827,6 +1888,7 @@ test('all four checked bundles publish together as one regular Nod release', asy
     assert.equal(completed.created, 1);
     assert.equal(completed.releases[f.appTag].draft, false);
     assert.equal(completed.releases[f.appTag].prerelease, false);
+    assert(completed.releases[f.appTag].body.startsWith(highlights + '\n\n'));
     assert.deepEqual(
       completed.calls.filter((call) => call.includes('--draft=false')).map((call) => call[2]),
       Array(isPublic ? 2 : 4).fill(f.appTag),

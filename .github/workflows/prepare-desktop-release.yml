@@ -7,6 +7,10 @@ on:
         description: Version to release; leave empty for the next patch
         type: string
         required: false
+      highlights:
+        description: 'Public Markdown highlights. For multiple lines, use gh workflow run --field highlights=@file. See Desktop releases in the docs.'
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -38,6 +42,7 @@ jobs:
         id: version
         env:
           NOD_RELEASE_VERSION: ${{ inputs.version }}
+          NOD_RELEASE_HIGHLIGHTS: ${{ inputs.highlights }}
           NOD_RELEASE_NOTES_FILE: ${{ runner.temp }}/release-notes.md
         run: node .github/scripts/prepare-desktop-release.mjs
       - name: Prepare the release PR description
@@ -46,6 +51,8 @@ jobs:
           Merge this PR after review and CI. CI on the merge commit builds Mac Intel, Mac ARM, Windows x64 and Linux x64 packages. It checks all four bundles and publishes one regular Nod GitHub release. Linux is a Flatpak preview. Its bundle includes the runtime and arrives in numbered parts with checksums.
 
           If main changes before merge, run Release desktop again to update this PR.
+
+          Review the public highlights below before merge. Keep them short, specific, and playful. Follow https://nod.n8n.io/docs/contribute/desktop-releases/#write-release-highlights. The publisher uses this copy and puts the full changelog and build details in a collapsed section.
 
           TEXT
           cat "$RUNNER_TEMP/release-notes.md" >> "$RUNNER_TEMP/release-pr.md"

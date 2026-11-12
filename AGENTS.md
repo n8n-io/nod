@@ -13,6 +13,7 @@ Setup, use and how the system works are in the docs site, whose pages live in `d
 - Use synthetic data and disposable database schemas. Never reset the normal local database, and never call a live model, connected account or real recipient from a test.
 - Analytics events follow [Change analytics](docs/src/content/docs/contribute/analytics.md): bounded values and no private content. Submitting About you explicitly sets bounded answers on the PostHog person profile under the installation ID while usage sharing is enabled, even without an email; typed answers stay out. An onboarding email submitted with its own consent to updates about Nod and other n8n products sets the `email` property on that same profile. Ordinary events do not create profiles; later events can link to a profile once it exists. Opt-out stops new sends; already stored contact data is deleted by request. Update the user-facing event list and any PostHog dashboard whose answer changes in the same change.
 - Documentation lives only in `docs/`. When setup, behaviour or a safety rule changes, update the matching page in the same change and follow [Write docs](docs/src/content/docs/contribute/write-docs.mdx). Package READMEs stay short pointers to the docs.
+- Before a desktop release, write short, specific, playful highlights. Follow [Write release highlights](docs/src/content/docs/contribute/desktop-releases.mdx#write-release-highlights) and use v0.7.0 as the style reference.
 
 ## Architecture
 

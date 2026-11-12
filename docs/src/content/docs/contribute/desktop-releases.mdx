@@ -141,15 +141,37 @@ Desktop binaries built from this code use public GitHub assets for installs and 
 
 <Steps>
 
-1. Open **Actions → Release desktop → Run workflow** on `main`. Leave **version** empty for the next patch, or enter a version such as `0.2.0`.
+1. [Write the public highlights](#write-release-highlights) in a Markdown file. Start **Release desktop** on `main` with the CLI so line breaks are kept. Set **version** or leave it empty for the next patch:
 
-2. Review the `release/desktop` pull request. It changes only the desktop version, the release manifest and the changelog, with notes grouped by Conventional Commit type. Edit the notes if a change needs more explanation.
+   ```sh
+   gh workflow run prepare-desktop-release.yml --repo n8n-io/nod --ref main \
+     --raw-field version=0.8.0 --field highlights=@/tmp/nod-release-highlights.md
+   ```
 
-3. Merge after review and CI. If `main` changes before you merge, run **Release desktop** again to update the source and notes.
+2. Review the `release/desktop` pull request. It changes only the desktop version, the release manifest and the changelog. The manifest saves the public highlights. The changelog lists the source changes by Conventional Commit type. Review the copy, facts, media, and upgrade instructions before merge. You can edit `highlights` in `desktop/release.json` before merge.
+
+3. Merge after review and CI. If `main` changes before you merge, run **Release desktop** again with the highlights. Update them if the new source changes what users can do.
 
 4. Wait for CI on the merge commit, then **Build desktop release**. The release workflow builds all four platform bundles and signs the Mac and Windows apps. It checks Mac updates, signature rejection and profile preservation on both Mac architectures. It also checks signing, runtime hashes, Windows workspace paths, installation, startup, updates and downloaded installer bytes. On Windows, every `.exe`, `.dll` and `.node` file in the installed app, `Uninstall.exe` and the installer itself must carry a valid, timestamped n8n GmbH signature. Files identical to ones Windows ships, such as `d3dcompiler_47.dll`, are signed too, but Windows reports its own catalog signature for them, so the check accepts that instead when Microsoft signed it. The workflow verifies uploaded hashes, publishes the release, then uses the app's own update code to check the Mac and Windows update platforms. Private builds also check delivery through the n8n service; public builds check direct GitHub downloads for every release asset. If delivery fails, the release goes back to draft.
 
 </Steps>
+
+The publisher puts the reviewed highlights first and adds download links for the release version. It puts the full changelog, installation requirements, and build details in a collapsed section. The copy is part of the release source, so it also survives retries and recovery. CI does not call a model to write or change it. Older saved releases without highlights keep their original notes format during recovery.
+
+### Write release highlights
+
+Use the [v0.7.0 release notes](https://github.com/n8n-io/nod/releases/tag/nod-v0.7.0) as the style reference. A person or coding agent writes the highlights before starting **Release desktop**. The version PR is the copy review.
+
+- Write for people who use Nod. Lead with the most useful change and what they can try.
+- Keep the copy near 150–250 words. Use two or three short sections for the main changes and a few bullets for smaller fixes.
+- Keep the tone friendly and playful. One or two relevant emoji in headings are enough. Use concrete examples, such as renaming invoices in Downloads.
+- Use short sentences and direct verbs. Avoid slogans, repeated sentence patterns, abstract promises, and claims such as “game-changing.”
+- Check each claim against changes included since the previous release. State previews and limits. Keep any required upgrade action visible.
+- Add a compact screenshot, short GIF, or demo link when it helps. Show product UI with synthetic data and label example data. Check that the media loads.
+- Use public media URLs, pinned repository images, or GitHub attachments. Do not add media as a release asset: older app updaters accept at most 30 assets.
+- Leave download links and the commit list to the publisher. Highlights are required Markdown, up to 8 KiB. They can contain media links.
+
+For a small fix release, write a shorter note that says what failed, what now works, and what users can test. The section titles and examples must fit that release.
 
 Nod releases are tagged `nod-v*`. Releases built from this code download metadata and assets from GitHub without an account or bundled credential. The install guide loads its scripts from the public repository. New releases include versioned `nod-install.sh` and `nod-install.ps1` assets; earlier releases do not gain them retroactively. The n8n download service at `webhook/nod/desktop` remains for installed private builds.
 
@@ -169,6 +191,8 @@ The **Build desktop release** workflow runs on `main` by hand for a draft or a r
 | ------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | **automatic** | Use the version and notes from the merged release pull request | Pick the next patch without a version pull request. Use for recovery only. |
 | **publish**   | Leave a draft to inspect                                       | Publish after every check passes                                           |
+
+When **automatic** is on, also supply **highlights**. The source-bound release plan saves that copy. An empty value stops the run before packaging. Normal builds use the highlights from the merged version PR.
 
 Release builds run one at a time, and up to 100 runs can wait in the queue. A failed build can reuse its matching draft. Published assets are never replaced.
 
