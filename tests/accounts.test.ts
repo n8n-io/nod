@@ -2616,7 +2616,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     ]);
   });
 
-  test('an incomplete saved subscription does not break redaction for the selected connection', async (t) => {
+  test('incomplete saved credentials do not break redaction for the selected connection', async (t) => {
     const f = await fixture(t);
     const ownerId = 'fixture-incomplete-subscription';
     const owner = await f.create(ownerId);
@@ -2640,6 +2640,25 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
         managed: false,
         credential: saved as import('../src/ports/models.ts').ModelCredential,
       });
+      for (const [type, provider] of [
+        ['api_key', 'openai'],
+        ['bedrock', 'amazon-bedrock'],
+        ['cloudflare', 'cloudflare-workers-ai'],
+      ] as const)
+        for (const key of [undefined, null, 42])
+          state.connections.push({
+            id: randomUUID(),
+            provider,
+            method: 'api_key',
+            label: 'Synthetic incomplete key',
+            status: 'reconnect',
+            models: [],
+            managed: false,
+            credential: {
+              type,
+              key,
+            } as unknown as import('../src/ports/models.ts').ModelCredential,
+          });
     });
     const restored = await f.create(ownerId);
     const secrets: string[] = [];
