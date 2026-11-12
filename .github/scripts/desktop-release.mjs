@@ -56,10 +56,11 @@ function gh(args, repository = sourceRepository) {
   try {
     return run('gh', args, { env: { ...process.env, GH_TOKEN: token } });
   } catch (error) {
-    if (args[0] === 'api' && String(error.stderr).includes('(HTTP 404)')) return undefined;
-    throw new Error(
-      'GitHub release access failed. Check token permissions and repository settings.',
-    );
+    const reason = String(error.stderr || error.message)
+      .replaceAll(token, '[redacted]')
+      .trim();
+    if (args[0] === 'api' && reason.includes('(HTTP 404)')) return undefined;
+    throw new Error(`GitHub ${args.slice(0, 2).join(' ')} failed: ${reason}`);
   }
 }
 

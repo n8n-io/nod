@@ -1240,7 +1240,7 @@ test('public releases refuse missing or rejected provenance before uploading ass
     /trusted main workflow/,
   );
   await f.writeState({ ...(await f.readState()), rejectAttestation: true });
-  await assert.rejects(f.invoke('draft'), /GitHub release access failed/);
+  await assert.rejects(f.invoke('draft'), /GitHub attestation verify failed/);
   assert.equal((await f.readState()).created, 0);
   await f.writeState({ ...(await f.readState()), rejectAttestation: false });
   await f.invoke('draft', false, {
