@@ -45,7 +45,7 @@ import {
   nativeCatalog,
 } from './model-catalog.ts';
 
-const localModelSilenceMs = 30 * 60_000;
+export const localModelSilenceMs = 30 * 60_000;
 
 function supportedModel(model: Model<Api>): Model<Api> {
   if (model.provider === 'groq' && model.id.startsWith('qwen/'))
