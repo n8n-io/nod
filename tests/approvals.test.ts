@@ -17,6 +17,9 @@ import { join } from 'node:path';
 import test from 'node:test';
 import Fastify from 'fastify';
 import pg from 'pg';
+import remarkGfm from 'remark-gfm';
+import remarkParse from 'remark-parse';
+import { unified } from 'unified';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createAnalytics, snapshotAnalytics } from '../src/server/analytics.ts';
 import {
@@ -152,8 +155,57 @@ test('confirmation escapes visual format controls and hides the internal account
       },
     },
   });
-  assert.match(ccOnly, /Cc cc@example\.test/);
-  assert.match(ccOnly, /Bcc bcc@example\.test/);
+  const ccTree = unified().use(remarkParse).use(remarkGfm).parse(ccOnly);
+  const ccContext = ccTree.children.find(
+    (node) =>
+      node.type === 'paragraph' && node.children.some((child) => child.type === 'inlineCode'),
+  );
+  assert.ok(ccContext?.type === 'paragraph');
+  assert.deepEqual(
+    ccContext.children.flatMap((child) => (child.type === 'inlineCode' ? [child.value] : [])),
+    ['cc@example.test', 'bcc@example.test'],
+  );
+});
+
+test('draft cleanup context renders untrusted names as text without links or HTML', async () => {
+  const communication = createCommunication({
+    pool: {} as pg.Pool,
+    ownerId: 'synthetic-owner',
+    review: async () => {
+      throw new Error('A model must not write the action confirmation.');
+    },
+  });
+  const title = 'Review [board](https://task.example.test) <b>today</b> `status`';
+  const subject = 'Summary <img src=x> https://subject.example.test ``draft``';
+  const to = 'alex@example.test';
+  const cc = 'www.example.test';
+  const bcc = '[audit](https://bcc.example.test)';
+  const question = await communication.describe({
+    turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
+    action: 'GMAIL_DELETE_DRAFT',
+    args: { draft_id: 'synthetic-draft' },
+    details: { target: { draftId: 'synthetic-draft', subject, to, cc, bcc } },
+    work: { kind: 'task', title },
+  });
+  const tree = unified().use(remarkParse).use(remarkGfm).parse(question);
+  const context = tree.children.find(
+    (node) =>
+      node.type === 'paragraph' &&
+      node.children.some((child) => child.type === 'text' && child.value.includes('Nod proposes')),
+  );
+  assert.ok(context?.type === 'paragraph');
+  const rendered = context.children.map((child) => {
+    assert.ok(child.type === 'text' || child.type === 'inlineCode');
+    return child.value;
+  });
+  assert.deepEqual(
+    context.children.flatMap((child) => (child.type === 'inlineCode' ? [child.value] : [])),
+    [title, subject, to, cc, bcc],
+  );
+  assert.equal(
+    rendered.join(''),
+    `While working on “${title}”, Nod proposes to permanently delete an unsent Gmail draft: subject “${subject}”; To ${to}; Cc ${cc}; Bcc ${bcc}.`,
+  );
 });
 
 test('confirmation stops on cancellation and rejects an unbound presentation', async () => {

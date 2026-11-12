@@ -83,6 +83,7 @@ test(
     const fallbackChecks: object[] = [];
     const smallReplies: object[] = [];
     const executedApps: string[] = [];
+    const draftReadArgs: Array<Record<string, unknown>> = [];
     const uploads: string[] = [];
     const workspaceFiles = new Map<string, Uint8Array>();
     const browserActs: Array<Record<string, unknown>> = [];
@@ -99,6 +100,8 @@ test(
     const readOnlyActions = new Set<string>();
     let appOutage = false;
     let appResult: unknown;
+    let changeRulesOnDraftRead = false;
+    let changedRulesDuringDraftRead = 0;
     let repeatAfterConfirm: { action: string; args: Record<string, unknown> } | undefined;
     const prompts = new Map<string, string>();
     const integrationFixture = createIntegrationFixture(`http://localhost:${port}`);
@@ -147,6 +150,19 @@ test(
         }
         if (task === 'review' && 'action' in input && 'schema' in Object(input.action))
           return { readOnly: readOnlyActions.has(String(Object(input.action).name)) };
+        if (
+          changeRulesOnDraftRead &&
+          task === 'review' &&
+          'action' in input &&
+          Object(input.action).name === 'GMAIL_GET_DRAFT'
+        ) {
+          changeRulesOnDraftRead = false;
+          changedRulesDuringDraftRead++;
+          await pool.query('UPDATE preferences SET rules=$2 WHERE owner_id=$1', [
+            ownerId,
+            'Synthetic read rule changed during Trust check.',
+          ]);
+        }
         if (task === 'review' && 'action' in input && checkCost !== undefined)
           report?.({ id: randomUUID(), model: 'fixture', costUsd: checkCost });
         return task === 'review' && 'reply' in input
@@ -384,6 +400,7 @@ test(
             const execute = session.execute.bind(session);
             session.execute = async (...input) => {
               executedApps.push(input[0]);
+              if (input[0] === 'GMAIL_GET_DRAFT') draftReadArgs.push({ ...input[1] });
               if (appOutage) throw new Error('Synthetic provider outage.');
               if (appResult) return appResult;
               return execute(...input);
@@ -1229,6 +1246,8 @@ test(
             executedApps.filter((action) => action === 'GMAIL_GET_DRAFT').length,
             reads + 1,
           );
+          assert.equal(draftReadArgs.at(-1)?.draft_id, created);
+          assert.equal(draftReadArgs.at(-1)?.format, 'metadata');
           assert.equal(integrationFixture.writes.length, writes);
           const declined = await request('POST', '/api/messages', {
             text: 'No',
@@ -1272,6 +1291,39 @@ test(
           );
           assert.equal(integrationFixture.writes.length, writes);
 
+          const trustTurn = await propose('GMAIL_DELETE_DRAFT', { draft_id: created }, 'apps');
+          const [trustApproval] = await approvalsFor(trustTurn);
+          const trustReads = executedApps.filter((action) => action === 'GMAIL_GET_DRAFT').length;
+          const changes = changedRulesDuringDraftRead;
+          const savedRules = (
+            await pool.query<{ rules: string }>('SELECT rules FROM preferences WHERE owner_id=$1', [
+              ownerId,
+            ])
+          ).rows[0].rules;
+          changeRulesOnDraftRead = true;
+          try {
+            const accepted = await request('POST', '/api/messages', {
+              text: 'Yes',
+              replyToMessageId: trustApproval.confirmation_message_id,
+              clientMessageId: randomUUID(),
+            });
+            assert.equal(accepted.statusCode, 200, accepted.body);
+            await waitFor(accepted.json().turnId, 'succeeded|failed');
+          } finally {
+            changeRulesOnDraftRead = false;
+            await pool.query('UPDATE preferences SET rules=$2 WHERE owner_id=$1', [
+              ownerId,
+              savedRules,
+            ]);
+          }
+          assert.equal(changedRulesDuringDraftRead, changes + 1);
+          assert.equal((await approvalsFor(trustTurn))[0].status, 'expired');
+          assert.equal(
+            executedApps.filter((action) => action === 'GMAIL_GET_DRAFT').length,
+            trustReads,
+          );
+          assert.equal(integrationFixture.writes.length, writes);
+
           const changedTurn = await propose('GMAIL_DELETE_DRAFT', { draft_id: created }, 'apps');
           const [changedApproval] = await approvalsFor(changedTurn);
           const deletes = executedApps.filter((action) => action === 'GMAIL_DELETE_DRAFT').length;
@@ -1301,6 +1353,7 @@ test(
           );
           assert.equal(integrationFixture.writes.length, writes);
 
+          const currentReadArgs = draftReadArgs.length;
           const currentTurn = await propose('GMAIL_DELETE_DRAFT', { draft_id: created }, 'apps');
           const [currentApproval] = await approvalsFor(currentTurn);
           const accepted = await request('POST', '/api/messages', {
@@ -1313,6 +1366,10 @@ test(
           assert.equal((await approvalsFor(currentTurn))[0].status, 'completed');
           assert.equal(integrationFixture.writes.length, writes + 1);
           assert.equal(integrationFixture.writes.at(-1)?.action, 'GMAIL_DELETE_DRAFT');
+          assert.deepEqual(
+            draftReadArgs.slice(currentReadArgs).map((args) => args.format),
+            ['metadata', 'metadata'],
+          );
         },
       );
       await t.test('Gmail deletion stops when the target cannot be verified', async () => {
@@ -1479,6 +1536,134 @@ test(
           );
         }
       });
+      await t.test(
+        'Gmail deletion refuses an account rebound while building its confirmation',
+        async () => {
+          const primary = (
+            await pool.query<{
+              id: string;
+              account_id: string;
+              account_name: string | null;
+              account_email: string | null;
+              watch_revision: number;
+            }>(
+              "SELECT id,account_id,account_name,account_email,watch_revision FROM app_connections WHERE owner_id=$1 AND slug='gmail' AND NOT revoked ORDER BY created_at LIMIT 1",
+              [ownerId],
+            )
+          ).rows[0];
+          assert.ok(primary?.account_id);
+          const session = await integrationFixture.provider.createSession(ownerId, {});
+          const secondary = await session.authorize(
+            'gmail',
+            `http://localhost:${port}/api/apps/callback?state=synthetic`,
+          );
+          const consent = await application.app.inject({
+            method: 'POST',
+            url: `/e2e/connect/${secondary.accountId}`,
+            headers,
+          });
+          assert.equal(consent.statusCode, 302);
+          const alternate = await integrationFixture.provider.inspectAccount(
+            secondary.accountId,
+            ownerId,
+          );
+          assert.equal(alternate.active, true);
+          const draft = (await session.execute(
+            'GMAIL_CREATE_EMAIL_DRAFT',
+            {
+              recipient_email: 'alternate@example.test',
+              subject: 'Synthetic alternate draft',
+              body: 'Synthetic unsent draft.',
+            },
+            secondary.accountId,
+          )) as { id: string };
+          const originalQuery = pool.query.bind(pool) as (...args: any[]) => Promise<any>;
+          const restore = () =>
+            originalQuery(
+              'UPDATE app_connections SET account_id=$3,account_name=$4,account_email=$5,watch_revision=$6 WHERE id=$1 AND owner_id=$2',
+              [
+                primary.id,
+                ownerId,
+                primary.account_id,
+                primary.account_name,
+                primary.account_email,
+                primary.watch_revision,
+              ],
+            );
+          try {
+            for (const [action, target] of [
+              ['GMAIL_DELETE_MESSAGE', { message_id: 'fixture-mail-1' }],
+              ['GMAIL_DELETE_DRAFT', { draft_id: draft.id }],
+            ] as const) {
+              let rebound = false;
+              const reads = executedApps.length;
+              const deletes = integrationFixture.writes.filter((write) =>
+                ['GMAIL_DELETE_MESSAGE', 'GMAIL_DELETE_DRAFT'].includes(write.action),
+              ).length;
+              pool.query = (async (...args: any[]) => {
+                if (
+                  !rebound &&
+                  typeof args[0] === 'string' &&
+                  args[0].startsWith('SELECT * FROM app_connections WHERE owner_id=$1 AND id=$2') &&
+                  args[1]?.[1] === primary.id
+                ) {
+                  rebound = true;
+                  await originalQuery(
+                    'UPDATE app_connections SET account_id=$3,account_name=$4,account_email=$5,watch_revision=watch_revision+1 WHERE id=$1 AND owner_id=$2',
+                    [
+                      primary.id,
+                      ownerId,
+                      secondary.accountId,
+                      alternate.accountName,
+                      alternate.accountEmail,
+                    ],
+                  );
+                }
+                return originalQuery(...args);
+              }) as typeof pool.query;
+              try {
+                const prompt = `Synthetic account race ${randomUUID()}`;
+                plans.set(prompt, {
+                  tool: 'apps',
+                  action,
+                  args: { connectionId: primary.id, ...target },
+                });
+                const response = await request('POST', '/api/messages', { text: prompt });
+                assert.equal(response.statusCode, 200, response.body);
+                const turnId = response.json().turnId as string;
+                ids.push(response.json().threadId as string);
+                await waitFor(turnId, 'failed');
+                assert.equal(rebound, true);
+                const failure = (
+                  await pool.query<{ error: string }>('SELECT error FROM turns WHERE id=$1', [
+                    turnId,
+                  ])
+                ).rows[0].error;
+                assert.match(
+                  failure,
+                  /selected Gmail account changed before deletion was proposed/,
+                );
+                assert.deepEqual(await approvalsFor(turnId), []);
+                assert.equal(executedApps.length, reads);
+                assert.equal(
+                  integrationFixture.writes.filter((write) =>
+                    ['GMAIL_DELETE_MESSAGE', 'GMAIL_DELETE_DRAFT'].includes(write.action),
+                  ).length,
+                  deletes,
+                );
+              } finally {
+                pool.query = originalQuery as typeof pool.query;
+                await restore();
+              }
+            }
+          } finally {
+            pool.query = originalQuery as typeof pool.query;
+            await restore();
+            await integrationFixture.provider.deleteAccount(secondary.accountId, ownerId);
+            await integrationFixture.provider.deleteSession(session.id);
+          }
+        },
+      );
 
       await t.test(
         "spending limits the owner didn't ask for change only after their yes",

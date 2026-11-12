@@ -45,6 +45,11 @@ export function languageText(value: string) {
   ).trim();
 }
 
+function markdownValue(value: string) {
+  const fence = '`'.repeat(Math.max(0, ...(value.match(/`+/g) ?? []).map((run) => run.length)) + 1);
+  return `${fence} ${value} ${fence}`;
+}
+
 export function createCommunication(options: {
   pool: Pool;
   ownerId: string;
@@ -190,14 +195,14 @@ export function createCommunication(options: {
     };
     const draftSubject = shortField(draftTarget?.subject);
     const draftFields = [
-      draftSubject ? `subject “${draftSubject}”` : '',
+      draftSubject ? `subject “${markdownValue(draftSubject)}”` : '',
       ...(['to', 'cc', 'bcc'] as const).map((field) => {
         const value = shortField(draftTarget?.[field]);
-        return value ? `${field[0].toUpperCase()}${field.slice(1)} ${value}` : '';
+        return value ? `${field[0].toUpperCase()}${field.slice(1)} ${markdownValue(value)}` : '';
       }),
     ].filter(Boolean);
     const draftIntro = contextTitle
-      ? `While working on “${contextTitle}”, Nod proposes`
+      ? `While working on “${markdownValue(contextTitle)}”, Nod proposes`
       : 'Nod proposes';
     const draftContext = `${draftIntro} to permanently delete an unsent Gmail draft${draftFields.length ? `: ${draftFields.join('; ')}` : ''}`;
     const fields = JSON.stringify(visible, null, 2)

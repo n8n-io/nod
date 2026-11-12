@@ -697,7 +697,11 @@ const toolDefinitions = [
     description: 'Read one unsent synthetic draft using its observed draft ID.',
     parameters: {
       type: 'object',
-      properties: { draft_id: { type: 'string' }, user_id: { type: 'string', enum: ['me'] } },
+      properties: {
+        draft_id: { type: 'string' },
+        format: { type: 'string', enum: ['minimal', 'full', 'raw', 'metadata'] },
+        user_id: { type: 'string', enum: ['me'] },
+      },
       required: ['draft_id'],
       additionalProperties: false,
     },
@@ -1071,7 +1075,7 @@ export function createIntegrationFixture(
               : action === 'GMAIL_LIST_DRAFTS'
                 ? ['user_id']
                 : action === 'GMAIL_GET_DRAFT'
-                  ? ['draft_id', 'user_id']
+                  ? ['draft_id', 'format', 'user_id']
                   : action === 'GMAIL_DELETE_DRAFT'
                     ? ['draft_id', 'user_id']
                     : action === 'GMAIL_DELETE_MESSAGE'
@@ -1191,6 +1195,21 @@ export function createIntegrationFixture(
             const draft = typeof args.draft_id === 'string' ? drafts.get(args.draft_id) : undefined;
             if (!draft || draft.accountId !== accountId)
               throw new Error('The synthetic draft was not found in this account.');
+            if (args.format === 'metadata')
+              return {
+                id: draft.id,
+                message: {
+                  id: draft.message.id,
+                  labelIds: draft.message.labelIds,
+                  payload: {
+                    headers: [
+                      { name: 'To', value: draft.message.to },
+                      { name: 'Subject', value: draft.message.subject },
+                    ],
+                  },
+                },
+                ...fixtureMetadata,
+              };
             return { id: draft.id, message: draft.message, ...fixtureMetadata };
           }
           if (action === 'GMAIL_DELETE_DRAFT') {

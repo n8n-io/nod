@@ -1370,14 +1370,24 @@ async function initializeApplication(
                           const readArgs = {
                             connectionId: args.connectionId,
                             draft_id: draftId,
+                            format: 'metadata',
                             ...(typeof args.user_id === 'string' ? { user_id: args.user_id } : {}),
                           };
-                          const readVerdict = await trust.check(
-                            { threadId: provenance.threadId, turnId: provenance.turnId },
-                            'GMAIL_GET_DRAFT',
-                            readArgs,
-                            provenance.signal,
-                          );
+                          const readVerdict = await trust
+                            .check(
+                              { threadId: provenance.threadId, turnId: provenance.turnId },
+                              'GMAIL_GET_DRAFT',
+                              readArgs,
+                              provenance.signal,
+                            )
+                            .catch((error: unknown) => {
+                              throw Object.assign(
+                                new Error(
+                                  `Nod could not recheck permission to read the Gmail draft before deletion: ${safeIntegrationFailure(error)}`,
+                                ),
+                                { notRun: true },
+                              );
+                            });
                           if (readVerdict.confirm)
                             throw Object.assign(
                               new Error(
@@ -1402,11 +1412,16 @@ async function initializeApplication(
                                 { notRun: true },
                               );
                             });
-                          await ledger.action(
-                            provenance.turnId,
-                            'GMAIL_GET_DRAFT',
-                            readVerdict.basis,
-                          );
+                          await ledger
+                            .action(provenance.turnId, 'GMAIL_GET_DRAFT', readVerdict.basis)
+                            .catch((error: unknown) => {
+                              throw Object.assign(
+                                new Error(
+                                  `Nod could not record the Gmail draft read before deletion: ${safeIntegrationFailure(error)}`,
+                                ),
+                                { notRun: true },
+                              );
+                            });
                           const currentTarget = gmailDraftTarget(current, draftId);
                           if (!currentTarget)
                             throw Object.assign(
@@ -2354,12 +2369,19 @@ async function initializeApplication(
           deleteBinding = await integrations.binding(connectionId);
           if (!deleteBinding)
             throw new Error('The selected Gmail account is no longer available for deletion.');
+          let boundAccountId: unknown;
+          try {
+            boundAccountId = JSON.parse(deleteBinding)[0];
+          } catch {}
+          if (!account?.accountId || account.accountId !== boundAccountId)
+            throw new Error('The selected Gmail account changed before deletion was proposed.');
           const readAction = deletingDraft
             ? 'GMAIL_GET_DRAFT'
             : 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID';
           const metadataArgs = {
             connectionId,
-            ...(deletingDraft ? { draft_id: itemId } : { message_id: itemId, format: 'metadata' }),
+            format: 'metadata',
+            ...(deletingDraft ? { draft_id: itemId } : { message_id: itemId }),
             ...(typeof prepared.user_id === 'string' ? { user_id: prepared.user_id } : {}),
           };
           const readVerdict = await trust.check(turn, readAction, metadataArgs, options.signal);
