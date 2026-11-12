@@ -253,15 +253,15 @@ try {
     import assert from 'node:assert/strict';
     import { createHash } from 'node:crypto';
     import { mkdir, readFile, writeFile } from 'node:fs/promises';
-    import { createDockerWorkspace } from './src/providers/docker/index.ts';
-    import { createContainerBrowserComputer } from './src/providers/container-browser/index.ts';
+    import { createDefaultAdapters } from './src/server/composition.ts';
     import { pool } from './src/server/db.ts';
     const id=${JSON.stringify(id)};
     const root=process.env.NOD_DATA_ROOT;
     const path=root+'/workspaces/'+id;
     await mkdir(path,{recursive:true});
-    const workspace=createDockerWorkspace({container:process.env.WORKSPACE_CONTAINER,workspaceRoot:root+'/workspaces'});
-    const browser=createContainerBrowserComputer({container:process.env.BROWSER_CONTAINER,dataRoot:root});
+    assert.equal(process.env.NOD_RUNTIME,undefined);
+    const adapters=createDefaultAdapters(process.env);
+    const {workspace,computer:browser}=adapters;
     try {
       const chunks=[];
       const session=workspace.open({threadId:id,workspacePath:path,signal:new AbortController().signal});
@@ -291,7 +291,16 @@ try {
       assert.equal(denied.status,403);
       const control=await session.exec(${JSON.stringify(networkScript)});
       assert.equal(control.exitCode,0);
-    } finally {await workspace.dispose();await browser.dispose();await pool.end();}
+    } finally {
+      await workspace.dispose();
+      await browser.dispose();
+      await adapters.models?.close();
+      await adapters.integrationBrowser?.close();
+      await adapters.passwordManager?.close();
+      await adapters.localSpeech?.close();
+      await adapters.telemetry?.shutdown();
+      await pool.end();
+    }
   `;
   console.log(
     (

@@ -1,5 +1,13 @@
 FROM docker:29.8.2-cli@sha256:35cfcf893c20f2931f4909151b5407aaaeab711277de7ce8b8f521f095d54c32 AS docker
 
+FROM scratch AS kubectl-amd64
+ADD --chmod=555 --checksum=sha256:29818b6729dc9262b692307470d0558d027725e738be5dd47c760261868a2634 https://dl.k8s.io/release/v1.36.6/bin/linux/amd64/kubectl /kubectl
+
+FROM scratch AS kubectl-arm64
+ADD --chmod=555 --checksum=sha256:35507ef408c3d38849e5d3203e18f8e861db822aa664101a9ced0869edd06046 https://dl.k8s.io/release/v1.36.6/bin/linux/arm64/kubectl /kubectl
+
+FROM kubectl-${TARGETARCH} AS kubectl
+
 FROM node:24.21.0-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS build
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -15,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=docker /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=kubectl /kubectl /usr/local/bin/kubectl
 COPY --from=build --chown=node:node /app/package.json ./
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/src ./src

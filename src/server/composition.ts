@@ -84,6 +84,10 @@ import { createDiscoveredConnections } from './discovered-connections.ts';
 import { createLocalFiles, isLocalFilesAction } from './local-files.ts';
 import { createAppGrantVault } from './vault-app-grants.ts';
 import { createDockerWorkspace } from '../providers/docker/index.ts';
+import {
+  createKubernetesComputer,
+  createKubernetesWorkspace,
+} from '../providers/kubernetes/index.ts';
 import { createEnvironmentKeyStore } from '../providers/environment/key-store.ts';
 import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
 import { createFilesystemKeyStore } from '../providers/filesystem/key-store.ts';
@@ -291,6 +295,8 @@ export function modelEnvironment(
 export function createDefaultAdapters(
   env: Record<string, string | undefined> = process.env,
 ): ApplicationAdapters {
+  const runtime = z.enum(['docker', 'kubernetes']).parse(env.NOD_RUNTIME ?? 'docker');
+  const namespace = env.NOD_KUBERNETES_NAMESPACE || 'nod';
   const defaultFeedbackUrl = 'https://internal.users.n8n.cloud/webhook/nod/feedback';
   const feedbackUrl = env.NOD_FEEDBACK_URL ?? defaultFeedbackUrl;
   const feedbackEnabled = env.NOD_FEEDBACK_ENABLED !== 'false';
@@ -473,15 +479,21 @@ export function createDefaultAdapters(
       configRoot: join(dataRoot, 'pi'),
       traces,
     }),
-    computer: createContainerBrowserComputer({ dataRoot, container: env.BROWSER_CONTAINER }),
+    computer:
+      runtime === 'kubernetes'
+        ? createKubernetesComputer({ dataRoot, namespace })
+        : createContainerBrowserComputer({ dataRoot, container: env.BROWSER_CONTAINER }),
     passwordManager: createOnePassword({
       open: desktopMode ? desktopOnePassword() : forkedOnePassword(env.NOD_APP_VERSION || 'source'),
     }),
     trash: desktopMode ? desktopTrash() : undefined,
-    workspace: createDockerWorkspace({
-      container: env.WORKSPACE_CONTAINER || 'nod-workspace',
-      workspaceRoot: join(dataRoot, 'workspaces'),
-    }),
+    workspace:
+      runtime === 'kubernetes'
+        ? createKubernetesWorkspace({ namespace, workspaceRoot: join(dataRoot, 'workspaces') })
+        : createDockerWorkspace({
+            container: env.WORKSPACE_CONTAINER || 'nod-workspace',
+            workspaceRoot: join(dataRoot, 'workspaces'),
+          }),
     localSpeech,
     speechInputFormat: (voice) => {
       const { connections, selection } = models.view();

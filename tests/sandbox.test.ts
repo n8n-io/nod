@@ -28,7 +28,9 @@ import { threadIdentity } from '../src/ports/thread-identity.ts';
 import { isPublicAddress, publicUrl } from '../src/providers/agent-browser/network.ts';
 import {
   connectedUser,
+  runSupervisedCommand,
   runWorkspaceCommand,
+  workspaceCommandProgram,
   WorkspaceCommandError,
   type WorkspaceCommandLauncher,
 } from '../src/providers/docker/command.ts';
@@ -395,6 +397,32 @@ async function exists(path: string) {
     return false;
   }
 }
+
+test('workspace transport startup grace preserves the command deadline', async () => {
+  const run = (command: string) =>
+    runSupervisedCommand({
+      args: ['sh', '-c', command],
+      timeoutMs: 250,
+      transportGraceMs: 2000,
+      launch: () =>
+        spawn('python3', [
+          '-I',
+          '-u',
+          '-c',
+          'import time; time.sleep(1.6)\n' + workspaceCommandProgram,
+        ]),
+    });
+  const result = await run('printf ready; printf problem >&2; exit 37');
+  assert.equal(result.stdout.toString(), 'ready');
+  assert.equal(result.stderr.toString(), 'problem');
+  assert.equal(result.exitCode, 37);
+  await assert.rejects(run('sleep 1; printf too-late'), (error: unknown) => {
+    assert.ok(error instanceof WorkspaceCommandError);
+    assert.equal(error.uncertain, false);
+    assert.match(error.message, /time or output limit/);
+    return true;
+  });
+});
 
 test('connected CLIs run only their sealed install with a clean environment', async () => {
   const root = await mkdtemp('/tmp/nod-connected-');

@@ -69,7 +69,7 @@ const cliInstallTimeoutMs = 600_000;
 export const connectedUser = (cli: ConnectedCli) =>
   20_000 + (createHash('sha256').update(cli.id).digest().readUInt32BE() % 40_000);
 
-const workspaceCommandProgram = `import os,sys,json,base64,selectors,subprocess,signal,time,threading,re,tempfile,shutil,glob
+export const workspaceCommandProgram = `import os,sys,json,base64,selectors,subprocess,signal,time,threading,re,tempfile,shutil,glob
 import ctypes
 try: ctypes.CDLL(None,use_errno=True).prctl(36,1,0,0,0)
 except Exception: pass
@@ -296,7 +296,7 @@ export async function runWorkspaceCommand(options: {
   });
 }
 
-function runSupervisedCommand(options: {
+export function runSupervisedCommand(options: {
   args: string[];
   input?: string;
   environment?: Record<string, string>;

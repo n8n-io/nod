@@ -11,6 +11,7 @@ on:
       - 'desktop/scripts/runtime-build-lock.json'
       - 'desktop/test/runtime-assets.test.mjs'
       - 'deployment/self-host/**'
+      - 'deployment/kubernetes/**'
       - 'Dockerfile.browser'
       - 'Dockerfile.workspace'
       - '.dockerignore'
@@ -21,6 +22,8 @@ on:
       - 'vite.config.ts'
       - 'patches/**'
       - 'src/providers/docker/**'
+      - 'src/providers/kubernetes/**'
+      - 'src/server/composition.ts'
       - 'src/providers/container-browser/**'
       - 'src/providers/agent-browser/**'
       - 'src/providers/process.ts'
@@ -35,6 +38,7 @@ on:
       - 'desktop/scripts/runtime-build-lock.json'
       - 'desktop/test/runtime-assets.test.mjs'
       - 'deployment/self-host/**'
+      - 'deployment/kubernetes/**'
       - 'Dockerfile.browser'
       - 'Dockerfile.workspace'
       - '.dockerignore'
@@ -45,6 +49,8 @@ on:
       - 'vite.config.ts'
       - 'patches/**'
       - 'src/providers/docker/**'
+      - 'src/providers/kubernetes/**'
+      - 'src/server/composition.ts'
       - 'src/providers/container-browser/**'
       - 'src/providers/agent-browser/**'
       - 'src/providers/process.ts'
@@ -75,8 +81,10 @@ jobs:
         include:
           - arch: amd64
             runner: blacksmith-16vcpu-ubuntu-2404
+            kind_sha256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
           - arch: arm64
             runner: blacksmith-16vcpu-ubuntu-2404-arm
+            kind_sha256: 20022bee6cfcd5086cb7234d218e3454e6090022f2a8f55d1fa7fcf42c3867a2
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     env:
@@ -135,8 +143,17 @@ jobs:
           labels: org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=self-host-workspace-${{ matrix.arch }}
           cache-to: type=gha,scope=self-host-workspace-${{ matrix.arch }},mode=max
-      - name: Validate the native stack
+      - name: Validate the Docker Compose stack
         run: node deployment/self-host/check.mjs
+      - name: Set up Kubernetes check tools
+        run: |
+          curl --fail --location --silent --show-error https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-${{ matrix.arch }} -o "$RUNNER_TEMP/kind"
+          echo '${{ matrix.kind_sha256 }}  '"$RUNNER_TEMP/kind" | sha256sum --check
+          docker run --rm nod-server:${{ github.sha }} cat /usr/local/bin/kubectl > "$RUNNER_TEMP/kubectl"
+          chmod 755 "$RUNNER_TEMP/kind" "$RUNNER_TEMP/kubectl"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Validate the same images on Kubernetes
+        run: node deployment/kubernetes/check.mjs
       - name: Package the tested images
         run: node deployment/self-host/bundle.mjs .local/server-bundles
       - name: Validate the standalone installer
