@@ -10,14 +10,13 @@ const maximumNotesBytes = 64 * 1024;
 const maximumHighlightsBytes = 8 * 1024;
 
 export function releaseHighlights(value) {
-  if (
-    typeof value !== 'string' ||
-    !value.trim() ||
-    Buffer.byteLength(value) > maximumHighlightsBytes
-  )
-    throw new Error(
-      'Write release highlights in Markdown, up to 8 KiB. See Desktop releases in the docs.',
-    );
+  if (value === undefined)
+    throw new Error('No release highlights were supplied. Add public Markdown highlights.');
+  if (typeof value !== 'string') throw new Error('The release highlights must be Markdown text.');
+  if (!value.trim())
+    throw new Error('The release highlights are empty. Add public Markdown highlights.');
+  if (Buffer.byteLength(value) > maximumHighlightsBytes)
+    throw new Error('The release highlights exceed 8 KiB. Shorten them.');
   return value.trim();
 }
 

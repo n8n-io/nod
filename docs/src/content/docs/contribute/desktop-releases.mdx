@@ -141,7 +141,12 @@ Desktop binaries built from this code use public GitHub assets for installs and 
 
 <Steps>
 
-1. [Write the public highlights](#write-release-highlights). Open **Actions → Release desktop → Run workflow** on `main` and supply **highlights**. Leave **version** empty for the next patch, or enter a version such as `0.8.0`.
+1. [Write the public highlights](#write-release-highlights) in a Markdown file. Start **Release desktop** on `main` with the CLI so line breaks are kept. Set **version** or leave it empty for the next patch:
+
+   ```sh
+   gh workflow run prepare-desktop-release.yml --repo n8n-io/nod --ref main \
+     --raw-field version=0.8.0 --field highlights=@/tmp/nod-release-highlights.md
+   ```
 
 2. Review the `release/desktop` pull request. It changes only the desktop version, the release manifest and the changelog. The manifest saves the public highlights. The changelog lists the source changes by Conventional Commit type. Review the copy, facts, media, and upgrade instructions before merge. You can edit `highlights` in `desktop/release.json` before merge.
 
@@ -150,13 +155,6 @@ Desktop binaries built from this code use public GitHub assets for installs and 
 4. Wait for CI on the merge commit, then **Build desktop release**. The release workflow builds all four platform bundles and signs the Mac and Windows apps. It checks Mac updates, signature rejection and profile preservation on both Mac architectures. It also checks signing, runtime hashes, Windows workspace paths, installation, startup, updates and downloaded installer bytes. On Windows, every `.exe`, `.dll` and `.node` file in the installed app, `Uninstall.exe` and the installer itself must carry a valid, timestamped n8n GmbH signature. Files identical to ones Windows ships, such as `d3dcompiler_47.dll`, are signed too, but Windows reports its own catalog signature for them, so the check accepts that instead when Microsoft signed it. The workflow verifies uploaded hashes, publishes the release, then uses the app's own update code to check the Mac and Windows update platforms. Private builds also check delivery through the n8n service; public builds check direct GitHub downloads for every release asset. If delivery fails, the release goes back to draft.
 
 </Steps>
-
-Use the CLI to supply a Markdown file with multiple lines:
-
-```sh
-gh workflow run prepare-desktop-release.yml --repo n8n-io/nod --ref main \
-  --raw-field version=0.8.0 --field highlights=@/tmp/nod-release-highlights.md
-```
 
 The publisher puts the reviewed highlights first and adds download links for the release version. It puts the full changelog, installation requirements, and build details in a collapsed section. The copy is part of the release source, so it also survives retries and recovery. CI does not call a model to write or change it. Older saved releases without highlights keep their original notes format during recovery.
 

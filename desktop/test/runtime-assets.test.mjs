@@ -424,6 +424,20 @@ test('server release rejects conflicting or corrupt uploaded assets and never pu
 
 test('release gate rejects malformed metadata, uncommitted notes and source drift', async (t) => {
   const f = await releaseRepository(t);
+  await assert.rejects(
+    promisify(execFile)(
+      process.execPath,
+      [
+        fileURLToPath(
+          new URL('../../.github/scripts/prepare-desktop-release.mjs', import.meta.url),
+        ),
+      ],
+      {
+        cwd: f.root,
+        env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` },
+      },
+    ),
+  );
   await assert.rejects(prepareRelease(f.root, '0.1.0-alpha'));
   for (const highlights of ['', '   ', 'x'.repeat(8193), null])
     await assert.rejects(prepareRelease(f.root, '0.1.0', highlights), /release highlights/);
@@ -485,6 +499,20 @@ test('automatic patches release unchanged source and bind generated notes across
   const digest = createHash('sha256').update(bytes).digest('hex');
   await writeFile(path, bytes);
   assert.deepEqual(await checkReleasePlan(f.root, plan.version, path, digest), plan);
+  const legacy = { ...plan };
+  delete legacy.highlights;
+  const legacyBytes = JSON.stringify(legacy);
+  await writeFile(path, legacyBytes);
+  assert.deepEqual(
+    await checkReleasePlan(
+      f.root,
+      plan.version,
+      path,
+      createHash('sha256').update(legacyBytes).digest('hex'),
+    ),
+    legacy,
+  );
+  await writeFile(path, bytes);
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 24 * 60 * 60 * 1000 });
   assert.deepEqual(await checkReleasePlan(f.root, plan.version, path, digest), plan);
   const nextDay = automaticRelease(f.root, releases, 'synthetic/nod');
@@ -1245,6 +1273,14 @@ test('release publication uses the reviewed highlights instead of an environment
   assert(published.body.startsWith(highlights + '\n\n'));
   assert(!published.body.includes('Unreviewed replacement'));
   assert(published.body.includes(`Source: https://github.com/synthetic/nod/commit/${f.source}`));
+  const legacy = await releaseFixture(t, { publish: true });
+  await legacy.invoke('draft');
+  const legacyBody = (await legacy.readState()).releases[legacy.appTag].body;
+  const legacyNotes = (await checkRelease(legacy.root, legacy.metadata.version)).notes.trimEnd();
+  assert.equal(
+    legacyBody,
+    `${legacyBody.split('\n\n')[0]}\n\n${legacyNotes}\n\nSource: https://github.com/synthetic/nod/commit/${legacy.source}\n`,
+  );
 });
 
 test('public desktop releases refuse broker-backed bundles before upload', async (t) => {

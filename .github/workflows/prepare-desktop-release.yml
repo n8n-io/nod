@@ -8,7 +8,7 @@ on:
         type: string
         required: false
       highlights:
-        description: 'Public highlights in Markdown. Follow Write release highlights in the desktop release docs.'
+        description: 'Public Markdown highlights. For multiple lines, use gh workflow run --field highlights=@file. See Desktop releases in the docs.'
         type: string
         required: true
 
