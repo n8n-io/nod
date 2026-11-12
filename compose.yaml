@@ -4,7 +4,7 @@ services:
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: nod
-      POSTGRES_PASSWORD: ${NOD_POSTGRES_PASSWORD:?Run npm run dev to prepare the local database}
+      POSTGRES_PASSWORD: ${NOD_POSTGRES_PASSWORD:?Run pnpm start from the repository root to set up and start Nod.}
       POSTGRES_DB: nod
     ports:
       - '127.0.0.1:54329:5432'

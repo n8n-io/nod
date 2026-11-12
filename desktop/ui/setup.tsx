@@ -503,7 +503,7 @@ function Startup() {
             type="button"
             onClick={() => void desktop?.openConnectionSettings()}
           >
-            Server connection
+            Connect to a server
           </button>
         }
         title={

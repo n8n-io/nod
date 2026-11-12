@@ -129,13 +129,15 @@ function rebaseSession(source: SessionManager, next: SessionManager) {
   const copyRecording = (entry: (typeof audio)[number]) =>
     next.appendCustomMessageEntry(entry.customType, entry.content, entry.display, entry.details);
   for (const entry of audio.slice(-2)) if (!current.has(entry.id)) copyRecording(entry);
-  let images = context.reduce(
-    (count, entry) =>
-      entry.type === 'message' && entry.message.role === 'toolResult'
-        ? count + entry.message.content.filter((part) => part.type === 'image').length
-        : count,
-    0,
-  );
+  let images = [...projected.values()]
+    .flat()
+    .reduce(
+      (count, message) =>
+        message.role === 'toolResult'
+          ? count + message.content.filter((part) => part.type === 'image').length
+          : count,
+      0,
+    );
   for (const entry of context) {
     if (entry.type === 'compaction')
       next.appendCompaction(entry.summary, null, entry.tokensBefore, entry.details);
@@ -150,22 +152,44 @@ function rebaseSession(source: SessionManager, next: SessionManager) {
             timestamp: message.timestamp,
           });
     } else if (entry.type === 'message') {
-      const message = entry.message;
-      next.appendMessage(
-        ('content' in message && Array.isArray(message.content)
-          ? {
-              ...message,
-              content: message.content.map((part) =>
-                part?.type === 'image' && message.role === 'toolResult' && images-- > keptImages
-                  ? { type: 'text' as const, text: removedImage }
-                  : part,
-              ),
-            }
-          : message) as Parameters<typeof next.appendMessage>[0],
-      );
+      for (const message of projected.get(entry.id) ?? [])
+        next.appendMessage(
+          ('content' in message && Array.isArray(message.content)
+            ? {
+                ...message,
+                content: message.content.map((part) =>
+                  part?.type === 'image' && message.role === 'toolResult' && images-- > keptImages
+                    ? { type: 'text' as const, text: removedImage }
+                    : part,
+                ),
+              }
+            : message) as Parameters<typeof next.appendMessage>[0],
+        );
     }
   }
   return next;
+}
+
+export function dropFailedInput(manager: SessionManager) {
+  const entries = manager.buildSessionProjection().entries;
+  const stops = entries.map(({ messages }) => {
+    const message = messages.find((item) => item.role === 'assistant');
+    return message?.role === 'assistant' ? message.stopReason : undefined;
+  });
+  const failed = stops.lastIndexOf('error');
+  const answered = stops.findLastIndex(
+    (stop) => stop === 'stop' || stop === 'toolUse' || stop === 'length',
+  );
+  if (failed <= answered) return false;
+  for (const { sourceEntry, messages } of entries.slice(answered + 1, failed + 1))
+    if (
+      messages.some((message) =>
+        ['user', 'custom', 'toolResult', 'assistant'].includes(message.role),
+      )
+    )
+      manager.appendContextEdit(sourceEntry.id, null);
+  closeInterruptedCalls(manager);
+  return true;
 }
 
 export function closeInterruptedCalls(manager: SessionManager) {

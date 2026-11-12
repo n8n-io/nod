@@ -277,6 +277,21 @@ test(
     const userMessages = thread.createUserMessageService({
       confirmAction: approvals.chat,
       taskReply: (client, threadId, messageId) => tasks.resolveReply(client, threadId, messageId),
+      accepted: () => {
+        const capture = snapshotAnalytics(captureAnalytics);
+        return (channel) => {
+          const source = channel.split(':')[0];
+          capture?.({
+            event: 'owner_message_accepted',
+            properties: {
+              channel:
+                source === 'web' || source === 'telegram' || source === 'whatsapp'
+                  ? source
+                  : 'other',
+            },
+          });
+        };
+      },
     });
     const discarded: string[] = [];
     const planInputs: Array<{ owner: string; input: object }> = [];
@@ -346,6 +361,8 @@ test(
         },
       }),
       submitMessage: userMessages.submit,
+      reactToMessage: (id, reaction, wake, channel) =>
+        thread.reactToAssistantMessage(id, reaction, wake, userMessages, channel),
       configuration: () => ({ ...configuration(), llmReady: chatReady }),
       planningTasks: onboarding.planning,
     });
@@ -2133,6 +2150,67 @@ test(
       });
 
       await t.test(
+        'separate queued questions each receive an answer while work continues',
+        async () => {
+          const prompt = `steer-questions-${randomUUID()}`;
+          const original = dependencies.runTurn;
+          const batches: string[][] = [];
+          block(prompt);
+          dependencies.runTurn = async (context) => {
+            if (context.prompt !== prompt) return original(context);
+            runs.push(context);
+            await waiting.get(prompt);
+            for (let step = 0; step < 2; step++) {
+              const messages = await context.takeMessages!();
+              batches.push(messages.map((message) => message.id));
+              if (messages[0]) await context.reply(`Answered: ${messages[0].text}`);
+            }
+            return { status: 'succeeded' };
+          };
+          try {
+            const active = await thread.submitUserMessage(prompt, [], { channel: 'web' });
+            await waitFor(() => Boolean(ran(active.turnId)));
+            const first = await thread.submitUserMessage(
+              'What is the first synthetic result?',
+              [],
+              {
+                channel: 'web',
+              },
+            );
+            const second = await thread.submitUserMessage(
+              'What is the second synthetic result?',
+              [],
+              {
+                channel: 'web',
+              },
+            );
+            assert.equal(await turnStatus(first.turnId), 'queued');
+            assert.equal(await turnStatus(second.turnId), 'queued');
+            release(prompt);
+            await waitFor(settled(active.turnId));
+            await waitFor(settled(second.turnId));
+            assert.equal(await turnStatus(active.turnId), 'succeeded');
+            assert.equal(await turnStatus(first.turnId), 'succeeded');
+            assert.equal(await turnStatus(second.turnId), 'succeeded');
+            assert.deepEqual(batches, [[first.messageId], [second.messageId]]);
+            const answers = (
+              await db.pool.query(
+                "SELECT text FROM messages WHERE turn_id=$1 AND role='assistant' ORDER BY created_at,id",
+                [active.turnId],
+              )
+            ).rows.map((row) => row.text);
+            assert.deepEqual(answers, [
+              'Answered: What is the first synthetic result?',
+              'Answered: What is the second synthetic result?',
+            ]);
+          } finally {
+            release(prompt);
+            dependencies.runTurn = original;
+          }
+        },
+      );
+
+      await t.test(
         'analytics separate automatic work from owner requests across resumed sessions',
         async (t) => {
           const completed = async (
@@ -2419,9 +2497,6 @@ test(
             (message) => message.turnId === source.turnId && message.role === 'assistant',
           );
           assert.match(previous!.text, /Research → Comparison: Once reviewed/);
-          assert.ok(
-            followupContext.history.some((message) => message.text === 'done: first message'),
-          );
           assert.doesNotMatch(JSON.stringify(followupContext.replyTo), /"edges"|"presentation"/);
         },
       );
@@ -3508,9 +3583,10 @@ test(
                   queued.push(await thread.submitUserMessage('Synthetic trailing text'));
                   release(prompt);
                   await waitFor(settled(first.turnId));
+                  const absorbed = initialAudio ? queued : queued.slice(0, 1);
                   assert.deepEqual(
                     taken.get(first.turnId)!.map(({ id }) => id),
-                    queued.map(({ messageId }) => messageId),
+                    absorbed.map(({ messageId }) => messageId),
                   );
                   assert.equal(spoken.length, before + 1);
                   assert.equal(spoken.at(-1), `done: ${prompt}`);
@@ -3527,7 +3603,11 @@ test(
                     await localArtifacts.readArtifact(replies[1].attachments[0].id),
                     Buffer.from('Synthetic generated audio'),
                   );
-                  for (const message of queued) assert.equal(ran(message.turnId), undefined);
+                  for (const message of absorbed) assert.equal(ran(message.turnId), undefined);
+                  for (const message of queued.slice(absorbed.length)) {
+                    await waitFor(settled(message.turnId));
+                    assert.ok(ran(message.turnId));
+                  }
                 } finally {
                   release(prompt);
                 }
@@ -3630,6 +3710,254 @@ test(
           }
         },
       );
+
+      await t.test('a reaction replies to the exact assistant question once', async () => {
+        await waitFor(settledThread);
+        const question = await thread.submitUserMessage('ask-question');
+        await waitFor(settled(question.turnId));
+        const asked = (
+          await db.pool.query<{ id: string }>(
+            "SELECT id FROM messages WHERE owner_id=$1 AND turn_id=$2 AND role='assistant' ORDER BY created_at DESC,id DESC LIMIT 1",
+            [ownerId, question.turnId],
+          )
+        ).rows[0]!.id;
+        const replies = () =>
+          db.pool.query<{ id: string; turn_id: string; text: string; reply_to_message_id: string }>(
+            "SELECT id,turn_id,text,reply_to_message_id FROM messages WHERE owner_id=$1 AND thread_id=$2 AND role='user' AND reply_to_message_id=$3 ORDER BY created_at,id",
+            [ownerId, question.threadId, asked],
+          );
+        const beforeAccepted = analyticsEvents.filter(
+          (event) => event.event === 'owner_message_accepted',
+        ).length;
+        const reacted = await request('POST', `/api/messages/${asked}/reaction`, {
+          reaction: '👍',
+        });
+        assert.equal(reacted.statusCode, 200);
+        assert.equal(reacted.json().reaction, '👍');
+        const response = (await replies()).rows;
+        assert.equal(response.length, 1);
+        assert.equal(response[0]!.text, '👍');
+        assert.equal(response[0]!.reply_to_message_id, asked);
+        assert.equal(
+          (
+            await db.pool.query('SELECT parent_turn_id FROM turns WHERE id=$1', [
+              response[0]!.turn_id,
+            ])
+          ).rows[0].parent_turn_id,
+          question.turnId,
+        );
+        await waitFor(settled(response[0]!.turn_id));
+        assert.equal(ran(response[0]!.turn_id)?.prompt, '👍');
+        assert.equal(ran(response[0]!.turn_id)?.replyTo?.id, asked);
+        assert.equal(ran(response[0]!.turn_id)?.replyTo?.text, 'Which account should I use?');
+        assert.equal(
+          analyticsEvents.filter((event) => event.event === 'owner_message_accepted').length,
+          beforeAccepted + 1,
+        );
+        await request('POST', `/api/messages/${asked}/reaction`, { reaction: '👍' });
+        assert.equal((await replies()).rowCount, 1);
+        await request('POST', `/api/messages/${asked}/reaction`, { reaction: null });
+        assert.equal((await replies()).rowCount, 1);
+        assert.equal(
+          analyticsEvents.filter((event) => event.event === 'owner_message_accepted').length,
+          beforeAccepted + 1,
+        );
+      });
+
+      await t.test('a channel reaction replies in its source channel', async () => {
+        await waitFor(settledThread);
+        const question = await thread.submitUserMessage('ask-question', [], {
+          channel: 'telegram:fixture',
+        });
+        await waitFor(settled(question.turnId));
+        const asked = (
+          await db.pool.query<{ id: string }>(
+            "SELECT id FROM messages WHERE owner_id=$1 AND turn_id=$2 AND role='assistant' ORDER BY created_at DESC,id DESC LIMIT 1",
+            [ownerId, question.turnId],
+          )
+        ).rows[0]!.id;
+        const beforeAccepted = analyticsEvents.filter(
+          (event) => event.event === 'owner_message_accepted',
+        ).length;
+        await thread.reactToAssistantMessage(asked, '👎', true, userMessages);
+        const reply = (
+          await db.pool.query<{ turn_id: string }>(
+            "SELECT turn_id FROM messages WHERE owner_id=$1 AND role='user' AND reply_to_message_id=$2",
+            [ownerId, asked],
+          )
+        ).rows[0]!;
+        await waitFor(settled(reply.turn_id));
+        assert.equal(
+          (await db.pool.query('SELECT channel FROM turns WHERE id=$1', [reply.turn_id])).rows[0]
+            .channel,
+          'telegram:fixture',
+        );
+        assert.equal(ran(reply.turn_id)?.channel, 'telegram');
+        assert.equal(ran(reply.turn_id)?.replyTo?.id, asked);
+        assert.equal(ran(reply.turn_id)?.replyTo?.text, 'Which account should I use?');
+        assert.deepEqual(
+          analyticsEvents
+            .filter((event) => event.event === 'owner_message_accepted')
+            .slice(beforeAccepted)
+            .map((event) => event.properties?.channel),
+          ['telegram'],
+        );
+      });
+
+      await t.test('a thumbs-up reaction confirms only its exact pending action once', async () => {
+        await waitFor(settledThread);
+        let executedByReaction = 0;
+        const reactionApprovals = await createApprovals(
+          async () => {
+            executedByReaction++;
+            return { sent: true };
+          },
+          undefined,
+          async (reply) => (reply === '👍' ? true : undefined),
+          async () => 'Send the synthetic update to the fixture account?',
+        );
+        const reactionMessages = thread.createUserMessageService({
+          confirmAction: reactionApprovals.chat,
+        });
+        const previousObserver = inspectObserver;
+        const previousConfirmation = dependencies.executeConfirmation;
+        dependencies.executeConfirmation = reactionApprovals.executeConfirmed;
+        inspectObserver = async (context) => {
+          if (context.prompt !== 'reaction-approval-fixture') return;
+          await reactionApprovals.request(
+            { threadId: context.threadId, turnId: context.turnId },
+            'NOD_reaction_fixture',
+            { account: 'fixture' },
+          );
+          return { status: 'waiting_user', waitingFor: 'approval' };
+        };
+        try {
+          const pending = await thread.submitUserMessage('reaction-approval-fixture');
+          await waitFor(settled(pending.turnId));
+          const approval = (
+            await db.pool.query<{ id: string; confirmation_message_id: string }>(
+              'SELECT id,confirmation_message_id FROM approvals WHERE owner_id=$1 AND turn_id=$2',
+              [ownerId, pending.turnId],
+            )
+          ).rows[0]!;
+          assert.equal(executedByReaction, 0);
+          await thread.reactToAssistantMessage(
+            approval.confirmation_message_id,
+            '👍',
+            true,
+            reactionMessages,
+            'web',
+          );
+          await waitFor(async () => executedByReaction === 1);
+          await waitFor(
+            async () =>
+              (await db.pool.query('SELECT status FROM approvals WHERE id=$1', [approval.id]))
+                .rows[0]?.status === 'completed',
+          );
+          const saved = (
+            await db.pool.query<{ id: string; turn_id: string; reply_to_message_id: string }>(
+              "SELECT id,turn_id,reply_to_message_id FROM messages WHERE owner_id=$1 AND role='user' AND reply_to_message_id=$2",
+              [ownerId, approval.confirmation_message_id],
+            )
+          ).rows;
+          assert.equal(saved.length, 1);
+          assert.equal(saved[0]!.reply_to_message_id, approval.confirmation_message_id);
+          assert.deepEqual(
+            (
+              await db.pool.query('SELECT source,parent_turn_id FROM turns WHERE id=$1', [
+                saved[0]!.turn_id,
+              ])
+            ).rows[0],
+            { source: 'resume', parent_turn_id: pending.turnId },
+          );
+          assert.equal(
+            (
+              await db.pool.query('SELECT status,execution_turn_id FROM approvals WHERE id=$1', [
+                approval.id,
+              ])
+            ).rows[0].status,
+            'completed',
+          );
+          await thread.reactToAssistantMessage(
+            approval.confirmation_message_id,
+            '👍',
+            true,
+            reactionMessages,
+            'web',
+          );
+          assert.equal(executedByReaction, 1);
+          assert.equal(
+            (
+              await db.pool.query(
+                "SELECT count(*)::int AS count FROM messages WHERE owner_id=$1 AND role='user' AND reply_to_message_id=$2",
+                [ownerId, approval.confirmation_message_id],
+              )
+            ).rows[0].count,
+            1,
+          );
+
+          const channelPending = await thread.submitUserMessage('reaction-approval-fixture', [], {
+            channel: 'telegram:fixture',
+          });
+          await waitFor(settled(channelPending.turnId));
+          const channelApproval = (
+            await db.pool.query<{ id: string; confirmation_message_id: string }>(
+              'SELECT id,confirmation_message_id FROM approvals WHERE owner_id=$1 AND turn_id=$2',
+              [ownerId, channelPending.turnId],
+            )
+          ).rows[0]!;
+          const unrelated = randomUUID();
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant','Unrelated fixture message.')",
+            [unrelated, ownerId, channelPending.threadId, channelPending.turnId],
+          );
+          assert.equal(
+            await reactionMessages.answer('👍', { channel: 'web', replyToMessageId: unrelated }),
+            undefined,
+          );
+          await thread.reactToAssistantMessage(
+            channelApproval.confirmation_message_id,
+            '👍',
+            true,
+            reactionMessages,
+            'web',
+          );
+          await waitFor(async () => executedByReaction === 2);
+          await waitFor(
+            async () =>
+              (
+                await db.pool.query('SELECT status FROM approvals WHERE id=$1', [
+                  channelApproval.id,
+                ])
+              ).rows[0]?.status === 'completed',
+          );
+          const webReply = (
+            await db.pool.query<{ turn_id: string }>(
+              "SELECT turn_id FROM messages WHERE owner_id=$1 AND role='user' AND reply_to_message_id=$2",
+              [ownerId, channelApproval.confirmation_message_id],
+            )
+          ).rows[0]!;
+          assert.deepEqual(
+            (
+              await db.pool.query('SELECT source,channel,parent_turn_id FROM turns WHERE id=$1', [
+                webReply.turn_id,
+              ])
+            ).rows[0],
+            { source: 'resume', channel: 'web', parent_turn_id: channelPending.turnId },
+          );
+          await thread.reactToAssistantMessage(
+            channelApproval.confirmation_message_id,
+            '👍',
+            true,
+            reactionMessages,
+            'web',
+          );
+          assert.equal(executedByReaction, 2);
+        } finally {
+          inspectObserver = previousObserver;
+          dependencies.executeConfirmation = previousConfirmation;
+        }
+      });
 
       await t.test(
         'answer choices bind owned pending questions across sessions and reject stale or altered submissions',
@@ -8371,6 +8699,66 @@ test(
       );
 
       await t.test(
+        'a request that failed at the model provider or that the owner stopped is no request for later turns',
+        async () => {
+          await waitFor(settledThread);
+          modelErrors.set(
+            'Synthetic refused paste',
+            'The model request failed: synthetic refusal.',
+          );
+          block('Synthetic stopped request');
+          try {
+            const kept = await thread.submitUserMessage('Synthetic standing request');
+            await waitFor(settled(kept.turnId));
+            const refused = await thread.submitUserMessage('Synthetic refused paste');
+            await waitFor(settled(refused.turnId));
+            assert.equal(await turnStatus(refused.turnId), 'failed');
+            const afterFailure = await thread.submitUserMessage('Synthetic first follow-up');
+            await waitFor(settled(afterFailure.turnId));
+            assert.equal(ran(afterFailure.turnId)!.withdrawnRequest, 'failed');
+            const scheduled = await thread.enqueueTurn('Synthetic scheduled check', {
+              source: 'schedule',
+            });
+            await waitFor(settled(scheduled));
+            const fresh = ran(scheduled)!.history.map(({ text }) => text);
+            assert.ok(fresh.includes('Synthetic standing request'));
+            assert.ok(!fresh.includes('Synthetic refused paste'));
+            const background = randomUUID();
+            modelErrors.set('Synthetic background check', 'The model request failed: overloaded.');
+            const failedCheck = await thread.enqueueTurn('Synthetic background check', {
+              source: 'event',
+              sessionId: background,
+            });
+            await waitFor(settled(failedCheck));
+            const nextCheck = await thread.enqueueTurn('Synthetic next background check', {
+              source: 'event',
+              sessionId: background,
+            });
+            await waitFor(settled(nextCheck));
+            assert.ok(ran(nextCheck)!.previousFailure);
+            assert.equal(ran(nextCheck)!.withdrawnRequest, undefined);
+            const stopped = await thread.submitUserMessage('Synthetic stopped request');
+            await waitFor(() => Boolean(ran(stopped.turnId)));
+            await thread.stopThread();
+            await waitFor(settled(stopped.turnId));
+            const next = await thread.submitUserMessage('Synthetic unrelated question');
+            await waitFor(settled(next.turnId));
+            assert.equal(ran(next.turnId)!.withdrawnRequest, 'stopped');
+            assert.ok(
+              !ran(next.turnId)!.history.some(({ text }) => text === 'Synthetic stopped request'),
+            );
+            const quiet = await thread.submitUserMessage('Synthetic second follow-up');
+            await waitFor(settled(quiet.turnId));
+            assert.equal(ran(quiet.turnId)!.withdrawnRequest, undefined);
+          } finally {
+            modelErrors.delete('Synthetic refused paste');
+            modelErrors.delete('Synthetic background check');
+            release('Synthetic stopped request');
+          }
+        },
+      );
+
+      await t.test(
         'a confirmed action whose resume turn stops or fails first reaches the next turn of its session once',
         async (t) => {
           let sends = 0;
@@ -8467,7 +8855,7 @@ const memoryFixture = async (tables: string[] = []) => {
   url.searchParams.set('options', `-c search_path=${schema}`);
   const pool = new pg.Pool({ connectionString: url.href });
   await pool.query(
-    "CREATE TABLE threads (id uuid PRIMARY KEY, owner_id text NOT NULL, archived_at timestamptz); CREATE TABLE messages (id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL, turn_id uuid, thread_id uuid, suggestions jsonb, approval_answer boolean, attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now()); CREATE TABLE turns (id uuid PRIMARY KEY, owner_id text NOT NULL, channel text); CREATE TABLE preferences (owner_id text PRIMARY KEY, time_zone text)",
+    "CREATE TABLE threads (id uuid PRIMARY KEY, owner_id text NOT NULL, archived_at timestamptz); CREATE TABLE messages (id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL, turn_id uuid, thread_id uuid, suggestions jsonb, approval_answer boolean, attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now()); CREATE TABLE turns (id uuid PRIMARY KEY, owner_id text NOT NULL, channel text, message_id uuid, withdrawn boolean NOT NULL DEFAULT false); CREATE TABLE preferences (owner_id text PRIMARY KEY, time_zone text)",
   );
   for (const table of tables) await pool.query(table);
   const ownerId = 'memory-fixture-owner';

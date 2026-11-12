@@ -7,6 +7,7 @@ import { repair } from './memory-lint.ts';
 import { applyOps } from './memory-ops.ts';
 import { localTimestamp } from '../shared/date-locale.ts';
 import { indexLayout, unsafe } from './memory-tree.ts';
+import { withdrawnSql } from './turn-chain.ts';
 import type { MemoryService } from './memory.ts';
 import type { WorkConsumers } from './work-admission.ts';
 import type { CaptureAnalytics } from './analytics.ts';
@@ -91,7 +92,7 @@ export function createMemoryLearning(options: {
     }
     const [from, after] = tree.reflected.split('/');
     const { rows } = await options.pool.query(
-      `${ownerText} AND m.attachments='[]'::jsonb
+      `${ownerText} AND m.attachments='[]'::jsonb AND NOT ${withdrawnSql('m')}
          AND m.created_at<=now()-interval '10 minutes' AND (m.created_at,m.id)>($2::timestamptz,$3::uuid)
          AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.owner_id=m.owner_id AND a.source_message_id=m.id AND a.action='NOD_memory_save')
        ORDER BY m.created_at,m.id LIMIT ${batchSize}`,
@@ -144,7 +145,7 @@ export function createMemoryLearning(options: {
     const required = [...new Set([...(input.messages ?? []), sourceMessageId])];
     const { rows } = await options.pool.query(
       `WITH source AS (SELECT thread_id,created_at FROM messages WHERE id=$3 AND owner_id=$1 AND role='user'),
-       recent AS (SELECT r.id FROM messages r, source WHERE r.owner_id=$1 AND r.role='user'
+       recent AS (SELECT r.id FROM messages r, source WHERE r.owner_id=$1 AND r.role='user' AND NOT ${withdrawnSql('r')}
          AND r.thread_id IS NOT DISTINCT FROM source.thread_id AND r.created_at<=source.created_at
          ORDER BY r.created_at DESC,r.id DESC LIMIT ${recentMessages})
        ${ownerText} AND (m.id=ANY($2::uuid[]) OR m.id IN (SELECT id FROM recent))

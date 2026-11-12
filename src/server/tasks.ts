@@ -24,6 +24,7 @@ import { snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
 import { createPreferencesStore, deliveryTime, isQuietTime } from './preferences.ts';
 import { personalSecret } from './memory-tree.ts';
 import { texts as codeTexts } from './chat-verification.ts';
+import { withdrawnSql } from './turn-chain.ts';
 
 const now = z.string().trim().min(1);
 const waits = z.array(
@@ -659,7 +660,7 @@ export function createTasks(options: {
       await pool.query<{ text: string; has_attachments: boolean }>(
         `SELECT DISTINCT m.id,m.created_at,m.text,jsonb_array_length(m.attachments)>0 AS has_attachments
          FROM messages m JOIN tasks t ON t.id=$1 AND t.owner_id=m.owner_id
-         WHERE m.owner_id=$2 AND m.role='user' AND (m.id=t.source_message_id OR m.id IN
+         WHERE m.owner_id=$2 AND m.role='user' AND NOT ${withdrawnSql('m')} AND (m.id=t.source_message_id OR m.id IN
            (SELECT u.message_id FROM turns u WHERE u.task_id=t.id AND u.owner_id=t.owner_id) OR m.turn_id IN
            (SELECT u.id FROM turns u WHERE u.task_id=t.id AND u.owner_id=t.owner_id))
          ORDER BY m.created_at,m.id`,

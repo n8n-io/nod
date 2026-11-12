@@ -112,7 +112,7 @@ The line follows only the work on your messages. A task shows its progress on it
 
 ### Send more while Nod works
 
-When you send a message while Nod works, a second line says **Got your message. I'll read it after this step.** Nod reads it before its next step and answers it. If other messages come between your message and the answer, the answer quotes the message it answers.
+When you send a message while Nod works, a second line says **Got your message. I'll read it after this step.** Nod reads it before its next step and answers it. If you send several messages, Nod reads them one at a time so each gets its own answer. If other messages come between your message and the answer, the answer quotes the message it answers.
 
 ![Nod's status line reads "Comparing flight prices · skyscanner.net · 2 min", with "Got your message. I'll read it after this step." below it, after a follow-up message.](../../../assets/screens/chat-live-line.png)
 
@@ -177,6 +177,8 @@ While the message box is empty, the send button becomes **Stop**. Select it to s
 
 The main Stop control ends active work, cancels queued messages and open questions, and closes all open tasks. To stop only one task, open its preview and select **Stop**. Your schedules stay configured. Stop can't undo something that already happened, such as an email that was already sent.
 
+A request you stop, or one you started whose model request fails at the provider, stays in the chat, but Nod doesn't pick it up again on its own and your words in it no longer allow an action. To continue it, ask again. See [Stop and failures](/how-it-works/threads-and-turns/#stop-and-failures).
+
 You can also tell Nod in the main chat, from any app, for example "stop everything" or "stop the flight search". Nod stops every task, scheduled run and app check, or only the task you name, and tells you what it stopped. Nod reads your message after its current step, or after its current reply if you write from another app. For an immediate stop, use the Stop control, or `/stop` in Telegram.
 
 When a run you started stops on an error or on your spending limit, Nod tells you what failed in the main chat or as a reply to the affected task. If an agent model request fails with a recognizable quota or rate limit, Nod gives you a short explanation instead of the provider's raw response. For a temporary limit, Nod includes an approximate wait time when it can read a provider retry delay of up to two minutes. For an account or workspace usage cap, wait for the limit to reset or check its settings; a workspace admin may need to raise it. Other errors still include safe details, such as a rejected model key. Nod's next turn knows what went wrong. If Nod restarts during a run you started, that run fails and Nod posts an interruption notice. Nod never repeats failed or interrupted work on its own. Saved tasks and waiting questions survive a restart.
@@ -197,7 +199,7 @@ In the desktop app, hold Command on a Mac or Ctrl on Windows and Linux to reveal
 
 ## React to messages
 
-To react to one of Nod's replies, hover over the bubble and select its reaction icon, or hold or right-click the bubble and choose **React**. Pick a quick reaction, or choose **More emoji** to search and scroll through the full picker. Your reaction appears at the bottom of the bubble. Select it to remove it. Nod takes a reaction as feedback on that reply, never as an answer to a question or an approval.
+To react to one of Nod's replies, hover over the bubble and select its reaction icon, or hold or right-click the bubble and choose **React**. Pick a quick reaction, or choose **More emoji** to search and scroll through the full picker. Your reaction appears at the bottom of the bubble and is sent as a reply to that message for Nod to interpret. A thumbs-up can answer a question. On an action confirmation, 👍 or 👎 confirms or declines the exact action Nod asked about. For other reactions, Nod asks for confirmation before acting outside chat. Select the reaction to remove it from the bubble. Removing or changing it does not undo a reply or action already sent.
 
 Nod sometimes reacts to your messages too, such as ✅ when you say yes to something it offered or ❤️ when you thank it. It reacts only now and then, and a reaction never replaces its reply.
 

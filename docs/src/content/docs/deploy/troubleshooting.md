@@ -19,9 +19,9 @@ If your problem isn't here, [send feedback with a diagnostic report](#send-feedb
 
 Docker isn't running, or Compose is too old. Start Docker (on a Mac, open Docker Desktop) and check that `docker compose version` reports v2.
 
-### Run npm run dev to prepare the local database
+### NOD_POSTGRES_PASSWORD is missing a value
 
-You ran `docker compose` yourself before Nod created the database password. Run `pnpm start` once. It generates `NOD_POSTGRES_PASSWORD` and starts the containers for you.
+You ran `docker compose` yourself before Nod created the database password. Run `pnpm start` from the repository root. It generates `NOD_POSTGRES_PASSWORD`, starts the containers, and starts Nod.
 
 ### Configure NOD_VAULT_KEY in server settings before saving a connection.
 
@@ -51,7 +51,7 @@ Every release is notarized by Apple. If macOS still blocks it, open **System Set
 
 macOS can ask again after Nod is re-signed. Approve it in the macOS dialog. Never type your Mac password into the Nod chat.
 
-While the keychain unlocks, Nod keeps the startup screen and **Server connection** available. If it keeps waiting, check for a macOS prompt, unlock your keychain, then quit and reopen Nod.
+While the keychain unlocks, Nod keeps the startup screen and **Connect to a server** available. If it keeps waiting, check for a macOS prompt, unlock your keychain, then quit and reopen Nod.
 
 ### Nod could not unlock your saved server token
 

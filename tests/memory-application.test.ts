@@ -1251,7 +1251,7 @@ test(
     });
     await pool.query(`CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text,archived_at timestamptz);
       CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text,thread_id uuid,turn_id uuid,role text,text text,hidden_at timestamptz,created_at timestamptz);
-      CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text,thread_id uuid,prompt text,status text,source text,channel text,created_at timestamptz);
+      CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text,thread_id uuid,message_id uuid,prompt text,status text,source text,channel text,withdrawn boolean NOT NULL DEFAULT false,created_at timestamptz);
       CREATE TABLE preferences(owner_id text,time_zone text);`);
     const active = randomUUID(),
       archived = randomUUID(),
