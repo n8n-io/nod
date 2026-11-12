@@ -8769,7 +8769,9 @@ test(
           const presentedFailures: string[] = [];
           presentInterruption = async (_threadId, input) => {
             if (input.kind === 'failed') presentedFailures.push(input.error);
-            return '';
+            return input.kind === 'failed' && input.error.includes('503 Service Unavailable')
+              ? 'Synthetic provider failure.'
+              : '';
           };
           const prefix = 'The model request failed: openrouter / anthropic/fixture-model: ';
           const nestedQuota =
@@ -8863,6 +8865,45 @@ test(
               prompt: 'model-plain-rate-limit-fixture',
               error: prefix + '429 Too Many Requests',
               reason: /429 Too Many Requests/,
+            },
+            {
+              prompt: 'model-zero-quota-fixture',
+              error:
+                prefix +
+                JSON.stringify({
+                  error: {
+                    code: 429,
+                    message: 'Quota exceeded. Limit: 0.',
+                    details: [
+                      {
+                        quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier',
+                        quotaValue: '0',
+                        retryDelay: '82800s',
+                      },
+                    ],
+                  },
+                }),
+              reason: /Quota exceeded\. Limit: 0\./,
+              advice: /This account has no quota for this model\./,
+            },
+            {
+              prompt: 'model-full-daily-quota-fixture',
+              error:
+                prefix +
+                JSON.stringify({
+                  error: {
+                    code: 429,
+                    message: 'Quota exceeded.',
+                    details: [
+                      {
+                        quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier',
+                        retryDelay: '82800.5s',
+                      },
+                    ],
+                  },
+                }),
+              reason: /Quota exceeded\./,
+              advice: /Try again in about 24 hours\./,
             },
             {
               prompt: 'model-rate-limit-code-fixture',
@@ -9023,12 +9064,21 @@ test(
               ).rows[0].text as string;
               assert.equal(turn.status, 'failed');
               assert.equal(presentedFailures.at(-1), turn.error);
-              assert.ok(shown.endsWith(turn.error));
+              assert.ok(
+                shown.includes(
+                  item.prompt === 'model-unavailable-fixture'
+                    ? 'Synthetic provider failure.'
+                    : turn.error,
+                ),
+              );
+              assert.match(shown, /\]\(\/settings\/models\)/);
               assert.ok(turn.error.length <= 2000);
               assert.ok(turn.error.startsWith(prefix));
               assert.match(turn.error, item.reason);
               if (item.code) assert.match(turn.error, item.code);
               if (item.advice) assert.match(turn.error, item.advice);
+              if (item.prompt === 'model-zero-quota-fixture')
+                assert.doesNotMatch(turn.error, /Try again in about/);
               for (const text of [turn.error, shown])
                 assert.doesNotMatch(
                   text,

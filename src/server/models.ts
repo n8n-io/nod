@@ -633,6 +633,10 @@ export function createModelService(options: {
       row.models = definitions;
       row.status = 'connected';
       row.label = connectionLabel(row.provider, row.method, value);
+      const selected = state.selection;
+      const choice = definitions.find((model) => model.choice.id === selected?.modelId)?.choice;
+      if (selected?.connectionId === id && choice && !choice.efforts.includes(selected.effort))
+        selected.effort = lightestEffort(choice.efforts);
       selectDefault(state, row);
     }, signal);
     await reload();

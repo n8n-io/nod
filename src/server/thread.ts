@@ -1106,6 +1106,8 @@ async function finishTurn(
 const interrupted = 'Interrupted.';
 
 function modelRecoveryAdvice(text: string) {
+  if (/\bHTTP 429\b/.test(text) && /\b(?:quotaValue|limit):\s*0(?!\d|\.\d)/i.test(text))
+    return 'This account has no quota for this model. Check its access or choose another model.';
   const oversized = text.match(
     /\brequest too large\b.{0,250}?\btokens per minute\s*\(TPM\):\s*Limit\s+(\d{1,9}),\s*Requested\s+(\d{1,9})/is,
   );
@@ -1113,10 +1115,10 @@ function modelRecoveryAdvice(text: string) {
     return 'Shorten the conversation or choose a model with a higher tokens-per-minute limit.';
   if (
     !/\bHTTP 429\b/.test(text) ||
-    !/\b(?:GenerateRequestsPerDay|requests?\s*(?:\/|per\s+)day)\b/i.test(text)
+    !/\b(?:GenerateRequestsPerDay\w*|requests?\s*(?:\/|per\s+)day)\b/i.test(text)
   )
     return '';
-  const retry = text.match(/\bretryDelay:\s*(\d{1,6})s\b/i);
+  const retry = text.match(/\bretryDelay:\s*(\d{1,6}(?:\.\d+)?)s\b/i);
   const seconds = retry ? Number(retry[1]) : 0;
   if (!seconds) return '';
   const amount =
@@ -1202,7 +1204,7 @@ async function failTurn(
   turnId: string,
   present: ThreadDependencies['present'],
   error = interrupted,
-  { next, withdrawn }: { next?: string; withdrawn?: boolean } = {},
+  { next, modelFailure }: { next?: string; modelFailure?: boolean } = {},
 ) {
   const turn = await transaction(async (client) => {
     const thread = await lockThread(client);
@@ -1232,7 +1234,7 @@ async function failTurn(
     ).rows[0];
     if (!turn) return;
     await finishTurn(client, turnId, 'failed', { error });
-    if (withdrawn) await withdraw(client, [turnId], false);
+    if (modelFailure) await withdraw(client, [turnId], false);
     const task = turn.task_id
       ? (
           await client.query('SELECT message_id FROM tasks WHERE id=$1 AND owner_id=$2', [
@@ -1252,12 +1254,15 @@ async function failTurn(
       ? { kind: 'interrupted', ...(work ? { work } : {}) }
       : { kind: 'failed', error, ...(work ? { work } : {}) },
   ).catch(() => undefined);
-  const message =
+  const body =
     typeof presented === 'string' && presented.trim()
       ? presented
       : error === interrupted
         ? `I was interrupted before I finished${work ? ` “${work}”` : ''}. Check anything I may have started before you ask me to continue.`
         : `I couldn't finish ${work ? `“${work}”` : 'this'}. ${error}${next ? ` ${next}` : ''}`;
+  const message = modelFailure
+    ? `${body}\n\n[Change the model or check its connection in Settings > Models](/settings/models).`
+    : body;
   await transaction(async (client) => {
     if ((await lockThread(client)).id !== turn.thread_id) return;
     const current = await client.query(
@@ -2248,7 +2253,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       failure = error instanceof ModelRequestError ? 'model' : 'unknown';
       if (
         await failTurn(turnId, dependencies.present, failureText(error), {
-          withdrawn: failure === 'model',
+          modelFailure: failure === 'model',
         })
       )
         logFailure('turn_failed', error, { threadId, turnId, sessionId: turn.session_id });

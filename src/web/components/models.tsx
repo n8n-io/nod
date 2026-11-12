@@ -764,7 +764,8 @@ export function ModelSettings({ onDirtyChange }: { onDirtyChange?(dirty: boolean
                                 : 'Add key'}
                           </Button>
                         )}
-                        {(connection.status === 'loading' ||
+                        {(connection.status === 'connected' ||
+                          connection.status === 'loading' ||
                           (connection.managed && connection.status === 'reconnect')) && (
                           <Button
                             type="button"
@@ -778,7 +779,11 @@ export function ModelSettings({ onDirtyChange }: { onDirtyChange?(dirty: boolean
                               )
                             }
                           >
-                            {connection.status === 'loading' ? 'Load models' : 'Try again'}
+                            {connection.status === 'connected'
+                              ? 'Reload models'
+                              : connection.status === 'loading'
+                                ? 'Load models'
+                                : 'Try again'}
                           </Button>
                         )}
                         {!connection.managed && (

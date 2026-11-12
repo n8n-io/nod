@@ -1,3 +1,6 @@
+import type { Context } from '@earendil-works/pi-ai';
+import type { ModelAccess } from '../src/ports/models.ts';
+import { createPiModelBackend, createPiModelRuntime } from '../src/providers/pi/models.ts';
 import type { Presentation } from '../src/shared/presentation.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -7100,5 +7103,247 @@ test('Anthropic connection failures explain workspace access without leaking pro
       },
     );
     assert.equal(calls, 1);
+  }
+});
+
+async function access(provider: ModelAccess['provider'], id: string): Promise<ModelAccess> {
+  const backend = createPiModelBackend({
+    fetch: async () => {
+      throw new Error('Network access is disabled.');
+    },
+  });
+  const definition = (await backend.catalog(provider, 'api_key')).find(
+    ({ choice }) => choice.id === id,
+  );
+  assert.ok(definition);
+  return {
+    provider,
+    method: 'api_key',
+    definition,
+    effort: 'medium',
+    read: async () => ({ type: 'api_key', key: 'fixture-model-key' }),
+  };
+}
+
+function reply(content: Record<string, unknown>, finish = 'stop') {
+  const chunk = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
+  return new Response(
+    chunk({ id: 'fixture-reply', choices: [{ index: 0, delta: content }] }) +
+      chunk({
+        id: 'fixture-reply',
+        choices: [{ index: 0, delta: {}, finish_reason: finish }],
+        usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 },
+      }) +
+      'data: [DONE]\n\n',
+    { headers: { 'content-type': 'text/event-stream' } },
+  );
+}
+
+test('Groq Qwen finishes a task through a tool call with supported message roles', async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => (globalThis.fetch = original));
+  let calls = 0;
+  globalThis.fetch = async (input, init) => {
+    const body = (await new Request(input, init).json()) as {
+      messages: Array<{ role: string }>;
+    };
+    assert.ok(body.messages.every(({ role }) => role !== 'developer'));
+    calls++;
+    if (calls === 1)
+      return reply(
+        {
+          role: 'assistant',
+          tool_calls: [
+            {
+              index: 0,
+              id: 'fixture-read',
+              type: 'function',
+              function: { name: 'read_fixture', arguments: '{}' },
+            },
+          ],
+        },
+        'tool_calls',
+      );
+    assert.equal(body.messages.at(-1)?.role, 'tool');
+    return reply({ role: 'assistant', content: 'The synthetic task is complete.' });
+  };
+  const { runtime, model } = await createPiModelRuntime(await access('groq', 'qwen/qwen3.8-27b'));
+  const context: Context = {
+    systemPrompt: 'Finish the synthetic task.',
+    messages: [{ role: 'user', content: 'Read the fixture.', timestamp: 1 }],
+    tools: [
+      {
+        name: 'read_fixture',
+        description: 'Read synthetic data.',
+        parameters: { type: 'object', properties: {} },
+      },
+    ],
+  };
+  const first = await runtime.completeSimple(model, context, {});
+  assert.equal(first.stopReason, 'toolUse');
+  context.messages.push(first, {
+    role: 'toolResult',
+    toolCallId: 'fixture-read',
+    toolName: 'read_fixture',
+    content: [{ type: 'text', text: 'Synthetic data' }],
+    isError: false,
+    timestamp: 2,
+  });
+  const result = await runtime.completeSimple(model, context, {});
+  assert.equal(result.stopReason, 'stop');
+  assert.ok(JSON.stringify(result.content).includes('The synthetic task is complete.'));
+  assert.equal(calls, 2);
+});
+
+test('OpenCode Go can prepare a task with its required session header', async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => (globalThis.fetch = original));
+  const sessions: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    const session = request.headers.get('x-opencode-session');
+    assert.ok(session);
+    sessions.push(session);
+    if (sessions.length === 1)
+      return Response.json(
+        { error: { message: 'Synthetic service is unavailable.' } },
+        { status: 503 },
+      );
+    return reply({ role: 'assistant', content: '{"ready":true}' });
+  };
+  const selected = await access('opencode-go', 'deepseek-v4.1-flash');
+  const curator = createPiMemoryCurator({
+    provider: selected.provider,
+    resolve: async () => selected,
+  });
+  for (let index = 0; index < 2; index++)
+    assert.deepEqual(
+      await curator.curate({ task: 'plan', instructions: 'Prepare a task.', input: {} }),
+      { ready: true },
+    );
+  assert.equal(sessions.length, 3);
+  assert.equal(sessions[0], sessions[1]);
+  assert.notEqual(sessions[1], sessions[2]);
+});
+
+test('OpenRouter MiMo accepts tools with different optional sampling settings', async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => (globalThis.fetch = original));
+  let calls = 0;
+  globalThis.fetch = async (input, init) => {
+    const body = (await new Request(input, init).json()) as {
+      tools: Array<{ function: { strict?: boolean } }>;
+    };
+    assert.equal(body.tools.length, 2);
+    assert.deepEqual(
+      [...new Set(body.tools.map((tool) => tool.function.strict ?? false))],
+      [false],
+    );
+    calls++;
+    return reply({ role: 'assistant', content: 'The synthetic result is ready.' });
+  };
+  const { runtime, model } = await createPiModelRuntime(
+    await access('openrouter', 'xiaomi/mimo-v2.6-flash'),
+  );
+  const context: Context = {
+    messages: [{ role: 'user', content: 'Finish the synthetic task.', timestamp: 1 }],
+    tools: [
+      {
+        name: 'read_fixture',
+        description: 'Read synthetic data.',
+        parameters: { type: 'object', properties: {} },
+        constrainedSampling: { type: 'json_schema', strict: 'prefer' },
+      },
+      {
+        name: 'inspect_fixture',
+        description: 'Inspect synthetic data.',
+        parameters: { type: 'object', properties: {} },
+        constrainedSampling: false,
+      },
+    ],
+  };
+  const result = await runtime.completeSimple(model, context, {});
+  assert.equal(result.stopReason, 'stop');
+  assert.equal(calls, 1);
+  context.tools![0].constrainedSampling = { type: 'json_schema', strict: 'require' };
+  const required = await runtime.completeSimple(model, context, {});
+  assert.equal(required.stopReason, 'error');
+  assert.match(required.errorMessage ?? '', /requires JSON-schema constrained sampling/);
+  assert.equal(calls, 1);
+});
+
+test('OpenRouter free routing can prepare a task when reasoning cannot be disabled', async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => (globalThis.fetch = original));
+  let calls = 0;
+  globalThis.fetch = async (input, init) => {
+    const body = (await new Request(input, init).json()) as {
+      reasoning?: { effort?: string; enabled?: boolean };
+    };
+    assert.equal(body.reasoning?.effort, 'minimal');
+    assert.notEqual(body.reasoning?.enabled, false);
+    calls++;
+    return reply({ role: 'assistant', content: '{"ready":true}' });
+  };
+  const selected = await access('openrouter', 'openrouter/free');
+  assert.ok(!selected.definition.choice.efforts.includes('off'));
+  const curator = createPiMemoryCurator({
+    provider: selected.provider,
+    resolve: async () => ({ ...selected, effort: 'off' }),
+  });
+  assert.deepEqual(
+    await curator.curate({ task: 'plan', instructions: 'Prepare a task.', input: {} }),
+    { ready: true },
+  );
+  assert.equal(calls, 1);
+});
+
+test('Ollama models with on or off thinking complete tasks without a named effort', async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => (globalThis.fetch = original));
+  for (const thinking of [undefined, { values: [false, true] }, { values: [true] }]) {
+    const onlyOn = thinking?.values.length === 1;
+    const enabled: Array<boolean | undefined> = [];
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      const path = new URL(request.url).pathname;
+      if (path === '/v1/models') return Response.json({ data: [{ id: 'qwen3:8b' }] });
+      if (path === '/api/version') return Response.json({ version: 'fixture' });
+      if (path === '/api/show')
+        return Response.json({
+          capabilities: ['completion', 'tools', 'thinking'],
+          model_info: { 'qwen3.context_length': 32768 },
+          thinking,
+        });
+      assert.equal(path, '/v1/chat/completions');
+      const body = (await request.json()) as { reasoning_effort?: string; think?: boolean };
+      assert.equal(body.reasoning_effort, undefined);
+      assert.equal(typeof body.think, thinking ? 'boolean' : 'undefined');
+      enabled.push(body.think);
+      return reply({ role: 'assistant', content: 'The synthetic task is complete.' });
+    };
+    const credential = { type: 'endpoint' as const, url: 'http://127.0.0.1:1/v1' };
+    const backend = createPiModelBackend({ fetch: globalThis.fetch });
+    const [definition] = await backend.catalog('compatible', 'api_key', credential);
+    assert.deepEqual(
+      definition.choice.efforts,
+      thinking ? (onlyOn ? ['high'] : ['off', 'high']) : ['off'],
+    );
+    const { runtime, model } = await createPiModelRuntime({
+      provider: 'compatible',
+      method: 'api_key',
+      definition,
+      effort: 'high',
+      read: async () => credential,
+    });
+    for (const reasoning of ['high', 'off'] as const) {
+      const result = await runtime.completeSimple(
+        model,
+        { messages: [{ role: 'user', content: 'Finish the synthetic task.', timestamp: 1 }] },
+        { reasoning: reasoning === 'off' ? undefined : reasoning },
+      );
+      assert.equal(result.stopReason, 'stop');
+    }
+    assert.deepEqual(enabled, thinking ? [true, onlyOn] : [undefined, undefined]);
   }
 });

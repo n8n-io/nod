@@ -2770,6 +2770,39 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     for (const access of captured) assert.equal(await access.read(), undefined);
   });
 
+  test('model refresh repairs an unsupported effort and keeps a supported choice', async (t) => {
+    const f = await fixture(t);
+    const definition = (await f.backend.catalog('openrouter', 'api_key')).find(
+      (model) => model.choice.id === 'openrouter/free',
+    )!;
+    let updated = false;
+    const owner = await f.create('fixture-refreshed-effort', {
+      ...f.backend,
+      catalog: async () => [
+        {
+          ...definition,
+          choice: {
+            ...definition.choice,
+            efforts: updated ? ['minimal', 'low', 'medium', 'high'] : ['off', 'high'],
+          },
+        },
+      ],
+    });
+    const id = await owner.addKey('openrouter', 'fixture-refreshed-key');
+    await owner.select({ connectionId: id, modelId: 'openrouter/free', effort: 'off' });
+    updated = true;
+    await owner.refreshCatalog(id);
+    assert.deepEqual(owner.view().selection, {
+      connectionId: id,
+      modelId: 'openrouter/free',
+      effort: 'minimal',
+    });
+    assert.equal((await owner.resolve()).effort, 'minimal');
+    await owner.select({ connectionId: id, modelId: 'openrouter/free', effort: 'high' });
+    await owner.refreshCatalog(id);
+    assert.equal((await owner.resolve()).effort, 'high');
+  });
+
   test('model setup chooses capable defaults, preserves explicit choices and requires valid cloud accounts', async (t) => {
     const f = await fixture(t);
     const backend = {
