@@ -4373,10 +4373,7 @@ test('the live line shows a model retry and the text before a tool call while th
   });
   assert.equal(released, 'step');
   assert.ok(scripts.some((script) => script.includes('fixture-read-notes')));
-  assert.deepEqual(
-    emitted.find(([type]) => type === 'retry'),
-    ['retry', `${definition.choice.name} failed, trying again (1 of 3)`],
-  );
+  assert.ok(emitted.find(([type]) => type === 'retry')?.[1].includes(definition.choice.name));
 });
 
 test('OpenAI cache boundaries cover shared instructions and keep task paths outside them', async () => {

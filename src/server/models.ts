@@ -827,9 +827,11 @@ export function createModelService(options: {
         provider:
           rows.find((row) => row.id === selection?.connectionId)?.provider ?? 'unconfigured',
         name: selection?.modelId ?? 'Unconfigured',
-        label: rows
-          .find((row) => row.id === selection?.connectionId)
-          ?.models.find((model) => model.choice.id === selection?.modelId)?.choice.name,
+        label:
+          rows
+            .find((row) => row.id === selection?.connectionId)
+            ?.models.find((model) => model.choice.id === selection?.modelId)?.choice.name ??
+          selection?.modelId,
         configured: service.configured,
         reconnect: rows.find((row) => row.id === selection?.connectionId)?.status === 'reconnect',
       };
