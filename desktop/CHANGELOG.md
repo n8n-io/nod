@@ -2,6 +2,36 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.7.2 - 2026-11-12
+
+### Features
+
+- **chat:** Answer questions and approvals on inline cards. [commit](https://github.com/n8n-io/nod/commit/b5ca2291efd8f6fa46104dd2817c6ed5aed79a0a) (b5ca229)
+
+### Fixes
+
+- Keep Windows workspace paths and observer inputs valid. [#774](https://github.com/n8n-io/nod/pull/774) (3e7cb1c)
+- **backend:** Guard missing token and text values. [commit](https://github.com/n8n-io/nod/commit/1de94edc35974975ac11dd7cb3c3e944666b4c26) (1de94ed)
+- Address recent desktop feedback. [#771](https://github.com/n8n-io/nod/pull/771) (d6581fb)
+- **desktop:** Show the Nod icon in the Windows app. [#770](https://github.com/n8n-io/nod/pull/770) (7c442fe)
+- **desktop:** Log when the background service health wait times out. [#769](https://github.com/n8n-io/nod/pull/769) (6919de1)
+- **backend:** Tell a late scheduled run it is late. [#766](https://github.com/n8n-io/nod/pull/766) (6e37fbc)
+- **backend:** Log why a trust check answer was unusable. [#768](https://github.com/n8n-io/nod/pull/768) (37a1fe3)
+- **backend:** Keep the Gmail check moving past an oversized message. [#767](https://github.com/n8n-io/nod/pull/767) (cdc1050)
+- **backend:** Keep owner-edited learned skills from agent overwrites. [#765](https://github.com/n8n-io/nod/pull/765) (b9b6840)
+- Unblock model requests and narrow Linux CI. [#757](https://github.com/n8n-io/nod/pull/757) (8af6bdb)
+- **scripts:** Run pnpm start on Windows. [#751](https://github.com/n8n-io/nod/pull/751) (cff2409)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.7.1...3e7cb1c40c1bf588c662df77a8c196270651a500)
+
+<details>
+<summary>Build details</summary>
+
+Source: `3e7cb1c40c1bf588c662df77a8c196270651a500`
+Previous release: `nod-v0.7.1`
+
+</details>
+
 ## 0.7.1 - 2026-11-12
 
 ### Features
