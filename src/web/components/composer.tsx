@@ -1188,20 +1188,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   : microphoneLabel}
               </span>
             </MicrophonePicker>
-            {showStop && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="stop-button"
-                aria-label="Stop all work"
-                title="Stop all work"
-                disabled={stopping}
-                onClick={onStop}
-              >
-                <Square size={16} solid />
-              </Button>
-            )}
+            <span className="stop-slot">
+              {showStop && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="stop-button"
+                  aria-label="Stop all work"
+                  title="Stop all work"
+                  disabled={stopping}
+                  onClick={onStop}
+                >
+                  <Square size={16} solid />
+                </Button>
+              )}
+            </span>
             <Button
               ref={sendButton}
               type="submit"

@@ -219,7 +219,14 @@
   gap: var(--chat-action-gap);
 }
 .composer-right > .button,
-.composer-microphone > .button {
+.composer-microphone > .button,
+.stop-slot > .button {
+  width: var(--chat-action-size);
+  min-width: var(--chat-action-size);
+  height: var(--chat-action-size);
+}
+.stop-slot {
+  display: inline-flex;
   width: var(--chat-action-size);
   min-width: var(--chat-action-size);
   height: var(--chat-action-size);
