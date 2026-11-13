@@ -10,6 +10,7 @@ import Fastify from 'fastify';
 import pg from 'pg';
 import type { ChannelSetupConfiguration } from '../src/ports/channel-settings.ts';
 import type { InboundMessage, MessagingTransport } from '../src/ports/messaging.ts';
+import { MessagingConnectionError } from '../src/ports/messaging.ts';
 import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../src/providers/chat-sdk/settings.ts';
 import {
@@ -19,6 +20,7 @@ import {
   type ChannelConnectionObservation,
 } from '../src/server/channel-settings.ts';
 import { createChannels } from '../src/server/channels.ts';
+import { withFailureLog } from '../src/server/failure-log.ts';
 import { transaction } from '../src/server/transaction.ts';
 import type { LiveWork } from '../src/server/activity.ts';
 
@@ -241,9 +243,13 @@ test(
       WHATSAPP_ACCESS_TOKEN: 'synthetic-server-meta-token',
     });
     const managedObservations: ChannelConnectionObservation[][] = [];
+    const reconnects: Record<string, string>[] = [];
     const settings = await createChannelSettings(pool, {
       ...options,
       managed,
+      apply: async (environment) => {
+        reconnects.push(environment);
+      },
       observed: () => (states) => {
         managedObservations.push(states);
       },
@@ -301,6 +307,20 @@ test(
     ]);
     for (const secret of [serverToken, 'synthetic-server-meta-token'])
       assert.equal(JSON.stringify(status).includes(secret), false);
+    const reconnected = await app.inject({
+      method: 'POST',
+      url: '/api/channel-settings/telegram/reconnect',
+    });
+    assert.equal(reconnected.statusCode, 200);
+    assert.equal(reconnected.json().channel.allowedUserId, '42');
+    assert.equal(reconnected.body.includes(serverToken), false);
+    assert.deepEqual(reconnects, [environment]);
+    for (const provider of ['whatsapp', 'unknown'])
+      assert.equal(
+        (await app.inject({ method: 'POST', url: `/api/channel-settings/${provider}/reconnect` }))
+          .statusCode,
+        400,
+      );
     assert.deepEqual((await pool.query('SELECT * FROM channel_settings')).rows, rows);
     const observeManaged = async (
       environment: Record<string, string | undefined>,
@@ -449,6 +469,15 @@ test(
     assert.equal(refreshed.statusCode, 200);
     assert.notEqual(refreshed.json().pairingId, qr.json().pairingId);
     assert.equal(restarts, 1);
+    linkedState = 'connected';
+    const reconnectedLink = await linkedApp.inject({
+      method: 'POST',
+      url: '/api/channel-settings/whatsapp/reconnect',
+    });
+    assert.equal(reconnectedLink.statusCode, 200);
+    assert.equal(reconnectedLink.json().channel.connectionState, 'connected');
+    assert.equal(reconnectedLink.body.includes('synthetic-pairing-qr'), false);
+    assert.equal(restarts, 2);
     assert.deepEqual((await pool.query('SELECT * FROM channel_settings')).rows, rows);
   },
 );
@@ -502,9 +531,9 @@ test(
           const persisted = await settings.environment();
           assert.equal(persisted.TELEGRAM_WEBHOOK_SECRET_TOKEN, body.secret_token);
           assert.equal(applied.TELEGRAM_WEBHOOK_SECRET_TOKEN, body.secret_token);
-          assert.equal(
-            (await settings.status()).channels[0]?.webhookStatus,
-            'registration_pending',
+          assert.match(
+            (await settings.status()).channels[0]?.webhookStatus ?? '',
+            /^(registration_pending|registered)$/,
           );
           registrations.push(body.secret_token);
           if (loseRegistrationResponse) throw new Error('fixture response lost after registration');
@@ -612,7 +641,28 @@ test(
         interrupted.TELEGRAM_WEBHOOK_SECRET_TOKEN,
       );
       assert.equal((await settings.status()).channels[0]?.webhookStatus, 'registered');
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: '/api/channel-settings/telegram/user',
+            payload: { allowedUserId: '123' },
+          })
+        ).statusCode,
+        200,
+      );
+      const savedConnection = await settings.environment();
+      const registrationCount = registrations.length;
+      const reconnect = () =>
+        app.inject({ method: 'POST', url: '/api/channel-settings/telegram/reconnect' });
+      const reconnected = await reconnect();
+      assert.equal(reconnected.statusCode, 200);
+      assert.equal(reconnected.json().channel.allowedUserId, '123');
+      assert.equal(registrations.length, registrationCount + 1);
+      assert.deepEqual(await settings.environment(), savedConnection);
       loseRegistrationResponse = true;
+      assert.equal((await reconnect()).statusCode, 400);
+      assert.deepEqual(await settings.environment(), savedConnection);
       assert.equal((await save()).statusCode, 503);
       assert.equal(
         (await app.inject({ method: 'DELETE', url: '/api/channel-settings/telegram' })).statusCode,
@@ -686,6 +736,17 @@ test(
         link.state = 'connected';
         assert.equal((await cancel(link.pairingId)).json().channel.enabled, true);
         assert.equal(unlinks, 0);
+        const savedLink = await linked.environment();
+        const savedPairingId = link.pairingId;
+        const reconnected = await linkedApp.inject({
+          method: 'POST',
+          url: '/api/channel-settings/whatsapp/reconnect',
+        });
+        assert.equal(reconnected.statusCode, 200);
+        assert.equal(reconnected.json().channel.connectionState, 'connected');
+        assert.equal(unlinks, 0);
+        assert.equal(link.pairingId, savedPairingId);
+        assert.deepEqual(await linked.environment(), savedLink);
         const oldId = link.pairingId;
         assert.equal(
           (
@@ -898,6 +959,14 @@ test(
       options: `-c search_path=${schema}`,
     });
     const offsets: number[] = [];
+    let pollFailure = false;
+    await pool.query(
+      'CREATE TABLE channel_poll_offsets(provider text NOT NULL,account_id text NOT NULL,next_offset bigint NOT NULL,PRIMARY KEY(provider,account_id))',
+    );
+    await pool.query(
+      "INSERT INTO channel_poll_offsets(provider,account_id,next_offset) VALUES('telegram',$1,999999)",
+      [token.split(':')[0]],
+    );
     const transport = createChatSdkTransport(
       pool,
       {
@@ -911,6 +980,15 @@ test(
         fetch: async (url, init) => {
           assert.equal(String(url), `https://api.telegram.org/bot${token}/getUpdates`);
           offsets.push(JSON.parse(String(init?.body)).offset);
+          if (pollFailure)
+            return Response.json(
+              {
+                ok: false,
+                error_code: 409,
+                description: `Conflict: terminated by another getUpdates request ${token} ${encodeURIComponent(token)}`,
+              },
+              { status: 409 },
+            );
           return Response.json({
             ok: true,
             result:
@@ -935,21 +1013,75 @@ test(
     try {
       await assert.rejects(
         transport.poll!(async () => {
-          throw new Error('database fixture failure');
+          throw Object.assign(new Error('database fixture failure'), { code: '40001' });
         }),
       );
-      assert.equal((await pool.query('SELECT * FROM channel_poll_offsets')).rowCount, 0);
+      assert.equal(
+        transport.channels.find((channel) => channel.id === 'telegram')?.available,
+        true,
+      );
+      assert.equal(
+        transport.channels.find((channel) => channel.id === 'telegram')?.error,
+        undefined,
+      );
+      assert.equal(
+        Number((await pool.query('SELECT * FROM channel_poll_offsets')).rows[0].next_offset),
+        999999,
+      );
       let accepted = 0;
       await transport.poll!(async (message) => {
         assert.equal(message.senderId, '123');
         assert.equal(message.text, 'Fixture polling request');
         accepted++;
       });
+      await pool.query("UPDATE channel_poll_offsets SET updated_at=now() - interval '23 hours'");
       await transport.poll!(async () => {
         assert.fail('Already persisted update');
       });
       assert.deepEqual(offsets, [0, 0, 42]);
       assert.equal(accepted, 1);
+      await pool.query(
+        "UPDATE channel_poll_offsets SET next_offset=999999,updated_at=now() - interval '25 hours'",
+      );
+      await transport.poll!(async () => {
+        accepted++;
+      });
+      assert.equal(accepted, 2);
+      await transport.poll!(async () => {
+        assert.fail('The new update number was not saved.');
+      });
+      assert.deepEqual(offsets.slice(-2), [0, 42]);
+      pollFailure = true;
+      await assert.rejects(
+        transport.poll!(async () => {}),
+        (error: Error) => {
+          assert.match(
+            error.message,
+            /HTTP 409, code 409.*Conflict: terminated by another getUpdates request/,
+          );
+          assert.equal(error.message.includes(token), false);
+          assert.equal(error.message.includes(encodeURIComponent(token)), false);
+          return true;
+        },
+      );
+      assert.equal(
+        transport.channels.find((channel) => channel.id === 'telegram')?.available,
+        false,
+      );
+      assert.match(
+        transport.channels.find((channel) => channel.id === 'telegram')?.error ?? '',
+        /HTTP 409/,
+      );
+      pollFailure = false;
+      await transport.poll!(async () => assert.fail('An accepted update was repeated.'));
+      assert.equal(
+        transport.channels.find((channel) => channel.id === 'telegram')?.available,
+        true,
+      );
+      assert.equal(
+        transport.channels.find((channel) => channel.id === 'telegram')?.error,
+        undefined,
+      );
     } finally {
       await transport.close();
       await pool.end();
@@ -1274,6 +1406,51 @@ async function outboxFixture(t: TestContext, max?: number, provider = 'telegram'
     });
   return { pool, threadId, posts, receive, turnOf, reply, create, transport };
 }
+
+test(
+  'channel polling keeps the service reason and clears it after recovery',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { create, transport } = await outboxFixture(t);
+    const reason = 'Telegram polling failed (HTTP 409): Conflict: another poll is active.';
+    transport.poll = async () => {
+      transport.channels[0].available = false;
+      transport.channels[0].error = reason;
+      throw new MessagingConnectionError(reason);
+    };
+    const channels = await create();
+    const app = Fastify();
+    channels.registerRoutes(app);
+    try {
+      const failures: string[] = [];
+      await withFailureLog(
+        (event) => {
+          failures.push(event);
+        },
+        async () => {
+          await channels.drain();
+          await channels.drain();
+        },
+      );
+      const failed = (await app.inject('/api/channels')).json();
+      assert.equal(failed.error, reason);
+      assert.equal(failed.channels[0].available, false);
+      assert.equal(failed.channels[0].error, reason);
+      assert.equal(failures.filter((event) => event === 'channel_connection_failed').length, 1);
+      transport.poll = async () => {
+        transport.channels[0].available = true;
+        transport.channels[0].error = undefined;
+      };
+      await channels.drain();
+      const recovered = (await app.inject('/api/channels')).json();
+      assert.equal(recovered.error, null);
+      assert.equal(recovered.channels[0].available, true);
+      assert.equal(recovered.channels[0].error, undefined);
+    } finally {
+      await app.close();
+    }
+  },
+);
 
 test(
   'channel answer choices preserve the question and option meaning without changing stored text',

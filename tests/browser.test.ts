@@ -4413,6 +4413,27 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
             await assertVisiblePaste(sent, literalPaste);
           }
         }
+        const atLimitPaste = 'x'.repeat(100_000);
+        await act(async () => replaceText(''));
+        await paste(atLimitPaste);
+        await settle(() => currentText.length === 100_000);
+        assert.equal(document.querySelector('[aria-label="Send message"]').disabled, false);
+        const sentBeforeAtLimit = sends.length;
+        await submit();
+        assert.equal(sends.length, sentBeforeAtLimit + 1);
+        assert.equal(sends.at(-1).text, atLimitPaste);
+        const longPaste = 'name;email\n' + 'x'.repeat(100_001 - 'name;email\n'.length);
+        await act(async () => replaceText(''));
+        await paste(longPaste);
+        await settle(() => currentText.length === 100_001);
+        assert.equal(document.querySelector('[aria-label="Send message"]').disabled, true);
+        const sentBeforeLongPaste = sends.length;
+        await submit();
+        assert.equal(sends.length, sentBeforeLongPaste);
+        assert.equal(currentText, longPaste);
+        assert.ok(document.querySelector('.composer-wrap [role="alert"]'));
+        await act(async () => replaceText(''));
+        await settle(() => !document.querySelector('.composer-wrap [role="alert"]'));
         const spacedPaste = '  ["__init__", "<after>", "ada@example.test"]  \n';
         await act(async () => replaceText(''));
         await paste(spacedPaste);
@@ -7310,7 +7331,10 @@ test('chat shows pending sends and active work before a model step', async () =>
         assert.ok(stop && !stop.disabled);
         await act(async () => stop.click());
         assert.equal(stops, 1);
-        for (const [detail, line] of [[{ site: 'example.test', doing: 'tool' }, 'example.test'], [{ site: 'example.test', doing: 'model' }, null], [{ step: '   ' }, null], [{ doing: 'model' }, null]]) {
+        const quiet = new Date(Date.now() - 150_000).toISOString();
+        for (const [detail, line] of [[{ site: 'example.test', doing: 'tool' }, 'example.test'], [{ site: 'example.test', doing: 'model' }, null], [{ step: '   ' }, null], [{ doing: 'model' }, null],
+          [{ doing: 'tool', tool: 'Synthetic tool label' }, 'Synthetic tool label'], [{ doing: 'model', model: 'Synthetic Model' }, null],
+          [{ doing: 'model', model: 'Synthetic Model', quietSince: quiet }, 'Synthetic Model']]) {
           state = { ...state, activity: [{ ...activity, ...detail }] };
           await render();
           if (line) assert.ok(document.querySelector('.thinking')?.textContent?.includes(line));

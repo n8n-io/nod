@@ -88,10 +88,19 @@ export function createWhatsAppLinkedTransport(options: {
     available: false,
   };
 
-  function stop(next: ChannelLinkStatus['state']) {
+  function stop(next: ChannelLinkStatus['state'], error: string, cause?: unknown) {
+    const code = (cause as { code?: unknown } | undefined)?.code;
+    if (typeof code === 'string' && /^(?:[0-9A-Z]{5}|[A-Z][A-Z0-9_]{0,31})$/.test(code))
+      error += ` Error code: ${code}.`;
     halted = true;
     channel.available = false;
-    state = { state: next, accountHandle: state.accountHandle, accountName: state.accountName };
+    state = {
+      state: next,
+      accountHandle: state.accountHandle,
+      accountName: state.accountName,
+      error,
+    };
+    channel.error = error;
     clearTimeout(reconnect);
     clearTimeout(expiry);
     socket?.end(undefined);
@@ -101,8 +110,9 @@ export function createWhatsAppLinkedTransport(options: {
       if (closed || !session) throw new Error('The WhatsApp session is closed.');
       await session.set(values);
     });
-    writes = pending.catch(() => {
-      if (!closed) stop('failed');
+    writes = pending.catch((cause) => {
+      if (!closed && !halted)
+        stop('failed', 'Nod could not save the WhatsApp device keys. Select Reconnect.', cause);
     });
     return pending;
   }
@@ -325,7 +335,14 @@ export function createWhatsAppLinkedTransport(options: {
   }
   function connect() {
     if (closed || halted) return;
-    state = { ...state, state: 'connecting', qr: undefined, expiresAt: undefined };
+    state = {
+      ...state,
+      state: 'connecting',
+      qr: undefined,
+      expiresAt: undefined,
+      error: undefined,
+    };
+    channel.error = undefined;
     const current = (options.createSocket ?? makeWASocket)({
       auth,
       logger: silent,
@@ -362,8 +379,9 @@ export function createWhatsAppLinkedTransport(options: {
         .then(async () => {
           for (const message of messages) await intake(message, current);
         })
-        .catch(() => {
-          if (!closed) stop('failed');
+        .catch((cause) => {
+          if (!closed && !halted)
+            stop('failed', 'Nod could not read a WhatsApp message. Select Reconnect.', cause);
         })
         .finally(() => {
           queued -= messages.length;
@@ -382,13 +400,25 @@ export function createWhatsAppLinkedTransport(options: {
         };
       if (update.connection === 'open') {
         if (!identity()) {
-          stop('failed');
+          stop(
+            'failed',
+            ownNumber() === options.allowedNumber
+              ? 'The bot account uses your personal number. Link a different account, or choose Use my own number.'
+              : 'WhatsApp did not provide a usable account number. Select Reconnect.',
+          );
           return;
         }
         clearTimeout(expiry);
         attempt = 0;
-        state = { ...state, state: 'connected', qr: undefined, expiresAt: undefined };
+        state = {
+          ...state,
+          state: 'connected',
+          qr: undefined,
+          expiresAt: undefined,
+          error: undefined,
+        };
         channel.available = true;
+        channel.error = undefined;
         if (!linkedAt) {
           linkedAt = Date.now() - 2000;
           void save({ 'intake-start': String(linkedAt) }).catch(() => {});
@@ -401,21 +431,43 @@ export function createWhatsAppLinkedTransport(options: {
           update.lastDisconnect?.error as { output?: { statusCode?: number } } | undefined
         )?.output?.statusCode;
         if (code === DisconnectReason.loggedOut) {
-          stop('logged_out');
+          stop('logged_out', `WhatsApp signed out this device (${code}). Start again to link it.`);
           void clearSaved().catch(() => {
-            state = { state: 'failed' };
+            stop(
+              'failed',
+              'Nod could not remove the signed-out WhatsApp device keys. Select Reconnect.',
+            );
           });
         } else if (
           code === DisconnectReason.connectionReplaced ||
           code === DisconnectReason.badSession ||
           code === DisconnectReason.forbidden ||
           code === DisconnectReason.multideviceMismatch
-        )
-          stop('failed');
-        else {
+        ) {
+          const reason =
+            code === DisconnectReason.connectionReplaced
+              ? 'WhatsApp replaced this connection with another session'
+              : code === DisconnectReason.badSession
+                ? 'WhatsApp rejected the saved device session'
+                : code === DisconnectReason.forbidden
+                  ? 'WhatsApp refused this device'
+                  : 'WhatsApp rejected the device version';
+          stop(
+            'failed',
+            `${reason} (${code}). Select Reconnect. If it still fails, check Linked Devices in WhatsApp.`,
+          );
+        } else {
+          state.error = `WhatsApp disconnected${Number.isInteger(code) ? ` (${code})` : ''}. Nod is trying to reconnect.`;
+          channel.error = state.error;
           clearTimeout(reconnect);
           reconnect = setTimeout(
-            () => connect(),
+            () => {
+              try {
+                connect();
+              } catch (cause) {
+                stop('failed', 'Nod could not reconnect to WhatsApp. Select Reconnect.', cause);
+              }
+            },
             Math.min(60_000, 1000 * 2 ** Math.min(attempt++, 6)),
           );
           reconnect.unref();
@@ -465,16 +517,24 @@ export function createWhatsAppLinkedTransport(options: {
       if (!credentials) await save({ creds: JSON.stringify(auth.creds, BufferJSON.replacer) });
       if (!auth.creds.registered) {
         expiry = setTimeout(() => {
-          stop('expired');
+          stop('expired', 'The WhatsApp QR setup expired. Start again to get a new code.');
           void clearSaved().catch(() => {
-            state = { state: 'failed' };
+            stop(
+              'failed',
+              'Nod could not remove the expired WhatsApp device keys. Select Reconnect.',
+            );
           });
         }, 5 * 60_000);
         expiry.unref();
       }
       connect();
-    })().catch(() => {
-      if (!closed) stop('failed');
+    })().catch((cause) => {
+      if (!closed && !halted)
+        stop(
+          'failed',
+          'Nod could not start the saved WhatsApp connection. Select Reconnect.',
+          cause,
+        );
     });
     await starting;
   }
@@ -670,6 +730,7 @@ export function createWhatsAppLinkedTransport(options: {
       }
       halted = true;
       channel.available = false;
+      channel.error = undefined;
       state = { state: 'failed' };
       clearTimeout(reconnect);
       clearTimeout(expiry);
@@ -693,7 +754,12 @@ export function createWhatsAppLinkedTransport(options: {
       } finally {
         socket?.end(undefined);
         await starting;
-        await clearSaved();
+        try {
+          await clearSaved();
+        } catch (cause) {
+          stop('failed', 'Nod could not remove the WhatsApp device keys.', cause);
+          throw cause;
+        }
         channel.available = false;
         channel.status = 'setup_required';
         state = { state: 'logged_out' };

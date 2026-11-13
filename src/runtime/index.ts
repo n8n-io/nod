@@ -12,7 +12,9 @@ import type {
   AgentImage,
   AgentSession,
   AgentTool,
+  AgentToolOutcome,
   AgentToolResult,
+  Documentation,
   RuntimeContext,
   RuntimeObservation,
   RuntimeResult,
@@ -28,11 +30,13 @@ import {
   compactSystemPrompt,
   firstInstruction,
   observerInstruction,
+  scheduledInstruction,
   ownerContext,
   steeredInstruction,
   systemPrompt,
 } from './prompt.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
+import { repeatsTaskStart } from '../shared/task-ack.ts';
 import { currentUserTime, localResultTimes } from './time-context.ts';
 import { connectedTools, mcpNamespaces, nodTools } from './tools.ts';
 import type { ReplyDelivery, Turn } from './turn.ts';
@@ -41,6 +45,33 @@ import type { MemoryBrief } from '../ports/memory-recall.ts';
 import { delimit } from './untrusted.ts';
 
 const imageBytes = (5 * 1024 * 1024 * 3) / 4;
+function toolProgress() {
+  const failures = new Map<string, { count: number; error: string }>();
+  return {
+    get error() {
+      const failed = [...failures].find(([, failure]) => failure.count >= 5);
+      return failed
+        ? `The ${failed[0]} tool failed five times without a successful call. Last failure: ${failed[1].error}`
+        : undefined;
+    },
+    stopped(results: AgentToolOutcome[] = []) {
+      for (const result of results) {
+        if (result.error === undefined) failures.delete(result.name);
+        else if (
+          /^(?:Validation failed for tool |Invalid (?:arguments for tool |[\w ]+ (?:input[.:]|arguments(?: at|[.:])))|Tool \S+ not found|This source (?:failed during this check|check has reached its read limit)|Nod could not confirm it was still on the page and control it checked|(?:This connected|The selected) account changed\.|The trust check couldn|The action review model is unavailable|Nod could not write an accurate confirmation)/.test(
+            result.error,
+          )
+        ) {
+          failures.set(result.name, {
+            count: (failures.get(result.name)?.count ?? 0) + 1,
+            error: result.error,
+          });
+        }
+      }
+      return [...failures.values()].some((failure) => failure.count >= 5);
+    },
+  };
+}
 const inlineChars = 40_000;
 const imageBudget = 16 * 1024 * 1024;
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
@@ -55,13 +86,13 @@ const parentTools = new Set([
   'task',
 ]);
 const parallelTools = new Set([
+  'nod_docs',
   'delegate',
   'share_file',
   'create_audio',
   'skills',
   'apps',
   'manage_personal_context',
-  'task',
   'react_to_message',
 ]);
 const orderedTools = new Set([
@@ -83,6 +114,7 @@ const reportingTaskActions = new Set(['finish', 'list', 'stop', 'update']);
 const limitActions = new Set(['usage_get', 'limits_update']);
 const dollars = (value: number) => `$${Number.isInteger(value) ? value : value.toFixed(2)}`;
 const delimitedTools = new Set([
+  'nod_docs',
   'read_source',
   'proactive_issue',
   'apps',
@@ -135,6 +167,7 @@ export function createAgentRuntime(dependencies: {
   computer: Computer;
   workspace: Workspace;
   skills?: SkillLibrary;
+  documentation?: Documentation;
   redactError?(text: string): string;
   observe?(turnId: string, event: RuntimeObservation): void;
   keepWarm?(threadId: string): Promise<boolean>;
@@ -191,6 +224,7 @@ export function createAgentRuntime(dependencies: {
     let stopped = false;
     let modelError: string | undefined;
     let modelIncomplete: 'output' | 'context' | undefined;
+    const progress = toolProgress();
     let completed = false;
     let lastReply = '';
     let lastPresentation = '';
@@ -233,6 +267,7 @@ export function createAgentRuntime(dependencies: {
     let reported = false;
     let finalDelivered = false;
     let requestRevision = 0;
+    let taskStart: { revision: number; message: string; previousReply: string } | undefined;
     const activeToolCalls = new Set<Promise<unknown>>();
     const observe = (event: RuntimeObservation) => {
       if (signal.aborted && !(event.type === 'tool_end' && event.status === 'cancelled')) return;
@@ -263,6 +298,7 @@ export function createAgentRuntime(dependencies: {
       id?: string,
       replyToMessageId?: string,
       presentation?: Presentation,
+      handoff?: boolean,
     ): Promise<ReplyDelivery> => {
       signal.throwIfAborted();
       const trimmed = text.trim();
@@ -273,7 +309,8 @@ export function createAgentRuntime(dependencies: {
         (trimmed === lastReply && (!visual || visual === lastPresentation))
       )
         return { delivered: false, presentation: outcome };
-      await context.reply(trimmed, id, replyToMessageId, presentation);
+      if (handoff) await context.reply(trimmed, id, replyToMessageId, presentation, true);
+      else await context.reply(trimmed, id, replyToMessageId, presentation);
       lastPresentation = visual;
       if (id) persistedStreams.add(id);
       lastReply = trimmed;
@@ -306,7 +343,8 @@ export function createAgentRuntime(dependencies: {
 
     const flushText = () => {
       if (bufferedText && !stopped && speaks) {
-        if (speakNext || replyOwed) context.delta(bufferedText, (streamId ??= randomUUID()));
+        if ((speakNext || replyOwed) && (taskStart?.revision !== requestRevision || replyOwed))
+          context.delta(bufferedText, (streamId ??= randomUUID()));
         streamedText += bufferedText;
       }
       bufferedText = '';
@@ -476,6 +514,12 @@ export function createAgentRuntime(dependencies: {
             (name === 'task' && (params as { action?: unknown } | null)?.action === 'start')
           )
             reported = true;
+          if (name === 'task' && (params as { action?: unknown } | null)?.action === 'start')
+            taskStart = {
+              revision,
+              message: String((params as { message?: unknown }).message ?? ''),
+              previousReply: lastReply,
+            };
           if (!stopped) await context.emit('tool_complete', label, event());
           result = isToolResult(output) ? output : textResult(output);
           if (
@@ -619,7 +663,10 @@ export function createAgentRuntime(dependencies: {
         return { gate, settle: () => decide(gate.asked) };
       };
       const bind = (turn: Turn, take: () => Promise<unknown>): AgentTool[] =>
-        [...nodTools(turn, skills), ...(context.proactivity ? [] : connectedTools(turn))]
+        [
+          ...nodTools(turn, skills, dependencies.documentation),
+          ...(context.proactivity ? [] : connectedTools(turn)),
+        ]
           .filter(
             (tool) =>
               !context.proactivity ||
@@ -749,8 +796,9 @@ export function createAgentRuntime(dependencies: {
           id?: string,
           replyToMessageId?: string,
           presentation?: Presentation,
+          handoff?: boolean,
         ) => {
-          return reply(text, id, replyToMessageId, presentation);
+          return reply(text, id, replyToMessageId, presentation, handoff);
         },
         pause,
         confirm,
@@ -778,11 +826,13 @@ export function createAgentRuntime(dependencies: {
         let failure: string | undefined;
         let incomplete = false;
         let completed = false;
+        const childProgress = toolProgress();
         await context.emit('agent_start', title, { execution: source });
         let child: AgentSession | undefined;
         try {
           child = await agent.open({
             ...source,
+            automatic: !context.currentMessageId,
             ephemeral: true,
             systemPrompt: system,
             ownerContext: ownerContext(context),
@@ -794,7 +844,7 @@ export function createAgentRuntime(dependencies: {
             timeZone: context.timeZone,
             runTool: (name, params, run, options) =>
               guard(name, params, run, { ...options, execution: source }),
-            shouldStop: () => stopped || overBudget(),
+            shouldStop: (results) => stopped || overBudget() || childProgress.stopped(results),
             onEvent: (event) => {
               countUsage(event);
               if (event.type === 'final') answer = event.text;
@@ -815,6 +865,8 @@ export function createAgentRuntime(dependencies: {
             `${currentUserTime(context.timeZone)}\nYou are a subagent doing one part of the owner's request: ${title}\n${instruction}\nYour working directory is ${childPath}. Write new files there. The shared workspace is ${workspace.path}. Give complete file paths in your answer. Return any question or browser blocker to the parent agent. Do not hand your browser to the owner. Your final answer goes back to the parent agent, so include every result it needs.`,
             [],
           );
+          if (childProgress.error)
+            throw new Error((dependencies.redactError ?? String)(childProgress.error));
           if (failure) throw new Error(`The subagent model request failed: ${failure}`);
           if (incomplete) throw new Error('The subagent response was incomplete.');
           assertActive();
@@ -949,7 +1001,9 @@ export function createAgentRuntime(dependencies: {
       await context.emit('agent_start', 'Main agent', { execution });
       const opening = agent.open({
         ...execution,
+        automatic: !context.currentMessageId,
         ...(context.proactivity ? { restricted: true, restartable: !context.resumed } : {}),
+        ...(context.scheduleCache ? { scheduleCache: context.scheduleCache } : {}),
         ...(sessionId === threadId && !context.proactivity && dependencies.keepWarm
           ? { keepWarm: () => dependencies.keepWarm!(threadId) }
           : {}),
@@ -961,8 +1015,9 @@ export function createAgentRuntime(dependencies: {
         ...(context.readAudio ? { readAudio: context.readAudio } : {}),
         timeZone: context.timeZone,
         runTool: guard,
-        shouldStop: () => {
+        shouldStop: (results) => {
           if (stopped || finalDelivered) return true;
+          if (progress.stopped(results)) return true;
           if (checkInBlocked) checkInStrikes++;
           checkInBlocked = false;
           return (checkInStopped = checkInStrikes >= 2);
@@ -1024,9 +1079,17 @@ export function createAgentRuntime(dependencies: {
             );
             void pendingReplies.catch(() => {});
           }
+          if (event.type === 'retry' && !stopped) {
+            const retry = `${event.model} failed, trying again (${event.attempt} of ${event.attempts})`;
+            pendingReplies = pendingReplies.then(() =>
+              context.emit('retry', retry, { execution }).catch(() => {}),
+            );
+            void pendingReplies.catch(() => {});
+          }
           if (event.type === 'message_start') {
             completeStream();
             streamId = randomUUID();
+            modelError = undefined;
           }
           if (event.type === 'message_end') {
             if (event.status === 'succeeded') {
@@ -1078,7 +1141,15 @@ export function createAgentRuntime(dependencies: {
             pendingReplies = pendingReplies.then(() =>
               context.emit('final', '', { execution }).catch(() => {}),
             );
-            queueStreamReply(event.text, streamId ?? randomUUID());
+            if (
+              taskStart?.revision === requestRevision &&
+              !replyOwed &&
+              [taskStart.message, taskStart.previousReply].some((message) =>
+                repeatsTaskStart(event.text, message),
+              )
+            )
+              streamSubmitted = true;
+            else queueStreamReply(event.text, streamId ?? randomUUID());
           }
         },
       });
@@ -1103,8 +1174,19 @@ export function createAgentRuntime(dependencies: {
             sourceReads,
           )
         : undefined;
+      const scheduled =
+        !context.proactivity && context.scheduleCache
+          ? scheduledInstruction(
+              requestContext,
+              resumed && !compact,
+              omitted,
+              currentUserTime(context.timeZone),
+              analysis,
+            )
+          : undefined;
       const fallback =
         observer?.text ??
+        scheduled?.text ??
         instruct(firstInstruction(requestContext, resumed && !compact, omitted, analysis));
       const audio = nativeAudio(context.attachments, fallback);
       const nativeContext = audio
@@ -1119,10 +1201,11 @@ export function createAgentRuntime(dependencies: {
           : fallback,
         images,
         audio,
-        observer?.stable,
+        audio ? undefined : (observer?.stable ?? scheduled?.stable),
       );
       await pendingReplies;
       signal.throwIfAborted();
+      if (progress.error) throw new Error((dependencies.redactError ?? String)(progress.error));
       const paused = () =>
         `Paused at the ${dollars(context.checkIn!.budgetUsd)} check-in. Reply to keep going.`;
       if (modelError)

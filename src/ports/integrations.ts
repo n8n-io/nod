@@ -99,18 +99,26 @@ export class IntegrationConnectionError extends Error {
       'authorization' | 'permission' | 'rate_limit' | 'timeout' | 'unavailable' | 'invalid_request',
     readonly phase: 'session' | 'link',
     readonly status?: number,
+    readonly code?:
+      | 'installation_busy'
+      | 'public_budget_exceeded'
+      | 'service_unavailable'
+      | 'security_service_unavailable',
   ) {
     super(
-      reason === 'authorization' || reason === 'permission'
-        ? 'The connection service could not authorize this request. Try connecting again, and contact support if it keeps failing.'
-        : reason === 'rate_limit'
-          ? 'The connection service is receiving too many requests. Wait a moment, then try connecting again.'
-          : reason === 'timeout'
-            ? 'The connection service took too long to respond. Try connecting again.'
-            : reason === 'invalid_request'
-              ? 'The connection service rejected this request. Try connecting again, and contact support if it keeps failing.'
-              : 'The connection service could not complete the connection. Try connecting again shortly.',
+      code
+        ? `The connection service refused this request: ${code}.`
+        : reason === 'authorization' || reason === 'permission'
+          ? 'The connection service could not authorize this request. Try connecting again, and contact support if it keeps failing.'
+          : reason === 'rate_limit'
+            ? 'The connection service is receiving too many requests. Wait a moment, then try connecting again.'
+            : reason === 'timeout'
+              ? 'The connection service took too long to respond. Try connecting again.'
+              : reason === 'invalid_request'
+                ? 'The connection service rejected this request. Try connecting again, and contact support if it keeps failing.'
+                : 'The connection service could not complete the connection. Try connecting again shortly.',
     );
+    if (status !== undefined) this.message += ` HTTP ${status}.`;
     this.statusCode =
       reason === 'authorization' || reason === 'permission'
         ? 503

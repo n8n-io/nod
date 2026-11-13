@@ -13,7 +13,7 @@ During onboarding, connect **Gmail** or **Outlook** so Nod can find emails that 
 
 After model selection, the app step lists the full catalog by category. Use **Manage** to add or remove accounts. While an app signs in, its card shows **Cancel**. You can continue without connecting any tools. A count shows connected tools, excluding email. You can also connect apps later from **Apps**.
 
-Nod uses [Composio](https://composio.dev) for these connections. By default, app requests and results pass through n8n's hosted connection service and Composio. Source installs can [select a trusted connection service](/deploy/configuration/#apps-and-composio). Nod checks each action before it reaches the connection service. Each installation signs its requests with its own random identity. The connection service stores only the public part, your connected accounts, usage counters, and expiring connection state, so knowing an account ID alone grants no access. Notion, Linear and n8n connect through their own MCP servers. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
+Nod uses [Composio](https://composio.dev) for these connections. By default, app requests and results pass through n8n's hosted connection service and Composio. Source installs can [select a trusted connection service](/deploy/configuration/#apps-and-composio). Notion, Linear and n8n connect through their own MCP servers. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
 
 ```mermaid
 flowchart TD
@@ -25,6 +25,27 @@ flowchart TD
   connection --> composio[Composio]
   composio --> apps[Gmail · Calendar<br/>Slack · more]
 ```
+
+## How Nod protects app connections
+
+**Nod's default Composio project has Zero Data Retention (ZDR) enabled.** Composio does not save the content of covered app calls in its execution logs. For example, a covered email read does not leave a copy of the email text in those logs. It keeps a record of which tool ran, when it ran, and whether it succeeded. See [Composio Zero Data Retention](/trust/privacy/#composio-zero-data-retention) for what this covers and its limits.
+
+Several controls protect each connection:
+
+| Control                                 | What it does                                                                                                                                                                                                                                                             |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **App permissions**                     | You connect each app and review the provider's permission screen. That grant sets what Composio can read or change. Some grants cover a whole mailbox.                                                                                                                   |
+| **A check before each app call**        | Nod checks reads and actions before sending them to the connection service. Reads and drafts normally run. Other actions need your words, a standing instruction, or a rule that allows them. Otherwise, Nod asks. A rule to ask first also applies to reads and drafts. |
+| **Signed requests and account checks**  | Each installation signs requests with its own private key. The connection service holds the public key. Nod checks that the account belongs to the current owner. An account ID alone grants no access.                                                                  |
+| **Credentials outside the model**       | Composio holds the access tokens that keep the app connected. These tokens do not enter Nod's prompts, workspace, or browser.                                                                                                                                            |
+| **App content cannot grant permission** | Nod marks app results as untrusted data. The trust check sees your words and the proposed action, never the app results. An email cannot authorize an action.                                                                                                            |
+| **A record you can review**             | [Usage](/use/spending/) shows app actions and the words that allowed them while the source message exists. You can [disconnect an account](#manage-connected-accounts) or revoke access in the provider's settings.                                                      |
+
+Composio documents credential encryption with AES-256-GCM and TLS for data in transit. Its [security documentation](https://docs.composio.dev/docs/security/overview) explains these controls. Its [Trust Center](https://trust.composio.dev/) provides security reports and its subprocessor list.
+
+With the default setup, app requests and results pass through n8n's connection service and Composio. Other setups use the connection service their operator selects. ZDR limits storage for covered calls. It does not reduce OAuth permissions or set retention for your model provider, destination apps, or Nod's local data. The trust check uses a model and can make mistakes. See the [Security review guide](/trust/security-review/) for the wider boundaries.
+
+The trust check protects requests made through Nod. It cannot block someone who uses a stolen app token outside Nod. The permissions you grant remain the limit of what that token can do. Review those permissions and revoke access in the provider's settings when you no longer need the connection.
 
 ## Connect your apps
 
