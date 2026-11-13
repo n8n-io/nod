@@ -3908,7 +3908,7 @@ test(
           const expiredPath = `/api/credential-requests/${expired.url.split('/').at(-1)}`;
           const expiredRequest = await get(expiredPath);
           await pool.query(
-            "UPDATE credential_requests SET created_at=now()-interval '31 minutes' WHERE turn_id=$1",
+            "UPDATE credential_requests SET created_at=now()-interval '31 minutes',flow_expires_at=now()-interval '1 second' WHERE turn_id=$1",
             [expiredTurn.turnId],
           );
           assert.equal((await get(expiredPath)).status, 'expired');
