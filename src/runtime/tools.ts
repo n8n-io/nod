@@ -253,12 +253,12 @@ export const toolDefinitions = {
   ),
   send_message: defineTool(
     'send_message',
-    'Deliver a checked result or necessary decision now. Use intent "final" only when this delivery completes the owner\'s request; successful delivery ends the turn. Omit intent or use "update" for partial results or remaining work. Read visual-replies for itineraries, comparisons and other native views, or to offer Connect buttons for apps. Use empty text for a self-contained visual; otherwise add only missing context, caveats or sources. End without delivery announcements or recaps. Background final text stays private. Completion requires confirmed, inspectable output.',
+    'Deliver a checked result, necessary decision, or task handoff now. Use intent "final" only when this delivery completes the owner\'s request; successful delivery ends the turn. Use "handoff" only for a short acknowledgement immediately before starting a task, so the task card can reuse it. Omit intent or use "update" for other partial results or remaining work. Read visual-replies for itineraries, comparisons and other native views, or to offer Connect buttons for apps. Use empty text for a self-contained visual; otherwise add only missing context, caveats or sources. End without delivery announcements or recaps. Background final text stays private. Completion requires confirmed, inspectable output.',
     Type.Object({
       text: Type.String(),
       presentation: Type.Optional(presentation),
       replyToMessageId: Type.Optional(Type.String({ pattern: '^[0-9a-fA-F-]{36}$' })),
-      intent: Type.Optional(literals(['update', 'final'])),
+      intent: Type.Optional(literals(['update', 'final', 'handoff'])),
     }),
     true,
   ),
@@ -946,7 +946,10 @@ export function nodTools(
       const visual =
         p.presentation === undefined ? undefined : presentationInputSchema.parse(p.presentation);
       if (!p.text.trim() && !visual) throw new Error('A text answer or visual is required.');
-      const delivery = await turn.reply(p.text, undefined, p.replyToMessageId, visual);
+      const delivery =
+        p.intent === 'handoff'
+          ? await turn.reply(p.text, undefined, p.replyToMessageId, visual, true)
+          : await turn.reply(p.text, undefined, p.replyToMessageId, visual);
       const outcome = {
         none: 'The text answer is already visible to the owner.',
         original: 'The visual and accompanying text are already visible to the owner.',
@@ -1201,7 +1204,7 @@ export function nodTools(
         ? {
             ...(result as object),
             message:
-              'The task now does this work in its own session and reports its result. Do not do any of it here; end the turn unless another request still needs an answer.',
+              'The task has started and its start message is already visible. Do not add another acknowledgement. The task now does this work in its own session and reports its result. End the turn unless another request still needs an answer.',
           }
         : result;
     }),
