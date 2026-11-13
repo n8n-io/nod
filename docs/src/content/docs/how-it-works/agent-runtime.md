@@ -159,9 +159,9 @@ The `pi-web-access` extension runs in the server process with the server's permi
 
 ### Questions about Nod
 
-For questions about its setup, features, privacy, or safety, Nod searches its own documentation before answering. It reads the relevant sections and links to them. The same rule applies when Nod uses its shorter instructions for a small model context.
+Nod searches its own documentation before answering any question about Nod. This covers setup, models, channels, schedules, memory, privacy, safety, troubleshooting, and development. It reads the relevant sections and links to them. The same rule applies when Nod uses its shorter instructions for a small model context.
 
-The `nod_docs` tool builds an index on its first use and keeps it in memory. Search ranks section titles and text, then returns up to five results with short excerpts. A read returns up to 8,000 characters. Longer sections include an offset to read the next part. Neither action calls a model or sends a network request.
+The `nod_docs` tool builds an index on its first use and keeps it in memory. Search matches common singular and plural forms. It gives more weight to section titles and terms that occur in fewer sections. Search adjusts for section length and limits the effect of repeated words. Search returns up to five results with short excerpts. A read returns up to 8,000 characters. Longer sections include an offset to read the next part. Neither action calls a model or sends a network request.
 
 Desktop packages and self-hosted images include the Markdown and MDX pages from the same source as the application. The tool reads only indexed sections. It accepts no file path or website address. Documentation is data, not permission to act. Nod still uses live tools to check current account state and owner settings.
 

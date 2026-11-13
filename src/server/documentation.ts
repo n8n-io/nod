@@ -20,7 +20,9 @@ function words(text: string) {
       .replace(/\p{M}/gu, '')
       .toLowerCase()
       .match(/[\p{L}\p{N}]+/gu) ?? []
-  ).filter((word) => !stopWords.has(word));
+  )
+    .filter((word) => !stopWords.has(word))
+    .map((word) => (word.length > 3 ? word.replace(/ies$/, 'y').replace(/(?<!s)s$/, '') : word));
 }
 
 function text(node: unknown): string {
@@ -53,17 +55,22 @@ export function createDocumentation(root: string): Documentation {
       const title =
         frontmatter?.[1].match(/^title:\s*(.+)$/m)?.[1].replace(/^(['"])(.*)\1$/, '$2') ??
         basename(file);
-      const body = source
-        .slice(frontmatter?.[0].length ?? 0)
-        .replace(/^import\s[\s\S]*?from\s+['"][^'"]+['"];?\s*$/gm, '')
-        .trim();
+      const content = source.slice(frontmatter?.[0].length ?? 0).trim();
+      const nodes = parser.parse(content).children;
+      const contentStart =
+        nodes.find(
+          (node) =>
+            node.type !== 'paragraph' ||
+            !/^import\s/.test(content.slice(node.position!.start.offset!)),
+        )?.position!.start.offset ?? content.length;
+      const body = content.slice(contentStart);
       const path = relative(root, file)
         .replaceAll('\\', '/')
         .replace(/\.mdx?$/, '')
         .replace(/(^|\/)index$/, '')
         .replace(/\/$/, '');
       const url = `${site}${path ? `${path}/` : ''}`;
-      const headings = parser.parse(body).children.filter((node) => node.type === 'heading');
+      const headings = nodes.filter((node) => node.type === 'heading');
       const anchors = new Set<string>();
       const starts = [
         { offset: 0, heading: title, anchor: '' },
@@ -77,17 +84,27 @@ export function createDocumentation(root: string): Documentation {
           for (let count = 1; anchors.has(anchor); count++) anchor = `${slug}-${count}`;
           anchors.add(anchor);
           return {
-            offset: node.position!.start.offset!,
+            offset: node.position!.start.offset! - contentStart,
             heading,
             anchor,
           };
         }),
       ];
       for (const [index, start] of starts.entries()) {
-        const content = body.slice(start.offset, starts[index + 1]?.offset).trim();
+        const end = starts[index + 1]?.offset ?? body.length;
+        const content = body.slice(start.offset, end).trim();
         if (!content) continue;
         const id = `${path || 'index'}${start.anchor ? `#${start.anchor}` : ''}`;
-        const terms = new Set(words(`${title} ${start.heading} ${content}`));
+        const visible = nodes
+          .filter((node) => {
+            const offset = node.position!.start.offset! - contentStart;
+            return offset >= start.offset && offset < end;
+          })
+          .map(text)
+          .join(' ');
+        const tokens = words(`${title} ${start.heading} ${visible}`);
+        const terms = new Map<string, number>();
+        for (const word of tokens) terms.set(word, (terms.get(word) ?? 0) + 1);
         const labels = new Set(words(`${title} ${start.heading}`));
         sections.push({
           id,
@@ -97,10 +114,17 @@ export function createDocumentation(root: string): Documentation {
           content,
           terms,
           labels,
+          length: Math.max(1, tokens.length),
         });
       }
     }
-    return sections;
+    const frequencies = new Map<string, number>();
+    for (const section of sections)
+      for (const word of section.terms.keys())
+        frequencies.set(word, (frequencies.get(word) ?? 0) + 1);
+    const averageLength =
+      sections.reduce((sum, section) => sum + section.length, 0) / Math.max(1, sections.length);
+    return { sections, frequencies, averageLength };
   };
   let pending: ReturnType<typeof load> | undefined;
   const index = () =>
@@ -110,28 +134,29 @@ export function createDocumentation(root: string): Documentation {
     }));
   return {
     async search(query) {
-      const sections = await index();
+      const { sections, frequencies, averageLength } = await index();
       const terms = [...new Set(words(query))];
       const weights = new Map(
         terms.map((word) => [
           word,
           Math.log(
             1 +
-              sections.length / (1 + sections.filter((section) => section.terms.has(word)).length),
+              (sections.length - (frequencies.get(word) ?? 0) + 0.5) /
+                ((frequencies.get(word) ?? 0) + 0.5),
           ),
         ]),
       );
       return sections
         .map((section) => {
-          const matched = terms.filter((word) => section.terms.has(word));
           return {
             section,
-            score:
-              matched.length *
-              matched.reduce(
-                (score, word) => score + weights.get(word)! * (section.labels.has(word) ? 2 : 1),
-                0,
-              ),
+            score: terms.reduce((score, word) => {
+              const frequency = section.terms.get(word) ?? 0;
+              const normalized =
+                (frequency * 2.2) /
+                (frequency + 1.2 * (0.25 + (0.75 * section.length) / averageLength));
+              return score + weights.get(word)! * normalized * (section.labels.has(word) ? 2 : 1);
+            }, 0),
           };
         })
         .filter(({ score }) => score > 0)
@@ -143,7 +168,7 @@ export function createDocumentation(root: string): Documentation {
         });
     },
     async read(id, offset = 0) {
-      const section = (await index()).find((section) => section.id === id);
+      const section = (await index()).sections.find((section) => section.id === id);
       if (!section) throw new Error(`The Nod documentation section was not found: ${id}`);
       if (!Number.isSafeInteger(offset) || offset < 0 || offset >= section.content.length)
         throw new Error('The Nod documentation offset is outside this section.');

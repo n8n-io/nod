@@ -1262,7 +1262,7 @@ test('documentation search ranks sections, bounds reads and cannot read files ou
   const long = `## Long section\n\n${'Synthetic documentation. '.repeat(800)}`.trim();
   await writeFile(
     join(root, 'trust', 'privacy.mdx'),
-    `---\ntitle: Privacy\n---\nimport { Aside } from 'fixture';\n\nIntroductory fixture.\n\n## Zero Data Retention\n\nCovered fixture payloads are not saved.\n\n\`\`\`md\n# This is a code sample\n\`\`\`\n\n${long}\n\n## Long section\n\nAnother section.\n\n## Long section-1\n\nA third section.`,
+    `---\ntitle: Privacy\n---\nimport { Aside } from 'fixture';\nimport 'fixture.css';\n\nIntroductory fixture.\n\n## Zero Data Retention\n\nCovered fixture payloads are not saved. [Reference](https://example.com/urlonlymarker).\n\n\`\`\`md\n# This is a code sample\n\`\`\`\n\n\`\`\`ts\nimport { sample } from 'fixture';\n\`\`\`\n\n${long}\n\n## Long section\n\nAnother section.\n\n## Long section-1\n\nA third section.`,
   );
   const docs = createDocumentation(root);
   const results = await docs.search('zero data retention');
@@ -1270,10 +1270,14 @@ test('documentation search ranks sections, bounds reads and cannot read files ou
   assert.equal(results[0].url, 'https://nod.n8n.io/docs/trust/privacy/#zero-data-retention');
   assert.equal(results.length, 5);
   assert.ok(results.every(({ excerpt }) => excerpt.length <= 400));
+  assert.equal((await docs.search('payload'))[0].id, results[0].id);
+  assert.deepEqual(await docs.search('urlonlymarker'), []);
   assert.deepEqual(await docs.search('OutsideSecretMarker'), []);
   const retained = await docs.read(results[0].id);
   assert.match(retained.content, /# This is a code sample/);
-  assert.doesNotMatch(retained.content, /import|Long section/);
+  assert.match(retained.content, /import \{ sample \} from 'fixture';/);
+  assert.doesNotMatch(retained.content, /Aside|Long section/);
+  assert.doesNotMatch((await docs.read('trust/privacy')).content, /import|Aside/);
   for (const id of [
     '../private.md',
     'https://example.com',

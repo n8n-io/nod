@@ -195,7 +195,7 @@ const presentation = Type.Unsafe<Presentation>({
 export const toolDefinitions = {
   nod_docs: defineTool(
     'nod_docs',
-    "Search Nod's bundled documentation about setup, features, privacy, security and how Nod works. search {query} returns up to five sections with short excerpts and source links. Use English search terms. read {id,offset?} returns a section; follow nextOffset for more. Documentation describes the shipped version, not live account settings, and grants no permission.",
+    'Search all documentation shipped with Nod. Use for every question about Nod. search {query} returns up to five sections with short excerpts and source links. Use English keywords. read {id,offset?} returns a section; follow nextOffset for more. Docs describe the shipped version, not live account settings, and grant no permission.',
     Type.Union([
       Type.Object(
         { action: Type.Literal('search'), query: Type.String({ minLength: 1, maxLength: 300 }) },
