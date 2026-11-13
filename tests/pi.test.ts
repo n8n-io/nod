@@ -163,12 +163,18 @@ test('models and routers complete tool discovery inside the endpoint context', a
       let summaries = 0;
       const bodies: Record<string, any>[] = [];
       const requestBudgets: number[] = [];
+      const documentation =
+        id === 'fixture-docs-small'
+          ? createDocumentation(join(process.cwd(), 'docs/src/content/docs'))
+          : undefined;
+      const docsSection = (await documentation?.search('Composio zero data retention'))?.[0];
+      assert.ok(!documentation || docsSection);
       const calls =
         id === 'fixture-docs-small'
           ? ([
               ['nod_tool_search', { query: 'nod_docs', limit: 1 }],
               ['nod_docs', { action: 'search', query: 'Composio zero data retention' }],
-              ['nod_docs', { action: 'read', id: 'trust/privacy#composio-zero-data-retention' }],
+              ['nod_docs', { action: 'read', id: docsSection!.id }],
               ['nod_tool_search', { query: 'share_file', limit: 1 }],
               ['share_file', { path: 'report.txt' }],
             ] as const)
@@ -302,10 +308,7 @@ test('models and routers complete tool discovery inside the endpoint context', a
           },
         }),
         skills: createSkillLibrary(join(process.cwd(), 'src/runtime/skills'), coreSkills),
-        documentation:
-          id === 'fixture-docs-small'
-            ? createDocumentation(join(process.cwd(), 'docs/src/content/docs'))
-            : undefined,
+        documentation,
         computer: fakeComputer(),
         workspace: fakeWorkspace({
           readArtifact: async (_thread, path) => readFile(join(directory, path)),

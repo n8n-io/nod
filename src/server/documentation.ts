@@ -8,19 +8,25 @@ const parser = unified().use(remarkParse);
 const site = 'https://nod.n8n.io/docs/';
 const readSize = 8000;
 const stopWords = new Set(
-  'a about an and are be can do does for from how i in is it its me my nod of on or that the this to what when where which why with you your'.split(
+  'a about an and are be can do does for from how i in is it its me my of on or that the this to what when where which why with you your'.split(
     ' ',
   ),
 );
 
-function words(text: string) {
+function tokens(text: string) {
   return (
     text
       .normalize('NFKD')
       .replace(/\p{M}/gu, '')
       .toLowerCase()
       .match(/[\p{L}\p{N}]+/gu) ?? []
-  )
+  );
+}
+
+const phrase = (text: string) => tokens(text).join(' ');
+
+function words(text: string) {
+  return tokens(text)
     .filter((word) => !stopWords.has(word))
     .map((word) => (word.length > 3 ? word.replace(/ies$/, 'y').replace(/(?<!s)s$/, '') : word));
 }
@@ -114,6 +120,8 @@ export function createDocumentation(root: string): Documentation {
           content,
           terms,
           labels,
+          titlePhrase: phrase(title),
+          headingPhrase: phrase(start.heading),
           length: Math.max(1, tokens.length),
         });
       }
@@ -136,6 +144,7 @@ export function createDocumentation(root: string): Documentation {
     async search(query) {
       const { sections, frequencies, averageLength } = await index();
       const terms = [...new Set(words(query))];
+      const queryPhrase = phrase(query);
       const weights = new Map(
         terms.map((word) => [
           word,
@@ -150,6 +159,12 @@ export function createDocumentation(root: string): Documentation {
         .map((section) => {
           return {
             section,
+            priority:
+              section.headingPhrase === queryPhrase
+                ? 2
+                : section.titlePhrase === queryPhrase
+                  ? 1
+                  : 0,
             score: terms.reduce((score, word) => {
               const frequency = section.terms.get(word) ?? 0;
               const normalized =
@@ -159,8 +174,13 @@ export function createDocumentation(root: string): Documentation {
             }, 0),
           };
         })
-        .filter(({ score }) => score > 0)
-        .sort((a, b) => b.score - a.score || a.section.id.localeCompare(b.section.id))
+        .filter(({ score, priority }) => score > 0 || priority > 0)
+        .sort(
+          (a, b) =>
+            b.priority - a.priority ||
+            b.score - a.score ||
+            a.section.id.localeCompare(b.section.id),
+        )
         .slice(0, 5)
         .map(({ section }) => {
           const { id, title, heading, url, content } = section;

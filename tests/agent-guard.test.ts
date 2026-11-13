@@ -1253,7 +1253,8 @@ test('documentation search ranks sections, bounds reads and cannot read files ou
   await writeFile(join(directory, 'private.md'), 'OutsideSecretMarker');
   await symlink(join(directory, 'private.md'), join(root, 'private.md'));
   await symlink(directory, join(root, 'outside'));
-  await writeFile(join(root, 'index.md'), '---\ntitle: Start here\n---\nFixture documentation.');
+  await writeFile(join(root, 'index.md'), '---\ntitle: What is Nod\n---\nFixture documentation.');
+  await writeFile(join(root, 'noisy.md'), '---\ntitle: Nod apps\n---\nNod.');
   for (let index = 0; index < 9; index++)
     await writeFile(
       join(root, `fixture-${index}.md`),
@@ -1265,6 +1266,7 @@ test('documentation search ranks sections, bounds reads and cannot read files ou
     `---\ntitle: Privacy\n---\nimport { Aside } from 'fixture';\nimport 'fixture.css';\n\nIntroductory fixture.\n\n## Zero Data Retention\n\nCovered fixture payloads are not saved. [Reference](https://example.com/urlonlymarker).\n\n\`\`\`md\n# This is a code sample\n\`\`\`\n\n\`\`\`ts\nimport { sample } from 'fixture';\n\`\`\`\n\n${long}\n\n## Long section\n\nAnother section.\n\n## Long section-1\n\nA third section.`,
   );
   const docs = createDocumentation(root);
+  assert.equal((await docs.search('What is Nod?'))[0].id, 'index');
   const results = await docs.search('zero data retention');
   assert.equal(results[0].id, 'trust/privacy#zero-data-retention');
   assert.equal(results[0].url, 'https://nod.n8n.io/docs/trust/privacy/#zero-data-retention');
