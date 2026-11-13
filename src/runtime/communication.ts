@@ -42,18 +42,26 @@ export function paymentExplanation(message: string) {
   if (!text) throw new Error('Describe the payment step.');
   const linkLike =
     /(?:[a-z][a-z\d+.-]*:\/\/|www\.|[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\.[\p{L}]{2,}|\/(?:api\/artifacts|vault|credentials|payments)\/)/iu;
-  return (text.match(/\s+|\S+/gu) ?? [])
-    .map((part) => {
-      if (/^\s+$/u.test(part)) return part;
-      if (linkLike.test(part.replaceAll('\\', ''))) {
-        const fence = '`'.repeat(
-          Math.max(0, ...(part.match(/`+/g) ?? []).map((run) => run.length)) + 1,
-        );
-        return `${fence} ${part} ${fence}`;
-      }
-      return part.replace(/[\\`*_{}\[\]()#+\-.!|>~<&=]/g, '\\$&');
+  const inert = (value: string) =>
+    (value.match(/\s+|\S+/gu) ?? [])
+      .map((part) => {
+        if (/^\s+$/u.test(part)) return part;
+        if (linkLike.test(part.replaceAll('\\', ''))) {
+          const fence = '`'.repeat(
+            Math.max(0, ...(part.match(/`+/g) ?? []).map((run) => run.length)) + 1,
+          );
+          return `${fence} ${part} ${fence}`;
+        }
+        return part.replace(/[\\`*_{}\[\]()#+\-.!|>~<&=]/g, '\\$&');
+      })
+      .join('');
+  return text
+    .split('\n')
+    .map((line) => {
+      const marker = /^([ \t]{0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+)(?=\S)/.exec(line)?.[0];
+      return marker ? `${marker}${inert(line.slice(marker.length))}` : inert(line);
     })
-    .join('');
+    .join('\n');
 }
 
 export function paymentInvitation(url: string | undefined, message: string, action: string) {
