@@ -71,7 +71,7 @@ Account, schedule and source checks inside a transaction use its database connec
 
 ## One background observer
 
-App events and source checks update one saved source queue. One observer reads the due batch, prepares useful work, and saves qualified nudges. A new batch keeps its Pi context only while the model's cache is warm and the context is no larger than compaction would keep; the transcript stays saved. When it starts fresh and the previous check was within the hour, its instructions, stable request data and recent chat are read from Anthropic's one-hour cache when an earlier fresh start stored them. A turn runs alone in that session. New signals received during work wait for its next turn.
+App events and source checks update one saved source queue. One observer reads the due batch, prepares useful work, and saves qualified nudges. A new batch keeps its Pi context only while the model's cache is warm and the context is no larger than compaction would keep; the transcript stays saved. When it starts fresh and the previous check was within the hour, its instructions, stable request data and recent chat are read from Anthropic's one-hour cache when an earlier fresh start stored them. A turn runs alone in that session. New signals received during work wait for its next turn. Scheduled runs have separate Pi sessions and choose cache retention from their planned interval; see [scheduled turn caching](/how-it-works/agent-runtime/#scheduled-turn-caching).
 
 ```mermaid
 flowchart TD

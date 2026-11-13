@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import type { DecisionModel, DecisionQuestion } from '../ports/decisions.ts';
 import type { OpenAIRegion } from '../shared/models.ts';
-import { openAIBaseUrl, openAIRequestError, OpenAIRequestError } from './openai/api.ts';
+import { openAIBaseUrl, openAIRequestError } from './openai/api.ts';
+import { ModelServiceError } from './model-error.ts';
 
 export type DecisionConnection = {
   provider: 'openai' | 'openrouter' | 'typesafe';
@@ -327,7 +328,7 @@ export function createDecisionModel(options: {
         };
       } catch (error) {
         status = signal?.aborted ? 'cancelled' : 'failed';
-        if (error instanceof OpenAIRequestError) throw error;
+        if (error instanceof ModelServiceError) throw error;
         throw new Error('The decision service could not complete the check.');
       } finally {
         const cacheRead =

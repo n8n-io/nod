@@ -39,6 +39,10 @@
 .desktop-update-toast-content p[role='alert'] {
   color: var(--error);
 }
+.desktop-update-toast-content a {
+  color: var(--foreground);
+  text-decoration: underline;
+}
 .desktop-update-toast-actions {
   display: flex;
   flex-wrap: wrap;

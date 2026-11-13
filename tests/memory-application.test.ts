@@ -13,7 +13,14 @@ import { memoryObjectStore } from './fixtures/object-store.ts';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { repair } from '../src/server/memory-lint.ts';
 import { applyOps } from '../src/server/memory-ops.ts';
-import { emptyTree, parse, render, type Entry, type Tree } from '../src/server/memory-tree.ts';
+import {
+  emptyTree,
+  parse,
+  render,
+  unsafe,
+  type Entry,
+  type Tree,
+} from '../src/server/memory-tree.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { createMemoryService, importMemoryFile } from '../src/server/memory.ts';
 import { createHistorySearch } from '../src/server/history.ts';
@@ -707,6 +714,26 @@ test('a full memory file sheds the oldest archive entries before refusing a save
   );
   assert.deepEqual(applied, []);
   assert.deepEqual(render(full), unchanged);
+});
+
+test('memory refuses card numbers and login links but keeps links with long numeric IDs', () => {
+  for (const text of [
+    'Pays with card 4111 1111 1111 1111.',
+    'Backup card 5555-5555-5555-4444',
+    'Amex 378282246310005',
+    'Old Visa 4222222222222',
+    'Old Visa 4222 2222 22222',
+    'Card 4111 1111 1111 1111 12/27',
+    'Ref 7 4111 1111 1111 1111',
+    'Dashboard at https://owner:example-pass@example.com/admin',
+  ])
+    assert.equal(unsafe(text), true, text);
+  for (const text of [
+    'Favourite thread: https://x.com/example/status/1987654321098765432',
+    'Talk recap: https://www.linkedin.com/feed/update/urn:li:activity:7254321098765432109/',
+    'Order 12345678901234 arrives Friday.',
+  ])
+    assert.equal(unsafe(text), false, text);
 });
 
 test('repair archives expired, stale and duplicate entries, keeps distinct numbers and never deletes', () => {

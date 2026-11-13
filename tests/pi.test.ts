@@ -92,10 +92,12 @@ function smallContextAccess(
 
 test('models and routers complete tool discovery inside the endpoint context', async (t) => {
   const { createSkillLibrary } = await import('../src/providers/pi/skills.ts');
+  const { createDocumentation } = await import('../src/server/documentation.ts');
   const { coreSkills } = await import('../src/runtime/prompt.ts');
   for (const { provider, id, window, limit } of [
     { provider: 'compatible', id: 'fixture-small', window: 8192, limit: 8192 },
     { provider: 'compatible', id: 'fixture-memory-small', window: 8192, limit: 8192 },
+    { provider: 'compatible', id: 'fixture-docs-small', window: 8192, limit: 8192 },
     { provider: 'openrouter', id: 'openrouter/free', window: 200_000, limit: 8192 },
     { provider: 'openrouter', id: 'openrouter/auto', window: 2_000_000, limit: 8192 },
     { provider: 'compatible', id: 'fixture-medium', window: 16_384, limit: 16_384 },
@@ -161,15 +163,33 @@ test('models and routers complete tool discovery inside the endpoint context', a
       let summaries = 0;
       const bodies: Record<string, any>[] = [];
       const requestBudgets: number[] = [];
-      const calls = [
-        ['nod_tool_search', { query: 'skills', limit: 1 }],
-        [
-          'skills',
-          { action: 'read', name: id.startsWith('fixture-mcp') ? 'mcp__fixture' : 'artifacts' },
-        ],
-        ['nod_tool_search', { query: 'share_file', limit: 1 }],
-        ['share_file', { path: 'report.txt' }],
-      ] as const;
+      const documentation =
+        id === 'fixture-docs-small'
+          ? createDocumentation(join(process.cwd(), 'docs/src/content/docs'))
+          : undefined;
+      const docsSection = (await documentation?.search('Composio zero data retention'))?.[0];
+      assert.ok(!documentation || docsSection);
+      const calls =
+        id === 'fixture-docs-small'
+          ? ([
+              ['nod_tool_search', { query: 'nod_docs', limit: 1 }],
+              ['nod_docs', { action: 'search', query: 'Composio zero data retention' }],
+              ['nod_docs', { action: 'read', id: docsSection!.id }],
+              ['nod_tool_search', { query: 'share_file', limit: 1 }],
+              ['share_file', { path: 'report.txt' }],
+            ] as const)
+          : ([
+              ['nod_tool_search', { query: 'skills', limit: 1 }],
+              [
+                'skills',
+                {
+                  action: 'read',
+                  name: id.startsWith('fixture-mcp') ? 'mcp__fixture' : 'artifacts',
+                },
+              ],
+              ['nod_tool_search', { query: 'share_file', limit: 1 }],
+              ['share_file', { path: 'report.txt' }],
+            ] as const);
       const serve = async (url: RequestInfo | URL, init?: RequestInit) => {
         assert.equal(String(url), `${access.definition.spec.baseUrl}/chat/completions`);
         const body = JSON.parse(String(init?.body));
@@ -288,6 +308,7 @@ test('models and routers complete tool discovery inside the endpoint context', a
           },
         }),
         skills: createSkillLibrary(join(process.cwd(), 'src/runtime/skills'), coreSkills),
+        documentation,
         computer: fakeComputer(),
         workspace: fakeWorkspace({
           readArtifact: async (_thread, path) => readFile(join(directory, path)),
@@ -300,7 +321,7 @@ test('models and routers complete tool discovery inside the endpoint context', a
         prompt: 'Return the text report named report.txt.',
         rules: 'Do not contact anyone.',
         memory: 'Synthetic earlier memory. '.repeat(2000),
-        ...(id === 'fixture-memory-small'
+        ...(['fixture-memory-small', 'fixture-docs-small'].includes(id)
           ? {
               memoryBrief: {
                 mode: 'recall' as const,
@@ -384,9 +405,14 @@ test('models and routers complete tool discovery inside the endpoint context', a
           largestRequestTokens: Math.max(...requestBudgets),
         }),
       );
-      assert.equal(requests, 5);
-      assert.equal(bodies.length, 5 + summaries);
-      assert.deepEqual(started, ['tool_search', 'skills', 'tool_search', 'share_file']);
+      assert.equal(requests, calls.length + 1);
+      assert.equal(bodies.length, calls.length + 1 + summaries);
+      assert.deepEqual(
+        started,
+        id === 'fixture-docs-small'
+          ? ['tool_search', 'nod_docs', 'nod_docs', 'tool_search', 'share_file']
+          : ['tool_search', 'skills', 'tool_search', 'share_file'],
+      );
       assert.equal(published.length, 1);
       assert.equal(published[0].toString(), 'Synthetic report bytes');
       if (id === 'fixture-resumed')
@@ -1150,6 +1176,129 @@ test('a restarted proactive check within the hour reads its stable context from 
       blocks.some((block: any) => /FIRST-BATCH/.test(block.text) && !('cache_control' in block)),
     );
   }
+});
+
+test('fresh scheduled sessions put their stable first request on a one-hour Anthropic cache', async (t) => {
+  const backend = createPiModelBackend({
+    fetch: async () => {
+      throw new Error('No live catalog request is allowed.');
+    },
+  });
+  const definition = (await backend.catalog('anthropic', 'api_key')).find(
+    ({ choice }) => choice.id === 'claude-opus-5-5',
+  )!;
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-scheduled-cache-'));
+  const bodies: Array<Record<string, any>> = [];
+  const stream = [
+    {
+      type: 'message_start',
+      message: {
+        id: 'msg_fixture',
+        type: 'message',
+        role: 'assistant',
+        model: 'claude-opus-5-5',
+        content: [],
+        stop_reason: null,
+        usage: { input_tokens: 10, output_tokens: 1 },
+      },
+    },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Checked.' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2 } },
+    { type: 'message_stop' },
+  ]
+    .map((event) => 'event: ' + event.type + '\ndata: ' + JSON.stringify(event) + '\n\n')
+    .join('');
+  t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (!url.includes('/v1/messages')) throw new Error('Unexpected request to ' + url);
+    bodies.push(JSON.parse(String(init?.body)));
+    return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+  });
+  const runtime = createAgentRuntime({
+    agent: createPiAgent({
+      provider: 'anthropic',
+      resolve: async () => ({
+        provider: 'anthropic',
+        method: 'api_key',
+        definition,
+        effort: 'low',
+        read: async () => ({ type: 'api_key', key: 'fixture-key' }),
+      }),
+      sessionRoot: join(directory, 'sessions'),
+    }),
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  const threadId = 'test-' + randomUUID();
+  const fire = (label: string) =>
+    runtime.runTurn({
+      ...({} as RuntimeContext),
+      ...({ scheduleCache: 'long' } as { scheduleCache: 'long' }),
+      threadId,
+      turnId: randomUUID(),
+      sessionId: randomUUID(),
+      background: true,
+      resumed: false,
+      prompt: 'Scheduled task: synthetic status check ' + label,
+      memory: 'about/name: The owner is Alex.',
+      credentialRequests: [
+        {
+          turnId: 'fixture-sign-in-turn',
+          origin: 'https://sign-in.fixture.test',
+          label: 'Synthetic sign-in',
+          kind: 'password',
+          status: label === 'FIRST-RUN' ? 'pending' : 'expired',
+        },
+      ],
+      history: [
+        { role: 'user', text: 'Earlier owner message', createdAt: new Date().toISOString() },
+      ],
+      workspacePath: directory,
+      signal: new AbortController().signal,
+      attachments: [],
+      emit: async () => {},
+      reply: async () => {},
+      delta: () => {},
+    });
+  try {
+    await fire('FIRST-RUN');
+    await fire('SECOND-RUN');
+  } finally {
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+  assert.equal(bodies.length, 2);
+  const blocks = (body: Record<string, any>) =>
+    body.messages.flatMap((message: { content: unknown }) =>
+      Array.isArray(message.content) ? message.content : [],
+    );
+  const stable = bodies.map((body) =>
+    blocks(body).filter((block: any) => block.cache_control?.ttl === '1h'),
+  );
+  assert.equal(stable[0].length, 2);
+  assert.match(stable[0][0].text, /^Owner context/);
+  assert.match(stable[0][1].text, /^Respond to currentInstruction/);
+  assert.deepEqual(
+    stable[0].map((block: any) => block.text),
+    stable[1].map((block: any) => block.text),
+  );
+  assert.ok(
+    stable.every((blocks) =>
+      blocks.every((block: any) => !block.text.includes('sign-in.fixture.test')),
+    ),
+  );
+  for (const [index, body] of bodies.entries()) {
+    const tail = blocks(body).at(-1);
+    assert.match(tail.text, index ? /SECOND-RUN/ : /FIRST-RUN/);
+    const status = JSON.stringify(`"status":"${index ? 'expired' : 'pending'}"`).slice(1, -1);
+    assert.ok(tail.text.includes(status));
+    assert.deepEqual(tail.cache_control, { type: 'ephemeral' });
+    assert.equal('cache_control' in body.system[0], false);
+    assert.ok(JSON.stringify(body).split('"cache_control"').length - 1 <= 4);
+  }
+  assert.equal(JSON.stringify(bodies[1]).includes('FIRST-RUN'), false);
 });
 
 test('messages taken after a Pi turn each reach a new request and not after a question', async () => {
@@ -3070,7 +3219,7 @@ test('each model call yields one chat-format trace without image data', async ()
       effort: 'low',
       read: async () => ({ type: 'api_key', key: 'fixture-router-key' }),
     },
-    (call) => calls.push(call),
+    { trace: (call) => calls.push(call) },
   );
   const image = Buffer.from('synthetic-image-bytes').toString('base64');
   const chunk = (value: object) => `data: ${JSON.stringify(value)}\n\n`;
@@ -3467,9 +3616,9 @@ test('a long tool call does not send model requests without usage records', asyn
       );
       if (outcome === 'succeeded' && !changeContext) {
         const cancelled: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
-        const { runtime, model } = await createPiModelRuntime(access, undefined, undefined, (row) =>
-          cancelled.push(row),
-        );
+        const { runtime, model } = await createPiModelRuntime(access, {
+          reportCacheUsage: (row) => cancelled.push(row),
+        });
         holdRefresh = true;
         const received = new Promise<void>((resolve) => {
           refreshStarted = resolve;
@@ -4266,6 +4415,121 @@ test('full 32k Pi sessions distinguish context exhaustion from output truncation
   }
 });
 
+test('the live line shows a model retry and the text before a tool call while the call streams', async (t) => {
+  const { createServer } = await import('node:http');
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-live-line-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const preamble = 'Checking the synthetic notes.';
+  let stepShown!: () => void;
+  const shown = new Promise<'step'>((resolve) => (stepShown = () => resolve('step')));
+  let released: 'step' | 'timeout' | undefined;
+  let requests = 0;
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on('end', async () => {
+      const send = (delta: object, finish?: string) =>
+        response.write(
+          `data: ${JSON.stringify({
+            id: `fixture-live-${requests}`,
+            choices: [{ index: 0, delta, ...(finish ? { finish_reason: finish } : {}) }],
+            ...(finish
+              ? { usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }
+              : {}),
+          })}\n\n`,
+        );
+      if (request.url === '/v1/models')
+        return response.end(
+          JSON.stringify({ data: [{ id: 'fixture-qwen', context_length: 32_768 }] }),
+        );
+      if (request.url !== '/v1/chat/completions') {
+        response.writeHead(404);
+        return response.end('{}');
+      }
+      if (++requests === 1) {
+        response.writeHead(503, { 'content-type': 'application/json' });
+        return response.end(
+          JSON.stringify({ error: { message: 'The synthetic model is overloaded.' } }),
+        );
+      }
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      if (requests === 3) {
+        send({ role: 'assistant', content: 'Partial synthetic update.' });
+        return response.end();
+      }
+      if (requests > 3) {
+        send({ role: 'assistant', content: 'The synthetic notes are read.' });
+        send({}, 'stop');
+        return response.end('data: [DONE]\n\n');
+      }
+      send({ role: 'assistant', content: preamble });
+      send({
+        tool_calls: [
+          {
+            index: 0,
+            id: 'fixture-notes',
+            type: 'function',
+            function: { name: 'bash', arguments: '' },
+          },
+        ],
+      });
+      let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+      released = await Promise.race([
+        shown,
+        new Promise<'timeout'>(
+          (resolve) => (timer = globalThis.setTimeout(() => resolve('timeout'), 5000)),
+        ),
+      ]);
+      clearTimeout(timer);
+      send({
+        tool_calls: [
+          { index: 0, function: { arguments: JSON.stringify({ command: 'fixture-read-notes' }) } },
+        ],
+      });
+      send({}, 'tool_calls');
+      response.end('data: [DONE]\n\n');
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const { port } = server.address() as import('node:net').AddressInfo;
+  const credential = { type: 'endpoint' as const, url: `http://127.0.0.1:${port}/v1` };
+  const [definition] = await createPiModelBackend().catalog('compatible', 'api_key', credential);
+  const agent = createPiAgent({
+    provider: 'compatible',
+    sessionRoot: join(directory, 'sessions'),
+    resolve: async () => ({
+      provider: 'compatible',
+      method: 'api_key',
+      definition,
+      effort: 'off',
+      read: async () => credential,
+    }),
+  });
+  const { workspace, scripts } = recordingWorkspace();
+  const runtime = createAgentRuntime({
+    agent,
+    computer: fakeComputer(),
+    workspace: fakeWorkspace({ open: () => workspace }),
+  });
+  t.after(() => runtime.dispose());
+  const emitted: Array<[string, string]> = [];
+  await runtime.runTurn({
+    ...context(directory),
+    sessionId: 'fixture-live-line',
+    turnId: randomUUID(),
+    prompt: 'Read the synthetic notes.',
+    emit: async (type, summary) => {
+      emitted.push([type, summary]);
+      if (type === 'step' && summary === preamble) stepShown();
+    },
+  });
+  assert.equal(released, 'step');
+  assert.equal(scripts.filter((script) => script.includes('fixture-read-notes')).length, 1);
+  assert.equal(requests, 4);
+  assert.ok(emitted.find(([type]) => type === 'retry')?.[1].includes(definition.choice.name));
+});
+
 test('OpenAI cache boundaries cover shared instructions and keep task paths outside them', async () => {
   const { createPiModelBackend, createPiModelRuntime } =
     await import('../src/providers/pi/models.ts');
@@ -4904,6 +5168,7 @@ test('native account catalogs never send a provider key to a different service o
     ['moonshotai', 'https://api.moonshot.ai/v1/models'],
     ['moonshotai-cn', 'https://api.moonshot.cn/v1/models'],
     ['together', 'https://api.together.xyz/v1/models'],
+    ['nvidia', 'https://integrate.api.nvidia.com/v1/models'],
   ] as const;
   for (const [provider, destination] of cases) {
     let status = 200;
@@ -4913,7 +5178,17 @@ test('native account catalogs never send a provider key to a different service o
         assert.equal(String(input), destination);
         assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
         assert.equal(init?.redirect, 'error');
-        if (status !== 200) return Response.json({ message: `Synthetic ${key}` }, { status });
+        if (status !== 200)
+          return Response.json(
+            { message: `Synthetic ${key}` },
+            {
+              status,
+              headers: {
+                'content-type':
+                  status === 503 ? 'application/problem+json' : 'Application/JSON; charset=utf-8',
+              },
+            },
+          );
         const [allowed, unavailable] = await backend.catalog(provider, 'api_key');
         const data = [
           { id: allowed.choice.id },
@@ -4929,7 +5204,12 @@ test('native account catalogs never send a provider key to a different service o
     for (status of [401, 403, 429, 503, 307]) {
       await assert.rejects(
         backend.catalog(provider, 'api_key', { type: 'api_key', key }),
-        (error: Error) => !error.message.includes(key),
+        (error: Error) => {
+          assert.ok(!error.message.includes(key));
+          assert.ok(error.message.includes(`HTTP ${status}`));
+          assert.match(error.message, /Synthetic \[redacted\]/);
+          return true;
+        },
       );
     }
   }
@@ -5813,7 +6093,7 @@ test('action review failures identify the task, model, provider, and bounded pro
       return true;
     },
   );
-  assert.equal(calls, 3);
+  assert.equal(calls, 1);
   assert.ok(sessions[0]);
   assert.equal(new Set(sessions).size, 1);
 });
@@ -5878,7 +6158,11 @@ test('image analysis passes image blocks to Pi and does not retry a failed charg
 });
 
 test('failed model requests keep unknown costs and remain separate from their retries', async () => {
-  const failed = { ...fauxAssistantMessage(''), stopReason: 'error' as const };
+  const failed = {
+    ...fauxAssistantMessage(''),
+    stopReason: 'error' as const,
+    errorMessage: 'Synthetic service is unavailable (HTTP 503).',
+  };
   const succeeded = {
     ...fauxAssistantMessage('{"saved":true}'),
     usage: {
@@ -7176,6 +7460,44 @@ function reply(content: Record<string, unknown>, finish = 'stop') {
   );
 }
 
+test('model requests refuse oversized payloads before dispatch and retain transport causes', async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    throw new TypeError('fetch failed', {
+      cause: Object.assign(new Error('Synthetic socket closed.'), { code: 'ECONNRESET' }),
+    });
+  };
+  for (const window of [8192, 131072]) {
+    const { runtime, model, requestFacts } = await createPiModelRuntime(
+      smallContextAccess('compatible', 'fixture-payload-limit', window),
+    );
+    const oversized = await runtime.completeSimple(model, {
+      messages: [{ role: 'user', content: 'Synthetic text '.repeat(window), timestamp: 1 }],
+    });
+    assert.equal(oversized.stopReason, 'error');
+    assert.match(oversized.errorMessage ?? '', new RegExp(`${window}-token context`));
+    assert.equal(calls, 0);
+    assert.equal(requestFacts(oversized)!.requestPhase, 'prepare');
+  }
+  for (const [index, provider] of (['compatible', 'openrouter'] as const).entries()) {
+    const { runtime, model } = await createPiModelRuntime(
+      smallContextAccess(provider, 'fixture-disconnect', 131072),
+    );
+    const failed = await runtime.completeSimple(model, {
+      messages: [{ role: 'user', content: 'Read synthetic data.', timestamp: 1 }],
+    });
+    assert.equal(failed.stopReason, 'error');
+    assert.equal(calls, index + 1);
+    assert.match(failed.errorMessage ?? '', /transport cause: ECONNRESET/);
+    assert.match(failed.errorMessage ?? '', /request phase: request/);
+  }
+});
+
 test('Groq Qwen finishes a task through a tool call with supported message roles', async (t) => {
   const original = globalThis.fetch;
   t.after(() => (globalThis.fetch = original));
@@ -7383,4 +7705,98 @@ test('Ollama models with on or off thinking complete tasks without a named effor
     }
     assert.deepEqual(enabled, thinking ? [true, onlyOn] : [undefined, undefined]);
   }
+});
+
+test('invalid tool calls stop before another model request and a valid repair resets the limit', async (t) => {
+  for (const [repair, toolName] of [
+    [false, 'task'],
+    [true, 'task'],
+    [false, 'sign_in'],
+  ] as const)
+    await t.test(`${toolName} ${repair ? 'repair' : 'stop'}`, async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'nod-tool-recovery-'));
+      t.after(() => rm(directory, { recursive: true, force: true }));
+      let requests = 0;
+      let writes = 0;
+      const runtime = createAgentRuntime({
+        agent: createPiAgent({
+          provider: 'openai',
+          apiKey: 'fixture-key-never-live',
+          sessionRoot: join(directory, 'sessions'),
+          createSession: async (options) => {
+            const result = await createAgentSession(options);
+            result.session.setActiveToolsByName([toolName]);
+            result.session.agent.streamFunction = () => {
+              requests++;
+              assert.ok(requests <= 11, 'The invalid call loop must stop.');
+              const done = repair && requests === 11;
+              const valid = repair && requests % 5 === 0;
+              const message = fauxAssistantMessage(
+                done
+                  ? 'Synthetic work was accepted.'
+                  : [
+                      {
+                        type: 'toolCall',
+                        id: `fixture-task-${requests}`,
+                        name: toolName,
+                        arguments:
+                          toolName === 'sign_in'
+                            ? {
+                                origin: 'https://signin.example.test',
+                                label: 'Synthetic login',
+                                message: 'Sign in to the synthetic account.',
+                                action: 'Sign in',
+                                kind: 'method',
+                              }
+                            : valid
+                              ? {
+                                  action: 'start',
+                                  title: 'Synthetic task',
+                                  doneWhen: 'The synthetic result exists.',
+                                  now: 'Read the synthetic source.',
+                                  message: 'Starting the synthetic task.',
+                                }
+                              : { action: 'start' },
+                      },
+                    ],
+                { stopReason: done ? 'stop' : 'toolUse' },
+              );
+              const stream = createAssistantMessageEventStream();
+              stream.push({ type: 'start', partial: message });
+              stream.push({ type: 'done', reason: done ? 'stop' : 'toolUse', message });
+              return stream;
+            };
+            return result;
+          },
+        }),
+        computer: fakeComputer(),
+        workspace: fakeWorkspace(),
+      });
+      t.after(() => runtime.dispose());
+      const run = () =>
+        runtime.runTurn({
+          ...context(directory),
+          turnId: randomUUID(),
+          task: async () => {
+            writes++;
+            return { id: randomUUID(), status: 'running' };
+          },
+        });
+      if (repair) {
+        assert.equal((await run()).status, 'succeeded');
+        assert.equal(requests, 11);
+        assert.equal(writes, 2);
+      } else {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          requests = 0;
+          await assert.rejects(run(), (error: Error) => {
+            assert.match(error.message, /failed five times/);
+            assert.match(error.message, toolName === 'sign_in' ? /\/methods:/ : /\/doneWhen:/);
+            return true;
+          });
+          assert.equal(requests, 5);
+          assert.equal(writes, 0);
+        }
+      }
+    });
 });
