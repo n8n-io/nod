@@ -218,6 +218,7 @@ const tools: Record<string, string> = {
   'fetch content': 'Read a web page',
   'get search content': 'Read search results',
   'source check': 'Checked a source',
+  'read source': 'Read a source',
   browser: 'Used the browser',
   'sign in': 'Signed in',
   pay: 'Entered a card',
@@ -238,6 +239,109 @@ const tools: Record<string, string> = {
 };
 
 export function toolTitle(summary: string) {
+  if (tools[summary]) return tools[summary];
+  const browser = /^browser ([a-z_]+)$/.exec(summary)?.[1];
+  if (browser) return `Browser: ${browser.replaceAll('_', ' ')}`;
   const server = /^mcp {2}(.+?) {2}.+$/.exec(summary)?.[1];
   return server ? `Used ${server}` : (tools[summary] ?? summary);
+}
+
+const browserVerbs: Record<string, string> = {
+  accept_dialog: 'accept a dialog',
+  evaluate: 'run a page script',
+  type: 'type and press Enter',
+};
+
+const settingNames: Record<string, string> = {
+  notificationRule: 'notifications',
+  rules: 'your rules',
+  speechReply: 'voice replies',
+  speechVoice: 'voice',
+  timeZone: 'time zone',
+  locale: 'region',
+  hourCycle: 'clock',
+  quietHoursEnabled: 'quiet hours',
+  quietStart: 'quiet hours',
+  quietEnd: 'quiet hours',
+  proactivePaused: 'preparation',
+};
+
+const host = (origin: unknown) => {
+  try {
+    return new URL(String(origin)).host.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+};
+
+const quoted = (text: string) => `“${text.length > 80 ? `${text.slice(0, 79)}…` : text}”`;
+
+const dollarsOrNone = (value: unknown, label: string) =>
+  value === null ? `no ${label}` : `${label} $${String(value)}`;
+
+export function recordedTitle(action: string) {
+  if (action === 'NOD_browser') return 'Browser';
+  if (action === 'NOD_notification_preferences_update') return 'Change settings';
+  if (action.startsWith('NOD_') && action !== 'NOD_read_source') return approvalTitle(action).title;
+  const { app, label } = actionTitle(action);
+  return app ? `${app}: ${label}` : label;
+}
+
+export function recordedAction(action: string, target?: string | null) {
+  if (action === 'NOD_browser' && target) return { label: `Browser: ${target}` };
+  return { label: recordedTitle(action), ...(target ? { target } : {}) };
+}
+
+export function actionTarget(
+  action: string,
+  args: Record<string, unknown>,
+  details?: Record<string, unknown>,
+) {
+  const target = (() => {
+    if (action === 'NOD_browser') {
+      const step = String(args.step ?? '');
+      const control = Array.isArray(args.control)
+        ? (args.control as Array<{ name?: unknown }>).find(
+            (item) => typeof item.name === 'string' && item.name.trim(),
+          )?.name
+        : undefined;
+      const what =
+        step === 'upload'
+          ? String(args.file ?? '')
+          : step === 'accept_dialog' && typeof args.dialog === 'string' && args.dialog.trim()
+            ? quoted(args.dialog.trim())
+            : typeof control === 'string'
+              ? quoted(control.trim())
+              : '';
+      const site = host(args.website);
+      return [browserVerbs[step] ?? step, what, site && `on ${site}`].filter(Boolean).join(' ');
+    }
+    if (action.startsWith('NOD_schedule_'))
+      return words(args.title ?? (details?.schedule as { title?: unknown } | undefined)?.title)[0];
+    if (action === 'NOD_model_select')
+      return words((details?.targetModel as { model?: unknown } | undefined)?.model)[0];
+    if (action === 'NOD_limits_update')
+      return [
+        'monthlyUsd' in args && dollarsOrNone(args.monthlyUsd, 'monthly limit'),
+        'taskUsd' in args && dollarsOrNone(args.taskUsd, 'task check-in'),
+      ]
+        .filter(Boolean)
+        .join(', ');
+    if (action === 'NOD_notification_preferences_update')
+      return [...new Set(Object.keys(args).map((key) => settingNames[key] ?? key))].join(', ');
+    if (action.startsWith('LOCAL_FILES_'))
+      return listed([
+        ...words(args.path),
+        ...words(args.paths),
+        ...(Array.isArray(args.moves)
+          ? (args.moves as Array<{ from?: unknown; to?: unknown }>).map(
+              (move) => `${String(move.from)} → ${String(move.to)}`,
+            )
+          : []),
+      ]);
+    return approvalContent(action, args)
+      .fields?.map((field) => field.value)
+      .join(' · ');
+  })()?.trim();
+  return target ? target.slice(0, 300) : undefined;
 }

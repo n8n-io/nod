@@ -213,7 +213,13 @@ export interface RuntimeContext {
   browserConnection?(request: BrowserConnectionRequest): Promise<unknown>;
   browserStep?(
     request: BrowserStep,
-  ): Promise<'run' | 'refused' | { [appConfirmation]: string } | { result: unknown }>;
+  ): Promise<
+    | 'run'
+    | 'refused'
+    | { record(): Promise<void> }
+    | { [appConfirmation]: string }
+    | { result: unknown }
+  >;
   delta(text: string, streamId?: string, done?: boolean): void;
   publish(path: string, name?: string): Promise<Artifact>;
   readAudio?(audio: AgentAudio, signal: AbortSignal): Promise<Uint8Array>;

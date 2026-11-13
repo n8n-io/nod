@@ -5,7 +5,7 @@ sidebar:
   order: 8
 ---
 
-Nod shows which models it used and what it did in your apps. With an API connection, you can also review spending and set a monthly limit.
+Nod shows what it did in your apps, on websites, in your files and in its own settings, and which models it used. With an API connection, you can also review spending and set a monthly limit.
 
 Nod itself doesn't charge you. Your model provider bills you for the requests Nod makes with your key or plan.
 
@@ -14,13 +14,16 @@ Nod itself doesn't charge you. Your model provider bills you for the requests No
 Open **Usage** in the sidebar (⌘5 in the Mac app, Ctrl+5 in the Windows or Linux app).
 
 - **The sentence at the top.** With an API model selected, this month's API spending and your monthly limit. Select the total to inspect spending or the limit to change it. With a ChatGPT plan selected, it says your usage comes from that plan.
-- **The list.** Model requests, connected app actions, sign-ins and card uses, grouped by day. Each line shows where it came from, such as **Schedule**, **Activity check** or **Task Nod started**, and what Nod did. A source check that found nothing to prepare says so, and a task's planned check reads **Checked on** with the task's name. Model requests show the models recorded for that run, including helpers and checks. Changing your selected model doesn't change these records. If an older request didn't record its model, the row says so. Under an action your words allowed, it shows those words, such as _You said "Send Lena the report"_.
+- **The list.** Your requests and Nod's runs, sign-ins and card submissions, grouped by day. Each row shows the request, when it ran, where it came from, such as **Schedule**, **Activity check** or **Task Nod started**, and what it changed, such as _Gmail: send email_ or _Change a schedule_. A source check that found nothing to prepare says so, and a task's planned check reads **Checked on** with the task's name.
+- **The log.** Select a row to see everything Nod did for it, step by step: each model call with its model, tokens and, when it has one, its cost; each action with what it acted on and, when recorded, why it was allowed, such as _Gmail: send email · lena@example.com · Q3 report · You said "Send Lena the report"_; the other tools it used; its notes along the way; work by helpers, indented; and its reply. When the words that allowed an action are your whole request, it says **You asked for it**. Actions cover connected apps (reads included), local files, steps on websites that click, submit or choose something, and changes to Nod's own schedules, settings, rules, memory and limits. Model calls keep the model recorded at the time, even if you change your selected model later. Each step is one line; point to it to read the whole line. Long logs load as you scroll, even with hundreds of thousands of steps. When the request has a chat message, **Show in chat** opens it.
 
-With a ChatGPT plan selected, Usage hides cost amounts, forecasts and monthly limit controls, including amounts on older API requests. Those requests still identify their recorded models and API connection. With an API model selected, recorded API costs are visible again; plan usage stays labeled separately and its API-price estimate is never shown as a charge. A run that used both shows its recorded API cost and identifies the models that used the plan.
+With a ChatGPT plan selected, Usage hides cost amounts, forecasts and monthly limit controls, including amounts on older API requests. Their logs still show the recorded models. With an API model selected, recorded API costs are visible again; plan usage stays labeled separately and its API-price estimate is never shown as a charge. A run that used both shows its recorded API cost, marked **API**.
 
-Scroll down to load earlier activity automatically.
+Scroll down to load earlier activity automatically. Select **Export** to download the full log as a CSV file: one row for every step of every request, plus sign-ins and card submissions, with the time to the second in your time zone, the request, where it came from, why each action was allowed and the cost of each model call. Plan-covered and unpriced model calls leave the cost empty. When Usage shows one task or run, Export downloads only its log.
 
-Select an activity with an available chat message to open that message in the conversation, including older messages. Sign-ins and card uses open the saved Vault item when it is still available. Entries without an available destination remain plain rows.
+You can also ask Nod in any chat, including Telegram and WhatsApp, for example "What did you do today?" or "Did you pay anything this week?". It answers from the same records. To get this every evening, ask for it as a [schedule](/use/schedules/).
+
+Sign-ins and card submissions open the saved Vault item when it is still available.
 
 To review or change [standing instructions](/trust/approvals/#standing-instructions), [rules](/trust/approvals/#your-rules) or task check-ins, ask Nod in chat.
 

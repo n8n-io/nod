@@ -53,8 +53,10 @@ import { createIntegrations, initializeIntegrationSchema } from '../src/server/i
 import { cachedIcons } from '../src/server/link-previews.ts';
 import { createErrorRedactor } from '../src/server/redaction.ts';
 import { createLedger } from '../src/server/ledger.ts';
+import { createActivityLog } from '../src/server/activity-log.ts';
+import { createVaultAccess } from '../src/server/vault-access.ts';
 import { usagePdf } from '../src/server/usage-report.ts';
-import type { TrustEntry } from '../src/shared/trust.ts';
+import type { TrustEntry, TrustPage, TrustStep } from '../src/shared/trust.ts';
 import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
 import { createWorkAdmission } from '../src/server/work-admission.ts';
 import { integrationServiceIds, integrationServices } from '../src/shared/integrations.ts';
@@ -9194,7 +9196,7 @@ test(
         CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,source text NOT NULL,source_id text,
           message_id uuid,prompt text NOT NULL,channel text NOT NULL DEFAULT 'web',status text NOT NULL DEFAULT 'succeeded',
           error text,created_at timestamptz NOT NULL DEFAULT now(),thread_id uuid,session_id uuid);
-        CREATE TABLE turn_events(id uuid DEFAULT gen_random_uuid(),turn_id uuid,type text,summary text DEFAULT '',created_at timestamptz NOT NULL DEFAULT now());
+        CREATE TABLE turn_events(id uuid DEFAULT gen_random_uuid(),turn_id uuid,type text,summary text DEFAULT '',site text,parent_run_id uuid,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,thread_id uuid,created_at timestamptz DEFAULT now(),hidden_at timestamptz);
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);
         CREATE TABLE schedules(id uuid,owner_id text,title text);
@@ -9230,6 +9232,21 @@ test(
       const ledger = createLedger({ pool, ownerId: 'owner' });
       await ledger.initialize();
       ledger.registerRoutes(app);
+      const vaultAccess = await createVaultAccess(pool, {
+        ownerId: 'owner',
+        check: async () => {
+          throw new Error('Reads need no check.');
+        },
+      });
+      const activity = createActivityLog({
+        bounds: ledger.bounds,
+        within: ledger.within,
+        chunk: ledger.chunk,
+        vault: vaultAccess.within,
+        steps: (turnIds, page) => ledger.steps(turnIds, page),
+        vaultPage: vaultAccess.ascending,
+      });
+      activity.registerRoutes(app);
       const usage = (turnId: string, costUsd: number | null): AgentEvent => ({
         type: 'model_usage',
         id: randomUUID(),
@@ -9299,8 +9316,13 @@ test(
           .curate({ task: 'review', instructions: 'Synthetic', input: {} }),
       );
       await ledger.action(chat, 'GMAIL_FETCH_EMAILS', { kind: 'read' });
-      await ledger.action(chat, 'GMAIL_SEND_EMAIL', { kind: 'approved' });
-      await ledger.action(foreign, 'GMAIL_SEND_EMAIL', { kind: 'approved' });
+      await ledger.action(
+        chat,
+        'GMAIL_SEND_EMAIL',
+        { kind: 'approved' },
+        'sam@example.test · Quote accepted',
+      );
+      await ledger.action(foreign, 'GMAIL_SEND_EMAIL', { kind: 'approved' }, 'Foreign target');
       for (let attempt = 0; attempt < 50; attempt++) {
         const rows = await pool.query('SELECT count(*)::int AS count FROM model_usage');
         if (rows.rows[0].count === 5) break;
@@ -9351,8 +9373,12 @@ test(
       assert.equal(scheduledEntry.messageId, null);
       assert.equal(scheduledEntry.costUsd, 0.1);
       assert.deepEqual(chatEntry(view.entries).actions, [
-        { label: 'Gmail: fetch emails' },
-        { label: 'Gmail: send email', because: { kind: 'approved' } },
+        { label: 'Gmail: fetch emails', read: true },
+        {
+          label: 'Gmail: send email',
+          target: 'sam@example.test · Quote accepted',
+          because: { kind: 'approved' },
+        },
       ]);
       const said = randomUUID();
       const foreignSaid = randomUUID();
@@ -9423,7 +9449,7 @@ test(
         [
           {
             label: 'Slack: send message',
-            because: { kind: 'message', text: 'Tell Sam we take the quote' },
+            because: { kind: 'message', text: 'Tell Sam we take the quote', whole: true },
           },
           { label: 'Slack: send message' },
         ],
@@ -9434,6 +9460,114 @@ test(
           .entries.map((entry: TrustEntry) => entry.id),
         [scheduled],
       );
+      await pool.query(
+        `INSERT INTO vault_activity(id,owner_id,action,origin,item_kind,task,reason,amount_minor,currency) VALUES
+          ($1,'owner','card','https://shop.example.test','card','=HYPERLINK("https://attacker.example.test")','said_yes',1200,'EUR'),
+          ($2,'other','card','https://foreign.example.test','card','Foreign task','said_yes',900,'EUR'),
+          ($3,'owner','card','https://shop.example.test','card','@SUM(1+1)','said_yes',300,'EUR')`,
+        [randomUUID(), randomUUID(), randomUUID()],
+      );
+      const exported = await app.inject('/api/trust/export');
+      assert.equal(exported.statusCode, 200);
+      const cells = (body: string) =>
+        body
+          .replace(/^\ufeff/, '')
+          .trim()
+          .split('\r\n')
+          .map((line) => {
+            const row: string[] = [];
+            let cell = '';
+            let quoted = false;
+            for (let index = 0; index < line.length; index++) {
+              const char = line[index]!;
+              if (quoted && char === '"' && line[index + 1] === '"') {
+                cell += '"';
+                index++;
+              } else if (char === '"') quoted = !quoted;
+              else if (char === ',' && !quoted) {
+                row.push(cell);
+                cell = '';
+              } else cell += char;
+            }
+            return [...row, cell];
+          });
+      const rows = cells(exported.body);
+      assert.ok(rows.every((row) => row.length === rows[0]!.length));
+      await ledger.withExecution(
+        {
+          threadId: conversation,
+          sessionId: conversation,
+          turnId: chat,
+          runId: randomUUID(),
+          parentRunId: chat,
+          browserId: 'helper-browser',
+          onEvent() {},
+        },
+        () => ledger.action(chat, 'NOTION_UPDATE_PAGE', { kind: 'approved' }, 'Helper page'),
+      );
+      const chatSteps = (await app.inject(`/api/trust/entries/${chat}/steps`)).json().steps;
+      assert.ok(
+        chatSteps.some(
+          (step: TrustStep) =>
+            step.kind === 'action' && step.detail === 'Helper page' && step.helper,
+        ),
+      );
+      assert.ok(chatSteps.some((step: TrustStep) => step.kind === 'model' && step.costUsd));
+      assert.ok(
+        chatSteps.some(
+          (step: TrustStep) =>
+            step.kind === 'action' && step.detail === 'sam@example.test · Quote accepted',
+        ),
+      );
+      assert.deepEqual((await app.inject(`/api/trust/entries/${foreign}/steps`)).json().steps, []);
+      assert.ok(
+        rows.some(
+          (row) =>
+            row[1] === 'Tell Sam we take the quote' &&
+            row[5] === 'sam@example.test · Quote accepted',
+        ),
+      );
+      assert.ok(rows.some((row) => row[1] === 'Tell Sam we take the quote' && Number(row[7]) > 0));
+      assert.ok(rows.some((row) => row[1] === `'=HYPERLINK("https://attacker.example.test")`));
+      assert.ok(rows.some((row) => row[1] === `'@SUM(1+1)`));
+      assert.doesNotMatch(exported.body, /Foreign|foreign\.example/);
+      const scoped = cells((await app.inject(`/api/trust/export?session=${scheduled}`)).body);
+      assert.deepEqual([...new Set(scoped.slice(1).map((row) => row[1]))], ['Morning brief']);
+      assert.deepEqual((await activity.read({ from: '2000-01-01' }, 200)).entries, []);
+      const tied = Array.from({ length: 31 }, () => randomUUID());
+      await pool.query(
+        `INSERT INTO turns(id,owner_id,source,prompt,thread_id,session_id,created_at)
+         SELECT id,'owner','user','Tied request',$2,id,'2026-01-01T00:00:00.123456Z' FROM unnest($1::uuid[]) id`,
+        [tied, conversation],
+      );
+      await pool.query(
+        `INSERT INTO app_actions(owner_id,turn_id,action,basis) SELECT 'owner',id,'GMAIL_FETCH_EMAILS','{"kind":"read"}' FROM unnest($1::uuid[]) id`,
+        [tied],
+      );
+      const span = await ledger.bounds({});
+      const paged: string[] = [];
+      let cursor: { at: string; id: string } | null = null;
+      for (let attempt = 0; ; attempt++) {
+        assert.ok(attempt < 100, 'Paging must advance.');
+        const page = await ledger.chunk(span, cursor, 2);
+        paged.push(...page.entries.map((entry) => entry.id));
+        if (page.entries.length < 2 || !page.next) break;
+        cursor = page.next;
+      }
+      assert.equal(new Set(paged).size, paged.length);
+      assert.ok(tied.every((id) => paged.includes(id)));
+      assert.ok(!paged.includes(foreign));
+      const listed: string[] = [];
+      let before = '';
+      for (let attempt = 0; ; attempt++) {
+        assert.ok(attempt < 100, 'Paging must advance.');
+        const page = (await app.inject(`/api/trust/entries${before}`)).json() as TrustPage;
+        listed.push(...page.entries.map((entry) => entry.id));
+        if (!page.next) break;
+        before = `?at=${encodeURIComponent(page.next.at)}&id=${page.next.id}`;
+      }
+      assert.equal(new Set(listed).size, listed.length);
+      assert.ok(tied.every((id) => listed.includes(id)));
       await pool.query(
         "DELETE FROM app_actions WHERE action='SLACK_SEND_MESSAGE' OR (turn_id=$1 AND action='GMAIL_FETCH_EMAILS')",
         [scheduled],

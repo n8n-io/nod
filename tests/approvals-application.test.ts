@@ -822,6 +822,7 @@ test(
             expectOrigin: 'https://bank.example.test',
           };
           const before = clicks().length;
+          const since = new Date();
           const held = await propose('click', { selector: '@e7' }, 'browser');
           const [card] = await approvalsFor(held);
           assert.equal(card.status, 'pending');
@@ -851,6 +852,30 @@ test(
           const requested = await propose('click', { selector: '@e7' }, 'browser', text);
           assert.deepEqual(await approvalsFor(requested), []);
           assert.deepEqual(clicks().slice(before), [click, click]);
+          assert.deepEqual(
+            (
+              await pool.query(
+                `SELECT target,basis->>'kind' AS kind FROM app_actions
+                 WHERE action='NOD_browser' AND created_at>=$1 ORDER BY created_at`,
+                [since],
+              )
+            ).rows,
+            [
+              { target: 'click “Authorize payment” on bank.example.test', kind: 'approved' },
+              { target: 'click “Authorize payment” on bank.example.test', kind: 'message' },
+            ],
+          );
+          const log = JSON.stringify(
+            results.get(
+              await propose(
+                'usage_get',
+                { from: '2000-01-01', to: '2099-12-31' },
+                'manage_personal_context',
+              ),
+            ),
+          );
+          assert.match(log, /untrusted_tool_result source=\\"usage\\"/);
+          assert.ok(log.includes('Browser: click “Authorize payment” on bank.example.test'));
           const moved = await propose('click', { selector: '@e7' }, 'browser');
           const [stale] = await approvalsFor(moved);
           browserUrl = 'https://bank.example.test/payees/remove';
@@ -1313,6 +1338,14 @@ test(
             limit: { monthlyUsd: 500, reached: false },
             taskUsd: null,
           });
+          assert.deepEqual(
+            (
+              await pool.query(
+                "SELECT target,basis->>'kind' AS kind FROM app_actions WHERE action='NOD_limits_update'",
+              )
+            ).rows,
+            [{ target: 'monthly limit $500, no task check-in', kind: 'approved' }],
+          );
         },
       );
 

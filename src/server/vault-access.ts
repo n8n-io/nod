@@ -232,6 +232,65 @@ export async function createVaultAccess(
     };
   }
 
+  const present = (row: Omit<Row, 'cursor'>): VaultActivityEntry => {
+    const because = becauseOf(row.basis, row.said);
+    return {
+      id: row.id,
+      at: row.at.toISOString(),
+      action: row.action,
+      origin: row.origin,
+      ...(row.item_id ? { itemId: row.item_id } : {}),
+      ...(row.item_kind ? { itemKind: row.item_kind } : {}),
+      ...(row.amount_minor !== null && row.currency
+        ? { amount: { minor: Number(row.amount_minor), currency: row.currency } }
+        : {}),
+      task: row.task,
+      reason: row.reason,
+      ...(because ? { because } : {}),
+    };
+  };
+
+  async function within(
+    start: Date | string | null,
+    end: Date | string | null,
+    limit: number | null,
+  ) {
+    const { rows } = await pool.query<Omit<Row, 'cursor'>>(
+      `SELECT id,at,action,origin,item_id,item_kind,amount_minor,currency,task,reason,basis,
+       EXISTS(SELECT 1 FROM messages m WHERE a.basis->>'kind'='message'
+         AND m.owner_id=$1 AND m.id=(a.basis->>'messageId')::uuid) AS said
+       FROM vault_activity a
+       WHERE owner_id=$1 AND ($2::timestamptz IS NULL OR at>=$2) AND ($3::timestamptz IS NULL OR at<$3)
+       ORDER BY at DESC,id DESC LIMIT $4`,
+      [ownerId, start, end, limit === null ? null : limit + 1],
+    );
+    return {
+      entries: (limit === null ? rows : rows.slice(0, limit)).map(present),
+      complete: limit === null || rows.length <= limit,
+    };
+  }
+
+  async function ascending(
+    start: Date | string | null,
+    end: Date | string | null,
+    after: { at: string; id: string } | null,
+    limit: number,
+  ) {
+    const { rows } = await pool.query<Row>(
+      `SELECT id,at,to_char(at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor,
+       action,origin,item_id,item_kind,amount_minor,currency,task,reason,basis,
+       EXISTS(SELECT 1 FROM messages m WHERE a.basis->>'kind'='message'
+         AND m.owner_id=$1 AND m.id=(a.basis->>'messageId')::uuid) AS said
+       FROM vault_activity a
+       WHERE owner_id=$1 AND ($2::timestamptz IS NULL OR at>=$2) AND ($3::timestamptz IS NULL OR at<$3)
+         AND ($4::timestamptz IS NULL OR (at,id)>($4,$5::uuid))
+       ORDER BY at,id LIMIT $6`,
+      [ownerId, start, end, after?.at ?? null, after?.id ?? null, limit],
+    );
+    const last = rows.at(-1);
+    return { entries: rows.map(present), next: last ? { at: last.cursor, id: last.id } : null };
+  }
+
   async function activity(query: {
     before?: unknown;
     origin?: unknown;
@@ -266,23 +325,7 @@ export async function createVaultAccess(
     const last = page.at(-1);
     return {
       week: { signIns: week.signed, payments: week.paid, held: week.held },
-      entries: page.map((row) => {
-        const because = becauseOf(row.basis, row.said);
-        return {
-          id: row.id,
-          at: row.at.toISOString(),
-          action: row.action,
-          origin: row.origin,
-          ...(row.item_id ? { itemId: row.item_id } : {}),
-          ...(row.item_kind ? { itemKind: row.item_kind } : {}),
-          ...(row.amount_minor !== null && row.currency
-            ? { amount: { minor: Number(row.amount_minor), currency: row.currency } }
-            : {}),
-          task: row.task,
-          reason: row.reason,
-          ...(because ? { because } : {}),
-        };
-      }),
+      entries: page.map(present),
       ...(rows.length > 50 && last ? { next: { at: last.cursor, id: last.id } } : {}),
     };
   }
@@ -343,6 +386,8 @@ export async function createVaultAccess(
     used,
     allow,
     activity,
+    within,
+    ascending,
     registerRoutes,
   };
 }
