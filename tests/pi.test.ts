@@ -1430,6 +1430,29 @@ test('fresh scheduled sessions put their stable first request on a one-hour Anth
   assert.equal(JSON.stringify(bodies[1]).includes('FIRST-RUN'), false);
 });
 
+test('an earlier sign-in link has unknown status without a current credential request', async () => {
+  const { firstInstruction, observerInstruction } = await import('../src/runtime/prompt.ts');
+  const input: RuntimeContext = {
+    ...context('/fixture'),
+    prompt: 'Can I still use the earlier sign-in link?',
+    credentialRequests: [],
+    history: [
+      {
+        role: 'assistant',
+        text: 'Open the private sign-in form at /credentials/fixture.',
+        turnId: 'earlier-sign-in-turn',
+      },
+    ],
+  };
+  for (const instruction of [
+    firstInstruction(input, false, new Set()),
+    observerInstruction(input, false, 'Synthetic time').text,
+  ]) {
+    assert.match(instruction, /An earlier sign-in link does not prove its form is open/);
+    assert.doesNotMatch(instruction, /"credentialRequests":/);
+  }
+});
+
 test('messages taken after a Pi turn each reach a new request and not after a question', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-pi-steer-'));
   const requests: string[] = [];
