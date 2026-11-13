@@ -9547,7 +9547,8 @@ test(
       const span = await ledger.bounds({});
       const paged: string[] = [];
       let cursor: { at: string; id: string } | null = null;
-      for (;;) {
+      for (let attempt = 0; ; attempt++) {
+        assert.ok(attempt < 100, 'Paging must advance.');
         const page = await ledger.chunk(span, cursor, 2);
         paged.push(...page.entries.map((entry) => entry.id));
         if (page.entries.length < 2 || !page.next) break;
@@ -9558,7 +9559,8 @@ test(
       assert.ok(!paged.includes(foreign));
       const listed: string[] = [];
       let before = '';
-      for (;;) {
+      for (let attempt = 0; ; attempt++) {
+        assert.ok(attempt < 100, 'Paging must advance.');
         const page = (await app.inject(`/api/trust/entries${before}`)).json() as TrustPage;
         listed.push(...page.entries.map((entry) => entry.id));
         if (!page.next) break;
