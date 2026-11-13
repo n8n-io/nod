@@ -126,6 +126,19 @@ sequenceDiagram
 - Frames pause during credential entry. Passwords you type in the handoff join the known secrets.
 - An init script makes every passkey request fail at once and reports no passkey support, so a sign-in doesn't open a passkey prompt that the live view can't show.
 
+## Watching a task's browser
+
+A task's card can show its browser live while the task works. The server sends the same frames as a handoff, bound to the task instead of a waiting question.
+
+- The view serves frames only while the task is open and its session has a running turn. The server checks this every second and ends the view when the turn finishes, waits or stops, the task closes or the thread is archived.
+- The browser is the task's own session browser, looked up from the task on the server. Another session's browser, a helper's browser or another owner's task never reach the view.
+- The view has no input path. Clicks, typing, **Back** and **Reload** still need a pending handoff, so watching can't race a step Nod is taking.
+- Watching doesn't hold the browser open or count as use. When the browser closes, the view ends and says so instead of showing a saved screenshot.
+- Live frames aren't masked like screenshots. A handoff pauses them during credential entry, then shows the page so you can finish a sign-in. A watch view also stays blank while any tab still shows a page Nod filled privately, until that page reloads or navigates.
+- Desktop feedback screenshots skip a page that shows the view, as they do for a handoff.
+
+Taking control while Nod browses isn't available yet. A takeover would have to stop the running step safely and treat an interrupted submission as uncertain, which needs its own design.
+
 :::caution[Limits]
 The workspace can reach public internet addresses. Source installs and self-hosted servers use a separate firewall container. It blocks private and reserved IPv4 addresses, including cloud metadata services, and all external IPv6 traffic. The workspace starts only after the firewall is ready and has no permission to change its rules. Local workspace services remain available through loopback. The desktop app's local runtime also blocks private and reserved addresses. The browser reaches only public addresses. Inside the browser container, Chromium runs with its own sandbox turned off; the container is the boundary.
 :::

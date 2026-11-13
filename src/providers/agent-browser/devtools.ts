@@ -244,6 +244,21 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
     walk((await send('Page.getFrameTree', {}, session)).frameTree as FrameNode);
     return frames;
   };
+  const documents = async () => {
+    const { targetInfos } = (await send('Target.getTargets')) as {
+      targetInfos: Array<{ targetId: string; type: string }>;
+    };
+    const loaders = new Set<string>();
+    for (const target of targetInfos.filter((item) => item.type === 'page')) {
+      const { sessionId } = (await send('Target.attachToTarget', {
+        targetId: target.targetId,
+        flatten: true,
+      })) as { sessionId: string };
+      const [main] = await tree(sessionId);
+      if (main?.loaderId) loaders.add(main.loaderId);
+    }
+    return loaders;
+  };
   const world = async (session: string, frameId: string) => {
     const key = `${session}:${frameId}`;
     const known = worlds.get(key);
@@ -1062,19 +1077,9 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
       return main.loaderId;
     },
     async alive(loaderId: string) {
-      const { targetInfos } = (await send('Target.getTargets')) as {
-        targetInfos: Array<{ targetId: string; type: string }>;
-      };
-      for (const target of targetInfos.filter((item) => item.type === 'page')) {
-        const { sessionId } = (await send('Target.attachToTarget', {
-          targetId: target.targetId,
-          flatten: true,
-        })) as { sessionId: string };
-        const [main] = await tree(sessionId);
-        if (main?.loaderId === loaderId) return true;
-      }
-      return false;
+      return (await documents()).has(loaderId);
     },
+    documents,
     close() {
       socket.close();
     },

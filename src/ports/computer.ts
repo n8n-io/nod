@@ -158,7 +158,7 @@ export interface Computer {
     input: BrowserHandoffInput,
     signal?: AbortSignal,
   ): Promise<string | void>;
-  view(threadId: string, signal: AbortSignal): AsyncIterable<Buffer>;
+  view(threadId: string, signal: AbortSignal, options?: { watch?: boolean }): AsyncIterable<Buffer>;
   screenStatus(threadId: string): {
     state: 'live' | 'last_known' | 'unavailable';
     capturedAt?: string;

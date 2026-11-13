@@ -8,6 +8,7 @@ import {
   CircleCheck,
   CircleSlash,
   Clock,
+  Eye,
   Globe2,
   Hourglass,
   LoaderCircle,
@@ -29,6 +30,7 @@ import { formatDateTime, useDateFormat } from '../lib/date-format';
 import { post, errorMessage } from '../lib/api';
 import { ScheduleRow } from './schedule';
 import { LiveLine } from '../components/live-line';
+import { BrowserWatch } from '../components/browser-watch';
 
 const icons = {
   queued: Clock,
@@ -130,6 +132,10 @@ export function TaskCard({
     return () => window.removeEventListener('nod:open-task', open);
   }, [inChat, task.id]);
   const [showActivity, setShowActivity] = useState(false);
+  const [watching, setWatching] = useState(false);
+  useEffect(() => {
+    if (task.status !== 'working') setWatching(false);
+  }, [task.status]);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState('');
   const format = useDateFormat();
@@ -340,6 +346,20 @@ export function TaskCard({
               >
                 {showActivity ? 'Hide activity' : 'Show activity'}
               </Button>
+              {task.status === 'working' && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-expanded={watching}
+                  onClick={() => {
+                    if (!watching) captureAnalytics('task_action', { action: 'watch_browser' });
+                    setWatching(!watching);
+                  }}
+                >
+                  <Eye size={16} aria-hidden="true" />
+                  {watching ? 'Hide browser' : 'Watch browser'}
+                </Button>
+              )}
               {!closed(task) && (
                 <Button
                   variant="ghost"
@@ -363,6 +383,9 @@ export function TaskCard({
               )}
             </div>
             {error && <Notice>{error}</Notice>}
+            {expanded && watching && task.status === 'working' && (
+              <BrowserWatch taskId={task.id} title={task.title} />
+            )}
             {showActivity && <TaskActivity id={task.id} />}
             {task.status === 'done' && <ScheduleTask taskId={task.id} onCreated={onScheduled} />}
           </div>

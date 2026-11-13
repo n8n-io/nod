@@ -45,6 +45,18 @@ Pointer input follows the page’s zoom level in both the chat and enlarged view
 
 Changing the view or selecting **Return to Nod** waits for pending input to reach the browser. If input fails, Nod shows an error and doesn't repeat it. Check the page before trying again.
 
+## Watch a task's browser
+
+While a task works, open its card and select **Watch browser** to see its current page live. The view sits inside that task's card and shows only that task's browser.
+
+- Watching is read only. Nod keeps control, and your clicks and typing don't reach the page.
+- The view pauses while Nod enters a saved login, a code or a card. It also pauses while a page holds a value Nod entered for you, until that page reloads or changes.
+- If the task's browser has closed, the view says so. It never shows an old picture of the page.
+- The view ends when the task stops working, for example when it finishes or asks you something. When the task hands you its browser, use **Open browser** instead.
+- Helpers that a task starts have their own browsers, and the view doesn't show them.
+
+You can't take control while Nod is browsing. To change course, reply to the task or select **Stop this task**. Stopping a task closes its browser.
+
 ## CAPTCHAs and human checks
 
 Nod tries a challenge first. It reads the instructions, looks at fresh screenshots and makes up to three informed attempts. It stops at a block, rate limit or lockout. Then it hands the browser to you and says what it tried.

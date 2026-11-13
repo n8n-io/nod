@@ -44,7 +44,12 @@ import {
 import { startContainerBrowserWorker } from '../src/providers/container-browser/worker.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { toolDefinitions } from '../src/runtime/tools.ts';
-import { createBrowserFixture, fakeDevtools, type DevtoolsModel } from './browser-fixture.ts';
+import {
+  createBrowserFixture,
+  fakeDevtools,
+  fakeScreencast,
+  type DevtoolsModel,
+} from './browser-fixture.ts';
 import { stagedLoginBrowser } from './login-fixture.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
@@ -89,6 +94,7 @@ test(
     let onView: ((signal: AbortSignal) => AsyncGenerator<Buffer>) | undefined;
     let onCapture: (() => Promise<void>) | undefined;
     const captures: string[] = [];
+    const viewed: Array<[string, boolean]> = [];
     const controls: unknown[] = [];
     let copyResponses: Array<string | undefined> = [];
     let onCopy: (() => Promise<void>) | undefined;
@@ -117,7 +123,8 @@ test(
           controls.push([id, input]);
           return { text: 'Synthetic page', url: 'https://example.test/' };
         },
-        view: async function* (_id, signal) {
+        view: async function* (id, signal, options) {
+          viewed.push([id, options?.watch === true]);
           if (!pageShown) return;
           if (onView) {
             yield* onView(signal);
@@ -444,6 +451,136 @@ test(
       );
       assert.deepEqual(await handoff(), [423, 423, 423]);
       assert.equal(controls.length, 6);
+
+      const { createTasks } = await import('../src/server/tasks.ts');
+      await createTasks({ pool: db.pool, ownerId }).initialize();
+      const taskSession = async (owner: string, threadId: string) => {
+        const turn = randomUUID();
+        const task = randomUUID();
+        await db.pool.query(
+          "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background) VALUES($1,$2,$3,'task','Synthetic task','running',true)",
+          [turn, owner, threadId],
+        );
+        await db.pool.query(
+          "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text) VALUES($1,$2,$3,$3,'Synthetic task','Done','Browsing')",
+          [task, owner, turn],
+        );
+        await db.pool.query('UPDATE turns SET task_id=$1 WHERE id=$2', [task, turn]);
+        return { turn, task };
+      };
+      const watched = await taskSession(ownerId, next.id);
+      const foreignTask = await taskSession('other', foreignThread.id);
+      const watch = async (taskId: string) => {
+        const controller = new AbortController();
+        const stream = await app.inject({
+          url: `/api/browser-watch/stream?taskId=${taskId}`,
+          headers,
+          payloadAsStream: true,
+          signal: controller.signal,
+        });
+        let body = '';
+        if (stream.statusCode === 200)
+          body = await new Promise<string>((resolve) => {
+            let bytes = Buffer.alloc(0);
+            stream.stream().on('data', (chunk) => {
+              bytes = Buffer.concat([bytes, chunk]);
+              if (bytes.length >= 4 && bytes.length >= bytes.readUInt32BE(0) + 4)
+                resolve(bytes.subarray(4).toString());
+            });
+          });
+        else
+          body = await new Promise<string>((resolve) => {
+            let text = '';
+            stream.stream().on('data', (chunk) => (text += chunk));
+            stream.stream().on('end', () => resolve(text));
+          });
+        controller.abort();
+        return { status: stream.statusCode, body };
+      };
+      assert.ok(viewed.length && viewed.every(([, watching]) => !watching));
+      viewed.length = 0;
+      const live = await watch(watched.task);
+      assert.equal(live.status, 200);
+      assert.equal(live.body, 'synthetic-live-frame');
+      assert.deepEqual(viewed, [[watched.turn, true]]);
+      assert.equal(
+        (await post('/api/browser-handoff', { turnId: watched.turn, inputs: [click] })).statusCode,
+        423,
+      );
+      assert.equal(
+        (await post('/api/browser-handoff/navigate', { turnId: watched.turn, action: 'back' }))
+          .statusCode,
+        423,
+      );
+      assert.equal(controls.length, 6);
+      viewed.length = 0;
+      const foreign = await watch(foreignTask.task);
+      assert.equal(foreign.status, 423);
+      assert.equal(foreign.body.includes('synthetic-live-frame'), false);
+      assert.equal((await watch(randomUUID())).status, 423);
+      assert.deepEqual(viewed, []);
+      pageShown = false;
+      const expired = await watch(watched.task);
+      assert.equal(expired.status, 409);
+      assert.match(expired.body, /closed/);
+      assert.equal(expired.body.includes('synthetic-live-frame'), false);
+      pageShown = true;
+      await db.pool.query(
+        "UPDATE turns SET status='waiting',waiting_reason='question',handoff_browser_id=session_id::text WHERE id=$1",
+        [watched.turn],
+      );
+      assert.equal((await watch(watched.task)).status, 423);
+      await db.pool.query(
+        "UPDATE turns SET status='running',waiting_reason=NULL,handoff_browser_id=NULL WHERE id=$1",
+        [watched.turn],
+      );
+      for (const reason of ['finished', 'stopped', 'archived']) {
+        const started = deferred<AbortSignal>();
+        const closed = deferred();
+        onView = async function* (signal) {
+          try {
+            yield Buffer.from('synthetic-live-frame');
+            started.resolve(signal);
+            await new Promise((resolve) =>
+              signal.addEventListener('abort', resolve, { once: true }),
+            );
+          } finally {
+            closed.resolve();
+          }
+        };
+        const controller = new AbortController();
+        const deadline = new AbortController();
+        const pending = app.inject({
+          url: `/api/browser-watch/stream?taskId=${watched.task}`,
+          headers,
+          signal: controller.signal,
+        });
+        try {
+          const viewing = await started.promise;
+          if (reason === 'finished')
+            await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [watched.turn]);
+          if (reason === 'stopped')
+            await db.pool.query("UPDATE tasks SET state='cancelled' WHERE id=$1", [watched.task]);
+          if (reason === 'archived')
+            await db.pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [next.id]);
+          await Promise.race([
+            closed.promise,
+            delay(5_000, undefined, { signal: deadline.signal }).then(() =>
+              assert.fail(`Watching should end after the task ${reason}.`),
+            ),
+          ]);
+          assert.equal(viewing.aborted, true);
+          assert.equal((await watch(watched.task)).status, 423);
+        } finally {
+          deadline.abort();
+          controller.abort();
+          await pending.catch(() => {});
+          onView = undefined;
+          await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [watched.turn]);
+          await db.pool.query("UPDATE tasks SET state='open' WHERE id=$1", [watched.task]);
+          await db.pool.query('UPDATE threads SET archived_at=NULL WHERE id=$1', [next.id]);
+        }
+      }
     } finally {
       await app.close();
       await db.pool.end();
@@ -963,6 +1100,89 @@ test('a card goes only into the approved fields on the approved sites and stays 
   }
 });
 
+test('watching stays blank while any tab still holds a page Nod filled privately', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-browser-watch-'));
+  let url = 'about:blank';
+  let documents = 0;
+  const model: DevtoolsModel = {
+    document: 'loader-0',
+    frames: [{ id: 'main', session: 'page', origin: 'https://1.1.1.1' }],
+    frameOf: { '@e3': 'main' },
+    values: new Map(),
+    tabs: [],
+  };
+  const devtools = await fakeDevtools(model);
+  const screencast = await fakeScreencast();
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: async (_executable, args, options) => {
+      const command = args.slice(args.indexOf('--idle-timeout') + 2);
+      let data: Record<string, unknown> = {};
+      if (command[0] === 'open') {
+        url = command[1]!;
+        model.document = `loader-${++documents}`;
+        model.values.clear();
+        model.focused = model.field = model.armed = undefined;
+      }
+      if (command[0] === 'get' && command[1] === 'url') data = { url };
+      if (command[0] === 'get' && command[1] === 'cdp-url') data = { cdpUrl: devtools.url };
+      if (command[0] === 'stream' && command[1] === 'status') data = { port: screencast.port };
+      if (command[0] === 'focus') {
+        model.field = command[1]!;
+        model.focused = model.frameOf[command[1]!];
+      }
+      if (command[0] === 'eval') data = { result: options?.input?.length ?? 0 };
+      return { stdout: JSON.stringify({ success: true, data }), stderr: '', exitCode: 0 };
+    },
+  });
+  const controller = new AbortController();
+  const signIn = () =>
+    computer.injectCredentials({
+      threadId: 'watch',
+      origin: 'https://1.1.1.1',
+      kind: 'password',
+      password: 'synthetic-watch-password',
+      passwordSelector: '@e3',
+    });
+  try {
+    await computer.act('watch', { action: 'open', url: 'https://1.1.1.1/login' });
+    await signIn();
+    model.tabs = [model.document];
+    await computer.act('watch', { action: 'open', url: 'https://1.1.1.1/second-login' });
+    await signIn();
+    const frames = computer
+      .view('watch', controller.signal, { watch: true })
+      [Symbol.asyncIterator]();
+    const first = frames.next();
+    const connecting = Date.now() + 5_000;
+    while (!screencast.connected) {
+      assert.ok(Date.now() < connecting, 'The watch view did not connect.');
+      await Promise.race([first, delay(5)]);
+    }
+    await screencast.send('synthetic-sealed-frame');
+    assert.equal((await first).value?.length, 0);
+    await computer.act('watch', { action: 'open', url: 'https://1.1.1.1/account' });
+    const next = frames.next();
+    for (let sent = 0; sent < 10; sent++) {
+      await screencast.send('synthetic-background-sealed-frame');
+      await delay(150);
+    }
+    assert.equal(await Promise.race([next.then(() => 'frame'), delay(200, 'none')]), 'none');
+    model.tabs = [];
+    const resumed = await Promise.race([next, delay(5_000, undefined)]);
+    assert.equal(String(resumed?.value), 'synthetic-background-sealed-frame');
+    const after = frames.next();
+    await screencast.send('synthetic-open-frame');
+    assert.equal(String((await after).value), 'synthetic-open-frame');
+  } finally {
+    controller.abort();
+    await computer.dispose();
+    await screencast.close();
+    await devtools.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('discarding a thread closes its browser and deletes only its throwaway data; clearing a finished session lets it start fresh', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-browser-discard-'));
   const fixture = stagedLoginBrowser();
@@ -1411,6 +1631,7 @@ test('a live view acknowledges applied input or fails', { timeout: 10_000 }, asy
   let allowInput: Promise<void> | undefined;
   let inputSignal: AbortSignal | undefined;
   const viewSignals: AbortSignal[] = [];
+  const viewOptions: unknown[] = [];
   let disposals = 0;
   const computer: Computer = {
     ...syntheticComputer(),
@@ -1430,8 +1651,9 @@ test('a live view acknowledges applied input or fails', { timeout: 10_000 }, asy
       inputs.push(input);
       if (input.type === 'copy') return 'Synthetic selected text';
     },
-    view: async function* (_id, signal) {
+    view: async function* (_id, signal, options) {
       viewSignals.push(signal);
+      viewOptions.push(options);
       yield Buffer.from('first frame');
       while (inputs.length < initialInputs.length && !signal.aborted) await delay(5);
       yield Buffer.from('second frame');
@@ -1456,6 +1678,16 @@ test('a live view acknowledges applied input or fails', { timeout: 10_000 }, asy
     assert.deepEqual(frames, ['first frame', 'second frame']);
     assert.deepEqual(inputs, initialInputs);
     await assert.rejects(client.control!('task', { type: 'text', text: 'late' }), /not open/);
+    const watchController = new AbortController();
+    const watching = client.view!('task', watchController.signal, { watch: true })[
+      Symbol.asyncIterator
+    ]();
+    assert.match(String((await watching.next()).value), /frame/);
+    assert.deepEqual(viewOptions.at(-1), { watch: true });
+    await assert.rejects(client.control!('task', { type: 'text', text: 'watched' }), /not open/);
+    assert.equal(inputs.length, initialInputs.length);
+    watchController.abort();
+    await watching.return?.();
     const controller = new AbortController();
     const stream = client.view!('task', controller.signal)[Symbol.asyncIterator]();
     await stream.next();

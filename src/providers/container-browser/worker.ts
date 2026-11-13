@@ -238,8 +238,9 @@ export async function startContainerBrowserWorker(
           socket.once('close', resolve);
         });
     };
-    const view = async (computer: Computer, threadId: string, id: string) => {
-      for await (const image of computer.view(threadId, controller.signal)) {
+    const view = async (computer: Computer, threadId: string, id: string, watch?: true) => {
+      const frames = computer.view(threadId, controller.signal, watch ? { watch } : undefined);
+      for await (const image of frames) {
         await send(JSON.stringify(viewFrame.parse({ id, frame: image.toString('base64') })) + '\n');
         if (socket.destroyed) break;
       }
@@ -277,7 +278,8 @@ export async function startContainerBrowserWorker(
           if (entry.pending.has(input.id)) throw new Error();
           if (input.method === 'view') viewing = entry.computer;
           const done = entry.computer.then(async (computer) => {
-            if (input.method === 'view') return view(computer, input.threadId, input.id);
+            if (input.method === 'view')
+              return view(computer, input.threadId, input.id, input.watch);
             const result = await dispatch(computer, input, controller.signal, upload);
             return input.method === 'download'
               ? download(result as BrowserDownload, input.id)
@@ -348,7 +350,8 @@ export async function startContainerBrowserWorker(
               uploaded = [];
             }
           } else if (frame.type === 'input') {
-            if (request?.method !== 'view' || frame.id !== request.id || !viewing) return stop();
+            if (request?.method !== 'view' || request.watch || frame.id !== request.id || !viewing)
+              return stop();
             const { threadId } = request;
             const computer = viewing;
             inputs = inputs
