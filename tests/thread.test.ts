@@ -6,7 +6,7 @@ import {
   type AnswerChoices,
 } from '../src/shared/answer-choices.ts';
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -191,6 +191,48 @@ test(
       },
     );
     await thread.initializeThreads();
+    await t.test('periodic checks use an installation-spread five-minute schedule', async () => {
+      const { createWorkConsumers } = await import('../src/server/work-admission.ts');
+      const consumers = createWorkConsumers();
+      await consumers.pause();
+      await thread.boss.createQueue('heartbeat', { retryLimit: 0 });
+      await thread.boss.schedule('heartbeat', '*/5 * * * *', {}, { tz: 'UTC' });
+      try {
+        const phases = new Set<number>();
+        for (const heartbeatKey of ['a'.repeat(64), 'c'.repeat(64), undefined]) {
+          await createTriage({
+            consumers,
+            heartbeatKey,
+            signal: async () => {},
+            due: async () => {},
+          }).initializeHeartbeat();
+          const schedule = await thread.boss.getSchedule('heartbeat');
+          assert.ok(schedule);
+          assert.equal(schedule.timezone, 'UTC');
+          const phase =
+            createHash('sha256')
+              .update(heartbeatKey ?? ownerId)
+              .digest()[0] % 5;
+          phases.add(phase);
+          const next = thread.boss.previewSchedule(schedule.cron, {
+            tz: schedule.timezone,
+            from: new Date('2026-01-01T00:00:00Z'),
+            count: 13,
+          });
+          assert.equal(next.length, 13);
+          assert.ok(next.every((instant) => instant.getUTCMinutes() % 5 === phase));
+          assert.ok(
+            next.every(
+              (instant, index) =>
+                !index || instant.getTime() - next[index - 1].getTime() === 300000,
+            ),
+          );
+        }
+        assert.equal(phases.size, 3);
+      } finally {
+        await consumers.close();
+      }
+    });
     const analyticsEvents: Parameters<ProductAnalytics['capture']>[0][] = [];
     const analytics = await createAnalytics({
       provider: { capture: (event) => analyticsEvents.push(event), shutdown: async () => {} },

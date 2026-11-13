@@ -13,7 +13,7 @@ Saved work starts observation when at least one saved task exists. An empty loca
 
 ## From a change to a nudge
 
-App events, source change tokens, and due matters feed one observer for your active conversation. Code checks the signals before any model request. An unchanged source with no due matter starts no monitoring model call. There is no periodic model search through every connected app. During quiet hours, new routine source assessments and background email checks wait. An assessment already in progress can finish. Changes collect for batches of up to 10 sources after quiet hours end. New changes are not assessed during that wait. A known high-impact matter with strong evidence and a deadline before quiet hours end can still get a check.
+App events, source change tokens, and due matters feed one observer for your active conversation. While Nod runs, each installation checks for due work every five minutes at its own stable minute. Supported app events and completed turns can prompt earlier checks. Code checks the signals before any model request. An unchanged source with no due matter starts no monitoring model call. There is no periodic model search through every connected app. During quiet hours, new routine source assessments and background email checks wait. An assessment already in progress can finish. Changes collect for batches of up to 10 sources after quiet hours end. New changes are not assessed during that wait. A known high-impact matter with strong evidence and a deadline before quiet hours end can still get a check.
 
 For app events with enough detail, one small model checks the whole batch before Nod reads the app. A notice that lacks detail reaches the observer.
 
