@@ -91,7 +91,15 @@ export type IntegrationCatalogAccessCode =
   'installation_enrollment_required' | 'installation_revoked' | 'browser_pairing_required';
 export class IntegrationCatalogAccessDenied extends Error {
   constructor(readonly code?: IntegrationCatalogAccessCode) {
-    super('The app catalog is unavailable. Try again later.');
+    super(
+      code === 'installation_enrollment_required'
+        ? 'This Nod installation needs enrollment for app access. Contact support if it remains blocked.'
+        : code === 'installation_revoked'
+          ? 'App access for this Nod installation was revoked. Contact support to restore it.'
+          : code === 'browser_pairing_required'
+            ? 'App access needs browser pairing. Complete the app connection in your browser, then try again.'
+            : 'The app catalog could not authorize this request. Contact support if it persists.',
+    );
     if (code) this.message += ` Proxy code: ${code}. HTTP 403.`;
   }
 }
@@ -118,15 +126,19 @@ export class IntegrationCatalogFailure extends Error {
     readonly code?: IntegrationCatalogProxyErrorCode,
   ) {
     super(
-      reason === 'rate_limit'
-        ? 'The app catalog is receiving too many requests. Wait a moment, then try again.'
-        : reason === 'timeout'
-          ? 'The app catalog took too long to respond. Try again shortly.'
-          : reason === 'authorization' || reason === 'permission'
-            ? 'The app catalog could not authorize this request. Try again later.'
-            : reason === 'invalid_request'
-              ? 'The app catalog request was rejected. Try again later.'
-              : 'The app catalog is unavailable. Try again later.',
+      code === 'public_budget_exceeded'
+        ? 'The app request limit has been reached. Wait for it to reset before trying again.'
+        : code === 'provider_rate_limited'
+          ? 'The app provider is limiting requests. Wait for its limit to reset before trying again.'
+          : reason === 'rate_limit'
+            ? 'The app catalog is receiving too many requests. Wait a moment, then try again.'
+            : reason === 'timeout'
+              ? 'The app catalog took too long to respond. Try again shortly.'
+              : reason === 'authorization' || reason === 'permission'
+                ? 'The app catalog could not authorize this request. Try again later.'
+                : reason === 'invalid_request'
+                  ? 'The app catalog request was rejected. Try again later.'
+                  : 'The app catalog is unavailable. Try again later.',
     );
     if (code) this.message += ` Proxy code: ${code}.`;
     if (status !== undefined) this.message += ` HTTP ${status}.`;
