@@ -6,7 +6,8 @@ export interface TrustOutside {
 }
 
 export type TrustBecause =
-  | { kind: 'message' | 'schedule' | 'standing' | 'rule'; text: string; whole?: true }
+  | { kind: 'message'; text: string; whole?: true }
+  | { kind: 'schedule' | 'standing' | 'rule'; text: string }
   | { kind: 'approved' };
 
 export interface TrustAction {

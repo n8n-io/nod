@@ -145,6 +145,7 @@ function presentStep(row: Record<string, any>): TrustStep {
       title: label,
       ...(target ? { detail: target } : {}),
       ...(because ? { because } : {}),
+      ...helper,
     };
   }
   if (row.kind === 'reply')
@@ -237,6 +238,7 @@ export function createLedger({
     );
     ALTER TABLE app_actions ADD COLUMN IF NOT EXISTS basis jsonb;
     ALTER TABLE app_actions ADD COLUMN IF NOT EXISTS target text;
+    ALTER TABLE app_actions ADD COLUMN IF NOT EXISTS parent_run_id uuid;
     CREATE INDEX IF NOT EXISTS app_actions_owner_time ON app_actions(owner_id,created_at);
     CREATE INDEX IF NOT EXISTS app_actions_turn ON app_actions(turn_id);
     CREATE TABLE IF NOT EXISTS spending_limits (
@@ -423,9 +425,16 @@ export function createLedger({
 
   function action(turnId: string, name: string, basis: TrustBasis, target?: string) {
     return save(
-      `INSERT INTO app_actions(owner_id,turn_id,action,basis,target)
-       SELECT $1,id,$3,$4,$5 FROM turns WHERE id=$2 AND owner_id=$1`,
-      [ownerId, turnId, name.slice(0, 200), JSON.stringify(basis), target?.slice(0, 300) ?? null],
+      `INSERT INTO app_actions(owner_id,turn_id,action,basis,target,parent_run_id)
+       SELECT $1,id,$3,$4,$5,$6 FROM turns WHERE id=$2 AND owner_id=$1`,
+      [
+        ownerId,
+        turnId,
+        name.slice(0, 200),
+        JSON.stringify(basis),
+        target?.slice(0, 300) ?? null,
+        activeExecution.getStore()?.parentRunId ?? null,
+      ],
     );
   }
 
@@ -693,7 +702,7 @@ export function createLedger({
          UNION ALL
          SELECT a.turn_id,a.created_at,'action',NULL,a.action,a.target,a.basis,m.id IS NOT NULL,
            COALESCE(regexp_replace(lower(m.text),'[^[:alnum:]]+','','g')=regexp_replace(lower(a.basis->>'quote'),'[^[:alnum:]]+','','g'),false),
-           NULL,NULL,false,a.id::text
+           NULL,NULL,a.parent_run_id IS NOT NULL,a.id::text
          FROM app_actions a LEFT JOIN messages m ON a.basis->>'kind'='message'
            AND m.owner_id=$1 AND m.id=(a.basis->>'messageId')::uuid
          WHERE a.owner_id=$1 AND a.turn_id=ANY($2::uuid[])

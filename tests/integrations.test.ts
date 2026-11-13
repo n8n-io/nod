@@ -9493,7 +9493,25 @@ test(
           });
       const rows = cells(exported.body);
       assert.ok(rows.every((row) => row.length === rows[0]!.length));
+      await ledger.withExecution(
+        {
+          threadId: conversation,
+          sessionId: conversation,
+          turnId: chat,
+          runId: randomUUID(),
+          parentRunId: chat,
+          browserId: 'helper-browser',
+          onEvent() {},
+        },
+        () => ledger.action(chat, 'NOTION_UPDATE_PAGE', { kind: 'approved' }, 'Helper page'),
+      );
       const chatSteps = (await app.inject(`/api/trust/entries/${chat}/steps`)).json().steps;
+      assert.ok(
+        chatSteps.some(
+          (step: TrustStep) =>
+            step.kind === 'action' && step.detail === 'Helper page' && step.helper,
+        ),
+      );
       assert.ok(chatSteps.some((step: TrustStep) => step.kind === 'model' && step.costUsd));
       assert.ok(
         chatSteps.some(
