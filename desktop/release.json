@@ -3,5 +3,8 @@
   "previousTag": "nod-v0.7.5",
   "source": "3ab2f076766bff409567ce850a2cb18bc5628dbf",
   "highlights": "## Choose when Nod prepares work\n\nAutomatic preparation checks supported app changes and can prepare a nudge or task. It starts off for new profiles; turn it on in **Settings → Notifications**. Gmail and Calendar use change checks, while other apps need supported events. Unchanged sources skip the monitoring model check. Routine changes wait through quiet hours; known urgent items with strong evidence may be checked. The separate $5 monthly allowance is adjustable in **Usage**. [How it works](https://nod.n8n.io/docs/how-it-works/proactivity/)\n\n## See the commands behind a task\n\nOpen a task preview and select **Show commands** for its latest 200 workspace commands, exit status, and saved output. **Usage** includes the details and a CSV export. Nod removes known secrets, but output may contain private file content. Check exports before sharing them. [Watch Nod's commands](https://nod.n8n.io/docs/use/workspace/#watch-nods-commands)\n\n## Find your reading size\n\nUse **Settings → General → Appearance → Font size** to make the desktop view larger or smaller. It follows **View → Zoom** and remembers your choice.\n\n## Also in this release\n\n- Approval prompts ask a clear question and name the action instead of showing raw tool details.\n- Gmail watches keep their place after a temporary Composio error. App discovery shows clear limit and outage reasons.\n- On managed networks, the local engine uses private CAs trusted by your operating system for Composio HTTPS. Certificate checks stay on.\n- Periodic app checks spread across the five-minute cycle while keeping their cadence.",
-  "video": null
+  "video": {
+    "url": "https://github.com/user-attachments/assets/1526edff-bbd1-40ab-b00f-2bbbe96f6093",
+    "releaseSha256": "e333402b91bf9b23fc58f2b95550db7a6bd21ee48df5823789e0aa67d492fab5"
+  }
 }
