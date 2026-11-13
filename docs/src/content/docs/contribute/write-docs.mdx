@@ -57,6 +57,16 @@ The Cloudflare Pages project **nod-n8n**, at [nod.n8n.io](https://nod.n8n.io/), 
 
 Every push to `main` that changes the site runs the **Docs** workflow, which builds the site and deploys it. To redeploy without a change, run the workflow on `main` from the **Actions** tab. The deploy job runs in the `nod-n8n` GitHub environment, which only `main` can use, and reads its `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` secrets. The token needs **Cloudflare Pages: Edit** on the project's account. That permission covers every Pages project in the account, so keep the token in that environment only.
 
+### Site security settings
+
+`docs/public/_headers` sets the response headers for the landing page and docs. The workflow copies it to the site root for Cloudflare Pages.
+
+The headers set HSTS for one year, block framing, prevent content type guessing, and disable camera, microphone, location, payment, and USB access. The Content Security Policy limits scripts, connections, fonts, and frames to the site and required services. Images can load from HTTPS addresses. Inline scripts, inline styles, and `eval()` remain allowed for the current pages and tag manager consent variables. This also permits WebAssembly for docs search. These exceptions limit protection against script injection.
+
+When you add a script, font, embed, or external request, update the policy only for the source it needs. Check the built site in a browser for blocked resources. After deployment, use `curl -sI https://nod.n8n.io/` and `curl -sI https://nod.n8n.io/docs/` to check the headers. Cloudflare zone settings can change the final response. Check that HSTS has `max-age=31536000` or a longer lifetime.
+
+`docs/public/.well-known/security.txt` lists the private reporting routes and security policy. The workflow publishes it at `/.well-known/security.txt` and `/security.txt`. The site artifact includes hidden files so the `.well-known` folder reaches the deploy job. Keep the reporting links current and renew `Expires` before it passes, with a date less than one year ahead.
+
 ## Where pages live
 
 <FileTree>

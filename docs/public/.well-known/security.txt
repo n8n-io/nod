@@ -1,0 +1,6 @@
+Contact: https://github.com/n8n-io/nod/security/advisories/new
+Contact: https://n8n.io/report-a-vulnerability/
+Expires: 2027-11-01T00:00:00Z
+Canonical: https://nod.n8n.io/.well-known/security.txt
+Policy: https://github.com/n8n-io/nod/security/policy
+Preferred-Languages: en
