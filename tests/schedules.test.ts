@@ -98,6 +98,11 @@ test(
     };
     const saved = async (id: string) =>
       (await personal.listSchedules()).find((schedule) => schedule.id === id)!;
+    const runNow = (schedule: Schedule, requestId = randomUUID()) =>
+      request('POST', `/api/schedules/${schedule.id}/run`, {
+        requestId,
+        expectedRevision: schedule.revision,
+      });
     const inbox: InboundMessage[] = [];
     const sent: Array<Parameters<MessagingTransport['post']>[0]> = [];
     const transport: MessagingTransport = {
@@ -194,6 +199,174 @@ test(
       });
       await personal.initialize();
       await tasks.initialize();
+      await db.pool.query(`ALTER TABLE schedule_runs ADD CONSTRAINT
+        schedule_runs_schedule_id_schedule_revision_scheduled_for_key
+        UNIQUE(schedule_id,schedule_revision,scheduled_for)`);
+      await personal.initialize({ workers: false });
+
+      await t.test(
+        'manual runs retain timing and start once across concurrent requests and retries',
+        async () => {
+          const schedule = await create({ cron: '0 9 * * *' });
+          const job = await jobFor(schedule.id);
+          const requestId = randomUUID();
+          const responses = await Promise.all([
+            runNow(schedule, requestId),
+            runNow(schedule, requestId),
+          ]);
+          for (const response of responses) assert.equal(response.statusCode, 200, response.body);
+          assert.deepEqual(responses[0]!.json(), responses[1]!.json());
+          const [run] = await runs(schedule.id);
+          assert.equal((await runs(schedule.id)).length, 1);
+          assert.equal(run!.scheduledFor, clock.toISOString());
+          assert.deepEqual(await saved(schedule.id), {
+            ...schedule,
+            lastRun: run,
+            activeRun: { turnId: run!.turnId, status: 'queued' },
+          });
+          assert.equal((await jobFor(schedule.id)).id, job.id);
+          assert.equal((await runNow(schedule)).statusCode, 409);
+          const before = clock;
+          clock = new Date(job.data.scheduledFor);
+          await deliver([job]);
+          assert.equal((await runs(schedule.id)).length, 1);
+          assert.notEqual((await jobFor(schedule.id)).id, job.id);
+          clock = before;
+          const turn = (
+            await db.pool.query('SELECT source,background,prompt FROM turns WHERE id=$1', [
+              run!.turnId,
+            ])
+          ).rows[0];
+          assert.equal(turn.source, 'schedule');
+          assert.equal(turn.background, true);
+          assert.match(turn.prompt, /Return a synthetic result only/);
+          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [run!.turnId]);
+          const repeated = await runNow(schedule, requestId);
+          assert.deepEqual(repeated.json(), { turnId: run!.turnId, activeRun: null });
+          assert.equal((await runs(schedule.id)).length, 1);
+          assert.equal((await saved(schedule.id)).activeRun, null);
+
+          failAfterTask = true;
+          const failed = await runNow(schedule);
+          failAfterTask = false;
+          assert.equal(failed.statusCode, 500);
+          assert.equal((await runs(schedule.id)).length, 1);
+          assert.equal(
+            (
+              await db.pool.query(
+                'SELECT count(*)::int AS count FROM turns WHERE source_id LIKE $1',
+                [`schedule:${schedule.id}:%`],
+              )
+            ).rows[0].count,
+            1,
+          );
+
+          const stale = schedule;
+          const paused = (
+            await request('PATCH', `/api/schedules/${schedule.id}`, { enabled: false })
+          ).json<Schedule>();
+          assert.equal((await runNow(stale)).statusCode, 409);
+          assert.equal((await runNow(paused)).statusCode, 200);
+          assert.equal((await saved(schedule.id)).enabled, false);
+          assert.equal((await saved(schedule.id)).nextRun, null);
+          assert.equal((await runs(schedule.id)).length, 2);
+          await request('DELETE', `/api/schedules/${schedule.id}`);
+          assert.equal((await runNow(paused)).statusCode, 404);
+          assert.equal((await runNow({ ...paused, id: randomUUID() })).statusCode, 404);
+          const foreign = await create({ cron: '0 10 * * *' });
+          await db.pool.query('UPDATE schedules SET owner_id=$2 WHERE id=$1', [
+            foreign.id,
+            'foreign-run',
+          ]);
+          assert.equal((await runNow(foreign)).statusCode, 404);
+          assert.equal((await runNow({ ...paused, id: 'invalid' })).statusCode, 400);
+          assert.equal(
+            (
+              await request('POST', `/api/schedules/${foreign.id}/run`, {
+                requestId: 'invalid',
+                expectedRevision: 0,
+              })
+            ).statusCode,
+            400,
+          );
+        },
+      );
+
+      await t.test('manual and timed one-time runs stay separate at the same time', async () => {
+        const before = clock;
+        const schedule = await create({
+          kind: 'once',
+          runAt: new Date(clock.getTime() + 60_000).toISOString(),
+        });
+        const job = await jobFor(schedule.id);
+        clock = new Date(schedule.runAt!);
+        const manual = await runNow(schedule);
+        assert.equal(manual.statusCode, 200, manual.body);
+        await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [
+          manual.json().turnId,
+        ]);
+        assert.equal((await saved(schedule.id)).enabled, true);
+        assert.equal((await jobFor(schedule.id)).id, job.id);
+        await deliver([job]);
+        assert.equal((await runs(schedule.id)).length, 2);
+        const completed = await saved(schedule.id);
+        assert.equal(completed.enabled, false);
+        assert.equal((await runNow(completed)).statusCode, 409);
+        await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [
+          completed.activeRun!.turnId,
+        ]);
+        assert.equal((await runNow(completed)).statusCode, 200);
+        assert.equal((await saved(schedule.id)).enabled, false);
+        await request('DELETE', `/api/schedules/${schedule.id}`);
+        clock = before;
+      });
+
+      await t.test(
+        'a due one-time schedule waits for a manual run and keeps its due time',
+        async () => {
+          const before = clock;
+          const schedule = await create({
+            kind: 'once',
+            runAt: new Date(clock.getTime() + 60_000).toISOString(),
+          });
+          const manual = await runNow(schedule);
+          assert.equal(manual.statusCode, 200, manual.body);
+          const manualTurn = manual.json().turnId;
+          const originalJob = await jobFor(schedule.id);
+          clock = new Date(Date.parse(schedule.runAt!) + 11 * 60_000);
+          await deliver([originalJob]);
+          assert.equal((await saved(schedule.id)).enabled, true);
+          assert.equal((await saved(schedule.id)).runAt, schedule.runAt);
+          assert.equal((await runs(schedule.id)).length, 1);
+          let deferred = await jobFor(schedule.id);
+          assert.notEqual(deferred.id, originalJob.id);
+          assert.equal(Date.parse(deferred.data.scheduledFor), clock.getTime() + 60_000);
+          await db.pool.query("UPDATE turns SET status='waiting',started_at=now() WHERE id=$1", [
+            manualTurn,
+          ]);
+          clock = new Date(deferred.data.scheduledFor);
+          await deliver([deferred]);
+          assert.equal((await saved(schedule.id)).enabled, true);
+          assert.equal((await runs(schedule.id)).length, 1);
+          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [manualTurn]);
+          deferred = await jobFor(schedule.id);
+          clock = new Date(deferred.data.scheduledFor);
+          await deliver([deferred]);
+          const [timed] = (await runs(schedule.id)).filter((run) => run.turnId !== manualTurn);
+          assert.equal(timed!.scheduledFor, schedule.runAt);
+          assert.equal((await saved(schedule.id)).enabled, false);
+          assert.equal((await saved(schedule.id)).nextRun, null);
+          assert.match(
+            (await db.pool.query('SELECT prompt FROM turns WHERE id=$1', [timed!.turnId])).rows[0]
+              .prompt,
+            /This run was due/,
+          );
+          await deliver([originalJob, deferred]);
+          assert.equal((await runs(schedule.id)).length, 2);
+          await request('DELETE', `/api/schedules/${schedule.id}`);
+          clock = before;
+        },
+      );
 
       await t.test('completed tasks produce isolated, reviewable schedule drafts', async (t) => {
         const seed = async (
@@ -676,22 +849,40 @@ test(
           };
           const [first] = await fire();
           assert.deepEqual(await fire(), [first]);
+          assert.equal((await runNow(schedule)).statusCode, 409);
           for (const status of ['running', 'waiting']) {
             await db.pool.query('UPDATE turns SET status=$2,started_at=now() WHERE id=$1', [
               first,
               status,
             ]);
             assert.deepEqual(await fire(), [first]);
+            assert.equal((await runNow(schedule)).statusCode, 409);
+            assert.equal((await saved(schedule.id)).activeRun?.status, status);
           }
+          const resumed = randomUUID();
           await db.pool.query(
             `INSERT INTO turns(id,owner_id,thread_id,source,prompt,session_id,parent_turn_id,background,status,started_at)
-             SELECT $1,owner_id,thread_id,'resume','Synthetic answer.',id,id,true,'succeeded',now() FROM turns WHERE id=$2`,
-            [randomUUID(), first],
+             SELECT $1,owner_id,thread_id,'resume','Synthetic answer.',id,id,true,'queued',now() FROM turns WHERE id=$2`,
+            [resumed, first],
           );
+          for (const status of ['queued', 'running', 'waiting'] as const) {
+            await db.pool.query('UPDATE turns SET status=$2 WHERE id=$1', [resumed, status]);
+            assert.deepEqual((await saved(schedule.id)).activeRun, { turnId: resumed, status });
+            assert.equal((await runNow(schedule)).statusCode, 409);
+          }
+          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [resumed]);
+          assert.equal((await saved(schedule.id)).activeRun, null);
           assert.equal((await fire()).length, 2);
           await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=ANY($1::uuid[])", [
             (await runs(schedule.id)).map((run) => run.turnId),
           ]);
+          const due = await jobFor(schedule.id);
+          clock = new Date(due.data.scheduledFor);
+          const beforeRace = (await runs(schedule.id)).length;
+          const [, manual] = await Promise.all([deliver([due]), runNow(schedule)]);
+          assert.ok([200, 409].includes(manual.statusCode), manual.body);
+          assert.equal((await runs(schedule.id)).length, beforeRace + 1);
+          assert.notEqual((await jobFor(schedule.id)).id, due.id);
           await request('DELETE', `/api/schedules/${schedule.id}`);
           clock = before;
         },
@@ -725,15 +916,18 @@ test(
           const [first] = await fire();
           await finish();
           assert.deepEqual(await fire(), [first]);
+          const manual = await runNow(schedule);
+          assert.equal(manual.statusCode, 200, manual.body);
+          assert.equal((await runs(schedule.id)).length, 2);
           await finish('failed');
-          assert.equal((await fire()).length, 2);
-          await finish();
-          assert.equal((await fire()).length, 2);
-          watched.set(account, 'v2');
           assert.equal((await fire()).length, 3);
           await finish();
-          await personal.manage('schedule_update', { id: schedule.id, watch: null });
+          assert.equal((await fire()).length, 3);
+          watched.set(account, 'v2');
           assert.equal((await fire()).length, 4);
+          await finish();
+          await personal.manage('schedule_update', { id: schedule.id, watch: null });
+          assert.equal((await fire()).length, 5);
           await finish();
           await request('DELETE', `/api/schedules/${schedule.id}`);
           clock = before;
@@ -861,6 +1055,32 @@ test(
             authority_instruction: 'Remind me in a minute.',
             authority_source_message_id: origin.sourceMessageId,
           });
+          const manual = await runNow(schedule);
+          assert.equal(manual.statusCode, 200, manual.body);
+          const manualTurn = manual.json().turnId;
+          assert.deepEqual(
+            (
+              await db.pool.query('SELECT channel,channel_source_id FROM turns WHERE id=$1', [
+                manualTurn,
+              ])
+            ).rows[0],
+            {
+              channel: origin.channel,
+              channel_source_id: origin.sourceId,
+            },
+          );
+          assert.deepEqual(
+            (
+              await db.pool.query(
+                'SELECT authority_instruction,authority_source_message_id FROM schedule_runs WHERE turn_id=$1',
+                [manualTurn],
+              )
+            ).rows[0],
+            {
+              authority_instruction: 'Remind me in a minute.',
+              authority_source_message_id: origin.sourceMessageId,
+            },
+          );
           const sameThread = await receive('Remind me in a minute again.');
           const otherThread = await receive('Remind me in a minute.', 'other-thread');
           for (const [route, timing, reused] of [
@@ -988,6 +1208,7 @@ test('scheduled controls reconcile pause and delete after a client timeout', asy
     revision: 1,
     nextRun: null,
     lastRun: null,
+    activeRun: null,
     baselineObservation: null,
     watch: null,
     monthlyUsd: null,

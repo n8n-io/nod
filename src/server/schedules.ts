@@ -233,7 +233,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
   }
 
   function lateNote(schedule: ScheduleRow) {
-    const due = schedule.nextRun!;
+    const due = schedule.kind === 'once' ? schedule.runAt! : schedule.nextRun!;
     const started = now();
     if (started.getTime() - due.getTime() <= lateAfterMs) return '';
     const format = new Intl.DateTimeFormat('en-GB', {
@@ -297,6 +297,92 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       });
   }
 
+  async function activeRun(client: Pick<Pool, 'query'>, scheduleId: string) {
+    const { rows } = await client.query<NonNullable<Schedule['activeRun']>>(
+      `SELECT u.id AS "turnId",u.status FROM schedule_runs r
+         JOIN turns u ON u.owner_id=r.owner_id AND u.session_id=r.turn_id
+         WHERE r.owner_id=$1 AND r.schedule_id=$2 AND (u.status IN ('queued','running')
+           OR (${waitingTurnSql('u')})) LIMIT 1`,
+      [ownerId, scheduleId],
+    );
+    return rows[0] ?? null;
+  }
+
+  async function startRun(
+    client: PoolClient,
+    row: ScheduleRow,
+    jobId: string,
+    scheduledFor: Date,
+    note = '',
+  ) {
+    const turnId = await enqueueTurn(
+      `Scheduled task: ${row.title}\n${row.prompt}\nDeliver what this schedule asks for in this run, even when an earlier message covered the same ground. When it asks for nothing to be sent, message the owner only about a useful result, a problem or a necessary question.${note}`,
+      {
+        sourceId: `schedule:${row.id}:${jobId}`,
+        source: 'schedule',
+        channel: row.deliveryChannel,
+        channelSourceId: row.channelSourceId,
+        background: true,
+        client,
+      },
+    );
+    await client.query(
+      `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone,authority_instruction,authority_source_message_id,baseline_observation)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [
+        randomUUID(),
+        ownerId,
+        row.id,
+        row.revision,
+        jobId,
+        row.title,
+        turnId,
+        scheduledFor,
+        row.timeZone,
+        row.authorityInstruction,
+        row.authoritySourceMessageId,
+        row.baselineObservation ? JSON.stringify(row.baselineObservation) : null,
+      ],
+    );
+    return { turnId };
+  }
+
+  async function runNow(id: string, raw: unknown) {
+    z.uuid().parse(id);
+    const input = z
+      .object({
+        requestId: z.uuid(),
+        expectedRevision: z.number().int().nonnegative(),
+      })
+      .strict()
+      .parse(raw);
+    const run = await transaction(async (client) => {
+      const row = (
+        await client.query<ScheduleRow>(
+          `SELECT ${columns} FROM schedules WHERE id=$1 AND owner_id=$2 FOR UPDATE`,
+          [id, ownerId],
+        )
+      ).rows[0];
+      if (!row) throw Object.assign(new Error('Schedule not found.'), { statusCode: 404 });
+      const previous = (
+        await client.query<{ turnId: string }>(
+          'SELECT turn_id AS "turnId" FROM schedule_runs WHERE job_id=$1 AND schedule_id=$2 AND owner_id=$3',
+          [input.requestId, id, ownerId],
+        )
+      ).rows[0];
+      if (previous) return previous;
+      assertRevision(row, input.expectedRevision);
+      if (await activeRun(client, id))
+        throw Object.assign(
+          new Error('This schedule already has a run in progress or waiting for your answer.'),
+          { statusCode: 409 },
+        );
+      return startRun(client, row, input.requestId, now());
+    });
+    refresh();
+    return { ...run, activeRun: await activeRun(pool, id) };
+  }
+
   async function dispatch(job: Job<ScheduleJob>) {
     job.signal.throwIfAborted();
     const watched = (
@@ -325,6 +411,12 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       )
         return false;
       job.signal.throwIfAborted();
+      const busy = await activeRun(client, row.id);
+      if (row.kind === 'once' && busy) {
+        await enqueue(client, row, new Date(now().getTime() + 60_000));
+        job.signal.throwIfAborted();
+        return true;
+      }
       if (row.kind === 'once') {
         await client.query('UPDATE schedules SET enabled=false WHERE id=$1 AND owner_id=$2', [
           row.id,
@@ -338,18 +430,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           nextOccurrence(row, new Date(Math.max(now().getTime(), row.nextRun!.getTime()))),
         );
       }
-      if (
-        row.kind === 'recurring' &&
-        (
-          await client.query(
-            `SELECT 1 FROM schedule_runs r JOIN turns u ON u.owner_id=r.owner_id AND u.session_id=r.turn_id
-             WHERE r.owner_id=$1 AND r.schedule_id=$2 AND (u.status IN ('queued','running')
-               OR (${waitingTurnSql('u')})) LIMIT 1`,
-            [ownerId, row.id],
-          )
-        ).rowCount
-      )
-        return true;
+      if (busy) return true;
       const unchanged = marker ? `${row.revision}:${marker}` : null;
       if (unchanged) {
         if (
@@ -369,34 +450,12 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           unchanged,
         ]);
       }
-      const turnId = await enqueueTurn(
-        `Scheduled task: ${row.title}\n${row.prompt}\nDeliver what this schedule asks for in this run, even when an earlier message covered the same ground. When it asks for nothing to be sent, message the owner only about a useful result, a problem or a necessary question.${lateNote(row)}`,
-        {
-          sourceId: `schedule:${row.id}:${row.revision}:${job.data.scheduledFor}`,
-          source: 'schedule',
-          channel: row.deliveryChannel,
-          channelSourceId: row.channelSourceId,
-          background: true,
-          client,
-        },
-      );
-      await client.query(
-        `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone,authority_instruction,authority_source_message_id,baseline_observation)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-        [
-          randomUUID(),
-          ownerId,
-          row.id,
-          row.revision,
-          job.id,
-          row.title,
-          turnId,
-          row.nextRun,
-          row.timeZone,
-          row.authorityInstruction,
-          row.authoritySourceMessageId,
-          row.baselineObservation ? JSON.stringify(row.baselineObservation) : null,
-        ],
+      await startRun(
+        client,
+        row,
+        job.id,
+        row.kind === 'once' ? row.runAt! : row.nextRun!,
+        lateNote(row),
       );
       job.signal.throwIfAborted();
       return true;
@@ -420,9 +479,9 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         title text NOT NULL, turn_id uuid REFERENCES turns(id), scheduled_for timestamptz NOT NULL,
         time_zone text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
         authority_instruction text, authority_source_message_id uuid,
-        baseline_observation jsonb, observation jsonb, observed_at timestamptz,
-        UNIQUE(schedule_id,schedule_revision,scheduled_for)
+        baseline_observation jsonb, observation jsonb, observed_at timestamptz
       );
+      ALTER TABLE schedule_runs DROP CONSTRAINT IF EXISTS schedule_runs_schedule_id_schedule_revision_scheduled_for_key;
       ALTER TABLE schedules ADD COLUMN IF NOT EXISTS baseline_observation jsonb;
       ALTER TABLE schedules ADD COLUMN IF NOT EXISTS watch jsonb, ADD COLUMN IF NOT EXISTS watch_marker text;
       ALTER TABLE schedule_runs ADD COLUMN IF NOT EXISTS baseline_observation jsonb,
@@ -641,6 +700,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       revision: row.revision,
       nextRun: row.nextRun?.toISOString() ?? null,
       lastRun: (await history({ limit: 1, scheduleId: row.id }, false)).runs[0] ?? null,
+      activeRun: await activeRun(pool, row.id),
       baselineObservation: row.baselineObservation,
       watch: row.watch,
       monthlyUsd: (monthly ?? (await monthlyCosts([row], turnId))).get(row.id) ?? null,
@@ -999,6 +1059,9 @@ export function createSchedules(dependencies: ScheduleDependencies) {
 
   function registerRoutes(app: FastifyInstance) {
     app.get('/api/schedules', list);
+    app.post<{ Params: { id: string } }>('/api/schedules/:id/run', (request) =>
+      runNow(request.params.id, request.body),
+    );
     app.post<{ Params: { id: string } }>('/api/schedules/:id/preview', async (request) => {
       const previous = await read(z.uuid().parse(request.params.id));
       const input = updateSchema
