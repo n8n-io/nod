@@ -172,18 +172,38 @@ export class IntegrationCatalogFailure extends Error {
               : 503;
   }
 }
+const integrationConnectionCodes = [
+  'installation_busy',
+  'public_budget_exceeded',
+  'service_unavailable',
+  'security_service_unavailable',
+] as const;
+export type IntegrationConnectionCode = (typeof integrationConnectionCodes)[number];
+export type IntegrationConnectionReason =
+  'authorization' | 'permission' | 'rate_limit' | 'timeout' | 'unavailable' | 'invalid_request';
+export function connectionCode(value: unknown): IntegrationConnectionCode | undefined {
+  return integrationConnectionCodes.find((code) => code === value);
+}
+export function connectionReason(
+  status: unknown,
+  timedOut: boolean,
+  unreachable: boolean,
+): IntegrationConnectionReason | undefined {
+  if (status === 401) return 'authorization';
+  if (status === 403) return 'permission';
+  if (status === 429) return 'rate_limit';
+  if (status === 408 || status === 504 || timedOut) return 'timeout';
+  if ((typeof status === 'number' && status >= 500 && status <= 599) || unreachable)
+    return 'unavailable';
+  if (typeof status === 'number' && status >= 400 && status <= 499) return 'invalid_request';
+}
 export class IntegrationConnectionError extends Error {
   readonly statusCode: number;
   constructor(
-    readonly reason:
-      'authorization' | 'permission' | 'rate_limit' | 'timeout' | 'unavailable' | 'invalid_request',
+    readonly reason: IntegrationConnectionReason,
     readonly phase: 'session' | 'link',
     readonly status?: number,
-    readonly code?:
-      | 'installation_busy'
-      | 'public_budget_exceeded'
-      | 'service_unavailable'
-      | 'security_service_unavailable',
+    readonly code?: IntegrationConnectionCode,
   ) {
     super(
       code

@@ -1,7 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { IntegrationConnectionBrowser } from '../ports/integrations.ts';
+import {
+  IntegrationConnectionError,
+  type IntegrationConnectionBrowser,
+} from '../ports/integrations.ts';
 import { logFailure } from './failure-log.ts';
 
 const token = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
@@ -28,7 +31,7 @@ const button=document.getElementById('connect');
 const status=document.getElementById('status');
 let popup,key,started=false,signed=false,deadline=expiresAt;
 const valid=()=>{if(Date.now()>=deadline)throw new Error();};
-const fail=()=>{button.disabled=true;status.textContent='Sign-in could not be completed. Return to Nod and try again.';popup?.close();};
+const fail=(message)=>{button.disabled=true;status.textContent=message||'Sign-in could not be completed. Return to Nod and try again.';popup?.close();};
 const encoded=(bytes)=>btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replaceAll('=','');
 window.addEventListener('message',async(event)=>{
 if(!key||signed||event.origin!==brokerOrigin||event.source!==popup)return;
@@ -43,9 +46,9 @@ button.addEventListener('click',async()=>{
 if(started)return;
 try{valid();popup=window.open('about:blank','_blank','popup,width=520,height=720');if(!popup){status.textContent='Allow popups for Nod, then select Continue to sign in.';return;}started=true;button.disabled=true;
 const pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},false,['sign','verify']);valid();key=pair.privateKey;
-const response=await fetch(location.pathname,{method:'POST',credentials:'same-origin',headers:{'X-Nod-Bridge':bridgeKey,'Content-Type':'application/json'},body:JSON.stringify({browserKey:await crypto.subtle.exportKey('jwk',pair.publicKey)})});if(!response.ok)throw new Error();
+const response=await fetch(location.pathname,{method:'POST',credentials:'same-origin',headers:{'X-Nod-Bridge':bridgeKey,'Content-Type':'application/json'},body:JSON.stringify({browserKey:await crypto.subtle.exportKey('jwk',pair.publicKey)})});if(!response.ok){const reply=await response.json().catch(()=>({}));throw Object.assign(new Error(),{reply:typeof reply?.error==='string'?reply.error.slice(0,300):''});}
 const attempt=await response.json();const target=new URL(attempt.url);if(attempt.id!==id||!Number.isSafeInteger(attempt.expiresAt)||target.origin!==brokerOrigin||target.pathname!=='/v2/connect/pair'||target.searchParams.size!==1||!target.searchParams.get('ticket')||target.username||target.password||target.hash)throw new Error();deadline=Math.min(deadline,attempt.expiresAt);valid();if(popup.closed)throw new Error();popup.location.replace(target.href);status.textContent='Finish signing in in the other window.';
-}catch{key=undefined;fail();}
+}catch(error){key=undefined;fail(error?.reply);}
 });
 setTimeout(()=>{key=undefined;button.disabled=true;if(!signed)fail();},Math.max(0,expiresAt-Date.now()));
 </script></body></html>`;
@@ -167,7 +170,10 @@ export function createHostedIntegrationBrowser(origin: string): IntegrationConne
             finish(attempt.id);
             logFailure('app_connection_start', error);
             return reply.code(400).send({
-              error: 'The app connection could not be started. Return to Nod and try again.',
+              error:
+                error instanceof IntegrationConnectionError
+                  ? error.message
+                  : 'The app connection could not be started. Return to Nod and try again.',
             });
           }
         },

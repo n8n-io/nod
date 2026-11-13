@@ -1212,6 +1212,77 @@ test('managed integration requests bind SDK calls to a private persisted install
   }
 });
 
+test('a refused broker request keeps the broker status and only known codes', async (t) => {
+  for (const [status, body, reason, code] of [
+    [429, '{"error":"public_budget_exceeded"}', 'rate_limit', 'public_budget_exceeded'],
+    [503, '{"error":"service_unavailable"}', 'unavailable', 'service_unavailable'],
+    [403, '{"error":"synthetic-private-detail"}', 'permission', undefined],
+    [500, 'synthetic upstream page', 'unavailable', undefined],
+  ] as const) {
+    await t.test(`HTTP ${status}`, async (t) => {
+      const root = await mkdtemp(join(tmpdir(), 'nod-connect-refusal-'));
+      t.after(() => rm(root, { recursive: true, force: true }));
+      const proxy = createComposioProxy({
+        dataRoot: root,
+        ownerId: 'fixture-owner',
+        keyStore: installationKeyStore,
+        checkpoint: fixtureIdentityCheckpoint,
+        url: 'https://proxy.example.test',
+        browser: eagerConnectionBrowser(),
+        request: async (input, init) => {
+          const path = new URL(new Request(input, init).url).pathname;
+          if (path === '/v2/access/enroll')
+            return Response.json({ state: 'enabled', userId: proxy.userId });
+          assert.equal(path, '/v2/connect/start');
+          return new Response(body, {
+            status,
+            headers: { 'Content-Type': body.startsWith('{') ? 'application/json' : 'text/html' },
+          });
+        },
+      });
+      await proxy.initialize();
+      const error = await proxy
+        .authorize(
+          'gmail',
+          `http://localhost:4310/api/apps/callback?state=${randomBytes(32).toString('base64url')}`,
+        )
+        .then(
+          () => assert.fail('The refused connection start resolved.'),
+          (error: unknown) => error,
+        );
+      assert.ok(error instanceof IntegrationConnectionError);
+      assert.equal(error.status, status);
+      assert.equal(error.reason, reason);
+      assert.equal(error.code, code);
+      assert.equal(error.phase, 'link');
+      assert.doesNotMatch(error.message, /synthetic/);
+    });
+  }
+  await t.test('enrollment during an app catalog request', async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'nod-enroll-refusal-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const proxy = createComposioProxy({
+      dataRoot: root,
+      ownerId: 'fixture-owner',
+      keyStore: installationKeyStore,
+      checkpoint: fixtureIdentityCheckpoint,
+      url: 'https://proxy.example.test',
+      request: async (input, init) => {
+        assert.equal(new URL(new Request(input, init).url).pathname, '/v2/access/enroll');
+        return Response.json({ error: 'public_budget_exceeded' }, { status: 429 });
+      },
+    });
+    await proxy.initialize();
+    await assert.rejects(
+      createComposioProvider({ proxy }).listServices!(),
+      (error: unknown) =>
+        error instanceof IntegrationCatalogFailure &&
+        error.status === 429 &&
+        error.code === 'public_budget_exceeded',
+    );
+  });
+});
+
 test('hosted app connection bridge keeps browser proof on the configured origin', async (t) => {
   for (const [origin, service] of [
     ['https://nod.customer.example', 'gmail'],
@@ -1377,6 +1448,7 @@ test('hosted connection attempts fail closed after expiry or invalid startup', a
   for (const variant of [
     'expired',
     'broker-failure',
+    'broker-refusal',
     'foreign-broker',
     'invalid-key',
     'cancelled-start',
@@ -1400,6 +1472,13 @@ test('hosted connection attempts fail closed after expiry or invalid startup', a
             await continueStart;
           }
           if (variant === 'broker-failure') throw new Error('Synthetic broker failure.');
+          if (variant === 'broker-refusal')
+            throw new IntegrationConnectionError(
+              'rate_limit',
+              'link',
+              429,
+              'public_budget_exceeded',
+            );
           return variant === 'foreign-broker'
             ? 'https://attacker.example.test/v2/connect/pair?ticket=synthetic'
             : brokerOrigin + '/v2/connect/pair?ticket=synthetic';
@@ -1433,6 +1512,11 @@ test('hosted connection attempts fail closed after expiry or invalid startup', a
         }
         const started = await pending;
         assert.equal(started.statusCode, variant === 'expired' ? 403 : 400, started.body);
+        if (variant === 'broker-refusal') {
+          assert.match(started.json().error, /public_budget_exceeded/);
+          assert.match(started.json().error, /HTTP 429/);
+        }
+        if (variant === 'broker-failure') assert.doesNotMatch(started.body, /Synthetic/);
         assert.equal(starts, ['expired', 'invalid-key'].includes(variant) ? 0 : 1);
         assert.equal(browser.owns(url.href), false);
         assert.equal(browser.remote(url.href), undefined);
