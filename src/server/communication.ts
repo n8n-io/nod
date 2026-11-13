@@ -45,6 +45,11 @@ export function languageText(value: string) {
   ).trim();
 }
 
+function markdownValue(value: string) {
+  const fence = '`'.repeat(Math.max(0, ...(value.match(/`+/g) ?? []).map((run) => run.length)) + 1);
+  return `${fence} ${value} ${fence}`;
+}
+
 export function createCommunication(options: {
   pool: Pool;
   ownerId: string;
@@ -161,6 +166,7 @@ export function createCommunication(options: {
       delete details[key];
     }
     delete details.verifiedBinding;
+    delete details.verifiedDraftMessageId;
     delete details.reason;
     const source = {
       action: proposal.action,
@@ -172,12 +178,40 @@ export function createCommunication(options: {
     const withheld = withheldPaths(source, visible);
     const title = approvalTitle(proposal.action);
     const label = [title.app, title.title].filter(Boolean).join(': ');
+    const workTitle = proposal.work?.title
+      ? publicText(proposal.work.title).replace(/\s+/g, ' ').trim()
+      : '';
+    const contextTitle =
+      workTitle.length > 200 ? `${workTitle.slice(0, 188)} [truncated]` : workTitle;
+    const draftTarget =
+      proposal.details?.target &&
+      typeof proposal.details.target === 'object' &&
+      !Array.isArray(proposal.details.target)
+        ? (proposal.details.target as Record<string, unknown>)
+        : undefined;
+    const shortField = (value: unknown) => {
+      const text = typeof value === 'string' ? publicText(value).replace(/\s+/g, ' ').trim() : '';
+      return text.length > 120 ? `${text.slice(0, 108)} [truncated]` : text;
+    };
+    const draftSubject = shortField(draftTarget?.subject);
+    const draftFields = [
+      draftSubject ? `subject “${markdownValue(draftSubject)}”` : '',
+      ...(['to', 'cc', 'bcc'] as const).map((field) => {
+        const value = shortField(draftTarget?.[field]);
+        return value ? `${field[0].toUpperCase()}${field.slice(1)} ${markdownValue(value)}` : '';
+      }),
+    ].filter(Boolean);
+    const draftIntro = contextTitle
+      ? `While working on “${markdownValue(contextTitle)}”, Nod proposes`
+      : 'Nod proposes';
+    const draftContext = `${draftIntro} to permanently delete an unsent Gmail draft${draftFields.length ? `: ${draftFields.join('; ')}` : ''}`;
     const fields = JSON.stringify(visible, null, 2)
       .split('\n')
       .map((line) => `    ${line}`)
       .join('\n');
     return [
       label,
+      ...(proposal.action === 'GMAIL_DELETE_DRAFT' ? [`${draftContext}.`] : []),
       'This is the exact action your answer approves:',
       fields,
       ...(withheld.length

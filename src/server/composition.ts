@@ -150,7 +150,7 @@ import { createDocumentation } from './documentation.ts';
 import { initializeDatabase, pool } from './db.ts';
 import { events, refresh } from './events.ts';
 import { createIntegrations } from './integrations.ts';
-import { gmailMessageTarget } from './action-presentation.ts';
+import { gmailDraftTarget, gmailMessageTarget } from './action-presentation.ts';
 import {
   createErrorRedactor,
   createRedactor,
@@ -1336,7 +1336,7 @@ async function initializeApplication(
                       const savedBinding = provenance.details?.verifiedBinding;
                       const verifiedBinding =
                         typeof savedBinding === 'string' ? savedBinding : undefined;
-                      if (action === 'GMAIL_DELETE_MESSAGE') {
+                      if (action === 'GMAIL_DELETE_MESSAGE' || action === 'GMAIL_DELETE_DRAFT') {
                         const currentBinding = await integrations
                           .binding(String(args.connectionId ?? ''))
                           .catch((error: unknown) => {
@@ -1352,6 +1352,92 @@ async function initializeApplication(
                             new Error('The selected Gmail account changed after confirmation.'),
                             { notRun: true },
                           );
+                        if (action === 'GMAIL_DELETE_DRAFT') {
+                          const draftId = args.draft_id;
+                          const savedMessageId = provenance.details?.verifiedDraftMessageId;
+                          if (
+                            typeof draftId !== 'string' ||
+                            !draftId.trim() ||
+                            typeof savedMessageId !== 'string' ||
+                            !savedMessageId.trim()
+                          )
+                            throw Object.assign(
+                              new Error(
+                                'The Gmail draft confirmation is missing its verified target.',
+                              ),
+                              { notRun: true },
+                            );
+                          const readArgs = {
+                            connectionId: args.connectionId,
+                            draft_id: draftId,
+                            format: 'metadata',
+                            ...(typeof args.user_id === 'string' ? { user_id: args.user_id } : {}),
+                          };
+                          const readVerdict = await trust
+                            .check(
+                              { threadId: provenance.threadId, turnId: provenance.turnId },
+                              'GMAIL_GET_DRAFT',
+                              readArgs,
+                              provenance.signal,
+                            )
+                            .catch((error: unknown) => {
+                              throw Object.assign(
+                                new Error(
+                                  `Nod could not recheck permission to read the Gmail draft before deletion: ${safeIntegrationFailure(error)}`,
+                                ),
+                                { notRun: true },
+                              );
+                            });
+                          if (readVerdict.confirm)
+                            throw Object.assign(
+                              new Error(
+                                'Nod could not authorize a fresh Gmail draft read before deletion.',
+                              ),
+                              { notRun: true },
+                            );
+                          const current = await integrations
+                            .execute(
+                              ownerId,
+                              'GMAIL_GET_DRAFT',
+                              readArgs,
+                              { threadId: provenance.threadId, turnId: provenance.turnId },
+                              provenance.signal,
+                              verifiedBinding,
+                            )
+                            .catch((error: unknown) => {
+                              throw Object.assign(
+                                new Error(
+                                  `Nod could not recheck the Gmail draft before deletion: ${safeIntegrationFailure(error)}`,
+                                ),
+                                { notRun: true },
+                              );
+                            });
+                          await ledger
+                            .action(provenance.turnId, 'GMAIL_GET_DRAFT', readVerdict.basis)
+                            .catch((error: unknown) => {
+                              throw Object.assign(
+                                new Error(
+                                  `Nod could not record the Gmail draft read before deletion: ${safeIntegrationFailure(error)}`,
+                                ),
+                                { notRun: true },
+                              );
+                            });
+                          const currentTarget = gmailDraftTarget(current, draftId);
+                          if (!currentTarget)
+                            throw Object.assign(
+                              new Error(
+                                'Nod could not verify the Gmail draft before deletion. Ask again before deleting it.',
+                              ),
+                              { notRun: true },
+                            );
+                          if (currentTarget.messageId !== savedMessageId)
+                            throw Object.assign(
+                              new Error(
+                                'The Gmail draft changed after confirmation. Ask again before deleting it.',
+                              ),
+                              { notRun: true },
+                            );
+                        }
                       }
                       const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
                       const ready = hasWorkspaceFiles(args)
@@ -1370,7 +1456,9 @@ async function initializeApplication(
                         ready,
                         turn,
                         provenance.signal,
-                        action === 'GMAIL_DELETE_MESSAGE' ? verifiedBinding : undefined,
+                        action === 'GMAIL_DELETE_MESSAGE' || action === 'GMAIL_DELETE_DRAFT'
+                          ? verifiedBinding
+                          : undefined,
                       );
                       await ledger.action(
                         provenance.turnId,
@@ -2259,43 +2347,57 @@ async function initializeApplication(
               )
             : undefined;
         const path = account?.accessPaths?.find((item) => item.id === prepared.pathId);
-        let target: ReturnType<typeof gmailMessageTarget>;
+        let target:
+          | ReturnType<typeof gmailMessageTarget>
+          | {
+              draftId: string;
+              subject?: string;
+              from?: string;
+              to?: string;
+              cc?: string;
+              bcc?: string;
+            };
         let deleteBinding: string | undefined;
-        if (verdict.confirm && action === 'GMAIL_DELETE_MESSAGE') {
-          const messageId = prepared.message_id;
+        let verifiedDraftMessageId: string | undefined;
+        const deletingDraft = action === 'GMAIL_DELETE_DRAFT';
+        if (verdict.confirm && (action === 'GMAIL_DELETE_MESSAGE' || deletingDraft)) {
+          const itemId = deletingDraft ? prepared.draft_id : prepared.message_id;
+          const item = deletingDraft ? 'draft' : 'message';
           const connectionId = prepared.connectionId;
-          if (
-            typeof messageId !== 'string' ||
-            !messageId.trim() ||
-            typeof connectionId !== 'string'
-          )
-            throw new Error('Nod cannot identify the Gmail message proposed for deletion.');
+          if (typeof itemId !== 'string' || !itemId.trim() || typeof connectionId !== 'string')
+            throw new Error(`Nod cannot identify the Gmail ${item} proposed for deletion.`);
           deleteBinding = await integrations.binding(connectionId);
           if (!deleteBinding)
             throw new Error('The selected Gmail account is no longer available for deletion.');
+          let boundAccountId: unknown;
+          try {
+            boundAccountId = JSON.parse(deleteBinding)[0];
+          } catch {}
+          if (!account?.accountId || account.accountId !== boundAccountId)
+            throw new Error('The selected Gmail account changed before deletion was proposed.');
+          const readAction = deletingDraft
+            ? 'GMAIL_GET_DRAFT'
+            : 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID';
           const metadataArgs = {
             connectionId,
-            message_id: messageId,
             format: 'metadata',
+            ...(deletingDraft ? { draft_id: itemId } : { message_id: itemId }),
             ...(typeof prepared.user_id === 'string' ? { user_id: prepared.user_id } : {}),
           };
-          const readVerdict = await trust.check(
-            turn,
-            'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID',
-            metadataArgs,
-            options.signal,
-          );
+          const readVerdict = await trust.check(turn, readAction, metadataArgs, options.signal);
           if (readVerdict.confirm)
             throw new Error(
               readVerdict.reason === 'rule'
-                ? 'Your rules require confirmation before reading this Gmail message, so Nod did not identify it or propose deletion. Allow this read in your rules before asking to delete it.'
-                : 'Nod could not authorize the Gmail metadata read needed to identify this message, so it did not propose deletion.',
+                ? `Your rules require confirmation before reading this Gmail ${item}, so Nod did not identify it or propose deletion. Allow this read in your rules before asking to delete it.`
+                : deletingDraft
+                  ? 'Nod could not authorize the Gmail draft read needed to identify this draft, so it did not propose deletion.'
+                  : 'Nod could not authorize the Gmail metadata read needed to identify this message, so it did not propose deletion.',
             );
           let observed: unknown;
           try {
             observed = await integrations.execute(
               ownerId,
-              'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID',
+              readAction,
               metadataArgs,
               turn,
               options.signal,
@@ -2304,14 +2406,21 @@ async function initializeApplication(
           } catch (error) {
             options.signal?.throwIfAborted();
             throw new Error(
-              `The Gmail metadata read failed: ${safeIntegrationFailure(error)} Nod did not ask for approval or delete the message.`,
+              `The Gmail ${deletingDraft ? 'draft' : 'metadata'} read failed: ${safeIntegrationFailure(error)} Nod did not ask for approval or delete the ${item}.`,
             );
           }
-          await ledger.action(turn.turnId, 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID', readVerdict.basis);
-          target = gmailMessageTarget(observed, messageId);
+          await ledger.action(turn.turnId, readAction, readVerdict.basis);
+          if (deletingDraft) {
+            const draft = gmailDraftTarget(observed, itemId);
+            if (draft) {
+              const { messageId, ...visible } = draft;
+              verifiedDraftMessageId = messageId;
+              target = visible;
+            }
+          } else target = gmailMessageTarget(observed, itemId);
           if (!target)
             throw new Error(
-              'Nod cannot verify which Gmail message this would delete, so it did not ask for approval or delete it.',
+              `Nod cannot verify which Gmail ${item} this would delete, so it did not ask for approval or delete it.`,
             );
         }
         const result = await approvals.request(turn, action, prepared, {
@@ -2349,6 +2458,7 @@ async function initializeApplication(
               : {}),
             ...(target ? { target } : {}),
             ...(deleteBinding ? { verifiedBinding: deleteBinding } : {}),
+            ...(verifiedDraftMessageId ? { verifiedDraftMessageId } : {}),
           },
         });
         return result;
