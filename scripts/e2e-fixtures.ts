@@ -572,7 +572,11 @@ const toolDefinitions = [
     description: 'Read a synthetic email by its observed emailId, including attachment metadata.',
     parameters: {
       type: 'object',
-      properties: { message_id: { type: 'string' }, user_id: { type: 'string' } },
+      properties: {
+        message_id: { type: 'string' },
+        format: { type: 'string' },
+        user_id: { type: 'string' },
+      },
       required: ['message_id'],
     },
   },

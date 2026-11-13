@@ -459,6 +459,10 @@ export function createAgentRuntime(dependencies: {
         const id = randomUUID();
         const started = performance.now();
         const app = appName(name, params);
+        const eventLabel =
+          name === 'browser' && typeof (params as { action?: unknown })?.action === 'string'
+            ? `${label} ${(params as { action: string }).action}`
+            : label;
         const event = () => ({
           execution: source,
           callId: id,
@@ -520,7 +524,7 @@ export function createAgentRuntime(dependencies: {
               message: String((params as { message?: unknown }).message ?? ''),
               previousReply: lastReply,
             };
-          if (!stopped) await context.emit('tool_complete', label, event());
+          if (!stopped) await context.emit('tool_complete', eventLabel, event());
           result = isToolResult(output) ? output : textResult(output);
           if (
             !nested &&
@@ -548,7 +552,7 @@ export function createAgentRuntime(dependencies: {
           }
           end({ status: 'succeeded', output });
         } catch (error) {
-          if (!stopped) await context.emit('tool_failed', label, event()).catch(() => {});
+          if (!stopped) await context.emit('tool_failed', eventLabel, event()).catch(() => {});
           const browserFailure = error instanceof BrowserActionError ? error.message : undefined;
           const failure = signal.aborted
             ? 'The action was cancelled.'

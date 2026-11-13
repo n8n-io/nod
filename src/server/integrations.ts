@@ -1574,7 +1574,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               current.account_id !== row.account_id ||
               (expectedBinding !== undefined && (await binding(row.id)) !== expectedBinding)
             )
-              throw new IntegrationError('The selected account changed.', 409);
+              throw Object.assign(new IntegrationError('The selected account changed.', 409), {
+                notRun: true,
+              });
             signal?.throwIfAborted();
             return session.execute(action, providerArgs, row.account_id!, signal);
           });
