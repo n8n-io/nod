@@ -391,6 +391,15 @@ function completeAssistantMessages(pi: ExtensionAPI) {
 const oversizedHistoryCheckpoint =
   'Older session context does not fit this model. It remains in the saved transcript. Use history_search for earlier messages and read workspace files for work results. Do not infer missing facts or repeat uncertain actions. Follow the current owner instruction and rules.';
 
+const imageOutputExtensions: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/bmp': 'bmp',
+};
+
 function checkpointOversizedHistory(
   manager: SessionManager,
   budget: ReturnType<typeof modelContextBudget>,
@@ -565,17 +574,19 @@ export function createPiAgent(options: {
           .filter((part) => part.type === 'text')
           .map((part) => part.text)
           .join('\n');
-        if (!text) return result;
+        const images = result.content.filter((part) => part.type === 'image');
+        if (!text && !images.length) return result;
         const history = manager.buildSessionContext().messages;
         const lastCompleted = history.findLastIndex(
-          (message) => message.role === 'assistant' && message.stopReason === 'stop',
+          (message) =>
+            message.role === 'assistant' && ['stop', 'length'].includes(message.stopReason),
         );
         const pending = history.slice(lastCompleted + 1);
         const lastAssistant = pending.findLastIndex((message) => message.role === 'assistant');
-        const active = [
-          pending.findLast((message) => message.role === 'user'),
-          ...pending.slice(Math.max(0, lastAssistant)),
-        ].filter((message) => message !== undefined);
+        const ownerCopy = input.ownerContext ? history.findLastIndex(isOwnerContext) : -1;
+        const active = history.filter(
+          (message, index) => message.role !== 'system' && index !== ownerCopy,
+        );
         const assistant = pending[lastAssistant];
         const remainingCalls = Math.max(
           1,
@@ -594,13 +605,15 @@ export function createPiAgent(options: {
         );
         if (
           text.length <= Math.floor(budget.window / 2) &&
-          estimateModelTokens(text) <= pointerTokens
+          estimateModelTokens(text) + (images.length ? estimateModelTokens(images) : 0) <=
+            pointerTokens
         )
           return result;
         signal?.throwIfAborted();
         if (input.shouldStop()) throw new Error('The turn was stopped.');
         const directory = `${input.workspace.path}/.nod/outputs`;
-        const path = `${directory}/${randomUUID()}.txt`;
+        const stem = `.nod/outputs/${randomBytes(12).toString('base64url')}`;
+        const textFile = `${stem}.txt`;
         if (
           (
             await input.workspace.exec(`mkdir -p -- '${directory.replaceAll("'", "'\\''")}'`, {
@@ -609,21 +622,59 @@ export function createPiAgent(options: {
           ).exitCode
         )
           throw new Error('The full tool output could not be saved.');
-        await writeWorkspaceFile(input.workspace, path, Buffer.from(text), signal);
+        let file = textFile;
+        if (images.length) {
+          const savedContent = [];
+          for (const [index, part] of result.content.entries()) {
+            const mimeType =
+              part.type === 'image' ? part.mimeType.toLowerCase().split(';')[0]!.trim() : '';
+            const partFile =
+              part.type === 'image'
+                ? `${stem}-${index}.${imageOutputExtensions[mimeType] ?? 'bin'}`
+                : `${stem}-${index}.txt`;
+            await writeWorkspaceFile(
+              input.workspace,
+              `${input.workspace.path}/${partFile}`,
+              part.type === 'image' ? Buffer.from(part.data, 'base64') : Buffer.from(part.text),
+              signal,
+            );
+            savedContent.push(
+              part.type === 'image'
+                ? { type: 'image', path: partFile, mimeType: part.mimeType }
+                : { type: 'text', path: partFile },
+            );
+          }
+          file = `${stem}.json`;
+          await writeWorkspaceFile(
+            input.workspace,
+            `${input.workspace.path}/${file}`,
+            Buffer.from(JSON.stringify({ content: savedContent })),
+            signal,
+          );
+        } else
+          await writeWorkspaceFile(
+            input.workspace,
+            `${input.workspace.path}/${textFile}`,
+            Buffer.from(text),
+            signal,
+          );
         let preview = text.slice(0, 1000);
-        let saved = JSON.stringify({ workspaceFile: path, characters: text.length, preview });
+        const reference = (excerpt: string) =>
+          JSON.stringify(
+            excerpt
+              ? { workspaceFile: file, characters: text.length, preview: excerpt }
+              : { workspaceFile: file },
+          );
+        let saved = reference(preview);
         let pointer = result.isError ? saved : untrustedBlock(name, saved);
         while (preview && estimateModelTokens(pointer) > pointerTokens) {
           preview = preview.slice(0, Math.floor(preview.length / 2));
-          saved = JSON.stringify({ workspaceFile: path, characters: text.length, preview });
+          saved = reference(preview);
           pointer = result.isError ? saved : untrustedBlock(name, saved);
         }
         return {
           ...result,
-          content: [
-            { type: 'text' as const, text: pointer },
-            ...result.content.filter((part) => part.type === 'image'),
-          ],
+          content: [{ type: 'text' as const, text: pointer }],
         };
       };
       let idle = false;
@@ -760,13 +811,13 @@ export function createPiAgent(options: {
                         ...tool,
                         name: 'nod_tool_search',
                         description: tool.description.replaceAll('tool_search', 'nod_tool_search'),
-                        execute: (id, params, signal, update, context) => {
+                        execute: async (id, params, signal, update, context) => {
                           if (budget.compact)
                             pi.setActiveTools([
                               ...sandboxTools.map((tool) => tool.name),
                               'nod_tool_search',
                             ]);
-                          return tool.execute(
+                          const result = await tool.execute(
                             id,
                             budget.compact
                               ? ({ ...(params as object), limit: 1 } as typeof params)
@@ -775,6 +826,16 @@ export function createPiAgent(options: {
                             update,
                             context,
                           );
+                          const loaded = (result.details as { loaded?: string[] } | undefined)
+                            ?.loaded;
+                          return budget.compact && loaded?.length
+                            ? {
+                                ...result,
+                                content: [
+                                  { type: 'text' as const, text: `Loaded: ${loaded.join(', ')}` },
+                                ],
+                              }
+                            : result;
                         },
                       }),
                   }),
@@ -824,18 +885,41 @@ export function createPiAgent(options: {
               } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 if (
-                  reason !== 'manual' ||
                   signal.aborted ||
                   !isContextOverflow({
                     stopReason: 'error',
                     errorMessage: message,
+                    provider: target.provider,
                   } as AssistantMessage)
                 )
                   throw error;
+                const entries = manager.buildSessionProjection().entries;
+                const cut = entries.findIndex(
+                  (entry) => entry.sourceEntry.id === preparation.firstKeptEntryId,
+                );
+                const lastAnswer = entries.findLastIndex((entry) =>
+                  entry.messages.some(
+                    (message) =>
+                      message.role === 'assistant' &&
+                      ['stop', 'length'].includes(message.stopReason),
+                  ),
+                );
+                const firstPending = entries.findIndex(
+                  (entry, index) =>
+                    index > lastAnswer &&
+                    entry.messages.some(
+                      (message) =>
+                        message.role === 'user' ||
+                        (message.role === 'custom' && message.customType === 'nod-audio-input'),
+                    ),
+                );
                 return {
                   compaction: {
                     summary: oversizedHistoryCheckpoint,
-                    firstKeptEntryId: preparation.firstKeptEntryId,
+                    firstKeptEntryId:
+                      firstPending >= 0 && firstPending < cut
+                        ? entries[firstPending]!.sourceEntry.id
+                        : preparation.firstKeptEntryId,
                     tokensBefore: preparation.tokensBefore,
                   },
                 };
@@ -1250,6 +1334,7 @@ export function createPiAgent(options: {
                 !isContextOverflow({
                   stopReason: 'error',
                   errorMessage: message,
+                  provider: model.provider,
                 } as AssistantMessage)
               )
                 throw error;
