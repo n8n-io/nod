@@ -661,6 +661,11 @@ test(
         if (context.prompt === 'release-retry') failRelease = 1;
         if (context.prompt === 'ask-question')
           return { status: 'waiting_user', message: 'Which account should I use?' };
+        if (context.prompt === '👍' && context.replyTo?.text === 'Which account should I use?') {
+          assert.ok(context.currentMessageId);
+          await context.reply('Synthetic reaction follow-up.', undefined, context.currentMessageId);
+          return { status: 'succeeded' };
+        }
         if (context.prompt === 'ask-approval')
           return { status: 'waiting_user', waitingFor: 'approval' };
         if (context.prompt === 'ask-credentials') {
@@ -4368,6 +4373,48 @@ test(
         assert.equal(ran(response[0]!.turn_id)?.prompt, '👍');
         assert.equal(ran(response[0]!.turn_id)?.replyTo?.id, asked);
         assert.equal(ran(response[0]!.turn_id)?.replyTo?.text, 'Which account should I use?');
+        const followUp = (
+          await db.pool.query<{ id: string; reply_to_message_id: string }>(
+            "SELECT id,reply_to_message_id FROM messages WHERE owner_id=$1 AND turn_id=$2 AND role='assistant' ORDER BY created_at DESC,id DESC LIMIT 1",
+            [ownerId, response[0]!.turn_id],
+          )
+        ).rows[0]!;
+        assert.equal(followUp.reply_to_message_id, response[0]!.id);
+        const state = (await request('GET', '/api/state')).json();
+        assert.equal(
+          state.messages.some((message: { id: string }) => message.id === response[0]!.id),
+          false,
+        );
+        assert.equal(
+          state.messages.find((message: { id: string }) => message.id === asked)?.reaction,
+          '👍',
+        );
+        assert.equal(
+          state.messages.find((message: { id: string }) => message.id === followUp.id)?.replyTo,
+          null,
+        );
+        const history = (
+          await request('GET', `/api/messages?threadId=${question.threadId}`)
+        ).json();
+        assert.equal(
+          history.messages.some((message: { id: string }) => message.id === response[0]!.id),
+          false,
+        );
+        assert.equal(
+          history.messages.find((message: { id: string }) => message.id === followUp.id)?.replyTo,
+          null,
+        );
+        const search = (
+          await request('GET', `/api/messages/search?q=${encodeURIComponent('👍')}`)
+        ).json();
+        assert.equal(
+          search.some((message: { id: string }) => message.id === response[0]!.id),
+          false,
+        );
+        assert.equal(
+          (await request('GET', `/api/messages/around/${response[0]!.id}`)).statusCode,
+          404,
+        );
         assert.equal(
           analyticsEvents.filter((event) => event.event === 'owner_message_accepted').length,
           beforeAccepted + 1,

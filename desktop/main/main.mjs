@@ -706,6 +706,22 @@ function waitForRenderer(window, present, failed) {
   });
 }
 
+function openingBounds(bounds) {
+  const area = (
+    bounds.x === undefined ? screen.getPrimaryDisplay() : screen.getDisplayMatching(bounds)
+  ).workArea;
+  const width = Math.min(bounds.width, area.width);
+  const height = Math.min(bounds.height, area.height);
+  const x = bounds.x ?? area.x + Math.floor((area.width - width) / 2);
+  const y = bounds.y ?? area.y + Math.floor((area.height - height) / 2);
+  return {
+    x: Math.max(area.x, Math.min(x, area.x + area.width - width)),
+    y: Math.max(area.y, Math.min(y, area.y + area.height - height)),
+    width,
+    height,
+  };
+}
+
 function showSettings(section = 'general', loading = false) {
   if (quitting) return;
   if (!loading && onboardingCompleted && (engine || remoteConnection) && status.phase === 'ready') {
@@ -732,11 +748,12 @@ function showSettings(section = 'general', loading = false) {
   }
   const resumed = resumeWindow;
   resumeWindow = undefined;
+  const bounds = openingBounds(resumed?.bounds ?? { width: 1200, height: 860 });
   setupWindow = new BrowserWindow({
     show: false,
-    ...(resumed?.bounds ?? { width: 1200, height: 860 }),
-    minWidth: 700,
-    minHeight: 600,
+    ...bounds,
+    minWidth: Math.min(700, bounds.width),
+    minHeight: Math.min(600, bounds.height),
     title: 'Nod',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#191919' : '#fafafa',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
@@ -859,13 +876,15 @@ function showEngine({ focus = true } = {}) {
   const initialReplay = replayingProductOnboarding;
   engineFocusRequested = false;
   update({ windowError: undefined });
+  const bounds =
+    setupWindow && !setupWindow.isDestroyed()
+      ? setupWindow.getNormalBounds()
+      : openingBounds({ width: 1200, height: 860 });
   engineWindow = new BrowserWindow({
     show: false,
-    ...(setupWindow && !setupWindow.isDestroyed()
-      ? setupWindow.getNormalBounds()
-      : { width: 1200, height: 860 }),
-    minWidth: 700,
-    minHeight: 600,
+    ...bounds,
+    minWidth: Math.min(700, bounds.width),
+    minHeight: Math.min(600, bounds.height),
     title: 'Nod',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#191919' : '#fafafa',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',

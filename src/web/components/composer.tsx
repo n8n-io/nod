@@ -1194,8 +1194,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   : microphoneLabel}
               </span>
             </MicrophonePicker>
-            <span className="stop-slot">
-              {showStop && (
+            {showStop && (
+              <span className="stop-slot">
                 <Button
                   type="button"
                   variant="ghost"
@@ -1208,8 +1208,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 >
                   <Square size={16} solid />
                 </Button>
-              )}
-            </span>
+              </span>
+            )}
             <Button
               ref={sendButton}
               type="submit"
