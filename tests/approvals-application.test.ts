@@ -1295,7 +1295,7 @@ test(
         assert.equal(messages.rows[0].text, 'The synthetic schedule finished.');
         const repeated = await request('POST', `/api/schedules/${schedule.id}/run`, deliveryInput);
         assert.equal(repeated.statusCode, 200, repeated.body);
-        assert.deepEqual(repeated.json(), delivered.json());
+        assert.deepEqual(repeated.json(), { turnId: deliveredTurn, activeRun: null });
         assert.equal(
           (await pool.query('SELECT 1 FROM schedule_runs WHERE schedule_id=$1', [schedule.id]))
             .rowCount,

@@ -241,7 +241,8 @@ test(
           assert.equal(turn.background, true);
           assert.match(turn.prompt, /Return a synthetic result only/);
           await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [run!.turnId]);
-          assert.equal((await runNow(schedule, requestId)).json().turnId, run!.turnId);
+          const repeated = await runNow(schedule, requestId);
+          assert.deepEqual(repeated.json(), { turnId: run!.turnId, activeRun: null });
           assert.equal((await runs(schedule.id)).length, 1);
           assert.equal((await saved(schedule.id)).activeRun, null);
 

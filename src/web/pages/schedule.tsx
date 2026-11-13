@@ -66,7 +66,7 @@ export function ScheduleRow({
     };
     pendingRun.current = input;
     try {
-      const run = await api<{ turnId: string }>(
+      const run = await api<{ turnId: string; activeRun: Schedule['activeRun'] }>(
         `${schedulesPath}/${encodeURIComponent(schedule.id)}/run`,
         { method: 'POST', body: JSON.stringify(input), signal: AbortSignal.timeout(45_000) },
       );
@@ -77,7 +77,7 @@ export function ScheduleRow({
         schedulesPath,
         (items) =>
           items?.map((item) =>
-            item.id === schedule.id ? { ...item, activeRun: { ...run, status: 'queued' } } : item,
+            item.id === schedule.id ? { ...item, activeRun: run.activeRun } : item,
           ) ?? null,
       );
     } catch (cause) {

@@ -380,7 +380,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       return startRun(client, row, input.requestId, now());
     });
     refresh();
-    return run;
+    return { ...run, activeRun: await activeRun(pool, id) };
   }
 
   async function dispatch(job: Job<ScheduleJob>) {
