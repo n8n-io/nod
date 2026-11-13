@@ -92,7 +92,6 @@ export function ChatSkeleton({
               <span className="button button-ghost button-icon">
                 <Mic size={16} />
               </span>
-              <span className="stop-slot" />
               <span className="button button-icon send-button ghost-send">
                 <ArrowUp size={18} />
               </span>

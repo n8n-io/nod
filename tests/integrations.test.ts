@@ -9359,6 +9359,29 @@ test(
           ['Tell Sam we take the quote', 'chat', 0.55],
         ],
       );
+      for (const [prompt, title] of [
+        ['Berlin time, 8am on monday&#x20;', 'Berlin time, 8am on monday'],
+        ['**Berlin time, 8am on monday&#x20;**', 'Berlin time, 8am on monday'],
+        ['Explain `&#x20;` and \\&#x20;', 'Explain &#x20; and &#x20;'],
+        ['```python\nprint("hello")\n```', 'print("hello")'],
+        ['# First line\nSecond line', 'First line'],
+        ['- First\n- Second', 'First'],
+        ['> First\n>\n> Second', 'First'],
+        [
+          '| Berlin time | 8am on Monday |\n| --- | --- |\n| Europe | Berlin |',
+          'Berlin time | 8am on Monday',
+        ],
+      ]) {
+        await pool.query('UPDATE turns SET prompt=$2 WHERE id=$1', [chat, prompt]);
+        const entry = (await app.inject('/api/trust'))
+          .json()
+          .entries.find((item: TrustEntry) => item.id === chat) as TrustEntry;
+        assert.equal(entry.title, title);
+      }
+      await pool.query('UPDATE turns SET prompt=$2 WHERE id=$1', [
+        chat,
+        'Tell Sam we take the quote',
+      ]);
       const chatEntry = (entries: TrustEntry[]) =>
         entries.find((entry) => entry.title === 'Tell Sam we take the quote')!;
       assert.ok(view.entries.every((entry: TrustEntry) => entry.messageId === null));

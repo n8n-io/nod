@@ -6,7 +6,7 @@ import {
   type AnswerChoices,
 } from '../src/shared/answer-choices.ts';
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -191,6 +191,48 @@ test(
       },
     );
     await thread.initializeThreads();
+    await t.test('periodic checks use an installation-spread five-minute schedule', async () => {
+      const { createWorkConsumers } = await import('../src/server/work-admission.ts');
+      const consumers = createWorkConsumers();
+      await consumers.pause();
+      await thread.boss.createQueue('heartbeat', { retryLimit: 0 });
+      await thread.boss.schedule('heartbeat', '*/5 * * * *', {}, { tz: 'UTC' });
+      try {
+        const phases = new Set<number>();
+        for (const heartbeatKey of ['a'.repeat(64), 'c'.repeat(64), undefined]) {
+          await createTriage({
+            consumers,
+            heartbeatKey,
+            signal: async () => {},
+            due: async () => {},
+          }).initializeHeartbeat();
+          const schedule = await thread.boss.getSchedule('heartbeat');
+          assert.ok(schedule);
+          assert.equal(schedule.timezone, 'UTC');
+          const phase =
+            createHash('sha256')
+              .update(heartbeatKey ?? ownerId)
+              .digest()[0] % 5;
+          phases.add(phase);
+          const next = thread.boss.previewSchedule(schedule.cron, {
+            tz: schedule.timezone,
+            from: new Date('2026-01-01T00:00:00Z'),
+            count: 13,
+          });
+          assert.equal(next.length, 13);
+          assert.ok(next.every((instant) => instant.getUTCMinutes() % 5 === phase));
+          assert.ok(
+            next.every(
+              (instant, index) =>
+                !index || instant.getTime() - next[index - 1].getTime() === 300000,
+            ),
+          );
+        }
+        assert.equal(phases.size, 3);
+      } finally {
+        await consumers.close();
+      }
+    });
     const analyticsEvents: Parameters<ProductAnalytics['capture']>[0][] = [];
     const analytics = await createAnalytics({
       provider: { capture: (event) => analyticsEvents.push(event), shutdown: async () => {} },
@@ -661,6 +703,11 @@ test(
         if (context.prompt === 'release-retry') failRelease = 1;
         if (context.prompt === 'ask-question')
           return { status: 'waiting_user', message: 'Which account should I use?' };
+        if (context.prompt === '👍' && context.replyTo?.text === 'Which account should I use?') {
+          assert.ok(context.currentMessageId);
+          await context.reply('Synthetic reaction follow-up.', undefined, context.currentMessageId);
+          return { status: 'succeeded' };
+        }
         if (context.prompt === 'ask-approval')
           return { status: 'waiting_user', waitingFor: 'approval' };
         if (context.prompt === 'ask-credentials') {
@@ -4368,6 +4415,48 @@ test(
         assert.equal(ran(response[0]!.turn_id)?.prompt, '👍');
         assert.equal(ran(response[0]!.turn_id)?.replyTo?.id, asked);
         assert.equal(ran(response[0]!.turn_id)?.replyTo?.text, 'Which account should I use?');
+        const followUp = (
+          await db.pool.query<{ id: string; reply_to_message_id: string }>(
+            "SELECT id,reply_to_message_id FROM messages WHERE owner_id=$1 AND turn_id=$2 AND role='assistant' ORDER BY created_at DESC,id DESC LIMIT 1",
+            [ownerId, response[0]!.turn_id],
+          )
+        ).rows[0]!;
+        assert.equal(followUp.reply_to_message_id, response[0]!.id);
+        const state = (await request('GET', '/api/state')).json();
+        assert.equal(
+          state.messages.some((message: { id: string }) => message.id === response[0]!.id),
+          false,
+        );
+        assert.equal(
+          state.messages.find((message: { id: string }) => message.id === asked)?.reaction,
+          '👍',
+        );
+        assert.equal(
+          state.messages.find((message: { id: string }) => message.id === followUp.id)?.replyTo,
+          null,
+        );
+        const history = (
+          await request('GET', `/api/messages?threadId=${question.threadId}`)
+        ).json();
+        assert.equal(
+          history.messages.some((message: { id: string }) => message.id === response[0]!.id),
+          false,
+        );
+        assert.equal(
+          history.messages.find((message: { id: string }) => message.id === followUp.id)?.replyTo,
+          null,
+        );
+        const search = (
+          await request('GET', `/api/messages/search?q=${encodeURIComponent('👍')}`)
+        ).json();
+        assert.equal(
+          search.some((message: { id: string }) => message.id === response[0]!.id),
+          false,
+        );
+        assert.equal(
+          (await request('GET', `/api/messages/around/${response[0]!.id}`)).statusCode,
+          404,
+        );
         assert.equal(
           analyticsEvents.filter((event) => event.event === 'owner_message_accepted').length,
           beforeAccepted + 1,

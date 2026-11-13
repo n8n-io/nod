@@ -3744,8 +3744,9 @@ root=createRoot(document.getElementById('root'));
 await render();
 await waitFor(()=>document.querySelector('[data-step="email"]'));
 assert.ok(rendererReady>0,'The email screen must become visible before account discovery finishes');
-assert.equal(button('Skip for now').disabled,false);
-await act(async()=>button('Skip for now').click());
+const emailSkip=()=>document.querySelector('[data-step="email"] .ob-footer-end button:not(.ob-next)');
+assert.equal(emailSkip().disabled,false);
+await act(async()=>emailSkip().click());
 await waitFor(()=>document.querySelector('[data-step="about"]'));
 for(let at=0;at<10&&!document.querySelector('[data-step="privacy"]');at++){await act(async()=>{await new Promise(resolve=>setTimeout(resolve,1000))});if(button('Not now'))await act(async()=>button('Not now').click())}
 await waitFor(()=>document.querySelector('[data-step="privacy"]'));
@@ -3781,6 +3782,7 @@ test(
       'staged continuity',
       'uncertain selection',
       'expired retry',
+      'late method choice',
       'trust refusal',
     ])
       await t.test(scenario, async (t) => {
@@ -3907,7 +3909,7 @@ test(
           const expiredPath = `/api/credential-requests/${expired.url.split('/').at(-1)}`;
           const expiredRequest = await get(expiredPath);
           await pool.query(
-            "UPDATE credential_requests SET flow_expires_at=now()-interval '1 second' WHERE turn_id=$1",
+            "UPDATE credential_requests SET created_at=now()-interval '31 minutes',flow_expires_at=now()-interval '1 second' WHERE turn_id=$1",
             [expiredTurn.turnId],
           );
           assert.equal((await get(expiredPath)).status, 'expired');
@@ -3945,6 +3947,87 @@ test(
             retried.url.split('/').at(-1),
           );
           assert.equal(clicks, 0);
+          return;
+        }
+        if (scenario === 'late method choice') {
+          const firstTurn = await turns.turn();
+          const first = await vault.request(firstTurn, 'local-development', {
+            origin: currentOrigin,
+            label: 'Identity',
+            kind: 'method',
+            methods: [{ label: 'Continue', selector: '#continue' }],
+          });
+          await turns.wait(firstTurn);
+          const firstPath = `/api/credential-requests/${first.url.split('/').at(-1)}`;
+          const firstRequest = await get(firstPath);
+          assert.equal(
+            (
+              await app.inject({
+                method: 'POST',
+                url: `${firstPath}/method`,
+                payload: { methodId: firstRequest.methods![0].id },
+              })
+            ).statusCode,
+            200,
+          );
+          await pool.query(
+            "UPDATE credential_requests SET flow_expires_at=clock_timestamp()+interval '5 seconds' WHERE turn_id=$1",
+            [firstTurn.turnId],
+          );
+          const nextTurn = await turns.resume(firstTurn);
+          const next = await vault.request(nextTurn, 'local-development', {
+            origin: currentOrigin,
+            label: 'Identity',
+            kind: 'method',
+            methods: [{ label: 'Use password', selector: '#password' }],
+          });
+          await turns.wait(nextTurn);
+          const nextPath = `/api/credential-requests/${next.url.split('/').at(-1)}`;
+          const nextRequest = await get(nextPath);
+          assert.equal(nextRequest.status, 'pending');
+          const { rows } = await pool.query<{
+            first_flow_id: string;
+            next_flow_id: string;
+            first_deadline: Date;
+            next_deadline: Date;
+          }>(
+            `SELECT first.flow_id AS first_flow_id,next.flow_id AS next_flow_id,
+              first.flow_expires_at AS first_deadline,next.flow_expires_at AS next_deadline
+             FROM credential_requests first,credential_requests next
+             WHERE first.turn_id=$1 AND next.turn_id=$2`,
+            [firstTurn.turnId, nextTurn.turnId],
+          );
+          assert.equal(rows[0].next_flow_id, rows[0].first_flow_id);
+          assert.equal(rows[0].next_deadline.getTime(), rows[0].first_deadline.getTime());
+          const waitMs = rows[0].first_deadline.getTime() - Date.now() + 100;
+          assert.ok(waitMs > 0 && waitMs < 5_100);
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+          assert.equal((await get(nextPath)).status, 'pending');
+          assert.equal(
+            (await app.inject({ method: 'GET', url: `${nextPath}/status` })).json().status,
+            'pending',
+          );
+          assert.deepEqual(
+            (await app.inject({ method: 'GET', url: `${firstPath}/flow` })).json(),
+            {},
+          );
+          assert.equal(
+            (await app.inject({ method: 'POST', url: `${nextPath}/retry`, payload: {} }))
+              .statusCode,
+            409,
+          );
+          assert.equal(
+            (
+              await app.inject({
+                method: 'POST',
+                url: `${nextPath}/method`,
+                payload: { methodId: nextRequest.methods![0].id },
+              })
+            ).statusCode,
+            200,
+          );
+          assert.equal(clicks, 2);
+          assert.equal(resumed, 2);
           return;
         }
         if (scenario === 'trust refusal') {

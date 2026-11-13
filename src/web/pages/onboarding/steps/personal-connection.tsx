@@ -321,6 +321,7 @@ export function PersonalConnection({
         show={revealed >= 3}
         onBack={onBack}
         onNext={onNext}
+        skipLabel={`Continue without ${kind}`}
         onSkip={
           connected
             ? undefined
