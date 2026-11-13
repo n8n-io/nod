@@ -402,7 +402,7 @@ function checkpointOversizedHistory(
     (entry) =>
       entry.type === 'message' &&
       entry.message.role === 'assistant' &&
-      entry.message.stopReason === 'stop',
+      ['stop', 'length'].includes(entry.message.stopReason),
   );
   const firstPending = entries
     .slice(lastAnswer + 1)
@@ -565,7 +565,38 @@ export function createPiAgent(options: {
           .filter((part) => part.type === 'text')
           .map((part) => part.text)
           .join('\n');
-        if (text.length <= Math.floor(budget.window / 2)) return result;
+        if (!text) return result;
+        const history = manager.buildSessionContext().messages;
+        const lastCompleted = history.findLastIndex(
+          (message) => message.role === 'assistant' && message.stopReason === 'stop',
+        );
+        const pending = history.slice(lastCompleted + 1);
+        const lastAssistant = pending.findLastIndex((message) => message.role === 'assistant');
+        const active = [
+          pending.findLast((message) => message.role === 'user'),
+          ...pending.slice(Math.max(0, lastAssistant)),
+        ].filter((message) => message !== undefined);
+        const assistant = pending[lastAssistant];
+        const remainingCalls = Math.max(
+          1,
+          (assistant?.role === 'assistant'
+            ? assistant.content.filter((part) => part.type === 'toolCall').length
+            : 1) -
+            pending.slice(lastAssistant + 1).filter((message) => message.role === 'toolResult')
+              .length,
+        );
+        const overheadTokens = requestOverheadTokens();
+        const pointerTokens = Math.max(
+          0,
+          Math.floor(
+            (budget.window - overheadTokens - estimateModelTokens(active)) / remainingCalls,
+          ),
+        );
+        if (
+          text.length <= Math.floor(budget.window / 2) &&
+          estimateModelTokens(text) <= pointerTokens
+        )
+          return result;
         signal?.throwIfAborted();
         if (input.shouldStop()) throw new Error('The turn was stopped.');
         const directory = `${input.workspace.path}/.nod/outputs`;
@@ -579,15 +610,18 @@ export function createPiAgent(options: {
         )
           throw new Error('The full tool output could not be saved.');
         await writeWorkspaceFile(input.workspace, path, Buffer.from(text), signal);
-        const saved = JSON.stringify({
-          workspaceFile: path,
-          characters: text.length,
-          preview: text.slice(0, 1000),
-        });
+        let preview = text.slice(0, 1000);
+        let saved = JSON.stringify({ workspaceFile: path, characters: text.length, preview });
+        let pointer = result.isError ? saved : untrustedBlock(name, saved);
+        while (preview && estimateModelTokens(pointer) > pointerTokens) {
+          preview = preview.slice(0, Math.floor(preview.length / 2));
+          saved = JSON.stringify({ workspaceFile: path, characters: text.length, preview });
+          pointer = result.isError ? saved : untrustedBlock(name, saved);
+        }
         return {
           ...result,
           content: [
-            { type: 'text' as const, text: result.isError ? saved : untrustedBlock(name, saved) },
+            { type: 'text' as const, text: pointer },
             ...result.content.filter((part) => part.type === 'image'),
           ],
         };
@@ -772,20 +806,40 @@ export function createPiAgent(options: {
                 return { cancel: true };
               }
               const target = session.model ?? model;
-              return {
-                compaction: await compact(
-                  preparation,
-                  target,
-                  undefined,
-                  undefined,
-                  undefined,
-                  signal,
-                  lightestEffort(getSupportedThinkingLevels(target)),
-                  session.agent.streamFunction,
-                  undefined,
-                  settings.getRetrySettings(),
-                ),
-              };
+              try {
+                return {
+                  compaction: await compact(
+                    preparation,
+                    target,
+                    undefined,
+                    undefined,
+                    undefined,
+                    signal,
+                    lightestEffort(getSupportedThinkingLevels(target)),
+                    session.agent.streamFunction,
+                    undefined,
+                    settings.getRetrySettings(),
+                  ),
+                };
+              } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                if (
+                  reason !== 'manual' ||
+                  signal.aborted ||
+                  !isContextOverflow({
+                    stopReason: 'error',
+                    errorMessage: message,
+                  } as AssistantMessage)
+                )
+                  throw error;
+                return {
+                  compaction: {
+                    summary: oversizedHistoryCheckpoint,
+                    firstKeptEntryId: preparation.firstKeptEntryId,
+                    tokensBefore: preparation.tokensBefore,
+                  },
+                };
+              }
             }),
           (pi: ExtensionAPI) =>
             pi.on('cache_warming_decision', async () => {
@@ -917,19 +971,6 @@ export function createPiAgent(options: {
       const systemPrompt = guidelines.length
         ? `${input.systemPrompt}\n\nTool guidelines:\n${guidelines.map((rule) => `- ${rule}`).join('\n')}`
         : input.systemPrompt;
-      const fixedRequestTokens = estimateModelTokens({
-        systemPrompt,
-        ownerContext: input.ownerContext,
-        tools: [
-          ...tools,
-          ...extensions.extensions.flatMap((extension) =>
-            [...extension.tools.values()].map((tool) => tool.definition),
-          ),
-        ]
-          .filter((tool) => budget.compact || tool.exposure !== 'deferred')
-          .map(({ name, description, parameters }) => ({ name, description, parameters })),
-      });
-      const requestOverheadTokens = fixedRequestTokens + budget.margin + 128;
       const resumed = !restart && manager.buildSessionContext().messages.length > 0;
       const { session } = await (options.createSession ?? createAgentSession)({
         cwd: input.workspace.path,
@@ -955,6 +996,19 @@ export function createPiAgent(options: {
       });
       if (budget.compact)
         session.setActiveToolsByName([...sandboxTools.map((tool) => tool.name), 'nod_tool_search']);
+      const requestOverheadTokens = () =>
+        estimateModelTokens({
+          systemPrompt,
+          ownerContext: input.ownerContext,
+          tools: session.getActiveToolNames().flatMap((name) => {
+            const tool = session.getToolDefinition(name);
+            return tool
+              ? [{ name: tool.name, description: tool.description, parameters: tool.parameters }]
+              : [];
+          }),
+        }) +
+        budget.margin +
+        128;
       if (disposed) {
         session.dispose();
         throw new Error('The agent service has stopped.');
@@ -1162,10 +1216,12 @@ export function createPiAgent(options: {
             throw new Error(
               `This request does not fit the model's ${budget.window}-token context. Use a model with a larger context or a shorter request.`,
             );
+          const overheadTokens = requestOverheadTokens();
           const incomingTokens = estimateModelTokens({ text, images, audio });
           const currentHistory = manager.buildSessionContext().messages;
           const lastCompleted = currentHistory.findLastIndex(
-            (message) => message.role === 'assistant' && message.stopReason === 'stop',
+            (message) =>
+              message.role === 'assistant' && ['stop', 'length'].includes(message.stopReason),
           );
           const unfinished = currentHistory.slice(lastCompleted + 1);
           if (
@@ -1174,8 +1230,7 @@ export function createPiAgent(options: {
                 message.role === 'user' ||
                 (message.role === 'custom' && message.customType === 'nod-audio-input'),
             ) &&
-            estimateModelTokens(unfinished) + incomingTokens + requestOverheadTokens >=
-              budget.window
+            estimateModelTokens(unfinished) + incomingTokens + overheadTokens >= budget.window
           )
             throw new Error(
               `The unfinished request does not fit this model's ${budget.window}-token context. Use a model with a larger context or reset the conversation.`,
@@ -1183,8 +1238,7 @@ export function createPiAgent(options: {
           if (
             !budget.compact &&
             currentHistory.length > 0 &&
-            estimateModelTokens(currentHistory) + incomingTokens + requestOverheadTokens >=
-              budget.window
+            estimateModelTokens(currentHistory) + incomingTokens + overheadTokens >= budget.window
           ) {
             try {
               await session.compact();
@@ -1201,7 +1255,7 @@ export function createPiAgent(options: {
                 throw error;
             }
             const remaining = estimateModelTokens(manager.buildSessionContext().messages);
-            if (remaining + incomingTokens + requestOverheadTokens >= budget.window) {
+            if (remaining + incomingTokens + overheadTokens >= budget.window) {
               checkpointOversizedHistory(
                 manager,
                 budget,
@@ -1212,7 +1266,7 @@ export function createPiAgent(options: {
                     0,
                     budget.window -
                       incomingTokens -
-                      requestOverheadTokens -
+                      overheadTokens -
                       estimateModelTokens(oversizedHistoryCheckpoint),
                   ),
                 ),
@@ -1221,7 +1275,7 @@ export function createPiAgent(options: {
               if (
                 estimateModelTokens(manager.buildSessionContext().messages) +
                   incomingTokens +
-                  requestOverheadTokens >=
+                  overheadTokens >=
                 budget.window
               )
                 throw new Error(
