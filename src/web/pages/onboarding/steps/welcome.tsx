@@ -17,7 +17,7 @@ function differentiators(local: boolean) {
     {
       icon: Sparkles,
       title: 'Works proactively',
-      text: 'Turn on automatic preparation to get useful work from app changes, within a monthly allowance.',
+      text: 'Turn on automatic preparation in Settings → Notifications to get useful work from app changes, within a monthly allowance.',
     },
     {
       icon: LockKeyhole,

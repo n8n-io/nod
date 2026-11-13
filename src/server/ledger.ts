@@ -373,6 +373,10 @@ export function createLedger({
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
         `preparation-budget:${ownerId}`,
       ]);
+      await client.query(
+        `DELETE FROM preparation_reservations WHERE owner_id=$1 AND month<${monthStart}`,
+        [ownerId],
+      );
       const { rows } = await client.query(
         `SELECT COALESCE((SELECT preparation_usd FROM spending_limits WHERE owner_id=$1),${defaultPreparationUsd})::float8 AS maximum,
           ${monthStart} AS month,
@@ -380,7 +384,9 @@ export function createLedger({
           (COALESCE((SELECT sum(COALESCE(m.cost_usd,(m.details->>'estimateUsd')::float8,0)) FROM model_usage m
             WHERE m.owner_id=$1 AND m.created_at>=${monthStart} AND m.details->>'preparation'='true'
               AND NOT EXISTS(SELECT 1 FROM preparation_reservations r WHERE r.owner_id=$1 AND r.id::text=m.details->>'preparationId' AND r.month=${monthStart})),0)
-          + COALESCE((SELECT sum(maximum_usd) FROM preparation_reservations WHERE owner_id=$1 AND month=${monthStart}),0))::float8 AS committed`,
+          + COALESCE((SELECT sum(GREATEST(r.maximum_usd,COALESCE((SELECT sum(COALESCE(m.cost_usd,(m.details->>'estimateUsd')::float8,0))
+            FROM model_usage m WHERE m.owner_id=$1 AND m.details->>'preparationId'=r.id::text AND m.created_at>=r.month),0)))
+            FROM preparation_reservations r WHERE r.owner_id=$1 AND r.month=${monthStart}),0))::float8 AS committed`,
         [ownerId],
       );
       if (scope.closed) throw new Error('This automatic preparation has stopped.');
@@ -441,8 +447,11 @@ export function createLedger({
         return await run();
       } finally {
         scope.closed = true;
-        await flushUsage();
-        await releasePreparation(id);
+        try {
+          await flushUsage();
+        } finally {
+          await releasePreparation(id);
+        }
       }
     });
   }
@@ -1097,10 +1106,9 @@ export function createLedger({
     const body = limitsInput.parse(input);
     const capture = snapshotAnalytics(analytics);
     const write = async (client: PoolClient) => {
-      if (body.preparationUsd !== undefined)
-        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-          `preparation-budget:${ownerId}`,
-        ]);
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+        `preparation-budget:${ownerId}`,
+      ]);
       await client.query(
         'INSERT INTO spending_limits(owner_id,monthly_usd) VALUES($1,NULL) ON CONFLICT DO NOTHING',
         [ownerId],

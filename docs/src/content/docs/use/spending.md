@@ -90,7 +90,7 @@ In **Usage**, select the preparation allowance to change it. You can also say "S
 
 The allowance covers email privacy checks, source reviews, the observer, and tasks Nod starts from those changes. Plan usage counts at its API-price estimate. Your chat requests, schedules, and tasks keep their normal limits.
 
-Nod reserves an estimated maximum before each model request. Parallel requests share the same allowance. A request that cannot fit does not start. Usage shows held funds when the final cost is not yet recorded. An unknown model price blocks automatic preparation. Automatic speech generation waits for a request in chat.
+Nod reserves an estimated maximum before each model request. Parallel requests share the same allowance. A request that cannot fit does not start. Usage shows held funds when the final cost is not yet recorded. An unknown model price blocks automatic preparation. Automatic preparation cannot generate speech. Request audio in chat.
 
 Conservative bounds can pause preparation before its recorded spending reaches the allowance. Preparation can continue next month, or after you raise the allowance. Your normal monthly limit and task check-ins still apply.
 

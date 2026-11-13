@@ -2550,6 +2550,7 @@ test('decision routing uses the selected connection and never sends subscription
     NOD_VAULT_KEY: Buffer.alloc(32, 7).toString('base64'),
   });
   const models = adapters.models!;
+  models.setRequestBudget(async () => async () => {});
   let selected: {
     provider: 'openai' | 'openrouter' | 'anthropic' | 'compatible';
     method: 'api_key' | 'oauth' | 'subscription';
@@ -2622,6 +2623,7 @@ test('decision routing uses the selected connection and never sends subscription
     TYPESAFE_API_KEY: 'fixture-explicit-jev-key',
     NOD_FEEDBACK_ENABLED: 'false',
   });
+  overridden.models!.setRequestBudget(async () => async () => {});
   overridden.models!.resolve = async () => {
     throw new Error('The override must not read another connection.');
   };
@@ -2677,6 +2679,7 @@ test('trust mode selects available Jev, Decider and OpenAI before the small LLM'
     NOD_TRUST_MODEL: 'decision',
     NOD_FEEDBACK_ENABLED: 'false',
   });
+  adapters.models!.setRequestBudget(async () => async () => {});
   assert.equal(adapters.trustModel, 'decision');
   const keys = new Map([
     ['openai', 'fixture-openai'],
@@ -2741,6 +2744,7 @@ test('trust mode selects available Jev, Decider and OpenAI before the small LLM'
     TYPESAFE_API_KEY: 'fixture-typesafe',
     NOD_FEEDBACK_ENABLED: 'false',
   });
+  direct.models!.setRequestBudget(async () => async () => {});
   direct.models!.hasApiKey = () => false;
   await check(direct);
   assert.equal(requests.at(-1)?.model, 'jev-1.14.0');
@@ -2749,6 +2753,7 @@ test('trust mode selects available Jev, Decider and OpenAI before the small LLM'
     NOD_TRUST_MODEL: 'decision',
     NOD_FEEDBACK_ENABLED: 'false',
   });
+  router.models!.setRequestBudget(async () => async () => {});
   router.models!.hasApiKey = (provider) => provider === 'openrouter';
   router.models!.apiKey = async () => 'fixture-router';
   await check(router);
@@ -9173,7 +9178,8 @@ test('invalid tool calls stop before another model request and a valid repair re
 });
 
 test('preparation reserves model cost before dispatch and blocks a request without a price', async () => {
-  for (const priced of [true, false]) {
+  for (const price of ['known', 'missing', 'negative']) {
+    const priced = price === 'known';
     let calls = 0;
     let reservations = 0;
     const settlements: Array<number | null> = [];
@@ -9186,7 +9192,12 @@ test('preparation reserves model cost before dispatch and blocks a request witho
           ...base.definition!.spec,
           cost: priced
             ? { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 2 }
-            : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            : {
+                input: price === 'negative' ? -1 : 0,
+                output: price === 'negative' ? 2 : 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+              },
         },
       },
       reserve: async (maximum) => {

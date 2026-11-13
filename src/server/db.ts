@@ -163,6 +163,7 @@ export async function initializeDatabase() {
     ALTER TABLE preferences ADD COLUMN IF NOT EXISTS speech_voice text;
     ALTER TABLE preferences ADD COLUMN IF NOT EXISTS speech_reply text NOT NULL DEFAULT 'auto' CHECK (speech_reply IN ('auto','voice','always','never'));
     ALTER TABLE preferences ADD COLUMN IF NOT EXISTS proactive_paused boolean NOT NULL DEFAULT true;
+    ALTER TABLE preferences ALTER COLUMN proactive_paused SET DEFAULT true;
     ALTER TABLE preferences ADD COLUMN IF NOT EXISTS local_keep_out text[] NOT NULL DEFAULT '{}';
     CREATE INDEX IF NOT EXISTS messages_owner_time ON messages(owner_id,created_at);
     CREATE INDEX IF NOT EXISTS messages_thread_time ON messages(thread_id,created_at);

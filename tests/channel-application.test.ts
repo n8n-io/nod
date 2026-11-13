@@ -824,6 +824,7 @@ test(
         NOD_VAULT_KEY: key.toString('base64'),
       });
       await localChoice.models!.initialize();
+      localChoice.models!.setRequestBudget(async () => async () => {});
       const { createPreferencesStore } = await import('../src/server/preferences.ts');
       const preferences = createPreferencesStore(pool, ownerId);
       const localProvider = localChoice.localSpeech as typeof localChoice.localSpeech &

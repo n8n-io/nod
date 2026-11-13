@@ -207,7 +207,6 @@ export function createDecisionModel(options: {
         (connection.provider === 'typesafe' && model === 'jev-1.14.0') ||
         (connection.provider === 'openrouter' && model === 'typesafe/jev-1.14');
       const id = crypto.randomUUID();
-      const started = performance.now();
       let usage: z.infer<typeof usageSchema> | undefined;
       let status: 'succeeded' | 'failed' | 'cancelled' = 'failed';
       const requestBody = JSON.stringify({
@@ -251,6 +250,7 @@ export function createDecisionModel(options: {
           ? (Buffer.byteLength(requestBody) * Math.max(service.rate, 0.125)) / 1_000_000
           : null,
       );
+      const started = performance.now();
       try {
         const url =
           connection.provider === 'openai'

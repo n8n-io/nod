@@ -1374,7 +1374,7 @@ export async function createPiModelRuntime(
         const maximumUsd =
           prices &&
           [prices.input, prices.output, prices.cacheRead, prices.cacheWrite].every(
-            Number.isFinite,
+            (price) => Number.isFinite(price) && price >= 0,
           ) &&
           Math.max(prices.input, prices.output, prices.cacheRead, prices.cacheWrite) > 0
             ? (Buffer.byteLength(JSON.stringify(prepared)) *

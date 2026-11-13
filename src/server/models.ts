@@ -275,6 +275,10 @@ export function createModelService(options: {
   });
   let analytics: CaptureAnalytics | undefined;
   let requestBudget: ModelAccess['reserve'];
+  const reserve: NonNullable<ModelAccess['reserve']> = async (maximumUsd) => {
+    if (!requestBudget) throw new Error('The model request budget is not configured.');
+    return requestBudget(maximumUsd);
+  };
   function connectionChanged(
     provider: ModelProvider,
     method: ModelMethod,
@@ -375,7 +379,7 @@ export function createModelService(options: {
   ): Pick<ModelAccess, 'read' | 'prepareRequest' | 'reserve'> {
     const access = {
       read: () => read(row.id),
-      reserve: async (maximumUsd: number | null) => requestBudget?.(maximumUsd) ?? (async () => {}),
+      reserve,
     };
     if (row.provider !== 'google') return access;
     const tag = (value: ModelCredential | undefined) =>
@@ -1161,7 +1165,7 @@ export function createModelService(options: {
         needsReconnect: (credential) => needsReconnect(row.id, { models: row.models, credential }),
       };
     },
-    reserve: async (maximumUsd: number | null) => requestBudget?.(maximumUsd) ?? (async () => {}),
+    reserve,
     setRequestBudget(reserve: NonNullable<ModelAccess['reserve']>) {
       requestBudget = reserve;
     },

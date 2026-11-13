@@ -403,53 +403,60 @@ export function QuietHours() {
       </Notice>
     );
   return (
-    <section className="account-region account-quiet-hours" aria-labelledby={`${id}-heading`}>
-      <div className="account-preference-row">
-        <span id={`${id}-preparation`}>Automatic preparation</span>
-        <Switch
-          checked={!draft.proactivePaused}
-          aria-labelledby={`${id}-preparation`}
-          disabled={busy}
-          onCheckedChange={(enabled) => setDraft({ ...draft, proactivePaused: !enabled })}
-        />
-      </div>
-      <p className="field-hint">
-        Prepare useful work from app changes. Spends from a $5 monthly allowance by default. Change
-        it in Usage.
-      </p>
-      <div className="account-preference-row">
-        <span id={`${id}-heading`}>Quiet hours</span>
-        <Switch
-          checked={draft.quietHoursEnabled}
-          aria-labelledby={`${id}-heading`}
-          disabled={busy}
-          onCheckedChange={(quietHoursEnabled) => setDraft({ ...draft, quietHoursEnabled })}
-        />
-      </div>
-      <p className="field-hint">Pause routine notifications during these hours.</p>
-      <div className="account-quiet-times" data-cycle={usesTwelveHourClock(format) ? 'h12' : 'h23'}>
-        <TimePicker
-          id={`${id}-start`}
-          label="From"
-          format={format}
-          value={draft.quietStart}
-          savedValue={data.quietStart}
-          changed={draft.quietStart !== data.quietStart}
-          disabled={busy || !draft.quietHoursEnabled}
-          onChange={(quietStart) => setDraft({ ...draft, quietStart })}
-        />
-        <TimePicker
-          id={`${id}-end`}
-          label="Until"
-          format={format}
-          value={draft.quietEnd}
-          savedValue={data.quietEnd}
-          changed={draft.quietEnd !== data.quietEnd}
-          disabled={busy || !draft.quietHoursEnabled}
-          onChange={(quietEnd) => setDraft({ ...draft, quietEnd })}
-        />
-      </div>
-      {error && <Notice>{error}</Notice>}
-    </section>
+    <>
+      <section className="account-region" aria-labelledby={`${id}-preparation`}>
+        <div className="account-preference-row">
+          <span id={`${id}-preparation`}>Automatic preparation</span>
+          <Switch
+            checked={!draft.proactivePaused}
+            aria-labelledby={`${id}-preparation`}
+            disabled={busy}
+            onCheckedChange={(enabled) => setDraft({ ...draft, proactivePaused: !enabled })}
+          />
+        </div>
+        <p className="field-hint">
+          Prepare useful work from app changes. Spends from a $5 monthly allowance by default.
+          Change it in Usage.
+        </p>
+      </section>
+      <section className="account-region account-quiet-hours" aria-labelledby={`${id}-heading`}>
+        <div className="account-preference-row">
+          <span id={`${id}-heading`}>Quiet hours</span>
+          <Switch
+            checked={draft.quietHoursEnabled}
+            aria-labelledby={`${id}-heading`}
+            disabled={busy}
+            onCheckedChange={(quietHoursEnabled) => setDraft({ ...draft, quietHoursEnabled })}
+          />
+        </div>
+        <p className="field-hint">Pause routine notifications during these hours.</p>
+        <div
+          className="account-quiet-times"
+          data-cycle={usesTwelveHourClock(format) ? 'h12' : 'h23'}
+        >
+          <TimePicker
+            id={`${id}-start`}
+            label="From"
+            format={format}
+            value={draft.quietStart}
+            savedValue={data.quietStart}
+            changed={draft.quietStart !== data.quietStart}
+            disabled={busy || !draft.quietHoursEnabled}
+            onChange={(quietStart) => setDraft({ ...draft, quietStart })}
+          />
+          <TimePicker
+            id={`${id}-end`}
+            label="Until"
+            format={format}
+            value={draft.quietEnd}
+            savedValue={data.quietEnd}
+            changed={draft.quietEnd !== data.quietEnd}
+            disabled={busy || !draft.quietHoursEnabled}
+            onChange={(quietEnd) => setDraft({ ...draft, quietEnd })}
+          />
+        </div>
+        {error && <Notice>{error}</Notice>}
+      </section>
+    </>
   );
 }

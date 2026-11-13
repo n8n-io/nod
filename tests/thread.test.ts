@@ -8357,6 +8357,80 @@ test(
                 );
               },
             );
+            await t.test('all spending limit changes use the preparation lock', async () => {
+              const previous = await ledger.limits();
+              const previousPreparation = await ledger.preparationLimit();
+              try {
+                const held = await db.pool.connect();
+                const pending: Array<Promise<unknown>> = [];
+                let begun = false;
+                try {
+                  await held.query('BEGIN');
+                  begun = true;
+                  await held.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+                    `preparation-budget:${ownerId}`,
+                  ]);
+                  const pid = (await held.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+                  pending.push(
+                    ledger.setLimits({ taskUsd: 9 }),
+                    ledger.setLimits({ monthlyUsd: 10 }),
+                    ledger.setLimits({ preparationUsd: 2 }),
+                  );
+                  await waitFor(
+                    async () =>
+                      Number(
+                        (
+                          await db.pool.query(
+                            'SELECT count(*) AS n FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))',
+                            [pid],
+                          )
+                        ).rows[0].n,
+                      ) === 3,
+                  );
+                  await held.query('COMMIT');
+                  begun = false;
+                } finally {
+                  if (begun) await held.query('ROLLBACK').catch(() => {});
+                  held.release(begun);
+                  await Promise.all(pending);
+                }
+                const current = await ledger.limits();
+                assert.equal(current.taskUsd, 9);
+                assert.equal(current.limit?.monthlyUsd, 10);
+                assert.equal((await ledger.preparationLimit()).monthlyUsd, 2);
+              } finally {
+                await ledger.setLimits({
+                  monthlyUsd: previous.limit?.monthlyUsd ?? null,
+                  taskUsd: previous.taskUsd,
+                  preparationUsd: previousPreparation.monthlyUsd,
+                });
+              }
+            });
+            await t.test('request admission counts recorded cost above a reservation', async () => {
+              await reset();
+              const previous = await ledger.preparationLimit();
+              const scope = randomUUID();
+              const usageId = randomUUID();
+              try {
+                await ledger.setLimits({ preparationUsd: previous.spentUsd + 1 });
+                await ledger.withPreparation(scope, async () => {
+                  const settle = await ledger.reserve(0.1);
+                  await db.pool.query(
+                    'INSERT INTO model_usage(id,owner_id,cost_usd,details) VALUES($1,$2,0.3,$3::jsonb)',
+                    [usageId, ownerId, JSON.stringify({ preparation: true, preparationId: scope })],
+                  );
+                  await assert.rejects(ledger.reserve(0.8), /preparation allowance/);
+                  await settle(0.3);
+                });
+              } finally {
+                await db.pool.query('DELETE FROM model_usage WHERE id=$1', [usageId]);
+                await db.pool.query(
+                  'DELETE FROM preparation_reservations WHERE owner_id=$1 AND id=$2',
+                  [ownerId, scope],
+                );
+                await ledger.setLimits({ preparationUsd: previous.monthlyUsd });
+              }
+            });
             await t.test(
               'preparation reserves concurrent requests, settles usage once, and keeps chat outside its allowance',
               async () => {

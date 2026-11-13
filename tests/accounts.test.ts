@@ -3016,6 +3016,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
         })),
     };
     let service = await f.create('fixture-quota-owner', backend);
+    await assert.rejects(service.reserve(1), /budget is not configured/);
+    service.setRequestBudget(async () => async () => {});
     const connectionId = await service.addKey('google', 'fixture-quota-key');
     const other = await f.create('fixture-other-quota-owner', backend);
     await other.addKey('google', 'fixture-other-quota-key');
@@ -3074,6 +3076,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     await assert.rejects(curator.curate(request), /Automatic requests are paused/);
     await service.close();
     service = await f.create('fixture-quota-owner', backend);
+    service.setRequestBudget(async () => async () => {});
     await assert.rejects(curator.curate(request), /Automatic requests are paused/);
     assert.equal(calls, 1);
     assert.doesNotMatch(
@@ -3127,6 +3130,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(calls, 7);
     await service.close();
     service = await f.create('fixture-quota-owner', backend);
+    service.setRequestBudget(async () => async () => {});
     await service.select({ ...selection, modelId: primary.choice.id });
     const paused = await service.resolve();
     await assert.rejects(

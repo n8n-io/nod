@@ -1933,15 +1933,16 @@ async function initializeApplication(
       proactivity: proactivity.context,
       runTurn: async (context) => {
         const automaticWork =
-          Boolean(context.proactivity) ||
-          Boolean(
-            (
-              await pool.query(
-                'SELECT 1 FROM tasks WHERE owner_id=$1 AND session_id=$2 AND activity_key IS NOT NULL',
-                [ownerId, context.sessionId],
-              )
-            ).rowCount,
-          );
+          !context.currentMessageId &&
+          (Boolean(context.proactivity) ||
+            Boolean(
+              (
+                await pool.query(
+                  'SELECT 1 FROM tasks WHERE owner_id=$1 AND session_id=$2 AND activity_key IS NOT NULL',
+                  [ownerId, context.sessionId],
+                )
+              ).rowCount,
+            ));
         const run = () =>
           ledger.withTurn(
             context.turnId,
