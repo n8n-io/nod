@@ -42,6 +42,8 @@ The repository includes an agent skill, `feature-video`, in `.claude/skills/feat
 
 Other coding agents can follow the same instructions. Point yours at `.claude/skills/feature-video/SKILL.md`.
 
+You don't have to remember to ask. The repository's agent instructions tell a coding agent to offer a video once when it finishes a feature a user can see, or prepares a release. It makes one only when you say yes.
+
 The agent works in a temporary folder. Captures, pages and videos never go into the repository.
 
 ## What a good video shows
