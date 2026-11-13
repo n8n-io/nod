@@ -52,7 +52,7 @@ function cardIssuer(digits: string) {
   );
 }
 
-function card(candidate: string) {
+export function cardNumber(candidate: string) {
   const digits = candidate.replace(/\D/g, '');
   return digits.length >= 13 && digits.length <= 19 && cardIssuer(digits) && luhn(digits);
 }
@@ -187,7 +187,7 @@ const detectors: [RegExp, string, ((match: string) => boolean)?][] = [
   [/\b[13][1-9A-HJ-NP-Za-km-z]{25,34}\b/g, '[wallet]', bitcoinLegacy],
   [/\b0x[0-9a-fA-F]{40}\b/g, '[wallet]'],
   [/\b[A-Za-z]{2}\d{2}(?:[ -]?[A-Za-z0-9]){11,30}\b/g, '[iban]', iban],
-  [/(?<![\p{N}\p{L}.-])\d(?:[ -]?\d){12,18}(?![\p{N}\p{L}-])/gu, '[card]', card],
+  [/(?<![\p{N}\p{L}.-])\d(?:[ -]?\d){12,18}(?![\p{N}\p{L}-])/gu, '[card]', cardNumber],
   [/\b(?!000|666|9\d\d)\d{3}[- ](?!00)\d{2}[- ](?!0000)\d{4}\b/g, '[id number]'],
   [/\b(?:\d{8}-?[A-Za-z]|[XYZxyz]-?\d{7}-?[A-Za-z])\b/g, '[id number]', spanishId],
   [/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g, '[id number]', cpf],

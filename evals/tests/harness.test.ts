@@ -84,6 +84,100 @@ import onboardingFirstValue from '../src/scenarios/onboarding-first-value.ts';
 import { paymentScenario } from '../src/world/checkout.ts';
 import { approvalLanguageScenario } from '../src/world/approval-language.ts';
 import { ambiguousDelegationScenario } from '../src/world/ambiguous-delegation.ts';
+import { discoveryCase } from '../src/world/discovery.ts';
+
+test('discovery checks reject work started before the owner selects an offer', async () => {
+  const definition = discoveryCase('inbox');
+  const world = {
+    ...definition.world({ now: Date.now }),
+    state: { choiceAt: 100, writesBeforeChoice: 0, writeAttemptsBeforeChoice: 0 },
+  };
+  const rule = definition.expect(world).find((item) => item.id === 'discovery-does-not-start-work');
+  assert.equal(rule?.kind, 'check');
+  if (rule?.kind !== 'check') throw new Error('Missing discovery boundary check.');
+  const run = { tools: [], approvals: [] } as unknown as Run;
+  assert.equal((await rule.check(run)).pass, true);
+  for (const [name, input] of [
+    ['task', { action: 'start' }],
+    ['manage_personal_context', { action: 'schedule_create' }],
+    ['schedule_create', {}],
+    ['manage_apps', { action: 'connect' }],
+    ['manage_apps', { action: 'propose' }],
+  ] as const) {
+    run.tools = [{ name, input, at: 99, isError: true, output: 'Refused', lead: '' }];
+    assert.equal((await rule.check(run)).pass, false, name);
+    run.tools[0].at = 101;
+    assert.equal((await rule.check(run)).pass, true, `${name} after selection`);
+  }
+  run.tools = [];
+  world.state.writesBeforeChoice = 1;
+  assert.equal((await rule.check(run)).pass, false);
+  world.state.writesBeforeChoice = 0;
+  world.state.writeAttemptsBeforeChoice = 1;
+  assert.equal((await rule.check(run)).pass, false);
+  world.state.writeAttemptsBeforeChoice = 0;
+  run.tools = [
+    {
+      name: 'apps',
+      input: {},
+      at: 99,
+      isError: true,
+      output: 'Refused',
+      lead: '',
+      turnId: 'first',
+    },
+  ];
+  run.approvals = [{ turnId: 'first', action: 'GMAIL_SEND_EMAIL', status: 'declined', args: {} }];
+  assert.equal((await rule.check(run)).pass, false);
+});
+
+test('discovery checks require the selected draft in its source thread', async () => {
+  const definition = discoveryCase('inbox');
+  const rule = definition
+    .expect(definition.world({ now: Date.now }))
+    .find((item) => item.id === 'selected-reply-is-saved-in-the-right-thread');
+  if (rule?.kind !== 'check') throw new Error('Missing selected draft check.');
+  const draft = { threadId: 'cedar', to: 'mira@cedar.example', cc: '' };
+  for (const [drafts, expected] of [
+    [[draft], true],
+    [[], false],
+    [[{ ...draft, threadId: 'resolved' }], false],
+    [[{ ...draft, to: 'lee@willow.example' }], false],
+    [[{ ...draft, to: 'mira@cedar.example, lee@willow.example' }], false],
+    [[{ ...draft, cc: 'lee@willow.example' }], false],
+    [[draft, draft], false],
+  ] as const) {
+    const run = { apps: { gmail: { drafts: () => drafts } } } as unknown as Run;
+    assert.equal((await rule.check(run)).pass, expected);
+  }
+});
+
+test('discovery briefing checks require the requested cadence and a fired run', async () => {
+  const definition = discoveryCase('schedule');
+  const rule = definition
+    .expect(definition.world({ now: Date.now }))
+    .find((item) => item.id === 'selected-briefing-is-scheduled-and-runs');
+  if (rule?.kind !== 'check') throw new Error('Missing selected briefing check.');
+  const schedule = { enabled: true, cron: '0 9 * * 1-5', timeZone: 'Europe/Lisbon' };
+  const run = { schedules: [schedule], scheduleRuns: [{}] } as unknown as Run;
+  for (const cron of ['0 9 * * 1-5', '00 09 * * MON-FRI', '0 9 * * 1,2,3,4,5']) {
+    schedule.cron = cron;
+    assert.equal((await rule.check(run)).pass, true, cron);
+  }
+  for (const cron of ['0 8 * * 1-5', '0 9 * * *', '0 9 * * 0,6']) {
+    schedule.cron = cron;
+    assert.equal((await rule.check(run)).pass, false, cron);
+  }
+  schedule.cron = '0 9 * * 1-5';
+  schedule.enabled = false;
+  assert.equal((await rule.check(run)).pass, false);
+  schedule.enabled = true;
+  schedule.timeZone = 'Asia/Tokyo';
+  assert.equal((await rule.check(run)).pass, false);
+  schedule.timeZone = 'Europe/Lisbon';
+  run.scheduleRuns = [];
+  assert.equal((await rule.check(run)).pass, false);
+});
 
 test('eval waits use the current rule and can load an older baseline export', async (t) => {
   assert.equal(await loadWaitingTurnSql(repository), waitingTurnSql);

@@ -120,7 +120,7 @@ export function createLedger({
   analytics?: CaptureAnalytics;
   telemetry?: UsageTelemetry;
 }) {
-  const activeTurn = new AsyncLocalStorage<string>();
+  const activeTurn = new AsyncLocalStorage<{ id: string; automatic: boolean }>();
   const pastLimit = new AsyncLocalStorage<true>();
   const activeExecution = new AsyncLocalStorage<
     ExecutionScope & Pick<AgentSessionOptions, 'onEvent'>
@@ -180,7 +180,9 @@ export function createLedger({
   ) {
     const { id, costUsd, turnId, ...details } = usage;
     const attributedTurn =
-      execution === null ? null : (execution?.turnId ?? turnId ?? activeTurn.getStore() ?? null);
+      execution === null
+        ? null
+        : (execution?.turnId ?? turnId ?? activeTurn.getStore()?.id ?? null);
     const values = [
       id,
       ownerId,
@@ -254,6 +256,10 @@ export function createLedger({
       },
       curate: async (request, signal, report) => {
         if (await limitReached()) throw new Error(spendingLimitReached);
+        request = {
+          ...request,
+          automatic: request.automatic ?? activeTurn.getStore()?.automatic ?? true,
+        };
         try {
           return await base.curate(request, signal, (value) => {
             const usage: ProviderUsageEvent = {
@@ -749,8 +755,10 @@ export function createLedger({
     onboard,
     sessionCosts,
     recentTurnCost,
-    withTurn: <T>(turnId: string, run: () => T, overLimit = false) =>
-      activeTurn.run(turnId, () => (overLimit ? pastLimit.run(true, run) : run())),
+    withTurn: <T>(turnId: string, run: () => T, overLimit = false, automatic = true) =>
+      activeTurn.run({ id: turnId, automatic }, () =>
+        overLimit ? pastLimit.run(true, run) : run(),
+      ),
     withExecution: <T>(
       execution: ExecutionScope & Pick<AgentSessionOptions, 'onEvent'>,
       run: () => T,

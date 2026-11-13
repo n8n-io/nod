@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { cardNumber } from './personal-data.ts';
 import { secretToken } from './redaction.ts';
 import {
   memoryAreas,
@@ -12,13 +13,29 @@ import {
 export const areas = memoryAreas;
 export const maxBytes = 256 * 1024;
 
-export const personalSecret = new RegExp(
-  String.raw`\b(?:\d[ -]?){14,19}\b|https?:\/\/[^\s/@]+:[^\s/@]+@|` + secretToken.source,
+const digitRun = /\d+(?:[ -]\d+)*/g;
+const keyOrLoginLink = new RegExp(
+  String.raw`https?:\/\/[^\s/@]+:[^\s/@]+@|` + secretToken.source,
   'i',
 );
+function holdsCard(run: string) {
+  const groups = run.split(/[ -]/);
+  for (let start = 0; start < groups.length; start++) {
+    let digits = '';
+    for (let end = start; end < groups.length; end++) {
+      digits += groups[end];
+      if (digits.length > 19) break;
+      if (cardNumber(digits)) return true;
+    }
+  }
+  return false;
+}
+export function personalSecret(text: string) {
+  return keyOrLoginLink.test(text) || [...text.matchAll(digitRun)].some(([run]) => holdsCard(run));
+}
 const slugPattern = '[a-z0-9]+(?:-[a-z0-9]+)*';
 export function unsafe(...texts: Array<string | undefined>) {
-  return texts.some((text) => !!text && personalSecret.test(text));
+  return texts.some((text) => !!text && personalSecret(text));
 }
 
 export const id = z.uuid();

@@ -22,7 +22,12 @@ import {
   type ResourceLoader,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
-import { createPiModelRuntime, estimateModelTokens, modelContextBudget } from './models.ts';
+import {
+  createPiModelRuntime,
+  estimateModelTokens,
+  localModelSilenceMs,
+  modelContextBudget,
+} from './models.ts';
 import { audioContext, audioMessage, readsNativeAudio } from './audio.ts';
 import { piModelTrace } from './traces.ts';
 import type { ModelTraces } from '../../ports/traces.ts';
@@ -203,8 +208,12 @@ type CachedRequest = {
   messages?: Array<{ role: string; content: string | CachedBlock[] }>;
 };
 
-function observerCache(cached: { owner?: string; stable?: string[] }) {
-  const long = { type: 'ephemeral', ttl: '1h' };
+function stableRequestCache(
+  cached: { owner?: string; stable?: string[] },
+  retention: 'short' | 'long',
+  moveOwnerFirst = false,
+) {
+  const durable = retention === 'long' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' };
   const short = { type: 'ephemeral' };
   return (pi: ExtensionAPI) => {
     pi.on('before_provider_request', ({ payload }) => {
@@ -212,15 +221,44 @@ function observerCache(cached: { owner?: string; stable?: string[] }) {
       if (!request || !Array.isArray(request.messages)) return;
       if (Array.isArray(request.system) && request.system.filter((b) => b.cache_control).length > 1)
         return;
-      const blocks = request.messages.flatMap((message, at) =>
+      const prefixes = [...new Set(cached.stable ?? [])].sort((a, b) => a.length - b.length);
+      const longest = prefixes.at(-1);
+      const ordered = [...request.messages];
+      if (moveOwnerFirst && cached.owner && longest) {
+        const ownerAt = ordered.findIndex(
+          (message) =>
+            Array.isArray(message.content) &&
+            message.content.length === 1 &&
+            message.content[0]?.type === 'text' &&
+            message.content[0].text === cached.owner,
+        );
+        const stableAt = ordered.findIndex(
+          (message) =>
+            Array.isArray(message.content) &&
+            message.content.some(
+              (block) =>
+                block.type === 'text' &&
+                typeof block.text === 'string' &&
+                block.text.startsWith(longest),
+            ),
+        );
+        if (
+          stableAt >= 0 &&
+          ownerAt === stableAt + 1 &&
+          ordered[stableAt]?.role === 'user' &&
+          ordered[ownerAt]?.role === 'user'
+        ) {
+          const [owner] = ordered.splice(ownerAt, 1);
+          ordered.splice(stableAt, 0, owner!);
+        }
+      }
+      const blocks = ordered.flatMap((message, at) =>
         Array.isArray(message.content)
           ? message.content.map((block, index) => ({ block, at, index }))
           : [],
       );
       const lastText = (match: (text: string) => boolean) =>
         blocks.findLast(({ block }) => block.type === 'text' && match(block.text ?? ''));
-      const prefixes = [...new Set(cached.stable ?? [])].sort((a, b) => a.length - b.length);
-      const longest = prefixes.at(-1);
       const stable = longest
         ? lastText((text) => text.length > longest.length && text.startsWith(longest))
         : undefined;
@@ -231,22 +269,26 @@ function observerCache(cached: { owner?: string; stable?: string[] }) {
         (found.at < stable.at || (found.at === stable.at && found.index < stable.index))
           ? found
           : undefined;
-      const messages = request.messages.map((message, at) =>
+      const messages = ordered.map((message, at) =>
         Array.isArray(message.content)
           ? {
               ...message,
               content: message.content.flatMap((block, index): CachedBlock[] => {
                 const rolling = block.cache_control ? { cache_control: short } : {};
                 if (owner?.at === at && owner.index === index)
-                  return [{ ...block, cache_control: long }];
+                  return [{ ...block, cache_control: durable }];
                 if (stable?.at === at && stable.index === index)
                   return [
                     ...prefixes.map((prefix, step) => ({
                       type: 'text',
                       text: prefix.slice(step ? prefixes[step - 1]!.length : 0),
-                      cache_control: long,
+                      cache_control: durable,
                     })),
-                    { ...block, text: block.text!.slice(longest!.length), ...rolling },
+                    {
+                      ...block,
+                      text: block.text!.slice(longest!.length),
+                      ...(moveOwnerFirst ? { cache_control: short } : rolling),
+                    },
                   ];
                 return [{ ...block, ...rolling }];
               }),
@@ -362,6 +404,7 @@ export function createPiAgent(options: {
     async open(input) {
       if (disposed) throw new Error('The agent service has stopped.');
       const access = await options.resolve?.();
+      if (input.automatic) await access?.prepareRequest?.(access.definition.choice.id, true);
       if (!access && !options.apiKey)
         throw new Error('Configure the selected model provider to enable the assistant.');
       if (access?.method === 'subscription') {
@@ -398,9 +441,10 @@ export function createPiAgent(options: {
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const traces = options.traces;
       const connection = access
-        ? await createPiModelRuntime(
-            access,
-            traces &&
+        ? await createPiModelRuntime(access, {
+            automatic: input.automatic,
+            trace:
+              traces &&
               ((call) => {
                 if (traces.active())
                   traces.record(
@@ -417,13 +461,13 @@ export function createPiAgent(options: {
                     ),
                   );
               }),
-            input.readAudio,
-            (usage) =>
+            readAudio: input.readAudio,
+            reportCacheUsage: (usage) =>
               input.onEvent({
                 type: 'provider_usage',
                 usage: { ...usage, turnId: input.turnId },
               }),
-          )
+          })
         : undefined;
       const runtime = connection
         ? connection.runtime
@@ -473,7 +517,7 @@ export function createPiAgent(options: {
         nested = false,
       ) => {
         const result = await run();
-        if (!budget.compact || nested) return result;
+        if (nested) return result;
         const text = result.content
           .filter((part) => part.type === 'text')
           .map((part) => part.text)
@@ -523,7 +567,8 @@ export function createPiAgent(options: {
         model.api === 'anthropic-messages' &&
         last !== undefined &&
         Date.now() - last.timestamp < longCache;
-      if (keepCache) {
+      const scheduleCache = model.api === 'anthropic-messages' ? input.scheduleCache : undefined;
+      if (keepCache || scheduleCache === 'long') {
         const stream = runtime.streamSimple.bind(runtime);
         runtime.streamSimple = (target, context, options) =>
           stream(target, context, { ...options, cacheRetention: 'long' });
@@ -641,6 +686,7 @@ export function createPiAgent(options: {
         transport: 'sse',
         steeringMode: 'all',
         cacheWarming: input.keepWarm ? 'idle' : 'streaming',
+        ...(access?.provider === 'compatible' ? { httpIdleTimeoutMs: localModelSilenceMs } : {}),
       });
       const extensionLoader = new DefaultResourceLoader({
         cwd: input.workspace.path,
@@ -687,7 +733,15 @@ export function createPiAgent(options: {
           recentImages,
           audioContext(manager, readsNativeAudio(model) && Boolean(input.readAudio)),
           threadPromptCache(input.threadId),
-          ...(keepCache ? [observerCache(cached)] : []),
+          ...(keepCache || scheduleCache
+            ? [
+                stableRequestCache(
+                  cached,
+                  keepCache ? 'long' : scheduleCache!,
+                  Boolean(scheduleCache),
+                ),
+              ]
+            : []),
           ownerContextCopies(input.ownerContext),
           (pi: ExtensionAPI) =>
             pi.on('session_before_compact', async ({ preparation, reason, signal }) => {
@@ -718,11 +772,16 @@ export function createPiAgent(options: {
               };
             }),
           (pi: ExtensionAPI) =>
-            pi.on('cache_warming_decision', async () =>
-              idle && !(await input.keepWarm?.().catch(() => false))
+            pi.on('cache_warming_decision', async () => {
+              try {
+                await access?.prepareRequest?.(connection?.textModel?.id ?? model.id, true);
+              } catch {
+                return { action: 'stop' as const };
+              }
+              return idle && !(await input.keepWarm?.().catch(() => false))
                 ? { action: 'stop' as const }
-                : undefined,
-            ),
+                : undefined;
+            }),
           completeAssistantMessages,
         ],
         noExtensions: true,
@@ -875,7 +934,21 @@ export function createPiAgent(options: {
       const finishTurn = session.agent.finishTurn;
       session.agent.finishTurn = async (turn, signal) => {
         const result = await finishTurn?.(turn, signal);
-        if (input.shouldStop()) return { action: 'end' as const };
+        if (
+          input.shouldStop(
+            turn.toolResults.map((result) => ({
+              name: result.toolName,
+              ...(result.isError
+                ? {
+                    error: result.content
+                      .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+                      .join('\n'),
+                  }
+                : {}),
+            })),
+          )
+        )
+          return { action: 'end' as const };
         if (
           input.nextMessages &&
           result?.action !== 'end' &&
@@ -954,6 +1027,13 @@ export function createPiAgent(options: {
           input.onEvent({ type: 'message_start' });
         }
         if (event.type === 'turn_start') input.onEvent({ type: 'turn_start' });
+        if (event.type === 'auto_retry_start')
+          input.onEvent({
+            type: 'retry',
+            model: (session.model ?? model).name,
+            attempt: event.attempt,
+            attempts: event.maxAttempts,
+          });
         if (event.type === 'message_update') {
           const update = event.assistantMessageEvent;
           if (update.type === 'text_start' || update.type === 'text_delta') {
@@ -962,6 +1042,11 @@ export function createPiAgent(options: {
               input.onEvent({ type: 'message_start' });
             }
             textBlock = update.contentIndex;
+          }
+          if (update.type === 'toolcall_start' && textBlock !== undefined) {
+            input.onEvent({ type: 'message_end' });
+            input.onEvent({ type: 'message_start' });
+            textBlock = undefined;
           }
           if (update.type === 'text_delta')
             input.onEvent({ type: 'text_delta', text: update.delta });

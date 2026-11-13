@@ -2032,6 +2032,179 @@ test(
         assert.equal((await sendJson({ text: ` ${'x'.repeat(100_000)}` })).statusCode, 400);
       });
 
+      await t.test(
+        'a task start reuses an acknowledgement in the same owner request',
+        async (t) => {
+          const previousObserver = inspectObserver;
+          const startMessage = 'I will review the synthetic inbox and flag urgent messages.';
+          const resultText = 'Three synthetic messages need review. Two reply drafts are saved.';
+          const cases = [
+            {
+              prompt: 'Review the synthetic inbox and flag urgent messages.',
+              prior: 'On it. I will review the synthetic inbox.',
+              start: startMessage,
+              expected: ['On it. I will review the synthetic inbox.'],
+              anchor: 0,
+            },
+            {
+              prompt: 'Review the synthetic inbox after checking the invoice.',
+              prior: 'On it. I will review the synthetic inbox.',
+              between: 'The invoice is due Friday for €450.',
+              start: startMessage,
+              expected: [
+                'On it. I will review the synthetic inbox.',
+                'The invoice is due Friday for €450.',
+              ],
+              anchor: 0,
+            },
+            {
+              prompt: 'Review the synthetic Gmail inbox and save reply drafts.',
+              prior:
+                "On it! I'll go through your Gmail, pull out anything urgent, and save reply drafts for the emails that need an answer. Nothing gets sent without your OK.",
+              start:
+                "I've started on your inbox, Synthetic account 1. I'll sort your Gmail into groups, point out anything urgent and why, and save draft replies for people who need an answer.",
+              expected: [
+                "On it! I'll go through your Gmail, pull out anything urgent, and save reply drafts for the emails that need an answer. Nothing gets sent without your OK.",
+              ],
+              anchor: 0,
+            },
+            {
+              prompt: 'Prepare synthetic email reply drafts and wait for approval.',
+              prior:
+                "On it. I'll draft email replies. No email replies will be sent without your approval.",
+              start:
+                "I've started drafting email replies. No email replies will be sent without your approval.",
+              expected: [
+                "On it. I'll draft email replies. No email replies will be sent without your approval.",
+              ],
+              anchor: 0,
+            },
+            {
+              prompt: 'Revisa el buzón sintético y prepara borradores.',
+              prior:
+                'Ya estoy revisando tu buzón y preparando borradores de respuesta. No enviaré nada sin tu aprobación.',
+              handoff: true,
+              start:
+                'Ya he empezado a revisar tu buzón y preparar borradores de respuesta. No enviaré nada sin tu aprobación.',
+              expected: [
+                'Ya estoy revisando tu buzón y preparando borradores de respuesta. No enviaré nada sin tu aprobación.',
+              ],
+              anchor: 0,
+            },
+            {
+              prompt: 'Review the synthetic inbox after confirming the deadline.',
+              prior:
+                'I found 3 urgent synthetic inbox messages. The invoice is due Friday for €450.',
+              start: startMessage,
+              expected: [
+                'I found 3 urgent synthetic inbox messages. The invoice is due Friday for €450.',
+                startMessage,
+              ],
+              anchor: 1,
+            },
+            {
+              prompt: 'Review the synthetic inbox after checking the messages.',
+              prior: 'I found urgent synthetic inbox messages and flagged them.',
+              start: startMessage,
+              expected: ['I found urgent synthetic inbox messages and flagged them.', startMessage],
+              anchor: 1,
+            },
+            {
+              prompt: 'Check the synthetic invoice due Friday.',
+              prior: 'No, the synthetic invoice is due Friday.',
+              start: 'Check the synthetic invoice due Friday.',
+              expected: [
+                'No, the synthetic invoice is due Friday.',
+                'Check the synthetic invoice due Friday.',
+              ],
+              anchor: 1,
+            },
+            {
+              prompt: 'Review whether the synthetic invoice can be approved.',
+              prior: 'I will not approve the synthetic invoice.',
+              start: 'I will approve the synthetic invoice.',
+              expected: [
+                'I will not approve the synthetic invoice.',
+                'I will approve the synthetic invoice.',
+              ],
+              anchor: 1,
+            },
+          ] as const;
+          const started = new Map<string, Task>();
+          inspectObserver = async (context) => {
+            const scenario = cases.find(({ prompt }) => prompt === context.prompt);
+            if (!scenario) return;
+            if (context.taskContext) {
+              await context.reply(resultText);
+              await context.task!({
+                action: 'finish',
+                id: context.taskContext.id,
+                status: 'done',
+                result: resultText,
+              });
+              return { status: 'succeeded' };
+            }
+            await context.reply(
+              scenario.prior,
+              undefined,
+              undefined,
+              undefined,
+              'handoff' in scenario && scenario.handoff,
+            );
+            if ('between' in scenario) await context.reply(scenario.between);
+            started.set(
+              context.prompt,
+              (await context.task!({
+                action: 'start',
+                title: 'Review synthetic inbox',
+                message: scenario.start,
+                doneWhen: 'Urgent messages are flagged and reply drafts saved',
+                now: 'Reading synthetic messages',
+              })) as Task,
+            );
+            return { status: 'succeeded' };
+          };
+          t.after(() => {
+            inspectObserver = previousObserver;
+          });
+          for (const scenario of cases) {
+            const request = await userMessages.submit(scenario.prompt);
+            await waitFor(settled(request.turnId));
+            const task = started.get(scenario.prompt);
+            assert.ok(task);
+            const replies = (
+              await db.pool.query<{ id: string; text: string }>(
+                "SELECT id,text FROM messages WHERE owner_id=$1 AND turn_id=$2 AND role='assistant' AND hidden_at IS NULL ORDER BY created_at,id",
+                [ownerId, request.turnId],
+              )
+            ).rows;
+            assert.deepEqual(
+              replies.map(({ text }) => text),
+              scenario.expected,
+            );
+            assert.equal(task.messageId, replies[scenario.anchor]!.id);
+            const taskTurn = (
+              await db.pool.query<{ id: string }>(
+                "SELECT id FROM turns WHERE owner_id=$1 AND session_id=$2 AND source='task'",
+                [ownerId, task.id],
+              )
+            ).rows[0]!.id;
+            await waitFor(settled(taskTurn));
+            const taskReplies = (
+              await db.pool.query<{ text: string }>(
+                "SELECT text FROM messages WHERE owner_id=$1 AND turn_id=$2 AND role='assistant' AND hidden_at IS NULL",
+                [ownerId, taskTurn],
+              )
+            ).rows;
+            assert.deepEqual(
+              taskReplies.map(({ text }) => text),
+              [resultText],
+            );
+            assert.equal((await tasks.read()).find(({ id }) => id === task.id)?.status, 'done');
+          }
+        },
+      );
+
       await t.test('a task resumes its own session when its next check is due', async (t) => {
         const previousObserver = inspectObserver;
         const prompt = 'Track a synthetic reply after connecting its source.';
@@ -2434,6 +2607,23 @@ test(
         await waitFor(settled(background));
         assert.equal(await turnStatus(background), 'failed');
         assert.equal(ran(background), undefined);
+      });
+
+      await t.test('a scheduled turn continues when cache policy lookup fails', async (t) => {
+        const previous = dependencies.scheduleCache;
+        dependencies.scheduleCache = async () => {
+          throw new Error('Synthetic cache policy lookup failure');
+        };
+        t.after(() => {
+          dependencies.scheduleCache = previous;
+        });
+        const turnId = await thread.enqueueTurn('schedule cache lookup failure fixture', {
+          source: 'schedule',
+          sourceId: randomUUID(),
+        });
+        await waitFor(settled(turnId));
+        assert.equal(await turnStatus(turnId), 'succeeded');
+        assert.equal(ran(turnId)?.scheduleCache, undefined);
       });
 
       await t.test(
@@ -6773,6 +6963,9 @@ test(
           let version = 'v1';
           let afterRead = async () => {};
           let changeToken: string | undefined;
+          let sourceFailure: Error | undefined;
+          let sourceReads = 0;
+          let toolSource = false;
           const options = {
             pool: db.pool,
             ownerId,
@@ -6787,10 +6980,13 @@ test(
                       changeToken,
                       readable: true,
                       revision,
+                      tools: toolSource,
                     },
                   ]
                 : [],
             read: async (_turn: unknown, input: Record<string, unknown>) => {
+              sourceReads++;
+              if (sourceFailure) throw sourceFailure;
               const snapshot = {
                 checkedAt: new Date().toISOString(),
                 records: [
@@ -6861,6 +7057,9 @@ test(
             connected = true;
             revision = 'account-one';
             changeToken = undefined;
+            sourceFailure = undefined;
+            sourceReads = 0;
+            toolSource = false;
             engine.release(turnId);
             await db.pool.query('DELETE FROM proactive_issues WHERE owner_id=$1', [ownerId]);
             await db.pool.query('DELETE FROM proactive_closures WHERE owner_id=$1', [ownerId]);
@@ -6879,6 +7078,105 @@ test(
             });
           }
           try {
+            await t.test(
+              'failed service reads wait for another check and allow recovery',
+              async () => {
+                await reset();
+                sourceFailure = Object.assign(new Error('Synthetic invalid source arguments.'), {
+                  statusCode: 502,
+                  upstreamStatus: 400,
+                });
+                await assert.rejects(
+                  engine.read(ref, { sourceId }, new AbortController().signal),
+                  sourceFailure,
+                );
+                sourceFailure = undefined;
+                await engine.read(ref, { sourceId }, new AbortController().signal);
+                assert.equal(sourceReads, 2);
+                await reset();
+                sourceFailure = Object.assign(new Error('Synthetic service unavailable.'), {
+                  status: 503,
+                });
+                await assert.rejects(
+                  engine.read(ref, { sourceId }, new AbortController().signal),
+                  sourceFailure,
+                );
+                const count = sourceReads;
+                sourceFailure = undefined;
+                for (let i = 0; i < 20; i++)
+                  await assert.rejects(
+                    engine.read(ref, { sourceId }, new AbortController().signal),
+                    (error: Error) => {
+                      assert.match(error.message, /next scheduled check/);
+                      assert.match(error.message, /503/);
+                      assert.match(error.message, /Synthetic service unavailable/);
+                      return true;
+                    },
+                  );
+                assert.equal(sourceReads, count);
+                assert.equal((await engine.view()).coverage[0].status, 'unavailable');
+                const next = { turnId: randomUUID(), threadId: currentThread };
+                await db.pool.query(
+                  "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,proactive,started_at) VALUES($1,$2,$3,'event','Synthetic recovery check','running',true,true,now())",
+                  [next.turnId, ownerId, currentThread],
+                );
+                try {
+                  await engine.read(next, { sourceId }, new AbortController().signal);
+                  assert.equal(sourceReads, count + 1);
+                  assert.equal((await engine.view()).coverage[0].status, 'ready');
+                } finally {
+                  engine.release(next.turnId);
+                  await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [
+                    next.turnId,
+                  ]);
+                }
+              },
+            );
+            await t.test(
+              'evidence failures identify the record and preserve every save fence',
+              async () => {
+                await reset();
+                toolSource = true;
+                const earlier = randomUUID();
+                await db.pool.query(
+                  "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,proactive) VALUES($1,$2,$3,'event','Synthetic earlier check','succeeded',true,true)",
+                  [earlier, ownerId, currentThread],
+                );
+                const read = () =>
+                  engine.read(
+                    ref,
+                    { sourceId, query: 'Read the synthetic record.' },
+                    new AbortController().signal,
+                  );
+                for (const [table, patch, reason] of [
+                  ['proactive_evidence', `turn_id='${earlier}'`, /earlier turn/],
+                  ['proactive_evidence', "version='v2'", /version changed/],
+                  ['proactive_evidence', "checked_at=now()-interval '3 minutes'", /two minutes/],
+                  ['proactive_evidence', "source_revision='old-account'", /connection changed/],
+                  ['proactive_sources', "status='unavailable'", /not ready/],
+                ] as const) {
+                  await read();
+                  await db.pool.query(`UPDATE ${table} SET ${patch} WHERE owner_id=$1`, [ownerId]);
+                  await assert.rejects(save(), (error: Error) => {
+                    assert.match(error.message, reason);
+                    assert.ok(error.message.includes(sourceId));
+                    assert.ok(error.message.includes('thread1'));
+                    return true;
+                  });
+                  assert.equal((await engine.view()).issues.length, 0);
+                  assert.equal(await delivered(), 0);
+                }
+                await read();
+                await assert.rejects(
+                  save({ sources: [{ sourceId, id: 'missing', version }] }),
+                  /missing/,
+                );
+                assert.equal(
+                  ((await save({ delivery: 'private' })) as { status: string }).status,
+                  'prepared',
+                );
+              },
+            );
             await t.test(
               'prepared outcomes and owner controls emit only committed bounded changes',
               async () => {
@@ -9041,6 +9339,13 @@ test(
                 /retry delay is about 24 hours\. Check its daily limit or choose another model\./,
             },
             {
+              prompt: 'model-daily-quota-message-fixture',
+              error: prefix + 'HTTP 429: Daily quota exceeded; retryDelay: 30s',
+              reason: /Daily quota exceeded/,
+              advice:
+                /retry delay is about 30 seconds\. Check its daily limit or choose another model\./,
+            },
+            {
               prompt: 'model-rate-limit-code-fixture',
               error: prefix + 'rate_limit_error',
               reason: /rate_limit_error/,
@@ -9219,7 +9524,7 @@ test(
                   text,
                   /synthetic-private-provider-detail|synthetic-fixture-secret|usage limits and billing/,
                 );
-              if (!item.error.includes('{')) assert.equal(turn.error, item.error);
+              if (!item.error.includes('{') && !item.advice) assert.equal(turn.error, item.error);
             }
           } finally {
             for (const item of cases) modelErrors.delete(item.prompt);
@@ -11136,7 +11441,7 @@ test(
         CREATE TABLE messages(id uuid PRIMARY KEY, owner_id text, turn_id uuid, role text, created_at timestamptz DEFAULT now())`);
       const { createActivity } = await import('../src/server/activity.ts');
       const owner = 'activity-fixture-owner';
-      const activity = createActivity({ pool, ownerId: owner });
+      const activity = createActivity({ pool, ownerId: owner, model: () => 'Synthetic Model' });
       const threadId = randomUUID();
       const chat = randomUUID();
       const followUp = randomUUID();
@@ -11199,6 +11504,18 @@ test(
       item = await live();
       assert.equal(item.doing, 'tool');
       assert.equal(item.site, null);
+      assert.equal(item.tool, undefined);
+      assert.equal(item.model, 'Synthetic Model');
+      const codeCall = randomUUID();
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,call_id) VALUES($1,'tool_start','codemode',$2)",
+        [chat, codeCall],
+      );
+      assert.ok((await live()).tool);
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,call_id) VALUES($1,'tool_complete','codemode',$2)",
+        [chat, codeCall],
+      );
       await pool.query(
         "INSERT INTO turn_events(turn_id,type,summary,call_id) VALUES($1,'tool_complete','Wait for result',$2)",
         [chat, unlabeledCall],
@@ -11211,6 +11528,18 @@ test(
       item = await live();
       assert.equal(item.step, null);
       assert.equal(item.received, undefined);
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary) VALUES($1,'retry','Synthetic retry note')",
+        [chat],
+      );
+      assert.equal((await live()).step, 'Synthetic retry note');
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,call_id) VALUES($1,'tool_start','codemode',$2)",
+        [chat, randomUUID()],
+      );
+      item = await live();
+      assert.equal(item.step, null);
+      assert.ok(item.tool);
       const taskSession = randomUUID();
       const taskTurn = randomUUID();
       const observerTurn = randomUUID();

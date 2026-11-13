@@ -128,7 +128,7 @@ Section "nod"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\nod" "DisplayName" "Nod"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\nod" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\nod" "Publisher" "n8n GmbH"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\nod" "UninstallString" '$"$INSTDIR\Uninstall.exe$"'
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\nod" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\nod" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\nod" "NoRepair" 1
 SectionEnd
