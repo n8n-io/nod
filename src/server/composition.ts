@@ -1832,7 +1832,7 @@ async function initializeApplication(
   payments = await createPayments(pool, {
     ownerId,
     analytics: captureAnalytics,
-    present: (turn, input) => communication.present(turn.threadId, input),
+    present: (turn, input) => communication.presentPayment(turn.threadId, input),
     uses: vault.uses,
     page: (threadId) => computer.currentPage(threadId),
     destinations: (threadId, fields) => computer.cardDestinations(threadId, fields),

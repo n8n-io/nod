@@ -94,7 +94,10 @@ export async function createPayments(
     ownerId: string;
     analytics?: CaptureAnalytics;
     uses: Awaited<ReturnType<typeof createVaultUses>>;
-    present(turn: TurnRef, input: { kind: string; [key: string]: unknown }): Promise<string>;
+    present(
+      turn: TurnRef,
+      input: { kind: string; [key: string]: unknown },
+    ): Promise<{ question: string; action: string }>;
     page(threadId: string): Promise<BrowserPage>;
     destinations(
       threadId: string,
@@ -156,7 +159,7 @@ export async function createPayments(
     const cards = await options.cards();
     if (!cards.length)
       throw new PaymentError(
-        'Ask the owner to open Nod on desktop and [add a card in Vault](/vault?add=card), then tell you to continue. Do not ask for card details in chat.',
+        'Ask the owner to open Nod and [add a card in Vault](/vault?add=card), then tell you to continue. Do not ask for card details in chat.',
       );
     const named = hint?.toLowerCase();
     const matches = named
@@ -314,11 +317,19 @@ export async function createPayments(
       currency,
       card: cardFacts(card),
       destinations: [...new Set(Object.values(destinations))],
-      requires: 'desktop_private_form',
+      requires: 'private_form',
     };
-    const question = await options.present({ ...turn }, structuredClone(details));
+    const { question, action } = await options.present({ ...turn }, structuredClone(details));
     if (typeof question !== 'string' || !question.trim() || question.length > 12_000)
       throw new PaymentError('The payment model did not produce a valid question.');
+    if (
+      typeof action !== 'string' ||
+      !action.trim() ||
+      action.length > 64 ||
+      /[\r\n]/.test(action) ||
+      !/[\p{L}\p{N}]/u.test(action)
+    )
+      throw new PaymentError('The payment model did not produce a valid action.');
     const closed = await uses.transaction(async (client) => {
       const active = await client.query(
         `SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
@@ -377,7 +388,7 @@ export async function createPayments(
       { kind: 'payment', origin, payment: spent(row) },
       'requested',
     );
-    return { image, question, url: `/payments/${row.id}` };
+    return { image, question, action, url: `/payments/${row.id}` };
   }
 
   async function submitCode(turnId: string, code: string, paymentId: string) {

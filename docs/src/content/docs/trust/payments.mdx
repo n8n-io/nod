@@ -40,7 +40,9 @@ When Nod has filled in the rest of the checkout, it prepares one payment request
 
 The request stays open while its task waits for you. If Nod can't write the approval question, the request closes at once. A newer request, a newer message from you in the same conversation, a changed card or **Stop** makes it unusable. A scheduled run or background task has its own session, so chatting with Nod never closes its payment request.
 
-In Nod web or desktop, Nod shows the checkout with the card fields hidden. Select its payment action to open **Approve payment** beside chat. Check the amount, shop, card and destinations, then enter the card's security code and submit. The code never reaches the model or the chat history. Closing the panel clears an unsent code; it does not cancel a payment already submitted. Reopening shows the current result, including an expired or uncertain request.
+In Nod web or desktop, Nod shows the checkout with the card fields hidden. Its payment message keeps the amount, shop, card and destinations separate from a short payment action. Only that action is a link; addresses in the explanation are shown as text. Select the action to open **Approve payment** beside chat. Check the details, then enter the card's security code and submit. The code never reaches the model or the chat history. Closing the panel clears an unsent code; it does not cancel a payment already submitted. Reopening shows the current result, including an expired or uncertain request.
+
+You can ask an unrelated question, including one with an invoice or order number, while payment waits. That message reaches ordinary chat and starts a new turn, which closes the pending payment request in the same conversation. To pay later, ask Nod to check the checkout and prepare a new approval. Nod still withholds standalone code-like numbers and messages labeled code, PIN, CVV, CVC or security code from the model.
 
 ### From Telegram or WhatsApp
 

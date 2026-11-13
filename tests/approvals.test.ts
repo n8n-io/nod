@@ -65,6 +65,37 @@ test('server confirmation uses the saved action without model calls', async () =
   assert.equal(modelCalls, 0);
 });
 
+test('payment presentation repairs a missing action and keeps it separate from the message', async () => {
+  let drafts = 0;
+  const communication = createCommunication({
+    pool: {} as pg.Pool,
+    ownerId: 'synthetic-owner',
+    review: async (_instructions, input) => {
+      assert.equal((input as { purpose: string }).purpose, 'payment');
+      drafts++;
+      return drafts === 1
+        ? { text: 'Synthetic payment details.' }
+        : { text: 'Synthetic payment details.', action: 'Approve payment' };
+    },
+  });
+  assert.deepEqual(await communication.presentPayment(null, { kind: 'payment' }), {
+    question: 'Synthetic payment details.',
+    action: 'Approve payment',
+  });
+  assert.equal(drafts, 2);
+  const confirmation = await communication.describe({
+    turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
+    action: 'GMAIL_FETCH_EMAILS',
+    args: { query: 'Northstar' },
+  });
+  assert.match(confirmation, /GMAIL_FETCH_EMAILS/);
+  assert.equal(drafts, 2);
+  assert.throws(
+    () => communication.present(null, { kind: 'confirmation' }),
+    /Confirmations require a saved action description/,
+  );
+});
+
 test('confirmation displays the saved action and redacts hidden values', async () => {
   const communication = createCommunication({
     pool: {} as pg.Pool,
