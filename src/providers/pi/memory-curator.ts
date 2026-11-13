@@ -133,6 +133,7 @@ export function createPiMemoryCurator(options: {
     },
     async curate({ task, instructions, input, images, automatic = true }, signal, report) {
       signal?.throwIfAborted();
+      const bounded = task === 'classify' || task === 'attention';
       if (options.resolve) loaded = undefined;
       loaded ??= load(automatic).catch((error) => {
         loaded = undefined;
@@ -172,12 +173,12 @@ export function createPiMemoryCurator(options: {
                 }
               : {}),
             signal: AbortSignal.any([
-              AbortSignal.timeout(task === 'classify' ? 10_000 : 45_000),
+              AbortSignal.timeout(bounded ? 10_000 : 45_000),
               ...(signal ? [signal] : []),
             ]),
-            maxTokens: task === 'classify' ? 512 : 8192,
+            maxTokens: bounded ? 512 : 8192,
             ...(sessionId ? { sessionId } : {}),
-            ...(task === 'classify' ? { maxRetries: 0, timeoutMs: 10_000 } : {}),
+            ...(bounded ? { maxRetries: 0, timeoutMs: 10_000 } : {}),
             reasoning: effort === 'off' ? undefined : effort,
           });
         } finally {
@@ -212,7 +213,7 @@ export function createPiMemoryCurator(options: {
       };
       const reply = await retryAssistantCall(
         complete,
-        { enabled: task !== 'vision' && task !== 'classify', maxRetries: 2, baseDelayMs: 250 },
+        { enabled: task !== 'vision' && !bounded, maxRetries: 2, baseDelayMs: 250 },
         signal,
       );
       if (
@@ -223,7 +224,7 @@ export function createPiMemoryCurator(options: {
         const label =
           task === 'vision'
             ? 'The image model is unavailable.'
-            : task === 'classify'
+            : task === 'classify' || task === 'attention'
               ? 'The classification model is unavailable.'
               : task === 'review' || task === 'access'
                 ? 'The action review model is unavailable.'

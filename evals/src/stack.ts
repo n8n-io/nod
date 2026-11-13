@@ -458,6 +458,11 @@ export async function startStack(options: {
               }),
             }
           : {}),
+        classificationCurator: createPiMemoryCurator({
+          provider: model.provider,
+          resolve: () => models.resolveClassification(),
+          configured: () => models.hasClassificationModel(),
+        }),
         memoryCurator: createPiMemoryCurator({
           provider: model.provider,
           resolve: () => models.resolve(true),

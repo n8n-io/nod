@@ -8168,6 +8168,165 @@ test(
               },
             );
             await t.test(
+              'one event decision skips routine work without app reads and keeps a later report pending',
+              async () => {
+                await reset();
+                toolSource = true;
+                let decisions = 0;
+                const gated = createProactivity({
+                  ...options,
+                  curator: {
+                    id: 'fixture',
+                    configured: true,
+                    curate: async (request) => {
+                      decisions++;
+                      assert.equal(request.task, 'attention');
+                      assert.match(JSON.stringify(request.input), /Routine synthetic report/);
+                      await transaction(
+                        (client) => gated.signal(sourceId, client, 'A later synthetic report'),
+                        db.pool,
+                      );
+                      return { review: false };
+                    },
+                  },
+                });
+                await transaction(
+                  (client) => gated.signal(sourceId, client, 'Routine synthetic report'),
+                  db.pool,
+                );
+                await db.pool.query(
+                  'UPDATE proactive_sources SET claimed_turn=$3,claimed_signal=signal_version WHERE owner_id=$1 AND source_id=$2',
+                  [ownerId, sourceId, turnId],
+                );
+                const context = (await gated.context(ref))!;
+                assert.equal(await context.screen!({}, new AbortController().signal), true);
+                assert.equal(decisions, 1);
+                assert.equal(sourceReads, 0);
+                let row = (
+                  await db.pool.query(
+                    'SELECT inspected_signal,signal_version,scan_checkpoint FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                    [ownerId, sourceId],
+                  )
+                ).rows[0];
+                assert.equal(Number(row.inspected_signal), 1);
+                assert.equal(Number(row.signal_version), 2);
+                assert.equal(Number(row.scan_checkpoint.inspected_signal), 0);
+                await db.pool.query("UPDATE turns SET status='failed' WHERE id=$1", [turnId]);
+                await preferences.update({ proactivePaused: true });
+                await gated.due();
+                row = (
+                  await db.pool.query(
+                    'SELECT inspected_signal FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                    [ownerId, sourceId],
+                  )
+                ).rows[0];
+                assert.equal(Number(row.inspected_signal), 0);
+              },
+            );
+            await t.test(
+              'a batch decision never consumes an incomplete report or a stopped turn',
+              async () => {
+                await reset();
+                toolSource = true;
+                let decisions = 0;
+                const gated = createProactivity({
+                  ...options,
+                  curator: {
+                    id: 'fixture',
+                    configured: true,
+                    curate: async () => {
+                      decisions++;
+                      await db.pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [
+                        turnId,
+                      ]);
+                      return { review: false };
+                    },
+                  },
+                });
+                await transaction((client) => gated.signal(sourceId, client), db.pool);
+                await db.pool.query(
+                  'UPDATE proactive_sources SET claimed_turn=$3,claimed_signal=signal_version WHERE owner_id=$1 AND source_id=$2',
+                  [ownerId, sourceId, turnId],
+                );
+                const context = (await gated.context(ref))!;
+                assert.equal(await context.screen!({}, new AbortController().signal), false);
+                assert.equal(decisions, 0);
+                await transaction(
+                  (client) => gated.signal(sourceId, client, 'Routine synthetic report'),
+                  db.pool,
+                );
+                await db.pool.query(
+                  'UPDATE proactive_sources SET inspected_signal=1,claimed_signal=2 WHERE owner_id=$1 AND source_id=$2',
+                  [ownerId, sourceId],
+                );
+                await assert.rejects(
+                  context.screen!({}, new AbortController().signal),
+                  /stopped|cancelled|no longer active/i,
+                );
+                assert.equal(decisions, 1);
+                assert.equal(sourceReads, 0);
+                assert.equal(
+                  Number(
+                    (
+                      await db.pool.query(
+                        'SELECT inspected_signal FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                        [ownerId, sourceId],
+                      )
+                    ).rows[0].inspected_signal,
+                  ),
+                  1,
+                );
+              },
+            );
+            await t.test(
+              'one native batch decision sees every record and a changed saved matter bypasses it',
+              async () => {
+                await reset();
+                let decisions = 0;
+                const gated = createProactivity({
+                  ...options,
+                  read: async () => ({
+                    checkedAt: new Date().toISOString(),
+                    records: Array.from({ length: 12 }, (_, i) => ({
+                      id: i === 0 ? 'thread1' : `routine-${i}`,
+                      version,
+                      available: true,
+                      data: { state: i === 0 ? 'open' : 'closed' },
+                    })),
+                  }),
+                  curator: {
+                    id: 'fixture',
+                    configured: true,
+                    curate: async (request) => {
+                      decisions++;
+                      assert.match(JSON.stringify(request.input), /thread1/);
+                      assert.equal(
+                        (request.input as { sources: Array<{ result: { records: unknown[] } }> })
+                          .sources[0]!.result.records.length,
+                        12,
+                      );
+                      return { review: false };
+                    },
+                  },
+                });
+                await transaction(
+                  (client) => gated.signal(sourceId, client, 'Synthetic records changed'),
+                  db.pool,
+                );
+                await db.pool.query(
+                  'UPDATE proactive_sources SET claimed_turn=$3,claimed_signal=signal_version WHERE owner_id=$1 AND source_id=$2',
+                  [ownerId, sourceId, turnId],
+                );
+                const context = (await gated.context(ref))!;
+                assert.equal(await context.screen!({}, new AbortController().signal), true);
+                assert.equal(decisions, 1);
+                await save();
+                version = 'v2';
+                assert.ok(Array.isArray(await context.screen!({}, new AbortController().signal)));
+                assert.equal(decisions, 1);
+              },
+            );
+            await t.test(
               '100 idle app sources start no reads or observer turns across 31 days of half-hour checks',
               async () => {
                 await reset();
@@ -8295,6 +8454,22 @@ test(
                   assert.ok(Math.abs(final.spentUsd - 0.3) < 1e-12);
                   assert.equal(final.reservedUsd, 0);
                   assert.equal(final.reached, false);
+                  await preferences.update({ proactivePaused: true });
+                  await ledger.withPreparation(randomUUID(), async () => {
+                    await assert.rejects(ledger.reserve(0.01), /preparation is paused/);
+                  });
+                  await ledger.withTurn(
+                    first.turnId,
+                    () =>
+                      ledger.withPreparation(randomUUID(), async () => {
+                        await (
+                          await ledger.reserve(0.01)
+                        )(0);
+                      }),
+                    false,
+                    false,
+                  );
+                  await preferences.update({ proactivePaused: false });
                   const admission = await db.pool.connect();
                   await admission.query('BEGIN');
                   await admission.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [

@@ -1785,6 +1785,7 @@ async function initializeApplication(
   proactivity = createProactivity({
     pool,
     ownerId,
+    curator: adapters.classificationCurator && ledger.curator(adapters.classificationCurator),
     analytics: captureAnalytics,
     modelAvailable: async () =>
       !(await ledger.preparationLimit()).reached &&

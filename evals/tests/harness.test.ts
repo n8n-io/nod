@@ -3886,8 +3886,10 @@ test('WhisperBench retains completed judge costs when a later judge fails', asyn
 });
 
 test('the proactive app check reads the tool name inside its input envelope', async () => {
-  const definition = scenarios.find((item) => item.id === 'proactivity-app-tools')!;
-  const world = definition.world({ now: Date.now });
+  const { default: definition } = await import('../src/scenarios/proactivity-app-tools.ts');
+  const world = definition.world({ now: Date.now }) as import('../src/scenario.ts').World & {
+    state: { turnId: string };
+  };
   world.state.turnId = 'synthetic-source-turn';
   const expectation = definition
     .expect(world)

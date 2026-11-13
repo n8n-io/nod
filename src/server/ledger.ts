@@ -376,6 +376,7 @@ export function createLedger({
       const { rows } = await client.query(
         `SELECT COALESCE((SELECT preparation_usd FROM spending_limits WHERE owner_id=$1),${defaultPreparationUsd})::float8 AS maximum,
           ${monthStart} AS month,
+          COALESCE((SELECT proactive_paused FROM preferences WHERE owner_id=$1),true) AS paused,
           (COALESCE((SELECT sum(COALESCE(m.cost_usd,(m.details->>'estimateUsd')::float8,0)) FROM model_usage m
             WHERE m.owner_id=$1 AND m.created_at>=${monthStart} AND m.details->>'preparation'='true'
               AND NOT EXISTS(SELECT 1 FROM preparation_reservations r WHERE r.owner_id=$1 AND r.id::text=m.details->>'preparationId' AND r.month=${monthStart})),0)
@@ -383,6 +384,8 @@ export function createLedger({
         [ownerId],
       );
       if (scope.closed) throw new Error('This automatic preparation has stopped.');
+      if (rows[0].paused && activeTurn.getStore()?.automatic !== false)
+        throw new Error('Automatic preparation is paused.');
       month = rows[0].month;
       if (
         rows[0].committed >= rows[0].maximum ||

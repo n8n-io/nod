@@ -7327,64 +7327,65 @@ test('a failed model request leaves none of its unanswered input for later turns
   assert.ok(requests[4].includes('Hi'));
 });
 
-test('task classification has a small request budget and never retries or records conversation traces', async (t) => {
+test('task and batch classification have a small request budget and never retries or records conversation traces', async (t) => {
   const deadlines: number[] = [];
   t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => {
     deadlines.push(milliseconds);
     return new AbortController().signal;
   });
-  for (const result of ['stop', 'error', 'aborted', 'length', 'transport'] as const)
-    await t.test(result, async () => {
-      let calls = 0;
-      let traces = 0;
-      const usage: Array<Partial<ProviderUsageEvent>> = [];
-      const runtime = {
-        setRuntimeApiKey: async () => {},
-        getModel: () => ({ provider: 'openai', id: 'gpt-6-luna' }),
-        completeSimple: async (
-          _model: unknown,
-          context: { messages: Array<{ content: unknown }> },
-          options: {
-            maxTokens: number;
-            maxRetries: number;
-            timeoutMs: number;
-            signal: AbortSignal;
+  for (const task of ['classify', 'attention'] as const)
+    for (const result of ['stop', 'error', 'aborted', 'length', 'transport'] as const)
+      await t.test(`${task}: ${result}`, async () => {
+        let calls = 0;
+        let traces = 0;
+        const usage: Array<Partial<ProviderUsageEvent>> = [];
+        const runtime = {
+          setRuntimeApiKey: async () => {},
+          getModel: () => ({ provider: 'openai', id: 'gpt-6-luna' }),
+          completeSimple: async (
+            _model: unknown,
+            context: { messages: Array<{ content: unknown }> },
+            options: {
+              maxTokens: number;
+              maxRetries: number;
+              timeoutMs: number;
+              signal: AbortSignal;
+            },
+          ) => {
+            calls++;
+            assert.equal(options.maxTokens, 512);
+            assert.equal(options.maxRetries, 0);
+            assert.equal(options.timeoutMs, 10_000);
+            assert.equal(deadlines.at(-1), 10_000);
+            assert.equal(options.signal.aborted, false);
+            assert.equal(context.messages[0].content, '{"request":"Compare synthetic products"}');
+            if (result === 'transport') throw new Error('Synthetic transport failure');
+            return { ...fauxAssistantMessage('{"task_type":"research"}'), stopReason: result };
           },
-        ) => {
-          calls++;
-          assert.equal(options.maxTokens, 512);
-          assert.equal(options.maxRetries, 0);
-          assert.equal(options.timeoutMs, 10_000);
-          assert.equal(deadlines.at(-1), 10_000);
-          assert.equal(options.signal.aborted, false);
-          assert.equal(context.messages[0].content, '{"request":"Compare synthetic products"}');
-          if (result === 'transport') throw new Error('Synthetic transport failure');
-          return { ...fauxAssistantMessage('{"task_type":"research"}'), stopReason: result };
-        },
-      };
-      const curator = createPiMemoryCurator({
-        provider: 'openai',
-        model: 'gpt-6-luna',
-        apiKey: 'fixture',
-        runtime: runtime as never,
-        traces: { active: () => true, record: () => traces++ },
+        };
+        const curator = createPiMemoryCurator({
+          provider: 'openai',
+          model: 'gpt-6-luna',
+          apiKey: 'fixture',
+          runtime: runtime as never,
+          traces: { active: () => true, record: () => traces++ },
+        });
+        const run = () =>
+          curator.curate(
+            {
+              task,
+              instructions: 'Choose a fixed task category.',
+              input: { request: 'Compare synthetic products' },
+            },
+            undefined,
+            (event) => usage.push(event),
+          );
+        if (result === 'stop') assert.deepEqual(await run(), { task_type: 'research' });
+        else await assert.rejects(run(), /classification model is unavailable|Synthetic transport/);
+        assert.equal(calls, 1);
+        assert.equal(usage.length, 1);
+        assert.equal(traces, 0);
       });
-      const run = () =>
-        curator.curate(
-          {
-            task: 'classify',
-            instructions: 'Choose a fixed task category.',
-            input: { request: 'Compare synthetic products' },
-          },
-          undefined,
-          (event) => usage.push(event),
-        );
-      if (result === 'stop') assert.deepEqual(await run(), { task_type: 'research' });
-      else await assert.rejects(run(), /classification model is unavailable|Synthetic transport/);
-      assert.equal(calls, 1);
-      assert.equal(usage.length, 1);
-      assert.equal(traces, 0);
-    });
 });
 
 test('action review failures identify the task, model, provider, and bounded provider reason', async (t) => {

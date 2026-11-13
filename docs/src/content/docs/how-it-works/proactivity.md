@@ -15,22 +15,24 @@ Saved work starts observation when at least one saved task exists. An empty loca
 
 App events, source change tokens, and due matters feed one observer for your active conversation. Code checks the signals before any model request. An unchanged source with no due matter starts no monitoring model call. There is no periodic model search through every connected app.
 
-The server reads a bounded batch through the normal Trust check. It collects source pages before the model assessment, within 12 page reads and a 96 KB soft input bound. Each source gets a share of the read allowance. Saved cursors keep the remaining pages for later checks. It compares record versions with the last successful assessment. It passes changed records to one observer as untrusted data. There is no separate model assessment for each record. Failed reads remain unknown and do not start a larger model. A later check can retry them.
+For app events with enough detail, one small model checks the whole batch before Nod reads the app. A notice that lacks detail reaches the observer.
+
+For sources with native readers, the server reads a bounded batch through the normal Trust check. It collects source pages before the model assessment, within 12 page reads and a 96 KB soft input bound. Each source gets a share of the read allowance. Saved cursors keep the remaining pages for later checks. It compares record versions with the last successful assessment. One small model checks the changed records together. It skips only clearly routine activity. Possible needs and uncertain cases reach the observer. There is no separate model assessment for each record. Source content stays untrusted data. Failed reads remain unknown and do not start a larger model. A later check can retry them.
 
 The observer reads current facts and relevant memory, then saves useful work. It keeps its context while the provider cache is warm. Saved matters carry the state between sessions. Events that arrive during a read stay pending for the next check.
 
-The observer uses your selected model after the code gate finds new work. It has no separate model selector. Work that needs normal tools starts a separate task. Both stages share the preparation allowance. Server code controls permission, freshness, and delivery.
+The observer uses your selected model for useful work. The batch check uses the existing small classification model. It returns only whether the observer must inspect the batch. It cannot prepare work or grant permission. Due matters and changes to cited records bypass this check. An invalid decision reaches the observer. A failed request leaves the batch pending. Oversized or incomplete batches reach the observer directly. Work that needs normal tools starts a separate task. Both stages share the preparation allowance. Server code controls permission, freshness, and delivery.
 
 ```mermaid
 flowchart TD
-  signal[Changed source or due matter]:::muted --> read[Read current facts]:::go
-  read --> prepare[Prepare the complete result]:::accent
-  prepare --> fresh{{Evidence still current?}}
-  fresh -- no --> read
-  fresh -- yes --> saved[(Private work)]
+  signal[Source change]:::muted --> check{{Possible need?}}
+  check -- no --> quiet[Stay quiet]:::muted
+  check -- yes or uncertain --> read[Selected model prepares work]:::accent
+  due[Due matter or changed evidence] --> read
+  read --> saved[(Current private work)]
   saved --> allowed{{Message allowed now?}}
   allowed -- yes --> nudge[Nudge]:::go
-  allowed -- no --> quiet[Stays private]:::muted
+  allowed -- no --> quiet
 ```
 
 If nothing useful remains, Nod stays quiet. It never reports routine checks or repeats a nudge because you didn't reply.
@@ -109,7 +111,7 @@ You answer in chat. `prepared_list` shows a draft, and reading it in a turn you 
 
 Automatic preparation has a $5 monthly allowance by default. Change it in **Usage**, or ask Nod to change it. It covers source reviews, email privacy checks, observer requests, and tasks the observer starts. Plan usage counts at its API-price estimate. Your own chat requests, schedules, and tasks have their normal limits.
 
-Before a model request, Nod reserves its estimated maximum cost under one owner lock. Parallel requests cannot spend the same remaining allowance. The final cost replaces the reservation. If a request has no price, or does not fit, it does not run. An unfinished request keeps its reservation until its recorded cost covers it. Speech generation waits for a request from you because it has no advance cost bound.
+Before a model request, Nod reserves its estimated maximum cost under one owner lock. Parallel requests cannot spend the same remaining allowance. The final cost replaces the reservation. Pausing preparation blocks each new paid request, including in a check already running. If a request has no price, or does not fit, it does not run. An unfinished request keeps its reservation until its recorded cost covers it. Speech generation waits for a request from you because it has no advance cost bound.
 
 A reservation uses conservative input and output bounds. Nod can stop before the displayed spending reaches the allowance. Provider pricing errors can still affect the final bill. This allowance is not a billing guarantee.
 

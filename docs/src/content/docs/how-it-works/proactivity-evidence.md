@@ -41,9 +41,9 @@ See [Capability evals](/contribute/evals/#stress-proactive-work) for commands. L
 
 ## Compare the change gate
 
-Keep automatic preparation on in both versions. Otherwise an opt-out can look like a cost improvement. Run both code revisions with the same source fixtures, owner rules, selected model, and judge. The candidate uses production model selection. The observer and its tasks use the selected model after code checks the change signal.
+Keep automatic preparation on in both versions. Otherwise an opt-out can look like a cost improvement. Run both code revisions with the same source fixtures, owner rules, selected model, and judge. The candidate uses production model selection. Code checks the change signal. One small classification model can skip clearly routine batches. The observer and its tasks use the selected model.
 
-Measure idle checks separately from useful-work cases. Include repeated events, later pages, outages, dismissal, snooze, changed goals, and hostile source data. Report missed important work with cost. A cheap run that misses needed work is a failure.
+Measure idle checks separately from useful-work cases. Also compare a mixed replay with idle ticks, routine changes, useful needs, and owner completions. Include every source review and batch decision in its cost. A compressed replay does not measure cold caches or a full day of live use. Include repeated events, later pages, outages, dismissal, snooze, changed goals, and hostile source data. Report missed important work with cost. A cheap run that misses needed work is a failure.
 
 Reserve separate cases for validation after a design change. Keep failed attempts and infrastructure failures in the report. Repeat infrastructure failures without deleting their costs. Store raw traces outside the repository.
 

@@ -60,7 +60,7 @@ Tell Nod "Fewer of these" and it uses that next time. To stop preparation itself
 
 Gmail is checked for new mail every 15 minutes. Your primary Google Calendar is checked for changes every 30 minutes. These change checks need no model. Saved work has its own change token. Other apps, including MCP and HTTP connections, need an app event to start preparation. They have no periodic model check. You can still ask Nod to read them in chat or in a schedule.
 
-A changed source goes to one observer with your selected model. There is no model assessment for each record. A failed or partial check leaves the source state unknown.
+One small model can skip clearly routine changes across the whole batch. Possible needs and uncertain cases reach your selected model. There is no model assessment for each record. A failed or partial check leaves the source state unknown.
 
 Automatic preparation has a $5 monthly allowance by default. This covers its source reviews, email privacy checks, observer, and tasks. Change it in **Usage**. See [Automatic preparation allowance](/use/spending/#automatic-preparation-allowance).
 
