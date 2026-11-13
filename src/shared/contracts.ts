@@ -390,6 +390,7 @@ export interface ChannelLinkStatus {
   expiresAt?: string;
   accountHandle?: string;
   accountName?: string;
+  error?: string;
 }
 export interface ChannelSetupSummary {
   provider: ChannelProvider;
