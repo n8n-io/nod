@@ -57,6 +57,9 @@ body {
 :root[data-desktop='true'] {
   --desktop-titlebar-height: 48px;
   --page-top: 12px;
+  --window-controls-width: calc(
+    100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)
+  );
 }
 :root[data-desktop='true'] body {
   padding-top: var(--desktop-titlebar-height);
@@ -107,7 +110,7 @@ body {
   align-items: flex-start;
   gap: 12px;
   height: calc(var(--desktop-titlebar-height) + 16px);
-  padding: 9px 16px 0;
+  padding: 9px calc(16px + var(--window-controls-width, 0px)) 0 16px;
   background: linear-gradient(var(--canvas) 50%, transparent);
   user-select: none;
   pointer-events: none;

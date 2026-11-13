@@ -126,6 +126,7 @@
 :root[data-desktop='true'] .artifact-drawer-header {
   height: auto;
   min-height: var(--desktop-titlebar-height);
+  padding-right: calc(8px + var(--window-controls-width, 0px));
   -webkit-app-region: drag;
 }
 
@@ -840,6 +841,7 @@
 
 .app-shell:has(.chat-route:not([hidden]) .artifact-drawer) .desktop-toolbar {
   right: var(--artifact-drawer-space, 0px);
+  padding-right: 16px;
 }
 
 @media (max-width: 640px) {

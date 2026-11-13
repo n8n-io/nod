@@ -381,11 +381,26 @@ async function readDesktopSettings() {
   };
 }
 
+function windowsTitleBar(dark) {
+  return process.platform === 'win32'
+    ? {
+        titleBarStyle: 'hidden',
+        titleBarOverlay: {
+          color: dark ? '#191919' : '#fafafa',
+          symbolColor: dark ? '#fafafa' : '#191919',
+          height: 48,
+        },
+      }
+    : {};
+}
+
 function publishPreferences() {
   const value = publicPreferences();
   for (const window of [setupWindow, ...engineWindows]) {
     if (!window || window.isDestroyed()) continue;
     window.setBackgroundColor(value.resolvedTheme === 'dark' ? '#191919' : '#fafafa');
+    if (process.platform === 'win32')
+      window.setTitleBarOverlay(windowsTitleBar(value.resolvedTheme === 'dark').titleBarOverlay);
     window.webContents.send('nod:preferences', value);
   }
 }
@@ -726,6 +741,7 @@ function showSettings(section = 'general', loading = false) {
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#191919' : '#fafafa',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 20, y: 17 } } : {}),
+    ...windowsTitleBar(nativeTheme.shouldUseDarkColors),
     webPreferences: {
       preload: join(desktopRoot, 'preload', 'index.cjs'),
       ...rendererSecurity,
@@ -854,6 +870,7 @@ function showEngine({ focus = true } = {}) {
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#191919' : '#fafafa',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 20, y: 17 } } : {}),
+    ...windowsTitleBar(nativeTheme.shouldUseDarkColors),
     webPreferences: {
       preload: join(desktopRoot, 'preload', 'engine.cjs'),
       ...rendererSecurity,
@@ -1651,6 +1668,9 @@ function refreshUpdateMenu() {
           enabled: Boolean(updates?.ready) && !checkingUpdates,
           click: () => void checkForUpdates(true, true),
         },
+        ...(process.platform === 'win32'
+          ? [{ label: 'Replay onboarding…', click: replayOnboarding }]
+          : []),
         { type: 'separator' },
         { label: 'Quit Nod', click: () => app.quit() },
       ]),

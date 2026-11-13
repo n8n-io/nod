@@ -89,7 +89,7 @@
 
 :root[data-desktop='true'] .private-entry-toolbar {
   height: var(--desktop-titlebar-height);
-  padding: 9px 12px 0;
+  padding: 9px calc(12px + var(--window-controls-width, 0px)) 0 12px;
   -webkit-app-region: drag;
 }
 :root[data-desktop='true'] .private-entry-toolbar button {
@@ -99,6 +99,7 @@
   .app-shell:has(.chat-route:not([hidden]) .private-entry-panel)
   .desktop-toolbar {
   right: calc(var(--private-entry-space, 0px) + var(--artifact-drawer-space, 0px));
+  padding-right: 16px;
 }
 :root[data-desktop='true']
   .app-shell:has(.private-entry-workspace.is-narrow .private-entry-panel)
