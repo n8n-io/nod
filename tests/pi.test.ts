@@ -2058,6 +2058,202 @@ test('a turn posts its opening line and final reply, shows the lines between as 
   }
 });
 
+test('task handoff does not repeat acknowledgements and keeps independent final answers and steered requests', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-task-handoff-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const acknowledgement =
+    "On it! I'll review your synthetic inbox, flag anything urgent, and save reply drafts. Nothing gets sent without your OK.";
+  const startMessage =
+    "I've started reviewing your synthetic inbox. I'll flag urgent email and save draft replies. Nothing gets sent without your OK.";
+  const cases = [
+    {
+      name: 'earlier update',
+      earlyUpdate: true,
+      steer: false,
+      final:
+        "I've started reviewing your synthetic inbox. I'll save draft replies and flag urgent email. Nothing gets sent without your OK.",
+      expected: [acknowledgement],
+    },
+    {
+      name: 'task start alone',
+      earlyUpdate: false,
+      steer: false,
+      final:
+        "I've started reviewing your synthetic inbox. I'll flag urgent email and save draft replies. Nothing gets sent without your OK.",
+      expected: [],
+    },
+    {
+      name: 'Spanish task start alone',
+      earlyUpdate: false,
+      steer: false,
+      start:
+        'Ya he empezado a revisar tu buzón y preparar borradores de respuesta. No enviaré nada sin tu aprobación.',
+      final:
+        'Ya he empezado a revisar tu buzón y preparando borradores de respuesta. No enviaré nada sin tu aprobación.',
+      expected: [],
+    },
+    {
+      name: 'independent answer',
+      earlyUpdate: true,
+      steer: false,
+      final: 'The synthetic invoice is due Friday for €450. I flagged it for review.',
+      expected: [
+        acknowledgement,
+        'The synthetic invoice is due Friday for €450. I flagged it for review.',
+      ],
+    },
+    {
+      name: 'new finding after the task starts',
+      earlyUpdate: true,
+      steer: false,
+      final:
+        "I've started reviewing your synthetic inbox. I'll flag urgent email and save draft replies. Nothing gets sent without your OK. I found 3 urgent messages.",
+      expected: [
+        acknowledgement,
+        "I've started reviewing your synthetic inbox. I'll flag urgent email and save draft replies. Nothing gets sent without your OK. I found 3 urgent messages.",
+      ],
+    },
+    {
+      name: 'negated finding after task start',
+      earlyUpdate: false,
+      steer: false,
+      start: "I've started checking the synthetic invoices. Every invoice is approved.",
+      final: "I've started checking the synthetic invoices. Every invoice is not approved.",
+      expected: ["I've started checking the synthetic invoices. Every invoice is not approved."],
+    },
+    {
+      name: 'removed negation after task start',
+      earlyUpdate: false,
+      steer: false,
+      start: "I've started checking the synthetic invoices. No invoice is approved.",
+      final: "I've started checking the synthetic invoices. Every invoice is approved.",
+      expected: ["I've started checking the synthetic invoices. Every invoice is approved."],
+    },
+    {
+      name: 'changed count after task start',
+      earlyUpdate: false,
+      steer: false,
+      start: "I've started checking all 12 synthetic invoices for overdue items.",
+      final: "I've started checking all 2 synthetic invoices for overdue items.",
+      expected: ["I've started checking all 2 synthetic invoices for overdue items."],
+    },
+    {
+      name: 'qualitative finding after task start',
+      earlyUpdate: false,
+      steer: false,
+      start: "I've started reviewing your synthetic inbox and will flag urgent messages.",
+      final: "I've started reviewing your synthetic inbox and will flag fraudulent messages.",
+      expected: ["I've started reviewing your synthetic inbox and will flag fraudulent messages."],
+    },
+    {
+      name: 'finding borrowed from the owner request',
+      earlyUpdate: false,
+      steer: false,
+      prompt: 'Check the synthetic invoices and tell me which are rejected.',
+      start: "I've started checking the synthetic invoices. Every invoice is approved.",
+      final: "I've started checking the synthetic invoices. Every invoice is rejected.",
+      expected: ["I've started checking the synthetic invoices. Every invoice is rejected."],
+    },
+    {
+      name: 'steered answer',
+      earlyUpdate: true,
+      steer: true,
+      final: 'I started reviewing your synthetic inbox in the account you selected.',
+      expected: [
+        acknowledgement,
+        'I started reviewing your synthetic inbox in the account you selected.',
+      ],
+    },
+    {
+      name: 'steered answer before a task starts',
+      earlyUpdate: true,
+      steer: true,
+      steerBefore: true,
+      final:
+        "I've started reviewing your synthetic Gmail inbox. I'll flag urgent email and save draft replies. Nothing gets sent without your OK.",
+      expected: [
+        acknowledgement,
+        "I've started reviewing your synthetic Gmail inbox. I'll flag urgent email and save draft replies. Nothing gets sent without your OK.",
+      ],
+    },
+  ] as const;
+  for (const scenario of cases)
+    await t.test(scenario.name, async () => {
+      const posted: string[] = [];
+      const incoming: string[] = [];
+      const runtime = createAgentRuntime({
+        agent: {
+          open: async (input) => ({
+            resumed: false,
+            abort() {},
+            dispose() {},
+            prompt: async () => {
+              if (scenario.earlyUpdate)
+                await input.tools
+                  .find((tool) => tool.name === 'send_message')!
+                  .execute({ text: acknowledgement, intent: 'update' });
+              if ('steerBefore' in scenario && scenario.steerBefore)
+                incoming.push(...((await input.nextMessages?.()) ?? []).map((item) => item.text));
+              await input.tools
+                .find((tool) => tool.name === 'task')!
+                .execute({
+                  action: 'start',
+                  title: 'Review synthetic inbox',
+                  doneWhen: 'Urgent messages identified and draft replies saved',
+                  now: 'Reviewing synthetic inbox',
+                  message: 'start' in scenario ? scenario.start : startMessage,
+                });
+              if (!('steerBefore' in scenario && scenario.steerBefore))
+                incoming.push(...((await input.nextMessages?.()) ?? []).map((item) => item.text));
+              input.onEvent({ type: 'message_start' });
+              input.onEvent({ type: 'text_delta', text: scenario.final });
+              input.onEvent({ type: 'final', text: scenario.final });
+              input.onEvent({ type: 'message_end', status: 'succeeded' });
+            },
+          }),
+          dispose() {},
+        },
+        computer: fakeComputer(),
+        workspace: fakeWorkspace(),
+      });
+      try {
+        let steered = false;
+        const result = await runtime.runTurn({
+          ...context(directory),
+          turnId: randomUUID(),
+          prompt:
+            'prompt' in scenario
+              ? scenario.prompt
+              : 'Review my synthetic inbox and report urgent messages.',
+          task: async () => ({ id: randomUUID() }),
+          reply: async (text) => {
+            posted.push(text);
+          },
+          ...(scenario.steer
+            ? {
+                takeMessages: async () =>
+                  steered
+                    ? []
+                    : ((steered = true),
+                      [
+                        {
+                          id: randomUUID(),
+                          text: 'Use the synthetic account I selected.',
+                          attachments: [],
+                        },
+                      ]),
+              }
+            : {}),
+        });
+        assert.equal(result.status, 'succeeded');
+        assert.deepEqual(posted, scenario.expected);
+        assert.equal(incoming.length, scenario.steer ? 1 : 0);
+      } finally {
+        await runtime.dispose();
+      }
+    });
+});
+
 test('a paused turn cannot start a subagent still preparing and failed children return errors', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-delegate-stop-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

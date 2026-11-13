@@ -192,6 +192,7 @@ export interface RuntimeContext {
     streamId?: string,
     replyToMessageId?: string,
     presentation?: Presentation,
+    handoff?: boolean,
   ): Promise<void>;
   reactToMessage?(
     messageId: string,

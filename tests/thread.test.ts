@@ -2015,6 +2015,179 @@ test(
         assert.equal((await sendJson({ text: ` ${'x'.repeat(100_000)}` })).statusCode, 400);
       });
 
+      await t.test(
+        'a task start reuses an acknowledgement in the same owner request',
+        async (t) => {
+          const previousObserver = inspectObserver;
+          const startMessage = 'I will review the synthetic inbox and flag urgent messages.';
+          const resultText = 'Three synthetic messages need review. Two reply drafts are saved.';
+          const cases = [
+            {
+              prompt: 'Review the synthetic inbox and flag urgent messages.',
+              prior: 'On it. I will review the synthetic inbox.',
+              start: startMessage,
+              expected: ['On it. I will review the synthetic inbox.'],
+              anchor: 0,
+            },
+            {
+              prompt: 'Review the synthetic inbox after checking the invoice.',
+              prior: 'On it. I will review the synthetic inbox.',
+              between: 'The invoice is due Friday for €450.',
+              start: startMessage,
+              expected: [
+                'On it. I will review the synthetic inbox.',
+                'The invoice is due Friday for €450.',
+              ],
+              anchor: 0,
+            },
+            {
+              prompt: 'Review the synthetic Gmail inbox and save reply drafts.',
+              prior:
+                "On it! I'll go through your Gmail, pull out anything urgent, and save reply drafts for the emails that need an answer. Nothing gets sent without your OK.",
+              start:
+                "I've started on your inbox, Synthetic account 1. I'll sort your Gmail into groups, point out anything urgent and why, and save draft replies for people who need an answer.",
+              expected: [
+                "On it! I'll go through your Gmail, pull out anything urgent, and save reply drafts for the emails that need an answer. Nothing gets sent without your OK.",
+              ],
+              anchor: 0,
+            },
+            {
+              prompt: 'Prepare synthetic email reply drafts and wait for approval.',
+              prior:
+                "On it. I'll draft email replies. No email replies will be sent without your approval.",
+              start:
+                "I've started drafting email replies. No email replies will be sent without your approval.",
+              expected: [
+                "On it. I'll draft email replies. No email replies will be sent without your approval.",
+              ],
+              anchor: 0,
+            },
+            {
+              prompt: 'Revisa el buzón sintético y prepara borradores.',
+              prior:
+                'Ya estoy revisando tu buzón y preparando borradores de respuesta. No enviaré nada sin tu aprobación.',
+              handoff: true,
+              start:
+                'Ya he empezado a revisar tu buzón y preparar borradores de respuesta. No enviaré nada sin tu aprobación.',
+              expected: [
+                'Ya estoy revisando tu buzón y preparando borradores de respuesta. No enviaré nada sin tu aprobación.',
+              ],
+              anchor: 0,
+            },
+            {
+              prompt: 'Review the synthetic inbox after confirming the deadline.',
+              prior:
+                'I found 3 urgent synthetic inbox messages. The invoice is due Friday for €450.',
+              start: startMessage,
+              expected: [
+                'I found 3 urgent synthetic inbox messages. The invoice is due Friday for €450.',
+                startMessage,
+              ],
+              anchor: 1,
+            },
+            {
+              prompt: 'Review the synthetic inbox after checking the messages.',
+              prior: 'I found urgent synthetic inbox messages and flagged them.',
+              start: startMessage,
+              expected: ['I found urgent synthetic inbox messages and flagged them.', startMessage],
+              anchor: 1,
+            },
+            {
+              prompt: 'Check the synthetic invoice due Friday.',
+              prior: 'No, the synthetic invoice is due Friday.',
+              start: 'Check the synthetic invoice due Friday.',
+              expected: [
+                'No, the synthetic invoice is due Friday.',
+                'Check the synthetic invoice due Friday.',
+              ],
+              anchor: 1,
+            },
+            {
+              prompt: 'Review whether the synthetic invoice can be approved.',
+              prior: 'I will not approve the synthetic invoice.',
+              start: 'I will approve the synthetic invoice.',
+              expected: [
+                'I will not approve the synthetic invoice.',
+                'I will approve the synthetic invoice.',
+              ],
+              anchor: 1,
+            },
+          ] as const;
+          const started = new Map<string, Task>();
+          inspectObserver = async (context) => {
+            const scenario = cases.find(({ prompt }) => prompt === context.prompt);
+            if (!scenario) return;
+            if (context.taskContext) {
+              await context.reply(resultText);
+              await context.task!({
+                action: 'finish',
+                id: context.taskContext.id,
+                status: 'done',
+                result: resultText,
+              });
+              return { status: 'succeeded' };
+            }
+            await context.reply(
+              scenario.prior,
+              undefined,
+              undefined,
+              undefined,
+              'handoff' in scenario && scenario.handoff,
+            );
+            if ('between' in scenario) await context.reply(scenario.between);
+            started.set(
+              context.prompt,
+              (await context.task!({
+                action: 'start',
+                title: 'Review synthetic inbox',
+                message: scenario.start,
+                doneWhen: 'Urgent messages are flagged and reply drafts saved',
+                now: 'Reading synthetic messages',
+              })) as Task,
+            );
+            return { status: 'succeeded' };
+          };
+          t.after(() => {
+            inspectObserver = previousObserver;
+          });
+          for (const scenario of cases) {
+            const request = await userMessages.submit(scenario.prompt);
+            await waitFor(settled(request.turnId));
+            const task = started.get(scenario.prompt);
+            assert.ok(task);
+            const replies = (
+              await db.pool.query<{ id: string; text: string }>(
+                "SELECT id,text FROM messages WHERE owner_id=$1 AND turn_id=$2 AND role='assistant' AND hidden_at IS NULL ORDER BY created_at,id",
+                [ownerId, request.turnId],
+              )
+            ).rows;
+            assert.deepEqual(
+              replies.map(({ text }) => text),
+              scenario.expected,
+            );
+            assert.equal(task.messageId, replies[scenario.anchor]!.id);
+            const taskTurn = (
+              await db.pool.query<{ id: string }>(
+                "SELECT id FROM turns WHERE owner_id=$1 AND session_id=$2 AND source='task'",
+                [ownerId, task.id],
+              )
+            ).rows[0]!.id;
+            await waitFor(settled(taskTurn));
+            const taskReplies = (
+              await db.pool.query<{ text: string }>(
+                "SELECT text FROM messages WHERE owner_id=$1 AND turn_id=$2 AND role='assistant' AND hidden_at IS NULL",
+                [ownerId, taskTurn],
+              )
+            ).rows;
+            assert.deepEqual(
+              taskReplies.map(({ text }) => text),
+              [resultText],
+            );
+            assert.equal((await tasks.read()).find(({ id }) => id === task.id)?.status, 'done');
+          }
+        },
+      );
+
       await t.test('a task resumes its own session when its next check is due', async (t) => {
         const previousObserver = inspectObserver;
         const prompt = 'Track a synthetic reply after connecting its source.';
