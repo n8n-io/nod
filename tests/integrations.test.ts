@@ -35,6 +35,7 @@ import {
   IntegrationCatalogAccessDenied,
   IntegrationCatalogFailure,
   IntegrationConnectionError,
+  IntegrationInboxTransientError,
   IntegrationPermissionError,
   type IntegrationFile,
   type IntegrationProvider,
@@ -5919,6 +5920,88 @@ test(
 );
 
 test(
+  'transient inbox failures retain completed receipts and retry before the normal interval',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    f.provider.webhooksConfigured = false;
+    const selected = await f.connect('gmail');
+    const message = (id: string) => ({
+      id,
+      threadId: 'fixture-thread',
+      subject: 'Fixture update',
+      sender: 'sender@example.test',
+      receivedAt: '2026-01-01T00:00:00.000Z',
+    });
+    const cursors: Array<string | null> = [];
+    let unavailable = true;
+    f.provider.pollInbox = async (_account, cursor) => {
+      cursors.push(cursor);
+      if (cursor === null) return { cursor: 'baseline', hasMore: false, messages: [] };
+      if (cursor === 'baseline')
+        return {
+          cursor: 'remaining',
+          hasMore: true,
+          retryAfterMs: 60_000,
+          messages: [message('first')],
+        };
+      if (unavailable) throw new IntegrationInboxTransientError(503);
+      return {
+        cursor: 'complete',
+        hasMore: false,
+        messages: [message('first'), message('second')],
+      };
+    };
+    const row = async () =>
+      (
+        await f.pool.query<{
+          inbox_cursor: string | null;
+          inbox_poll_at: Date;
+          inbox_failed: boolean;
+          inbox_reconnect_required: boolean;
+        }>(
+          'SELECT inbox_cursor,inbox_poll_at,inbox_failed,inbox_reconnect_required FROM app_connections WHERE id=$1',
+          [selected.connectionId],
+        )
+      ).rows[0];
+    const assertShortRetry = (pollAt: Date) => {
+      const waitMs = pollAt.getTime() - Date.now();
+      assert.ok(waitMs > 30_000 && waitMs <= 65_000, `Retry in ${waitMs} ms`);
+    };
+    await f.service.pollInboxes();
+    await f.pool.query('UPDATE app_connections SET inbox_poll_at=NULL WHERE id=$1', [
+      selected.connectionId,
+    ]);
+    await f.service.pollInboxes();
+    assert.equal((await row()).inbox_cursor, 'remaining');
+    assert.equal((await row()).inbox_failed, false);
+    assertShortRetry((await row()).inbox_poll_at);
+    assert.equal((await f.pool.query('SELECT id FROM integration_events')).rowCount, 1);
+    await f.service.pollInboxes();
+    assert.deepEqual(cursors, [null, 'baseline']);
+    await f.pool.query('UPDATE app_connections SET inbox_poll_at=now() WHERE id=$1', [
+      selected.connectionId,
+    ]);
+    await f.service.pollInboxes();
+    assert.deepEqual(cursors, [null, 'baseline', 'remaining']);
+    assert.equal((await row()).inbox_cursor, 'remaining');
+    assert.equal((await row()).inbox_failed, true);
+    assert.equal((await row()).inbox_reconnect_required, false);
+    assertShortRetry((await row()).inbox_poll_at);
+    await f.service.pollInboxes();
+    assert.deepEqual(cursors, [null, 'baseline', 'remaining']);
+    unavailable = false;
+    await f.pool.query('UPDATE app_connections SET inbox_poll_at=now() WHERE id=$1', [
+      selected.connectionId,
+    ]);
+    await f.service.pollInboxes();
+    assert.equal((await row()).inbox_cursor, 'complete');
+    assert.equal((await row()).inbox_failed, false);
+    assert.equal((await f.pool.query('SELECT id FROM integration_events')).rowCount, 2);
+  },
+);
+
+test(
   'disconnect during a claimed event prevents admission and cannot revive discarded delivery',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 15_000 },
   async (t) => {
@@ -10490,6 +10573,178 @@ test('Composio inbox polling rejects cancellation and invalid metadata after par
   );
   assert.equal(unlabeled.hasMore, false);
   assert.equal(JSON.parse(unlabeled.cursor).historyId, '200');
+});
+
+test('Composio inbox polling retains completed messages when a later Gmail read is temporarily unavailable', async (t) => {
+  const diagnostics: string[] = [];
+  t.mock.method(console, 'warn', (value: string) => diagnostics.push(value));
+  let unavailable = true;
+  let historyReads = 0;
+  let failedMessageReads = 0;
+  const poll = inboxPollFixture(t, (input) => {
+    if (input.endpoint.endsWith('/history')) {
+      historyReads++;
+      return {
+        status: 200,
+        data: {
+          historyId: '200',
+          history: [{ messagesAdded: ['m0', 'm1'].map((id) => ({ message: { id } })) }],
+        },
+      };
+    }
+    const id = input.endpoint.split('/').at(-1)!;
+    if (id === 'm1') {
+      failedMessageReads++;
+      if (unavailable) return { status: 503, data: { error: 'service_unavailable' } };
+    }
+    return {
+      status: 200,
+      data: {
+        id,
+        threadId: `thread-${id}`,
+        internalDate: '1790769600000',
+        labelIds: ['INBOX'],
+        payload: { headers: [] },
+      },
+    };
+  });
+  const first = await poll(
+    'inbox-account',
+    JSON.stringify({ accountId: 'inbox-account', historyId: '100' }),
+    new AbortController().signal,
+  );
+  assert.deepEqual(
+    first.messages.map(({ id }) => id),
+    ['m0'],
+  );
+  assert.equal(first.hasMore, true);
+  assert.equal(first.retryAfterMs, 60_000);
+  assert.deepEqual(JSON.parse(first.cursor), {
+    accountId: 'inbox-account',
+    historyId: '100',
+    pending: ['m1'],
+    finalHistoryId: '200',
+  });
+  assert.equal(failedMessageReads, 3);
+  unavailable = false;
+  const second = await poll('inbox-account', first.cursor, new AbortController().signal);
+  assert.deepEqual(
+    second.messages.map(({ id }) => id),
+    ['m1'],
+  );
+  assert.equal(second.hasMore, false);
+  assert.equal(second.retryAfterMs, undefined);
+  assert.equal(JSON.parse(second.cursor).historyId, '200');
+  assert.equal(historyReads, 1);
+  assert.doesNotMatch(diagnostics.join(' '), /m0|m1|inbox-account/);
+});
+
+test('Composio inbox polling shares a bounded retry budget across Gmail reads', async (t) => {
+  let historyReads = 0;
+  let firstReads = 0;
+  let secondReads = 0;
+  const poll = inboxPollFixture(t, (input) => {
+    if (input.endpoint.endsWith('/history')) {
+      historyReads++;
+      if (historyReads === 1) return { status: 503, data: {} };
+      return {
+        status: 200,
+        data: {
+          historyId: '200',
+          history: [{ messagesAdded: ['m0', 'm1'].map((id) => ({ message: { id } })) }],
+        },
+      };
+    }
+    const id = input.endpoint.split('/').at(-1)!;
+    if (id === 'm0') {
+      firstReads++;
+      if (firstReads === 1) return { status: 503, data: {} };
+    } else {
+      secondReads++;
+      return { status: 503, data: {} };
+    }
+    return {
+      status: 200,
+      data: {
+        id,
+        threadId: `thread-${id}`,
+        internalDate: '1790769600000',
+        labelIds: ['INBOX'],
+        payload: { headers: [] },
+      },
+    };
+  });
+  const result = await poll(
+    'inbox-account',
+    JSON.stringify({ accountId: 'inbox-account', historyId: '100' }),
+    new AbortController().signal,
+  );
+  assert.deepEqual(
+    result.messages.map(({ id }) => id),
+    ['m0'],
+  );
+  assert.equal(result.retryAfterMs, 60_000);
+  assert.deepEqual([historyReads, firstReads, secondReads], [2, 2, 1]);
+});
+
+test('Composio inbox polling defers shared budget failures without retrying and cancels backoff', async (t) => {
+  let budgetRequests = 0;
+  const budgetPoll = inboxPollFixture(t, () => {
+    budgetRequests++;
+    throw APIError.generate(429, { error: 'public_budget_exceeded' }, undefined, new Headers());
+  });
+  await assert.rejects(
+    budgetPoll('inbox-account', null, new AbortController().signal),
+    (error: unknown) => {
+      assert.ok(error instanceof IntegrationInboxTransientError);
+      assert.equal(error.status, 429);
+      assert.equal(error.code, 'public_budget_exceeded');
+      assert.equal(error.retryAfterMs, 300_000);
+      return true;
+    },
+  );
+  assert.equal(budgetRequests, 1);
+
+  let unavailableRequests = 0;
+  const unavailablePoll = inboxPollFixture(t, () => {
+    unavailableRequests++;
+    if (unavailableRequests === 1)
+      throw APIError.generate(503, { error: 'service_unavailable' }, undefined, new Headers());
+    return { status: 200, data: { historyId: '200' } };
+  });
+  const recovered = await unavailablePoll('inbox-account', null, new AbortController().signal);
+  assert.equal(JSON.parse(recovered.cursor).historyId, '200');
+  assert.equal(unavailableRequests, 2);
+
+  const controller = new AbortController();
+  let cancelledRequests = 0;
+  const cancellationPoll = inboxPollFixture(t, () => {
+    cancelledRequests++;
+    setTimeout(() => controller.abort(), 25);
+    return { status: 503, data: {} };
+  });
+  await assert.rejects(cancellationPoll('inbox-account', null, controller.signal), {
+    name: 'AbortError',
+  });
+  assert.equal(cancelledRequests, 1);
+});
+
+test('Composio inbox polling reports a transient failure when no message can be read', async (t) => {
+  let reads = 0;
+  const poll = inboxPollFixture(t, () => {
+    reads++;
+    return { status: 503, data: {} };
+  });
+  await assert.rejects(
+    poll('inbox-account', null, new AbortController().signal),
+    (error: unknown) => {
+      assert.ok(error instanceof IntegrationInboxTransientError);
+      assert.equal(error.status, 503);
+      assert.equal(error.retryAfterMs, 60_000);
+      return true;
+    },
+  );
+  assert.equal(reads, 3);
 });
 
 test('Composio inbox polling reads past a message with a very long or very large header set', async (t) => {

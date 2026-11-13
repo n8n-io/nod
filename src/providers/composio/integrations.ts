@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import type { Composio, ToolRouterSession } from '@composio/core';
 import { z } from 'zod';
 import { composioActivity } from './activity.ts';
@@ -11,6 +12,7 @@ import {
   IntegrationCatalogFailure,
   IntegrationConnectionError,
   IntegrationInboxCursorExpired,
+  IntegrationInboxTransientError,
   IntegrationPermissionError,
   type IntegrationProvider,
   type IntegrationSession,
@@ -727,34 +729,93 @@ export function createComposioProvider(options: {
         pending: z.array(id).max(1000).default([]),
         finalHistoryId: historyId.optional(),
       });
-      async function get(path: string, parameters: Array<[string, string | number]>) {
-        operation.throwIfAborted();
-        phase = path === 'profile' ? 'baseline' : path === 'history' ? 'history' : 'message';
-        category = 'request';
-        status = undefined;
-        const response = await client.tools.proxyExecute(
-          {
-            connectedAccountId: accountId,
-            endpoint: `https://gmail.googleapis.com/gmail/v1/users/me/${path}`,
-            method: 'GET',
-            parameters: parameters.map(([name, value]) => ({ in: 'query', name, value })),
-          },
-          { signal: operation },
-        );
-        operation.throwIfAborted();
-        status = response.status;
-        if (response.status === 404 && path.startsWith('messages/')) return null;
-        if (response.status === 404 && path === 'history')
-          throw new IntegrationInboxCursorExpired();
-        category = 'http';
-        if (response.status !== 200) throw new Error();
-        category = 'response_size';
-        if (JSON.stringify(response.data).length > 1_000_000) {
-          if (path === 'history') throw new IntegrationInboxCursorExpired();
-          throw new Error();
+      let retriesRemaining = 2;
+      const retryableStatus = (value: unknown): value is number =>
+        typeof value === 'number' &&
+        Number.isInteger(value) &&
+        (value === 408 || value === 429 || (value >= 500 && value <= 599));
+      function proxyCode(value: unknown) {
+        if (!value || typeof value !== 'object') return undefined;
+        const detail = (value as Record<string, unknown>).error;
+        const candidate =
+          typeof detail === 'string'
+            ? detail
+            : detail && typeof detail === 'object'
+              ? ((detail as Record<string, unknown>).code ??
+                (detail as Record<string, unknown>).error)
+              : undefined;
+        const code = z
+          .enum([
+            'installation_busy',
+            'public_budget_exceeded',
+            'service_unavailable',
+            'security_service_unavailable',
+          ])
+          .safeParse(candidate);
+        return code.success ? code.data : undefined;
+      }
+      function transientFailure(error: unknown) {
+        let current = error;
+        for (let depth = 0; depth < 3 && current && typeof current === 'object'; depth++) {
+          const detail = current as Record<string, unknown>;
+          const code = proxyCode(detail.error);
+          if (retryableStatus(detail.status))
+            return new IntegrationInboxTransientError(detail.status, code);
+          if (current instanceof Error) {
+            const kind = current.constructor.name;
+            if (kind === 'APIConnectionError' || kind === 'APIConnectionTimeoutError')
+              return new IntegrationInboxTransientError(undefined, code);
+          }
+          current = detail.cause;
         }
-        category = 'response';
-        return response.data;
+      }
+      async function get(path: string, parameters: Array<[string, string | number]>) {
+        for (;;) {
+          operation.throwIfAborted();
+          phase = path === 'profile' ? 'baseline' : path === 'history' ? 'history' : 'message';
+          category = 'request';
+          status = undefined;
+          try {
+            const response = await client.tools.proxyExecute(
+              {
+                connectedAccountId: accountId,
+                endpoint: `https://gmail.googleapis.com/gmail/v1/users/me/${path}`,
+                method: 'GET',
+                parameters: parameters.map(([name, value]) => ({ in: 'query', name, value })),
+              },
+              { signal: operation },
+            );
+            operation.throwIfAborted();
+            status = response.status;
+            if (response.status === 404 && path.startsWith('messages/')) return null;
+            if (response.status === 404 && path === 'history')
+              throw new IntegrationInboxCursorExpired();
+            category = 'http';
+            if (response.status !== 200) {
+              if (retryableStatus(response.status))
+                throw new IntegrationInboxTransientError(response.status, proxyCode(response.data));
+              throw new Error();
+            }
+            category = 'response_size';
+            if (JSON.stringify(response.data).length > 1_000_000) {
+              if (path === 'history') throw new IntegrationInboxCursorExpired();
+              throw new Error();
+            }
+            category = 'response';
+            return response.data;
+          } catch (error) {
+            if (operation.aborted) throw error;
+            const transient =
+              error instanceof IntegrationInboxTransientError ? error : transientFailure(error);
+            if (!transient) throw error;
+            if (!retriesRemaining || transient.code === 'public_budget_exceeded') throw transient;
+            const attempt = 2 - retriesRemaining;
+            retriesRemaining--;
+            await delay(350 * 2 ** attempt + Math.floor(Math.random() * 150), undefined, {
+              signal: operation,
+            });
+          }
+        }
       }
       try {
         if (cursor === null) {
@@ -808,6 +869,7 @@ export function createComposioProvider(options: {
         }
         const messages = [];
         let consumed = 0;
+        let retryAfterMs: number | undefined;
         for (const pendingId of state.pending.slice(0, 20)) {
           let response;
           try {
@@ -816,7 +878,27 @@ export function createComposioProvider(options: {
               ['fields', 'id,threadId,internalDate,labelIds,payload/headers'],
             ]);
           } catch (error) {
-            if (!signal.aborted && deadline.aborted && consumed) break;
+            if (!signal.aborted && consumed) {
+              if (deadline.aborted) {
+                retryAfterMs = 60_000;
+                break;
+              }
+              if (error instanceof IntegrationInboxTransientError) {
+                retryAfterMs = error.retryAfterMs;
+                console.warn(
+                  JSON.stringify({
+                    event: 'gmail_inbox_poll_deferred',
+                    timestamp: new Date().toISOString(),
+                    phase,
+                    category,
+                    ...(error.status === undefined ? {} : { status: error.status }),
+                    ...(error.code ? { code: error.code } : {}),
+                    consumed,
+                  }),
+                );
+                break;
+              }
+            }
             throw error;
           }
           if (response === null) {
@@ -862,6 +944,7 @@ export function createComposioProvider(options: {
         return {
           cursor: JSON.stringify(state),
           hasMore: Boolean(state.pending.length || state.pageToken),
+          ...(retryAfterMs ? { retryAfterMs } : {}),
           messages,
         };
       } catch (error) {
@@ -945,6 +1028,9 @@ export function createComposioProvider(options: {
                     ? 'timeout'
                     : category,
             ...(httpStatus === undefined ? {} : { status: httpStatus }),
+            ...(error instanceof IntegrationInboxTransientError && error.code
+              ? { code: error.code }
+              : {}),
             ...(errorKind ? { errorKind } : {}),
             ...(causeCode ? { causeCode } : {}),
             ...(issue
@@ -965,6 +1051,8 @@ export function createComposioProvider(options: {
           }),
         );
         if (error instanceof IntegrationInboxCursorExpired) throw error;
+        if (error instanceof IntegrationInboxTransientError) throw error;
+        if (deadline.aborted) throw new IntegrationInboxTransientError(httpStatus);
         throw new Error('The Gmail inbox could not be checked.');
       }
     },

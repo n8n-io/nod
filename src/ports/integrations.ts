@@ -77,6 +77,7 @@ export interface IntegrationEvent {
 export interface IntegrationInboxPoll {
   cursor: string;
   hasMore: boolean;
+  retryAfterMs?: number;
   messages: Array<{
     id: string;
     threadId: string;
@@ -86,6 +87,23 @@ export interface IntegrationInboxPoll {
   }>;
 }
 export class IntegrationInboxCursorExpired extends Error {}
+export class IntegrationInboxTransientError extends Error {
+  readonly retryAfterMs: number;
+
+  constructor(
+    readonly status?: number,
+    readonly code?:
+      | 'installation_busy'
+      | 'public_budget_exceeded'
+      | 'service_unavailable'
+      | 'security_service_unavailable',
+  ) {
+    super(
+      `The inbox check temporarily failed${status ? ` (HTTP ${status})` : ''}${code ? `: ${code}` : ''}.`,
+    );
+    this.retryAfterMs = code === 'public_budget_exceeded' ? 300_000 : 60_000;
+  }
+}
 export class IntegrationPermissionError extends Error {}
 export type IntegrationCatalogAccessCode =
   'installation_enrollment_required' | 'installation_revoked' | 'browser_pairing_required';

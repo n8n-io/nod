@@ -11,6 +11,7 @@ import {
   IntegrationCatalogFailure,
   IntegrationConnectionError,
   IntegrationInboxCursorExpired,
+  IntegrationInboxTransientError,
   IntegrationPermissionError,
   type ConnectedApp,
   type IntegrationProvider,
@@ -2212,13 +2213,13 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       await Promise.all(
         rows.map(async (row) => {
           let client: PoolClient | undefined;
+          const pollDeadline = AbortSignal.timeout(30_000);
+          const pollSignal = AbortSignal.any([stop.signal, pollDeadline]);
+          let pollFinished = false;
           try {
-            const result = await provider.pollInbox!(
-              row.account_id!,
-              row.inbox_cursor,
-              AbortSignal.any([stop.signal, AbortSignal.timeout(30_000)]),
-            );
-            stop.signal.throwIfAborted();
+            const result = await provider.pollInbox!(row.account_id!, row.inbox_cursor, pollSignal);
+            pollSignal.throwIfAborted();
+            pollFinished = true;
             const overviews = await Promise.all(
               result.messages.map((message) =>
                 eventOverview(
@@ -2241,7 +2242,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             await client.query('BEGIN');
             const saved = await client.query(
               `UPDATE app_connections SET inbox_cursor=$1,inbox_checked_at=now(),inbox_failed=false,
-             inbox_poll_at=CASE WHEN $2 THEN now() ELSE inbox_poll_at END
+             inbox_poll_at=CASE WHEN $2 THEN now()+$10::integer * interval '1 millisecond' ELSE inbox_poll_at END
              WHERE id=$3 AND owner_id=$4 AND provider_id=$5 AND account_id=$6 AND watch_revision=$7 AND inbox_claim_id=$8
              AND watch_requested AND account_active AND NOT revoked
              AND ($9::text IS NULL OR configuration_id=$9) RETURNING id`,
@@ -2255,6 +2256,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 row.watch_revision,
                 row.inbox_claim_id,
                 provider.configurationId ?? null,
+                Number.isSafeInteger(result.retryAfterMs) && (result.retryAfterMs ?? 0) > 0
+                  ? Math.min(result.retryAfterMs!, 300_000)
+                  : 0,
               ],
             );
             if (saved.rowCount) {
@@ -2281,10 +2285,36 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             if (saved.rowCount) options.refresh?.();
           } catch (error) {
             if (client) await client.query('ROLLBACK');
+            if (stop.signal.aborted) {
+              await (client ?? pool).query(
+                `UPDATE app_connections SET inbox_poll_at=now(),inbox_claim_id=NULL
+                 WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND watch_revision=$5 AND inbox_claim_id=$6
+                 AND watch_requested AND account_active AND NOT revoked
+                 AND ($7::text IS NULL OR configuration_id=$7)`,
+                [
+                  row.id,
+                  configuredOwner,
+                  providerId,
+                  row.account_id,
+                  row.watch_revision,
+                  row.inbox_claim_id,
+                  provider.configurationId ?? null,
+                ],
+              );
+              return;
+            }
+            const retryAfterMs =
+              error instanceof IntegrationInboxTransientError
+                ? error.retryAfterMs
+                : !pollFinished && pollDeadline.aborted
+                  ? 60_000
+                  : null;
             await (client ?? pool).query(
-              `WITH failed AS (UPDATE app_connections SET inbox_failed=true,inbox_reconnect_required=$7
+              `WITH failed AS (UPDATE app_connections SET inbox_failed=true,inbox_reconnect_required=$7,
+               inbox_poll_at=CASE WHEN $11::integer IS NULL THEN inbox_poll_at ELSE now()+$11::integer * interval '1 millisecond' END
                WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND watch_revision=$5 AND inbox_claim_id=$6
-               AND watch_requested AND NOT revoked AND ($10::text IS NULL OR configuration_id=$10) RETURNING id)
+               AND watch_requested AND account_active AND NOT revoked
+               AND ($10::text IS NULL OR configuration_id=$10) RETURNING id)
                INSERT INTO integration_events (id,owner_id,summary,slug,account_id,provider_id,poll_connection_id)
                SELECT $8,$2,$9,'gmail',$4,$3,id FROM failed WHERE $7 ON CONFLICT(id) DO NOTHING`,
               [
@@ -2298,6 +2328,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 `${providerId}:inbox-expired:${row.id}:${row.watch_revision}`,
                 `Gmail inbox updates need reconnection because the saved history expired. Reconnect this account to resume future updates; the missing interval still needs a separate inbox review. Source connectionId: ${row.id}.`,
                 provider.configurationId ?? null,
+                retryAfterMs,
               ],
             );
             options.refresh?.();
