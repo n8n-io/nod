@@ -199,7 +199,7 @@ export function useChannelSettings({
       { method: 'POST' },
       (message) => setError(message),
     );
-    await load();
+    if (result) await load();
     return Boolean(result);
   }
 

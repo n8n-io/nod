@@ -1013,8 +1013,16 @@ test(
     try {
       await assert.rejects(
         transport.poll!(async () => {
-          throw new Error('database fixture failure');
+          throw Object.assign(new Error('database fixture failure'), { code: '40001' });
         }),
+      );
+      assert.equal(
+        transport.channels.find((channel) => channel.id === 'telegram')?.available,
+        true,
+      );
+      assert.equal(
+        transport.channels.find((channel) => channel.id === 'telegram')?.error,
+        undefined,
       );
       assert.equal(
         Number((await pool.query('SELECT * FROM channel_poll_offsets')).rows[0].next_offset),
@@ -1406,14 +1414,14 @@ test(
     const { create, transport } = await outboxFixture(t);
     const reason = 'Telegram polling failed (HTTP 409): Conflict: another poll is active.';
     transport.poll = async () => {
+      transport.channels[0].available = false;
+      transport.channels[0].error = reason;
       throw new MessagingConnectionError(reason);
     };
     const channels = await create();
     const app = Fastify();
     channels.registerRoutes(app);
     try {
-      transport.channels[0].available = false;
-      transport.channels[0].error = reason;
       const failures: string[] = [];
       await withFailureLog(
         (event) => {
@@ -1429,9 +1437,10 @@ test(
       assert.equal(failed.channels[0].available, false);
       assert.equal(failed.channels[0].error, reason);
       assert.equal(failures.filter((event) => event === 'channel_connection_failed').length, 1);
-      transport.poll = async () => {};
-      transport.channels[0].available = true;
-      transport.channels[0].error = undefined;
+      transport.poll = async () => {
+        transport.channels[0].available = true;
+        transport.channels[0].error = undefined;
+      };
       await channels.drain();
       const recovered = (await app.inject('/api/channels')).json();
       assert.equal(recovered.error, null);

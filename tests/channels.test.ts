@@ -611,6 +611,7 @@ test(
           let logouts = 0;
           let failSend = false;
           let failConnect = false;
+          let blockedSave: Promise<void> | undefined;
           let failClear = false;
           let failLogout = false;
           let abortDownload: AbortController | undefined;
@@ -679,6 +680,10 @@ test(
                   const session = await store.open();
                   return {
                     ...session,
+                    async set(values: Parameters<typeof session.set>[0]) {
+                      if (blockedSave) await blockedSave;
+                      await session.set(values);
+                    },
                     async clear() {
                       if (failClear) {
                         failClear = false;
@@ -1163,6 +1168,15 @@ test(
             transport = open();
             await transport.pairing!();
             sockets.at(-1)!.events.emit('connection.update', { connection: 'open' });
+            let rejectSave: (error: Error) => void = () => {};
+            blockedSave = new Promise<void>((_resolve, reject) => {
+              rejectSave = reject;
+            });
+            void blockedSave.catch(() => {});
+            const lateSave = Promise.resolve(
+              sockets.at(-1)!.config.auth.keys.set({ session: { late: Uint8Array.from([4]) } }),
+            );
+            const failedSave = assert.rejects(lateSave, /synthetic late save failure/);
             sockets.at(-1)!.events.emit('connection.update', {
               connection: 'close',
               lastDisconnect: {
@@ -1174,6 +1188,10 @@ test(
             assert.match(failed.error ?? '', /another session.*440/);
             assert.equal(JSON.stringify(failed).includes('synthetic-private-provider-text'), false);
             assert.equal(transport.channels[0].error, failed.error);
+            rejectSave(new Error('synthetic late save failure'));
+            await failedSave;
+            blockedSave = undefined;
+            assert.equal((await transport.pairing!()).error, failed.error);
             await transport.close();
             transport = open();
             await transport.pairing!();

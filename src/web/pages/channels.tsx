@@ -270,11 +270,13 @@ function ChannelCard({
   const status: keyof typeof channelStatus | null = connected
     ? retrying
       ? 'connecting'
-      : available === false
-        ? 'connection-failed'
-        : needsDelivery || needsPairing || !configured
-          ? 'needs-setup'
-          : null
+      : setup?.connectionState === 'awaiting_scan'
+        ? 'needs-setup'
+        : available === false
+          ? 'connection-failed'
+          : needsDelivery || needsPairing || !configured
+            ? 'needs-setup'
+            : null
     : comingSoon
       ? 'coming-soon'
       : null;

@@ -352,6 +352,7 @@ export function createChatSdkTransport(
     async poll(accept, pair, react) {
       if (closed || polling || !telegram || env.TELEGRAM_MODE !== 'polling') return;
       polling = true;
+      let requesting = false;
       try {
         offsetsReady ??= pool
           .query(
@@ -368,6 +369,7 @@ export function createChatSdkTransport(
           "SELECT CASE WHEN updated_at > now() - interval '24 hours' THEN next_offset ELSE 0 END AS next_offset FROM channel_poll_offsets WHERE provider='telegram' AND account_id=$1",
           [accountId],
         );
+        requesting = true;
         const response = await request(
           `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getUpdates`,
           {
@@ -409,6 +411,7 @@ export function createChatSdkTransport(
               .max(100),
           })
           .parse(body);
+        requesting = false;
         const channel = channels.find((channel) => channel.id === 'telegram')!;
         channel.available = true;
         channel.error = undefined;
@@ -436,14 +439,22 @@ export function createChatSdkTransport(
         const channel = channels.find((channel) => channel.id === 'telegram')!;
         const source = cause as { code?: unknown; cause?: { code?: unknown } } | undefined;
         const code = source?.code ?? source?.cause?.code;
+        const detail =
+          typeof code === 'string' && /^(?:[0-9A-Z]{5}|[A-Z][A-Z0-9_]{0,31})$/.test(code)
+            ? ` (${code})`
+            : '';
         const failure =
           cause instanceof MessagingConnectionError
             ? cause
             : new MessagingConnectionError(
-                `Telegram could not receive messages${typeof code === 'string' && /^(?:[0-9A-Z]{5}|[A-Z][A-Z0-9_]{0,31})$/.test(code) ? ` (${code})` : ''}. Select Reconnect.`,
+                requesting
+                  ? `Telegram could not receive messages${detail}. Select Reconnect.`
+                  : `Telegram message processing failed${detail}.`,
               );
-        channel.available = false;
-        channel.error = failure.message;
+        if (requesting) {
+          channel.available = false;
+          channel.error = failure.message;
+        }
         throw failure;
       } finally {
         polling = false;

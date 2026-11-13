@@ -111,7 +111,7 @@ export function createWhatsAppLinkedTransport(options: {
       await session.set(values);
     });
     writes = pending.catch((cause) => {
-      if (!closed)
+      if (!closed && !halted)
         stop('failed', 'Nod could not save the WhatsApp device keys. Select Reconnect.', cause);
     });
     return pending;
