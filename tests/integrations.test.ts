@@ -9363,6 +9363,10 @@ test(
         ['Berlin time, 8am on monday&#x20;', 'Berlin time, 8am on monday'],
         ['**Berlin time, 8am on monday&#x20;**', 'Berlin time, 8am on monday'],
         ['Explain `&#x20;` and \\&#x20;', 'Explain &#x20; and &#x20;'],
+        ['```python\nprint("hello")\n```', 'print("hello")'],
+        ['# First line\nSecond line', 'First line'],
+        ['- First\n- Second', 'First'],
+        ['> First\n>\n> Second', 'First'],
       ]) {
         await pool.query('UPDATE turns SET prompt=$2 WHERE id=$1', [chat, prompt]);
         const entry = (await app.inject('/api/trust'))

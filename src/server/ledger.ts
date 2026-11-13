@@ -74,14 +74,25 @@ const titleMarkdown = unified().use(remarkParse).use(remarkGfm);
 function visibleText(node: Nodes): string {
   if (node.type === 'html') return '';
   if (node.type === 'image') return node.alt ?? '';
+  if (node.type === 'break') return '\n';
   if ('value' in node) return node.value;
-  if ('children' in node) return node.children.map(visibleText).join('');
+  if ('children' in node)
+    return node.children
+      .map(visibleText)
+      .join(
+        ['root', 'blockquote', 'list', 'listItem', 'table', 'tableRow'].includes(node.type)
+          ? '\n'
+          : '',
+      );
   return '';
 }
 
 function messageTitle(value: string | null) {
-  const line = value?.trim().slice(0, 2_000).split('\n', 1)[0];
-  return line ? visibleText(titleMarkdown.parse(line)).trim().slice(0, 120) : '';
+  const excerpt = value?.trim().slice(0, 2_000);
+  return excerpt
+    ? (visibleText(titleMarkdown.parse(excerpt)).trim().split('\n', 1)[0]?.trim().slice(0, 120) ??
+        '')
+    : '';
 }
 
 function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'> {
