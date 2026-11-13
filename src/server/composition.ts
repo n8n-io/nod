@@ -1044,6 +1044,8 @@ async function initializeApplication(
   const triage = createTriage({
     analytics: captureAnalytics,
     consumers,
+    heartbeatKey:
+      adapters.integrations.id === 'composio' ? adapters.integrations.configurationId : undefined,
     signal: async (sourceId, client, summary) => {
       if (!privateReady) throw new Error('Background sources are starting.');
       const source = observedSource(await observations.sources(client), sourceId);
