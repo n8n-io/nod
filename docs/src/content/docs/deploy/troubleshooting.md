@@ -19,6 +19,12 @@ If your problem isn't here, [send feedback with a diagnostic report](#send-feedb
 
 Docker isn't running, or Compose is too old. Start Docker (on a Mac, open Docker Desktop) and check that `docker compose version` reports v2.
 
+### the --chmod option requires BuildKit
+
+Docker cannot build the workspace and browser images when BuildKit is unavailable or disabled. A missing Buildx plugin can cause this error. Docker Desktop includes it. Other setups, such as Colima with a Homebrew Docker CLI or a Linux package without `docker-buildx-plugin`, need it installed separately. [Install Buildx](https://github.com/docker/buildx#installing) and check that `docker buildx version` prints a version.
+
+If `DOCKER_BUILDKIT=0` is set in your environment, remove it or set it to `1` to enable BuildKit. Then run `pnpm start` again.
+
 ### NOD_POSTGRES_PASSWORD is missing a value
 
 You ran `docker compose` yourself before Nod created the database password. Run `pnpm start` from the repository root. It generates `NOD_POSTGRES_PASSWORD`, starts the containers, and starts Nod.
@@ -149,7 +155,7 @@ The bot was set up with a webhook elsewhere. Remove that webhook to use local po
 
 ### A scheduled task didn't run
 
-For a local desktop assistant, scheduled tasks run only while Nod is open and your computer is awake. Closing the window keeps Nod running in the menu bar or tray, but **Quit Nod** stops it. **Open at login** is on after setup; keep it on in **Settings → General** if you rely on schedules. For a remote assistant, check that the server is running; closing a desktop client does not stop its schedules.
+For a local desktop assistant, scheduled tasks run only while Nod is open and your computer is awake. Closing the window keeps Nod running in the menu bar or tray, but **Quit Nod** stops it. **Open at login** is on after setup; keep it on in **Settings → General** if you rely on schedules. After a restart or power cut, Nod starts only once you sign in to your computer, and a Mac with FileVault turned on never signs in automatically. For a remote assistant, check that the server is running; closing a desktop client does not stop its schedules.
 
 ### An action shows as uncertain
 

@@ -7310,7 +7310,10 @@ test('chat shows pending sends and active work before a model step', async () =>
         assert.ok(stop && !stop.disabled);
         await act(async () => stop.click());
         assert.equal(stops, 1);
-        for (const [detail, line] of [[{ site: 'example.test', doing: 'tool' }, 'example.test'], [{ site: 'example.test', doing: 'model' }, null], [{ step: '   ' }, null], [{ doing: 'model' }, null]]) {
+        const quiet = new Date(Date.now() - 150_000).toISOString();
+        for (const [detail, line] of [[{ site: 'example.test', doing: 'tool' }, 'example.test'], [{ site: 'example.test', doing: 'model' }, null], [{ step: '   ' }, null], [{ doing: 'model' }, null],
+          [{ doing: 'tool', tool: 'Synthetic tool label' }, 'Synthetic tool label'], [{ doing: 'model', model: 'Synthetic Model' }, null],
+          [{ doing: 'model', model: 'Synthetic Model', quietSince: quiet }, 'Synthetic Model']]) {
           state = { ...state, activity: [{ ...activity, ...detail }] };
           await render();
           if (line) assert.ok(document.querySelector('.thinking')?.textContent?.includes(line));

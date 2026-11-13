@@ -79,11 +79,19 @@ function useIdleWord(enabled: boolean) {
 export function LiveLine({ item, quiet = true }: { item?: Activity; quiet?: boolean }) {
   const step = item?.step?.trim();
   const site = item?.doing === 'tool' ? item.site : null;
-  const described = step || (site && `Using ${site}`);
+  const minutes = useQuietMinutes(item?.quietSince ?? '', quiet && Boolean(item));
+  const work =
+    item?.doing === 'tool'
+      ? item.tool
+      : item?.doing === 'model' && minutes && item.model
+        ? `Waiting for ${item.model}`
+        : undefined;
+  const described = step || (site && `Using ${site}`) || work;
   const queued = item?.doing === 'queued';
   const word = useIdleWord(!described && !queued);
-  const minutes = useQuietMinutes(item?.quietSince ?? '', quiet && Boolean(item));
-  const meta = [step ? site : null, minutes ? `${minutes} min` : null].filter(Boolean).join(' · ');
+  const meta = [step ? site || work : null, minutes ? `${minutes} min` : null]
+    .filter(Boolean)
+    .join(' · ');
   return (
     <span>
       {described ? (

@@ -528,6 +528,20 @@ export async function createChannelSettings(
       return { ok: true, channel: summary, ...(pairingUrl ? { pairingUrl } : {}) };
     });
   }
+  async function reconnect(provider: ChannelProvider) {
+    return exclusive(async () => {
+      const channel = (await status()).channels.find((item) => item.provider === provider);
+      if (!channel?.enabled) throw new ChannelSetupFailure('pairing_unavailable');
+      const configured = await environment();
+      if (provider === 'telegram' && !managed.telegram && channel.mode === 'webhook')
+        await activate(provider, { environment: configured, summary: channel });
+      else await options.apply(configured);
+      return {
+        ok: true,
+        channel: (await status()).channels.find((item) => item.provider === provider)!,
+      };
+    });
+  }
   async function telegramRow() {
     if (managed.telegram) return;
     const row = (await store.read()).find((item) => item.provider === 'telegram' && item.enabled);
@@ -749,6 +763,11 @@ export async function createChannelSettings(
           });
       });
       scope.get('/api/channel-settings', status);
+      scope.post<{ Params: { provider: string } }>(
+        '/api/channel-settings/:provider/reconnect',
+        { bodyLimit: 1024 },
+        (request) => reconnect(providerSchema.parse(request.params.provider)),
+      );
       scope.get('/api/channel-settings/whatsapp/pairing', async (_request, reply) => {
         reply.header('Cache-Control', 'no-store');
         const row = (await status()).channels.find(

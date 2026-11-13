@@ -596,13 +596,17 @@ async function verifyDelivery(tag, version) {
       throw new Error(`the GitHub asset ${name} is unavailable`);
   };
   let target;
+  const deadline = Date.now() + 300_000;
   try {
     requireUpdateSourceVisibility(sourceUrl);
     for (target of ['darwin-arm64', 'darwin-x64', 'win32-x64']) {
       const [os, arch] = target.split('-');
       let update;
       for (let attempt = 0; update?.version !== version; attempt++) {
-        if (attempt === 6) throw new Error(`it does not list Nod ${version}`);
+        if (attempt && Date.now() > deadline)
+          throw new Error(
+            `it still lists ${update ? `Nod ${update.version}` : 'no valid release'} instead of Nod ${version} after 5 minutes`,
+          );
         if (attempt) await new Promise((resolve) => setTimeout(resolve, 10_000));
         try {
           update = await createUpdateSource({
@@ -615,7 +619,7 @@ async function verifyDelivery(tag, version) {
           if (
             sourceUrl ||
             error.message !== 'The latest desktop release is invalid.' ||
-            attempt === 5
+            Date.now() > deadline
           )
             throw error;
         }

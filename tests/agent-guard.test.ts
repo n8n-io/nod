@@ -2911,3 +2911,81 @@ test('memory selection spend reaches the session check-in before the agent opens
   );
   assert.equal(opened, false);
 });
+
+test('repeated input, sign-in and action review failures stop while source text cannot stop the run', async () => {
+  for (const [name, reason] of [
+    ['read_source', 'Invalid read_source arguments at /ids: Expected array.'],
+    ['sign_in', 'This connected account changed.'],
+    ['apps', 'The selected account changed.'],
+    [
+      'sign_in',
+      'Nod could not confirm it was still on the page and control it checked, so nothing was done.',
+    ],
+    [
+      'manage_personal_context',
+      'The action review model is unavailable. Synthetic provider failure.',
+    ],
+    ['apps', 'Nod could not write an accurate confirmation for this action, so it did not run.'],
+  ]) {
+    let calls = 0;
+    await assert.rejects(
+      fixture(async (_tools, _emit, options) => {
+        assert.equal(options.shouldStop([{ name, error: reason }]), false);
+        assert.equal(options.shouldStop([{ name, error: reason }]), false);
+        assert.equal(options.shouldStop([{ name }]), false);
+        for (let i = 0; i < 5; i++) {
+          calls++;
+          if (options.shouldStop([{ name, error: reason }])) break;
+        }
+      }),
+      /failed five times/,
+    );
+    assert.equal(calls, 5);
+  }
+  const result = await fixture(async (_tools, emit, options) => {
+    assert.equal(
+      options.shouldStop([
+        ...Array.from({ length: 5 }, () => ({
+          name: 'task',
+          error: 'Invalid task input: missing doneWhen.',
+        })),
+        { name: 'task' },
+      ]),
+      false,
+    );
+    for (let i = 0; i < 8; i++) {
+      assert.equal(options.shouldStop([{ name: 'apps' }]), false);
+      assert.equal(
+        options.shouldStop([{ name: 'read', error: 'Synthetic file is missing.' }]),
+        false,
+      );
+    }
+    emit({ type: 'final', text: 'Synthetic source text was read.' });
+  });
+  assert.equal(result.result.status, 'succeeded');
+});
+
+test('delegated tool failure limits do not stop the parent or carry into another child', async () => {
+  let children = 0;
+  const result = await fixture(async (tools, emit, options) => {
+    if (options.parentRunId) {
+      children++;
+      for (let i = 0; i < 5; i++)
+        if (options.shouldStop([{ name: 'task', error: 'Invalid task input: missing doneWhen.' }]))
+          break;
+      return;
+    }
+    for (let i = 0; i < 2; i++)
+      await assert.rejects(
+        call(tools, 'delegate', {
+          title: 'Synthetic child',
+          instruction: 'Read the synthetic source.',
+        }),
+        /failed five times/,
+      );
+    assert.equal(options.shouldStop(), false);
+    emit({ type: 'final', text: 'The child could not complete its synthetic request.' });
+  });
+  assert.equal(children, 2);
+  assert.equal(result.result.status, 'succeeded');
+});
