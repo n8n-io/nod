@@ -382,7 +382,10 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
             `/api/credential-requests/${encodeURIComponent(activeId)}`,
             { signal: controller.signal, cache: 'no-store' },
           );
-          if (generation.current === current && !controller.signal.aborted) setRequest(value);
+          if (generation.current === current && !controller.signal.aborted) {
+            setRequest(value);
+            if (value.status === 'filled' || value.status === 'uncertain') setError('');
+          }
         } catch {}
       }
     } finally {
@@ -395,7 +398,9 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
       '/retry',
       {},
       () => setRetried(true),
-      'A new sign-in step could not be requested. Return to chat to check this task.',
+      uncertain
+        ? 'Nod could not check this sign-in step. Return to chat and ask Nod to inspect the page.'
+        : 'A new sign-in step could not be requested. Return to chat to check this task.',
     );
   }
   function submitted(result: { ok: boolean; retryUrl?: string; error?: string }) {
@@ -486,7 +491,8 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
       '',
       input,
       submitted,
-      'Sign-in could not continue. Try again or return to chat for a new link.',
+      'The sign-in response could not be confirmed. Ask Nod to check the website before another attempt.',
+      true,
     );
   }
   return (
@@ -534,21 +540,25 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
             <LockKeyhole size={32} />
             <h1>
               {retried
-                ? 'A new step is on its way.'
+                ? 'Nod is continuing the sign-in.'
                 : uncertain
                   ? 'The result is unknown.'
                   : 'This link has expired.'}
             </h1>
             <p>
               {retried
-                ? 'Return to chat for the next step.'
+                ? 'Return to chat to follow this task.'
                 : uncertain
                   ? 'The sign-in may have reached the website. Ask Nod to check its result before another attempt.'
                   : 'Ask Nod to check the sign-in page again.'}
             </p>
             {!retried && (
               <Button disabled={saving} onClick={() => void retry()}>
-                {saving ? 'Requesting…' : 'Get a new Vault link'}
+                {saving
+                  ? 'Requesting…'
+                  : uncertain
+                    ? 'Check sign-in result'
+                    : 'Get a new Vault link'}
               </Button>
             )}
             <BackToChat onClose={onClose} />

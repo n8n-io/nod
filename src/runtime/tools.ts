@@ -586,7 +586,7 @@ export const toolDefinitions = {
   ),
   manage_personal_context: defineTool(
     'manage_personal_context',
-    'Read or change owner settings, memory, schedules and history. Read current values before a change. Change only the requested fields.\nprepared_list {id?|query?} reads complete prepared work and sources; {} lists it. Read before acting and show its draft when asked. prepared_update {id,action,minutes?} records an owner request to snooze, handle, dismiss, or give useful/not_useful feedback.\nnotification_preferences_get {} reads settings. notification_preferences_update partially changes notificationRule, rules, speechReply (auto,voice,always,never), timeZone (IANA or null), locale (tag or null), hourCycle (auto,h12,h23), quietHoursEnabled, quietStart/quietEnd (HH:MM), or proactivePaused. Device permissions need Settings on that device.\nmodels_get {} lists model IDs and efforts; model_select {connectionId,modelId,effort} selects one for the next turn. Model connections need private Settings sign-in.\nmemory_find {query,area?} and memory_read {path} read saved facts (areas: about,preferences,people,routines,lessons). Check memory and history for earlier facts or advice; collect all relevant mentions for totals, and use the latest statement when facts change. Do not guess missing facts. memory_learn {messages?} asks the memory model to learn from owner messages, never your own text. Use it for lasting facts or explicit requests, never tasks, guesses, secrets or outside content. Pass older owner message IDs when needed. Sensitive facts require sensitiveTopics enabled or an explicit save request. Corrections archive old notes. memory_forget {path} removes a requested note. memory_control {enabled?,clear?,quote} needs the complete current owner message; clear keeps chat history.\nhistory_search {query?,from?,to?,before?,cursor?,order?,around?} searches earlier messages. Dates are YYYY-MM-DD in owner time. Page with cursor=nextCursor, keeping the same query, dates and order (relevance or newest). complete covers search matches only. Dates and before filter message times, not event dates. around reads a result in context. Read source messages before claims about earlier work.\nschedule_list {} reads current schedules; use it before saying none is active or will act on a file. schedule_create {title,prompt,timeZone,kind:once|recurring,cron?,runAt?,baselineObservation?,watch?}: recurring needs a five-field cron, once a future runAt with offset; baselineObservation is {status:verified,sourceUrl,value,summary}; watch lists manage_apps connectionIds whose changes alone make a run useful. schedule_update {id,...changed fields,enabled?,watch?|null}. schedule_pause {id} disables a schedule without deleting it. After pausing a schedule that was active, Scheduled labels it Paused and it can be resumed; a completed one-time schedule retains its last-run status. schedule_record_observation {status,sourceUrl,value,summary} records a scheduled check; value is null when unavailable.\nusage_get {} reads spend and activity; planUsd is ChatGPT plan usage at API prices, not charged; unpriced usage has no price in Nod and is not counted. limits_update {monthlyUsd?,taskUsd?} changes requested limits; values are at least 1 USD, or null to remove.',
+    'Read or change owner settings, memory, schedules and history. Read current values before a change. Change only the requested fields.\nprepared_list {id?|query?} reads complete prepared work and sources; {} lists it. Read before acting and show its draft when asked. prepared_update {id,action,minutes?} records an owner request to snooze, handle, dismiss, or give useful/not_useful feedback.\nnotification_preferences_get {} reads settings. notification_preferences_update partially changes notificationRule, rules, speechReply (auto,voice,always,never), timeZone (IANA or null), locale (tag or null), hourCycle (auto,h12,h23), quietHoursEnabled, quietStart/quietEnd (HH:MM), or proactivePaused. Device permissions need Settings on that device.\nmodels_get {} lists model IDs and efforts; model_select {connectionId,modelId,effort} selects one for the next turn. Model connections need private Settings sign-in.\nmemory_find {query,area?} and memory_read {path} read saved facts (areas: about,preferences,people,routines,lessons). Check memory and history for earlier facts or advice; collect all relevant mentions for totals, and use the latest statement when facts change. Do not guess missing facts. memory_learn {messages?} asks the memory model to learn from owner messages, never your own text. Use it for lasting facts or explicit requests, never tasks, guesses, secrets or outside content. Pass older owner message IDs when needed. Sensitive facts require sensitiveTopics enabled or an explicit save request. Corrections archive old notes. memory_forget {path} removes a requested note. memory_control {enabled?,clear?,quote} needs the complete current owner message; clear keeps chat history.\nhistory_search {query?,from?,to?,before?,cursor?,order?,around?} searches earlier messages. Dates are YYYY-MM-DD in owner time. Page with cursor=nextCursor, keeping the same query, dates and order (relevance or newest). complete covers search matches only. Dates and before filter message times, not event dates. around reads a result in context. Read source messages before claims about earlier work.\nschedule_list {} reads current schedules; use it before saying none is active or will act on a file. schedule_create {title,prompt,timeZone,kind:once|recurring,cron?,runAt?,baselineObservation?,watch?}: recurring needs a five-field cron, once a future runAt with offset; baselineObservation is {status:verified,sourceUrl,value,summary}; watch lists manage_apps connectionIds whose changes alone make a run useful. schedule_update {id,...changed fields,enabled?,watch?|null}. schedule_pause {id} disables a schedule without deleting it. After pausing a schedule that was active, Scheduled labels it Paused and it can be resumed; a completed one-time schedule retains its last-run status. schedule_record_observation {status,sourceUrl,value,summary} records a scheduled check; value is null when unavailable.\nusage_get {} reads spend and recent activity; planUsd is ChatGPT plan usage at API prices, not charged; unpriced usage has no price in Nod and is not counted. usage_get {from,to?} (YYYY-MM-DD, owner time, to defaults to from) lists what Nod did on those days: each request or run with its actions in apps, websites, local files and Nod settings, the owner words that allowed each, and sign-ins and card submissions. Answer what you did only from this list; complete false means it was cut, so narrow the days. limits_update {monthlyUsd?,taskUsd?} changes requested limits; values are at least 1 USD, or null to remove.',
     Type.Object({
       action: literals(personalActions),
       args: Type.Record(Type.String(), Type.Unknown()),
@@ -841,6 +841,7 @@ export function nodTools(
     | {
         binding: { expectOrigin?: string; expectUrl?: string; expectTarget?: string };
         choice?: string;
+        record?: () => Promise<void>;
       }
     | { output: unknown }
   > => {
@@ -864,8 +865,9 @@ export function nodTools(
       subagent: Boolean(turn.execution.parentRunId),
     });
     signal.throwIfAborted();
-    if (verdict === 'run')
+    if (verdict === 'run' || (typeof verdict === 'object' && 'record' in verdict))
       return {
+        ...(verdict === 'run' ? {} : { record: verdict.record }),
         binding: {
           expectOrigin: page.origin,
           expectUrl: page.url,
@@ -1038,6 +1040,7 @@ export function nodTools(
             { selector: rest.selector, name, ...checked.binding },
             signal,
           );
+          await checked.record?.();
         }
         signal.throwIfAborted();
         if (!file.bytes.length || file.bytes.length > fileBytes)
@@ -1050,14 +1053,13 @@ export function nodTools(
         const bytes = await context.readWorkspaceFile(rest.path, fileBytes);
         const checked = await check({ action, selector: rest.selector, path: rest.path });
         if ('output' in checked) return checked.output;
-        return observed(
-          { action },
-          await computer.upload(
-            browserId,
-            { selector: rest.selector, name: basename(rest.path), bytes, ...checked.binding },
-            signal,
-          ),
+        const page = await computer.upload(
+          browserId,
+          { selector: rest.selector, name: basename(rest.path), bytes, ...checked.binding },
+          signal,
         );
+        await checked.record?.();
+        return observed({ action }, page);
       }
       const step = { action, ...rest } as BrowserAction;
       if (action === 'evaluate' && context.browserStep)
@@ -1069,11 +1071,9 @@ export function nodTools(
         }
       const checked = commits(step) ? await check(step) : { binding: {} };
       if ('output' in checked) return checked.output;
-      return observed(
-        step,
-        await computer.act(browserId, { ...step, ...checked.binding }, signal),
-        checked.choice,
-      );
+      const page = await computer.act(browserId, { ...step, ...checked.binding }, signal);
+      if ('record' in checked) await checked.record?.();
+      return observed(step, page, checked.choice);
     }),
     bind(toolDefinitions.sign_in, async ({ message, action, ...request }) => {
       const result = await context.requestCredential(request);

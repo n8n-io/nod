@@ -13,8 +13,8 @@ import { PrivateEntryWorkspace, usePrivateEntry } from '../src/web/components/pr
 import { pageDataCache } from '../src/web/lib/page-data-cache.ts';
 import { Composio } from '@composio/core';
 import Fastify, { type FastifyInstance } from 'fastify';
-import pg from 'pg';
-import type { CredentialKind } from '../src/ports/computer.ts';
+import pg, { DatabaseError } from 'pg';
+import { BrowserActionError, type CredentialKind } from '../src/ports/computer.ts';
 import type { IntegrationProvider, VerificationEmail } from '../src/ports/integrations.ts';
 import { readVerificationEmails } from '../src/providers/composio/verification-email.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
@@ -43,6 +43,7 @@ import { createOnePassword, forkedOnePassword } from '../src/providers/onepasswo
 import { PasswordManagerError, type PasswordManager } from '../src/ports/password-manager.ts';
 import { createPayments } from '../src/server/payments.ts';
 import type { CardEntry } from '../src/ports/computer.ts';
+import { withFailureLog } from '../src/server/failure-log.ts';
 
 async function seedTurns(pool: pg.Pool) {
   await pool.query(
@@ -305,7 +306,7 @@ async function vaultFixture() {
 }
 
 test(
-  'a lost Vault claim acknowledgement and a failed uncertainty write never repeat browser work',
+  'interrupted Vault claims and private entry retain uncertainty without replay or secret diagnostics',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
     const { createVaultUses, VaultUseError } = await import('../src/server/vault-use.ts');
@@ -324,7 +325,7 @@ test(
                       const result = await client.query(...args);
                       if (args[0] === 'COMMIT' && loseCommit) {
                         loseCommit = false;
-                        throw new Error('Synthetic lost commit acknowledgement');
+                        throw new DatabaseError('fixture-private-value', 0, 'error');
                       }
                       return result;
                     };
@@ -394,8 +395,18 @@ test(
           .status,
         'submitted',
       );
+      const failures: Array<{
+        event: string;
+        error: unknown;
+        context?: Record<string, unknown>;
+      }> = [];
+      const record = (event: string, error: unknown, context?: Record<string, unknown>) => {
+        failures.push({ event, error, context });
+      };
       loseCommit = true;
-      await assert.rejects(uses.run(use, operation), uncertain);
+      await withFailureLog(record, async () => {
+        await assert.rejects(uses.run(use, operation), uncertain);
+      });
       assert.equal(entries, 0);
       assert.equal(
         (await f.pool.query('SELECT status FROM vault_uses WHERE id=$1', [use.id])).rows[0].status,
@@ -436,6 +447,111 @@ test(
         (await f.pool.query('SELECT status FROM vault_uses WHERE id=$1', [failed.id])).rows[0]
           .status,
         'uncertain',
+      );
+      const interrupted = { ...use, id: randomUUID() };
+      let websiteSubmissions = 0;
+      await withFailureLog(record, async () => {
+        await assert.rejects(
+          uses.run(interrupted, {
+            perform: async () => {
+              websiteSubmissions++;
+              throw new BrowserActionError('browser_card_changed', 'fixture-private-value');
+            },
+          }),
+          uncertain,
+        );
+      });
+      assert.equal(websiteSubmissions, 1);
+      assert.equal(
+        (await f.pool.query('SELECT status FROM vault_uses WHERE id=$1', [interrupted.id])).rows[0]
+          .status,
+        'uncertain',
+      );
+      await assert.rejects(
+        uses.run(interrupted, { perform: operation.perform }),
+        (error: unknown) => error instanceof VaultUseError && error.statusCode === 409,
+      );
+      assert.equal(websiteSubmissions, 1);
+      for (const code of ['ECONNRESET', 'UND_ERR_SOCKET']) {
+        const disconnected = { ...use, id: randomUUID() };
+        await withFailureLog(record, async () => {
+          await assert.rejects(
+            uses.run(disconnected, {
+              perform: async () => {
+                throw Object.assign(new Error('fixture-private-value'), { code });
+              },
+            }),
+            uncertain,
+          );
+        });
+      }
+      const unfinished = { ...use, id: randomUUID() };
+      await withFailureLog(record, async () => {
+        await assert.rejects(
+          uses.run(unfinished, {
+            perform: async () => {
+              websiteSubmissions++;
+              return true;
+            },
+            complete: async () => {
+              throw new Error('fixture-private-value');
+            },
+          }),
+          uncertain,
+        );
+      });
+      assert.equal(websiteSubmissions, 2);
+      assert.equal(
+        (await f.pool.query('SELECT status FROM vault_uses WHERE id=$1', [unfinished.id])).rows[0]
+          .status,
+        'uncertain',
+      );
+      await assert.rejects(
+        uses.run(unfinished, { perform: operation.perform }),
+        (error: unknown) => error instanceof VaultUseError && error.statusCode === 409,
+      );
+      assert.equal(websiteSubmissions, 2);
+      const malformed = { ...use, id: randomUUID(), kind: 'fixture-private-value' };
+      await withFailureLog(record, async () => {
+        await assert.rejects(
+          uses.run(malformed, {
+            perform: async () => {
+              throw Object.assign(new BrowserActionError('browser_card_changed'), {
+                code: 'fixture-private-value',
+              });
+            },
+          }),
+          uncertain,
+        );
+      });
+      assert.deepEqual(
+        failures
+          .filter((failure) => failure.event === 'vault_private_operation_interrupted')
+          .map((failure) => failure.context),
+        [
+          { stage: 'claim', kind: 'password', cause: 'database' },
+          {
+            stage: 'entry',
+            kind: 'password',
+            cause: 'browser',
+            browserCode: 'browser_card_changed',
+          },
+          { stage: 'entry', kind: 'password', cause: 'transport' },
+          { stage: 'entry', kind: 'password', cause: 'transport' },
+          { stage: 'completion', kind: 'password', cause: 'operation' },
+          { stage: 'entry', kind: 'other', cause: 'browser' },
+        ],
+      );
+      assert.equal(
+        JSON.stringify(
+          failures.map(({ event, error, context }) => ({
+            event,
+            message: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+            context,
+          })),
+        ).includes('fixture-private-value'),
+        false,
       );
     } finally {
       await f.close();
@@ -3121,6 +3237,7 @@ test(
     });
     let submitted = 0;
     let entered = 0;
+    let retried = 0;
     let failed = false;
     let requestSignal: AbortSignal | null | undefined;
     const key = randomBytes(32);
@@ -3140,7 +3257,9 @@ test(
         return { status: 'submitted' as const };
       },
       resume: async () => {},
-      retry: async () => {},
+      retry: async () => {
+        retried++;
+      },
     });
     vault.registerRoutes(app);
     const request = await vault.request(turn, 'local-development', {
@@ -3295,6 +3414,7 @@ test(
     );
     assert.equal(view.document.querySelector('form'), null);
     assert.equal(view.document.querySelector('.success-mark'), null);
+    assert.equal(view.document.querySelector('.credential-card .notice'), null);
     assert.deepEqual(
       (
         await app.inject({
@@ -3304,6 +3424,9 @@ test(
       { status: 'uncertain' },
     );
     assert.equal(submitted, 2);
+    assert.equal(entered, 2);
+    await click('.credential-complete button');
+    await settle(() => retried === 1);
     assert.equal(entered, 2);
     await view.render(panel('/vault?add=card', 'card-owner'));
     await click('#open-private');
@@ -3365,7 +3488,7 @@ test(
     await click('#open-private');
     await settle(() => Boolean(view.document.querySelector('.notice')));
     assert.equal(view.document.querySelector('form'), null);
-    assert.equal(submitted, 3);
+    assert.equal(submitted, 4);
   },
 );
 

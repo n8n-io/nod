@@ -158,6 +158,8 @@ import {
   environmentSecrets,
 } from './redaction.ts';
 import { createLedger, limitsInput } from './ledger.ts';
+import { createActivityLog } from './activity-log.ts';
+import { actionTarget } from './action-presentation.ts';
 import { usageFileName, usagePdf } from './usage-report.ts';
 import { buildFeedbackReport, type FeedbackReportOptions } from './bug-report.ts';
 import { registerFeedback } from './feedback.ts';
@@ -1370,7 +1372,12 @@ async function initializeApplication(
                         provenance.signal,
                         action === 'GMAIL_DELETE_MESSAGE' ? verifiedBinding : undefined,
                       );
-                      await ledger.action(provenance.turnId, action, { kind: 'approved' });
+                      await ledger.action(
+                        provenance.turnId,
+                        action,
+                        provenance.basis ?? { kind: 'approved' },
+                        actionTarget(action, args, provenance.details),
+                      );
                       return privateEmailResult(
                         (
                           await saveIntegrationFiles(result, async (file) => {
@@ -1382,6 +1389,13 @@ async function initializeApplication(
                         mailCheck,
                       );
                     })());
+      if (action.startsWith('NOD_') && action !== 'NOD_vault_allow')
+        await ledger.action(
+          provenance.turnId,
+          action,
+          provenance.basis ?? { kind: 'approved' },
+          actionTarget(action, args, provenance.details),
+        );
       return result;
     },
     async (action, args, expectedRevision, client) => {
@@ -1719,6 +1733,14 @@ async function initializeApplication(
     check: trust.check,
     refresh,
   });
+  const activityLog = createActivityLog({
+    bounds: ledger.bounds,
+    within: ledger.within,
+    chunk: ledger.chunk,
+    vault: vaultAccess.within,
+    steps: (turnIds, page) => ledger.steps(turnIds, page),
+    vaultPage: vaultAccess.ascending,
+  });
   payments = await createPayments(pool, {
     ownerId,
     analytics: captureAnalytics,
@@ -1860,7 +1882,13 @@ async function initializeApplication(
         const args = browserStepArgs(request);
         const verdict = await trust.check(turn, 'NOD_browser', args, signal);
         if (!verdict.confirm) {
-          if (!verdict.chatRevision || verdict.basis.kind === 'read') return 'run';
+          if (verdict.basis.kind === 'read') return 'run';
+          const basis = verdict.basis;
+          const allowed = {
+            record: () =>
+              ledger.action(turn.turnId, 'NOD_browser', basis, actionTarget('NOD_browser', args)),
+          };
+          if (!verdict.chatRevision) return allowed;
           const handoff = await approvals.request(turn, 'NOD_browser', args, {
             allowed: true,
             expectedChatRevision: verdict.chatRevision,
@@ -1868,7 +1896,7 @@ async function initializeApplication(
             run: async () => 'run',
           });
           return handoff === 'run'
-            ? 'run'
+            ? allowed
             : handoff && typeof handoff === 'object' && appConfirmation in handoff
               ? handoff
               : { result: handoff };
@@ -1965,6 +1993,7 @@ async function initializeApplication(
           return approvals.request(turn, 'NOD_limits_update', input, {
             ...provenance,
             allowed: !verdict.confirm,
+            ...(verdict.confirm ? {} : { basis: verdict.basis }),
             expectedChatRevision: verdict.chatRevision,
             admit,
             details: {
@@ -2031,6 +2060,7 @@ async function initializeApplication(
           return approvals.request(turn, `NOD_${action}`, input, {
             ...provenance,
             allowed: !verdict.confirm,
+            ...(verdict.confirm ? {} : { basis: verdict.basis }),
             expectedChatRevision: verdict.chatRevision,
             admit,
             expectedRevision: schedule?.revision,
@@ -2069,6 +2099,7 @@ async function initializeApplication(
           return approvals.request(turn, `NOD_${action}`, input, {
             ...provenance,
             allowed: !verdict.confirm,
+            ...(verdict.confirm ? {} : { basis: verdict.basis }),
             expectedChatRevision: verdict.chatRevision,
             admit,
             details: verdict.confirm ? { reason: verdict.reason } : {},
@@ -2095,7 +2126,13 @@ async function initializeApplication(
             withTurnLock(turn.turnId, write),
           );
         }
-        if (action === 'usage_get') return ledger.read();
+        if (action === 'usage_get')
+          return untrustedBlock(
+            'usage',
+            JSON.stringify(
+              Object.keys(args).length ? await activityLog.read(args, 200) : await ledger.read(),
+            ),
+          );
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },
       requestPayment: async (turn, input, show) => {
@@ -2295,6 +2332,7 @@ async function initializeApplication(
               turn.turnId,
               action,
               verdict.confirm ? { kind: 'approved' } : verdict.basis,
+              actionTarget(action, prepared),
             );
             return result;
           },
@@ -2401,6 +2439,7 @@ async function initializeApplication(
     updatesEmail: onboardingProfile.available,
   }).register(app);
   ledger.registerRoutes(app);
+  activityLog.registerRoutes(app);
   registerSpeechSettings(app, {
     speech,
     preferences: speechPreferences,
