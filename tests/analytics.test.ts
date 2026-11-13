@@ -830,11 +830,11 @@ test('model analytics separate retries, helpers and maintenance from the main re
     pool: { query: async () => ({ rows: [] }) } as never,
     analytics: analytics.forOwner(owner),
   });
-  const usage = (status: 'succeeded' | 'failed'): AgentEvent => ({
+  const usage = (status: 'succeeded' | 'failed', helper = false): AgentEvent => ({
     type: 'model_usage',
     id: randomUUID(),
-    provider: 'openai',
-    model: 'gpt-6-luna',
+    provider: helper ? 'anthropic' : 'openai',
+    model: helper ? 'claude-haiku-4-5' : 'gpt-6-luna',
     status,
     inputTokens: 3,
     outputTokens: 1,
@@ -850,10 +850,10 @@ test('model analytics separate retries, helpers and maintenance from the main re
       return {
         resumed: false,
         async prompt() {
-          options.onEvent(usage('failed'));
+          options.onEvent(usage('failed', Boolean(options.parentRunId)));
           options.onEvent({ type: 'retry', attempt: 1, attempts: 2, model: 'private-canary' });
-          options.onEvent(usage('succeeded'));
-          options.onEvent(usage('succeeded'));
+          options.onEvent(usage('succeeded', Boolean(options.parentRunId)));
+          options.onEvent(usage('succeeded', Boolean(options.parentRunId)));
           for (const operation of ['compaction', 'cache_warm', 'auxiliary'])
             options.onEvent({
               type: 'provider_usage',
