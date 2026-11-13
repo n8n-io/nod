@@ -132,6 +132,8 @@ The model judges usefulness. Code checks source versions, tool access, owner con
 | [PRISM, 2026](https://arxiv.org/abs/2602.01532)                                                                                                                   | Test the decision to interrupt separately from the quality of the prepared response.                               |
 | [PARE, 2026](https://arxiv.org/abs/2604.00842)                                                                                                                    | Test changing user state, failed tools, and repeated events. Re-read evidence before saving.                       |
 
+[Hermes cron pre-checks](https://hermes-agent.nousresearch.com/docs/user-guide/features/cron#skipping-the-agent-entirely-wakeagent) use code to skip model requests when state has not changed. Nod applies that pattern to its source ports and keeps its normal Trust checks.
+
 These are design applications of research. Health intervention results don't establish the value of an assistant nudge, and Nod uses no fixed psychological score or sender-ranking rule. See [Proactivity evidence](/how-it-works/proactivity-evidence/) for what the evals measure.
 
 ## Add a source

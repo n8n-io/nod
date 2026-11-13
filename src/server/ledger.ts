@@ -355,7 +355,8 @@ export function createLedger({
       reservedUsd: rows[0].reserved as number,
       reached:
         rows[0].spent + rows[0].reserved >= rows[0].maximum ||
-        (preparationDeclined?.month === rows[0].month.getTime() &&
+        (preparationDeclined !== undefined &&
+          preparationDeclined.month === rows[0].month.getTime() &&
           rows[0].spent + rows[0].reserved + preparationDeclined.maximumUsd > rows[0].maximum),
     };
   }
@@ -413,13 +414,15 @@ export function createLedger({
   }
 
   async function releasePreparation(id: string) {
-    await pool.query(
-      `DELETE FROM preparation_reservations r WHERE r.owner_id=$1 AND r.id=$2
+    await pool
+      .query(
+        `DELETE FROM preparation_reservations r WHERE r.owner_id=$1 AND r.id=$2
         AND r.maximum_usd<=COALESCE((SELECT sum(COALESCE(m.cost_usd,(m.details->>'estimateUsd')::float8,0))
           FROM model_usage m WHERE m.owner_id=$1 AND m.details->>'preparationId'=$2::text
           AND m.created_at>=r.month),0)+1e-12`,
-      [ownerId, id],
-    );
+        [ownerId, id],
+      )
+      .catch((error) => logFailure('preparation_reservation_release', error));
   }
 
   async function withPreparation<T>(id: string, run: () => Promise<T>): Promise<T> {

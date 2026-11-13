@@ -8128,6 +8128,7 @@ test(
                     pages.push(query.cursor);
                     const page = Number(query.cursor ?? 0);
                     return {
+                      checkedAt: new Date().toISOString(),
                       records: [
                         {
                           id: `fixture-page-${page}`,
@@ -8153,14 +8154,17 @@ test(
                   'UPDATE proactive_sources SET claimed_turn=$3 WHERE owner_id=$1 AND source_id=$2',
                   [ownerId, sourceId, id],
                 );
-                const context = await paged.context({ turnId: id, threadId: currentThread });
-                assert.ok(context?.screen);
-                const result = await context.screen!({}, new AbortController().signal);
-                assert.ok(Array.isArray(result));
-                assert.equal(result.length, 4);
-                assert.deepEqual(pages, [undefined, '1', '2', '3']);
-                assert.match(JSON.stringify(result), /needs_owner_choice/);
-                await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [id]);
+                try {
+                  const context = await paged.context({ turnId: id, threadId: currentThread });
+                  assert.ok(context?.screen);
+                  const result = await context.screen!({}, new AbortController().signal);
+                  assert.ok(Array.isArray(result));
+                  assert.equal(result.length, 4);
+                  assert.deepEqual(pages, [undefined, '1', '2', '3']);
+                  assert.match(JSON.stringify(result), /needs_owner_choice/);
+                } finally {
+                  await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [id]);
+                }
               },
             );
             await t.test(
@@ -8254,12 +8258,15 @@ test(
                   });
                   assert.equal((await ledger.preparationLimit()).reached, true);
                   await ledger.reserve(100);
-                  const gate = Promise.withResolvers<void>();
+                  let releaseLate!: () => void;
+                  const gate = new Promise<void>((resolve) => {
+                    releaseLate = resolve;
+                  });
                   let pending!: Promise<void>;
                   await ledger.withPreparation(lateScope, async () => {
                     const settle = await ledger.reserve(0.8);
                     pending = (async () => {
-                      await gate.promise;
+                      await gate;
                       await assert.rejects(ledger.reserve(0.01), /has stopped/);
                       await settle(0.2);
                       await ledger
@@ -8282,7 +8289,7 @@ test(
                   await ledger.withPreparation(randomUUID(), async () => {
                     await assert.rejects(ledger.reserve(0.2), /preparation allowance/);
                   });
-                  gate.resolve();
+                  releaseLate();
                   await pending;
                   const final = await ledger.preparationLimit();
                   assert.ok(Math.abs(final.spentUsd - 0.3) < 1e-12);

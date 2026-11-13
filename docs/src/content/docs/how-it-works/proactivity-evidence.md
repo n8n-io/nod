@@ -9,7 +9,7 @@ Nod uses controlled evals to test useful preparation and appropriate silence. Re
 
 ## What the evals test
 
-Each attempt uses the real server, runtime, selected model, Trust checks, and PostgreSQL storage. Sources and owner actions are synthetic. No eval uses a connected account or a real recipient.
+Each attempt uses the real server, runtime, production model selection, Trust checks, and PostgreSQL storage. Sources and owner actions are synthetic. No eval uses a connected account or a real recipient.
 
 ```mermaid
 flowchart TD
@@ -38,6 +38,14 @@ A source with no notification request or deadline can produce private work for a
 Integration tests cover the execution limits that model evals cannot establish reliably: forbidden writes, owner isolation, stale evidence, cancellation, atomic delivery, and connector failures.
 
 See [Capability evals](/contribute/evals/#stress-proactive-work) for commands. Live-model evals run manually against synthetic fixtures.
+
+## Compare the change gate
+
+Keep automatic preparation on in both versions. Otherwise an opt-out can look like a cost improvement. Run both code revisions with the same source fixtures, owner rules, selected model, and judge. The candidate uses the production small-observer route. Tasks still use the selected model.
+
+Measure idle checks separately from useful-work cases. Include repeated events, later pages, outages, dismissal, snooze, changed goals, and hostile source data. Report missed important work with cost. A cheap run that misses needed work is a failure.
+
+Reserve separate cases for validation after a design change. Keep failed attempts and infrastructure failures in the report. Repeat infrastructure failures without deleting their costs. Store raw traces outside the repository.
 
 ## Compare fairly
 
