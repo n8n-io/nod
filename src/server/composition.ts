@@ -1782,6 +1782,7 @@ async function initializeApplication(
         ),
       spendingLimit: ledger.reachedLimit,
       checkIn: ledger.checkIn,
+      scheduleCache: personal.scheduleCache,
       skipTurn: async (sourceId) =>
         sourceId.startsWith('proactivity:') && !(await proactivity.canRun()),
       accountProfile,

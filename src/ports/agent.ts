@@ -119,6 +119,7 @@ export interface RuntimeContext {
   prompt: string;
   audioCaption?: string;
   background?: boolean;
+  scheduleCache?: 'short' | 'long';
   channel?: string;
   runtimeHost?: 'desktop' | 'server';
   timeZone?: string;
@@ -345,6 +346,7 @@ export interface AgentSessionOptions extends ExecutionScope {
   restricted?: boolean;
   ephemeral?: boolean;
   restartable?: boolean;
+  scheduleCache?: 'short' | 'long';
   keepWarm?(): Promise<boolean>;
   systemPrompt: string;
   ownerContext?: string;

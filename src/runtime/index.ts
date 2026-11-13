@@ -30,6 +30,7 @@ import {
   compactSystemPrompt,
   firstInstruction,
   observerInstruction,
+  scheduledInstruction,
   ownerContext,
   steeredInstruction,
   systemPrompt,
@@ -991,6 +992,7 @@ export function createAgentRuntime(dependencies: {
         ...execution,
         automatic: !context.currentMessageId,
         ...(context.proactivity ? { restricted: true, restartable: !context.resumed } : {}),
+        ...(context.scheduleCache ? { scheduleCache: context.scheduleCache } : {}),
         ...(sessionId === threadId && !context.proactivity && dependencies.keepWarm
           ? { keepWarm: () => dependencies.keepWarm!(threadId) }
           : {}),
@@ -1153,8 +1155,19 @@ export function createAgentRuntime(dependencies: {
             sourceReads,
           )
         : undefined;
+      const scheduled =
+        !context.proactivity && context.scheduleCache
+          ? scheduledInstruction(
+              requestContext,
+              resumed && !compact,
+              omitted,
+              currentUserTime(context.timeZone),
+              analysis,
+            )
+          : undefined;
       const fallback =
         observer?.text ??
+        scheduled?.text ??
         instruct(firstInstruction(requestContext, resumed && !compact, omitted, analysis));
       const audio = nativeAudio(context.attachments, fallback);
       const nativeContext = audio
@@ -1169,7 +1182,7 @@ export function createAgentRuntime(dependencies: {
           : fallback,
         images,
         audio,
-        observer?.stable,
+        audio ? undefined : (observer?.stable ?? scheduled?.stable),
       );
       await pendingReplies;
       signal.throwIfAborted();
