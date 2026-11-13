@@ -9243,7 +9243,8 @@ test(
         within: ledger.within,
         chunk: ledger.chunk,
         vault: vaultAccess.within,
-        steps: (turnIds) => ledger.steps(turnIds),
+        steps: (turnIds, page) => ledger.steps(turnIds, page),
+        vaultPage: vaultAccess.ascending,
       });
       activity.registerRoutes(app);
       const usage = (turnId: string, costUsd: number | null): AgentEvent => ({

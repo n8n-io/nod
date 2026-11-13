@@ -270,6 +270,27 @@ export async function createVaultAccess(
     };
   }
 
+  async function ascending(
+    start: Date | string | null,
+    end: Date | string | null,
+    after: { at: string; id: string } | null,
+    limit: number,
+  ) {
+    const { rows } = await pool.query<Row>(
+      `SELECT id,at,to_char(at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor,
+       action,origin,item_id,item_kind,amount_minor,currency,task,reason,basis,
+       EXISTS(SELECT 1 FROM messages m WHERE a.basis->>'kind'='message'
+         AND m.owner_id=$1 AND m.id=(a.basis->>'messageId')::uuid) AS said
+       FROM vault_activity a
+       WHERE owner_id=$1 AND ($2::timestamptz IS NULL OR at>=$2) AND ($3::timestamptz IS NULL OR at<$3)
+         AND ($4::timestamptz IS NULL OR (at,id)>($4,$5::uuid))
+       ORDER BY at,id LIMIT $6`,
+      [ownerId, start, end, after?.at ?? null, after?.id ?? null, limit],
+    );
+    const last = rows.at(-1);
+    return { entries: rows.map(present), next: last ? { at: last.cursor, id: last.id } : null };
+  }
+
   async function activity(query: {
     before?: unknown;
     origin?: unknown;
@@ -366,6 +387,7 @@ export async function createVaultAccess(
     allow,
     activity,
     within,
+    ascending,
     registerRoutes,
   };
 }

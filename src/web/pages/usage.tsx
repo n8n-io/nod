@@ -17,6 +17,7 @@ import {
   type TrustSource,
   type TrustStep,
   type TrustView,
+  trustStepPage as stepPage,
 } from '../../shared/trust';
 import { modelSource, type ModelsResponse } from '../../shared/models';
 import type {
@@ -371,7 +372,6 @@ function UsageSummary({
 
 type StepPage = { steps: TrustStep[]; total: number };
 const stepHeight = 26;
-const stepPage = 200;
 const stepOverscan = 30;
 
 function StepLine({ step, showCosts }: { step: TrustStep; showCosts: boolean }) {
@@ -415,7 +415,10 @@ function TrustLog({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean 
       frame = 0;
       const box = target.getBoundingClientRect();
       const view = scroller?.getBoundingClientRect() ?? { top: 0, bottom: window.innerHeight };
-      const start = Math.max(0, Math.floor((view.top - box.top) / stepHeight) - stepOverscan);
+      const start = Math.min(
+        total,
+        Math.max(0, Math.floor((view.top - box.top) / stepHeight) - stepOverscan),
+      );
       const end = Math.min(total, Math.ceil((view.bottom - box.top) / stepHeight) + stepOverscan);
       setRange((current) =>
         current[0] === start && current[1] === end ? current : [start, Math.max(start, end)],

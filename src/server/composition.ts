@@ -1738,7 +1738,8 @@ async function initializeApplication(
     within: ledger.within,
     chunk: ledger.chunk,
     vault: vaultAccess.within,
-    steps: (turnIds) => ledger.steps(turnIds),
+    steps: (turnIds, page) => ledger.steps(turnIds, page),
+    vaultPage: vaultAccess.ascending,
   });
   payments = await createPayments(pool, {
     ownerId,

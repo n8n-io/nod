@@ -25,6 +25,7 @@ const kinds: Record<TrustStep['kind'], string> = {
 };
 
 const chunkSize = 200;
+const pageRows = 5000;
 
 export interface ActivityLogEntry {
   at: string;
@@ -61,7 +62,16 @@ interface Sources {
     end: Date | string | null,
     limit: number | null,
   ): Promise<{ entries: VaultActivityEntry[]; complete: boolean }>;
-  steps(turnIds: string[]): Promise<Map<string, TrustStep[]>>;
+  vaultPage(
+    start: Date | string | null,
+    end: Date | string | null,
+    after: Cursor | null,
+    limit: number,
+  ): Promise<{ entries: VaultActivityEntry[]; next: Cursor | null }>;
+  steps(
+    turnIds: string[],
+    page: { offset: number; limit: number },
+  ): Promise<Map<string, TrustStep[]>>;
 }
 
 const clock = (timeZone: string) => {
@@ -137,7 +147,18 @@ export function createActivityLog(log: Sources) {
   async function* csv(span: Span) {
     const local = clock(span.timeZone);
     const time = (at: string) => local(at, true);
-    yield `﻿${line([`Time (${span.timeZone})`, 'Request', 'Source', 'Kind', 'Step', 'Detail', 'Allowed by', 'Cost (USD)'])}`;
+    const vaultLine = (use: VaultActivityEntry) =>
+      line([
+        time(use.at),
+        use.task,
+        'Vault',
+        'Vault',
+        vaultActivityTitle(use, span.locale),
+        '',
+        vaultReason(use),
+        '',
+      ]);
+    yield `\ufeff${line([`Time (${span.timeZone})`, 'Request', 'Source', 'Kind', 'Step', 'Detail', 'Allowed by', 'Cost (USD)'])}`;
     let after: Cursor | null = null;
     let from: Date | string | null = span.start;
     for (;;) {
@@ -148,48 +169,89 @@ export function createActivityLog(log: Sources) {
       );
       const last = entries.length < chunkSize || !next;
       const until = last ? span.end : next.at;
-      const uses = span.session ? [] : (await log.vault(from, until, null)).entries;
-      const steps = entries.length
-        ? await log.steps(entries.map((entry) => entry.id))
-        : new Map<string, TrustStep[]>();
-      const items = [
-        ...entries.map((entry) => ({ at: entry.at, entry })),
-        ...uses.map((use) => ({ at: use.at, use })),
-      ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-      let out = '';
-      for (const item of items) {
-        if ('use' in item) {
-          const { use } = item;
-          out += line([
-            time(use.at),
-            use.task,
-            'Vault',
-            'Vault',
-            vaultActivityTitle(use, span.locale),
-            '',
-            vaultReason(use),
-            '',
-          ]);
-          continue;
+      const pending: VaultActivityEntry[] = [];
+      let vaultAfter: Cursor | null = null;
+      let vaultDone = Boolean(span.session);
+      async function* vaultBefore(before: string | null) {
+        for (;;) {
+          if (!pending.length && !vaultDone) {
+            const page = await log.vaultPage(from, until, vaultAfter, pageRows);
+            pending.push(...page.entries);
+            vaultAfter = page.next;
+            vaultDone = page.entries.length < pageRows;
+          }
+          let out = '';
+          while (
+            pending.length &&
+            (before === null || Date.parse(pending[0]!.at) < Date.parse(before))
+          )
+            out += vaultLine(pending.shift()!);
+          if (out) yield out;
+          if (pending.length || vaultDone) return;
         }
-        const { entry } = item;
-        const base = [entry.title, sources[entry.source]];
-        const list = steps.get(entry.id) ?? [];
-        if (!list.length)
-          out += line([time(entry.at), ...base, '', '', '', '', entry.costUsd?.toFixed(6)]);
-        for (const step of list)
-          out += line([
-            time(step.at),
-            ...base,
-            kinds[step.kind],
-            `${step.title}${step.failed ? ' (failed)' : ''}`,
-            step.detail ?? '',
-            step.because ? becauseText(step.because) : '',
-            step.costUsd?.toFixed(6),
-          ]);
-        if (entry.error) out += line([time(entry.at), ...base, 'Error', entry.error, '', '', '']);
+      }
+      const base = (entry: TrustEntry) => [entry.title, sources[entry.source]];
+      const close = (entry: TrustEntry) =>
+        entry.error ? line([time(entry.at), ...base(entry), 'Error', entry.error, '', '', '']) : '';
+      const index = new Map(entries.map((entry, position) => [entry.id, position]));
+      const ids = entries.map((entry) => entry.id);
+      let position = 0;
+      let open: TrustEntry | null = null;
+      for (let offset = 0; ids.length; offset += pageRows) {
+        const page = await log.steps(ids, { offset, limit: pageRows });
+        let count = 0;
+        let out = '';
+        for (const [turnId, list] of page) {
+          count += list.length;
+          const at = index.get(turnId)!;
+          if (open && open.id !== turnId) {
+            out += close(open);
+            open = null;
+          }
+          while (!open && position <= at) {
+            const entry = entries[position]!;
+            if (out) yield out;
+            out = '';
+            yield* vaultBefore(entry.at);
+            if (position < at) {
+              out += line([
+                time(entry.at),
+                ...base(entry),
+                '',
+                '',
+                '',
+                '',
+                entry.costUsd?.toFixed(6),
+              ]);
+              out += close(entry);
+            } else open = entry;
+            position++;
+          }
+          for (const step of list)
+            out += line([
+              time(step.at),
+              ...base(open!),
+              kinds[step.kind],
+              `${step.title}${step.failed ? ' (failed)' : ''}`,
+              step.detail ?? '',
+              step.because ? becauseText(step.because) : '',
+              step.costUsd?.toFixed(6),
+            ]);
+        }
+        if (out) yield out;
+        if (count < pageRows) break;
+      }
+      let out = open ? close(open) : '';
+      for (; position < entries.length; position++) {
+        const entry = entries[position]!;
+        if (out) yield out;
+        out = '';
+        yield* vaultBefore(entry.at);
+        out += line([time(entry.at), ...base(entry), '', '', '', '', entry.costUsd?.toFixed(6)]);
+        out += close(entry);
       }
       if (out) yield out;
+      yield* vaultBefore(null);
       if (last) return;
       after = next;
       from = until;

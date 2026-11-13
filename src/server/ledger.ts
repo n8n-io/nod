@@ -16,6 +16,7 @@ import type {
   TrustStep,
   TrustView,
 } from '../shared/trust.ts';
+import { trustStepPage as stepPage } from '../shared/trust.ts';
 import { becauseOf, type TrustBasis } from './trust-basis.ts';
 import { recordedAction, toolTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
@@ -54,7 +55,6 @@ const zone = `COALESCE((SELECT time_zone FROM preferences WHERE owner_id=$1),'UT
 const monthStart = `(date_trunc('month', now() AT TIME ZONE ${zone}) AT TIME ZONE ${zone})`;
 const spentThisMonth = `COALESCE((SELECT sum(cost_usd::numeric) FROM model_usage WHERE owner_id=$1 AND created_at>=${monthStart}),0)::float8`;
 const pageSize = 30;
-const stepPage = 200;
 const planUsage = `(cost_usd IS NULL AND (details->>'estimateUsd')::float8>0)`;
 const unpricedUsage = `(details->>'status'='succeeded' AND COALESCE(cost_usd,(details->>'estimateUsd')::float8,0)=0)`;
 const cost = (value: number | null | undefined) =>
@@ -706,7 +706,7 @@ export function createLedger({
 
   async function steps(turnIds: string[], page?: { offset: number; limit: number }) {
     const { rows } = await pool.query(
-      `SELECT * FROM (${stepUnion}) s ORDER BY s.at,s.id OFFSET $3 LIMIT $4`,
+      `SELECT * FROM (${stepUnion}) s ORDER BY array_position($2::uuid[],s.turn_id),s.at,s.id OFFSET $3 LIMIT $4`,
       [ownerId, turnIds, page?.offset ?? 0, page ? page.limit : null],
     );
     const grouped = new Map<string, TrustStep[]>();

@@ -16,6 +16,8 @@ export interface TrustAction {
   read?: true;
 }
 
+export const trustStepPage = 200;
+
 export interface TrustStep {
   at: string;
   kind: 'model' | 'action' | 'tool' | 'note' | 'reply';
