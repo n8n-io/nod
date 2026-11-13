@@ -10851,6 +10851,43 @@ test('proactive readers use fixed GET paths, preserve pages, and check exact sou
   );
   assert.equal(exact.records.find((record) => record.id === 'large')?.error, 'unavailable');
   assert.equal(exact.records.find((record) => record.id === 'good')?.available, true);
+  for (const status of [429, 503]) {
+    let entered!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let activeSignal: AbortSignal | undefined;
+    const stop = new AbortController();
+    const interrupted = {
+      proxyExecute: async (
+        input: Parameters<Composio['tools']['proxyExecute']>[0],
+        options?: { signal?: AbortSignal },
+      ) => {
+        if (input.endpoint.endsWith('/bad')) {
+          await pending;
+          return { status, data: {} };
+        }
+        activeSignal = options?.signal;
+        entered();
+        return new Promise<never>(() => {});
+      },
+    } as unknown as Pick<Composio['tools'], 'proxyExecute'>;
+    try {
+      await assert.rejects(
+        readActivity(
+          interrupted,
+          'gmail',
+          'fixture-account',
+          { ids: ['bad', 'waiting'] },
+          stop.signal,
+        ),
+        (error: Error & { status?: number }) => error.status === status,
+      );
+      assert.equal(activeSignal?.aborted, true);
+    } finally {
+      stop.abort();
+    }
+  }
   const slow = {
     proxyExecute: async (input: Parameters<Composio['tools']['proxyExecute']>[0]) => {
       if (input.endpoint.endsWith('/threads'))

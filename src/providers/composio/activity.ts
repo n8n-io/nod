@@ -117,6 +117,7 @@ function reader(client: Client, accountId: string, input: Query, signal: AbortSi
     load: (id: string, stop: AbortSignal) => Promise<ObservationRecord>,
   ) => {
     const records: ObservationRecord[] = new Array(values.length);
+    const cancellation = new AbortController();
     let index = 0;
     await Promise.all(
       Array.from({ length: Math.min(4, values.length) }, async () => {
@@ -131,12 +132,13 @@ function reader(client: Client, accountId: string, input: Query, signal: AbortSi
           try {
             records[current] = await load(
               values[current],
-              AbortSignal.any([signal, deadline.signal]),
+              AbortSignal.any([signal, cancellation.signal, deadline.signal]),
             );
           } catch (error) {
             signal.throwIfAborted();
             const status = (error as { status?: number } | undefined)?.status;
             if (status === 429 || (status !== undefined && status >= 500 && status <= 599)) {
+              cancellation.abort(error);
               index = values.length;
               throw error;
             }
