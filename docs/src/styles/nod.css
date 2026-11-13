@@ -681,8 +681,12 @@ body.lp {
   transform: translate(2px, -2px);
 }
 @media (prefers-reduced-motion: reduce) {
+  .lp-labs-link,
   .lp-labs-link-arrow {
     transition: none;
+  }
+  .lp-labs-link:hover .lp-labs-link-arrow {
+    transform: none;
   }
 }
 @media (max-width: 600px) {
