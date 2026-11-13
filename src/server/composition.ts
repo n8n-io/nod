@@ -393,6 +393,7 @@ export function createDefaultAdapters(
     traces,
   });
   const decisions = createDecisionModel({
+    reserve: (maximumUsd) => models.reserve(maximumUsd),
     configured: () => {
       if (env.TYPESAFE_API_KEY?.trim()) return true;
       if (!models.configured) return false;
@@ -424,6 +425,7 @@ export function createDefaultAdapters(
     .parse(env.NOD_TRUST_MODEL ?? 'selected');
   const decisionCatalog = createOpenRouterDecisionCatalog();
   const trustDecisions = createDecisionModel({
+    reserve: (maximumUsd) => models.reserve(maximumUsd),
     configured: () =>
       Boolean(env.TYPESAFE_API_KEY?.trim()) ||
       models.hasApiKey('openrouter') ||
@@ -470,7 +472,15 @@ export function createDefaultAdapters(
     },
     models,
     agent: createPiAgent({
-      resolve: () => models.resolve(),
+      resolve: async (session) => {
+        if (!session.restricted) return models.resolve();
+        const access = await models.resolveClassification();
+        if (!access)
+          throw new Error(
+            'Automatic preparation needs a small model on your selected connection. Open Settings > Models and reload its models or choose another connection.',
+          );
+        return access;
+      },
       provider,
       model,
       sessionRoot: join(dataRoot, 'sessions'),
@@ -808,6 +818,7 @@ async function initializeApplication(
     telemetry: adapters.telemetry,
   });
   await ledger.initialize();
+  adapters.models?.setRequestBudget?.(ledger.reserve);
   const { computer, workspace } = adapters;
   const curator = ledger.curator(memoryCurator);
   const taskClassification = createTaskClassification({
@@ -1103,8 +1114,18 @@ async function initializeApplication(
   });
   const integrations = await createIntegrations(pool, {
     localFiles,
-    mailCheck,
-    paused: async () => (await speechPreferences.get()).proactivePaused,
+    mailCheck: async (...args) => {
+      if (
+        (adapters.models && !adapters.models.hasClassificationModel()) ||
+        (await ledger.preparationLimit()).reached
+      )
+        return args[0].map(() => undefined);
+      return ledger.withPreparation(randomUUID(), () => mailCheck(...args));
+    },
+    paused: async () =>
+      (await speechPreferences.get()).proactivePaused ||
+      Boolean(adapters.models && !adapters.models.hasClassificationModel()) ||
+      (await ledger.preparationLimit()).reached,
     analytics: captureAnalytics,
     analyticsConsent,
     admission,
@@ -1773,8 +1794,12 @@ async function initializeApplication(
     pool,
     ownerId,
     analytics: captureAnalytics,
-    modelAvailable: () =>
-      adapters.models?.automaticRequestsAllowed() ?? Promise.resolve(adapters.model.configured),
+    modelAvailable: async () =>
+      !(await ledger.preparationLimit()).reached &&
+      (adapters.models
+        ? adapters.models.hasClassificationModel() &&
+          (await adapters.models.automaticRequestsAllowed())
+        : adapters.model.configured),
     redact: createTextRedactor(secrets),
     sources: (client) => observations.sources(client),
     read: async (turn, input, signal) => {
@@ -1812,7 +1837,6 @@ async function initializeApplication(
       await ledger.action(turn.turnId, 'NOD_read_source', verdict.basis);
       return result;
     },
-    curator,
   });
   await proactivity.initialize();
   privateReady = true;
@@ -1915,16 +1939,29 @@ async function initializeApplication(
       bindVerificationQuestion: chatVerification.bindQuestion,
       reactToMessage: reactions.react,
       proactivity: proactivity.context,
-      runTurn: (context) =>
-        ledger.withTurn(
-          context.turnId,
-          () =>
-            runtime
-              .runTurn({ ...context, runtimeHost: desktopMode ? 'desktop' : 'server' })
-              .finally(() => proactivity.release(context.turnId)),
-          Boolean(context.spendingLimitReached),
-          !context.currentMessageId,
-        ),
+      runTurn: async (context) => {
+        const automaticWork =
+          Boolean(context.proactivity) ||
+          Boolean(
+            (
+              await pool.query(
+                'SELECT 1 FROM tasks WHERE owner_id=$1 AND session_id=$2 AND activity_key IS NOT NULL',
+                [ownerId, context.sessionId],
+              )
+            ).rowCount,
+          );
+        const run = () =>
+          ledger.withTurn(
+            context.turnId,
+            () =>
+              runtime
+                .runTurn({ ...context, runtimeHost: desktopMode ? 'desktop' : 'server' })
+                .finally(() => proactivity.release(context.turnId)),
+            Boolean(context.spendingLimitReached),
+            !context.currentMessageId,
+          );
+        return automaticWork ? ledger.withPreparation(context.turnId, run) : run();
+      },
       spendingLimit: ledger.reachedLimit,
       checkIn: ledger.checkIn,
       scheduleCache: personal.scheduleCache,

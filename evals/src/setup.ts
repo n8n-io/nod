@@ -25,6 +25,7 @@ export async function prepare(stack: Stack, world: World, timeZone: string) {
   await call(stack, 'PATCH', '/api/preferences', {
     timeZone,
     quietHoursEnabled: false,
+    proactivePaused: false,
     notificationRule: world.notificationRule ?? '',
     ...(world.rules ? { rules: world.rules } : {}),
   });

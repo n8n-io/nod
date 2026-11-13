@@ -82,6 +82,18 @@ Only paid usage with a known price counts toward the limit. See [How each model 
 
 Switching to a ChatGPT plan doesn't remove an existing monthly limit or its recorded API spending. If that limit is already reached, schedules, tasks and background work stay paused, and Nod answers your messages only to change the limit. Tell Nod to raise or remove it, or select an API model to review it in **Usage**.
 
+## Automatic preparation allowance
+
+Automatic preparation has a separate $5 monthly allowance. It starts off for new profiles. Turn it on in **Settings → Notifications**.
+
+In **Usage**, select the preparation allowance to change it. You can also say "Set my preparation allowance to $3". The minimum is $1.
+
+The allowance covers email privacy checks, source reviews, the small observer, and tasks Nod starts from those changes. Plan usage counts at its API-price estimate. Your chat requests, schedules, and tasks keep their normal limits.
+
+Nod reserves an estimated maximum before each model request. Parallel requests share the same allowance. A request that cannot fit does not start. Usage shows held funds when the final cost is not yet recorded. An unknown model price blocks automatic preparation. Automatic speech generation waits for a request in chat.
+
+Conservative bounds can pause preparation before its recorded spending reaches the allowance. Preparation can continue next month, or after you raise the allowance. Your normal monthly limit and task check-ins still apply.
+
 ## Task check-ins
 
 A task checks in with you when its spending since your last message to it passes the check-in amount, $5 by default. Nod stops before its next step. It states the cost and what continuing would do, then asks whether to keep going. It includes a completed result only when that helps your decision and you can inspect the result.

@@ -1187,6 +1187,7 @@ export async function createPiModelRuntime(
     let status: number | undefined;
     let transportCause: string | undefined;
     let completeRequest: ((error?: string) => Promise<void>) | undefined;
+    let settleBudget: ((spentUsd: number | null) => Promise<void>) | undefined;
     const guardedFetch =
       access.provider === 'compatible' ||
       access.provider === 'radius' ||
@@ -1369,6 +1370,19 @@ export async function createPiModelRuntime(
         const prepared = audio?.active
           ? await audio.payload(body, options?.signal ?? AbortSignal.timeout(120000))
           : body;
+        const prices = target.cost;
+        const maximumUsd =
+          prices &&
+          [prices.input, prices.output, prices.cacheRead, prices.cacheWrite].every(
+            Number.isFinite,
+          ) &&
+          Math.max(prices.input, prices.output, prices.cacheRead, prices.cacheWrite) > 0
+            ? (Buffer.byteLength(JSON.stringify(prepared)) *
+                Math.max(prices.input * 2, prices.cacheWrite, prices.cacheRead) +
+                output * prices.output) /
+              1_000_000
+            : null;
+        settleBudget = await access.reserve?.(maximumUsd);
         phase = 'payload';
         return prepared;
       },
@@ -1402,6 +1416,7 @@ export async function createPiModelRuntime(
         }
         if (event.type === 'done' || event.type === 'error') {
           const message = event.type === 'done' ? event.message : event.error;
+          await settleBudget?.(piUsageMetrics(message.usage).costUsd ?? null);
           requestFacts.set(message, {
             requestPhase: phase,
           });

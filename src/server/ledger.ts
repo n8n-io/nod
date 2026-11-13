@@ -30,6 +30,7 @@ export const spendingLimitText = (monthlyUsd: number) =>
   `This month’s $${Number.isInteger(monthlyUsd) ? monthlyUsd : monthlyUsd.toFixed(2)} spending limit is reached.`;
 const defaultTaskUsd = 5;
 const newOwnerMonthlyUsd = 200;
+const defaultPreparationUsd = 5;
 const usd = z
   .number()
   .min(1)
@@ -47,7 +48,11 @@ export const activityRange = z
   .strict();
 export type ActivityRange = z.infer<typeof activityRange>;
 export const limitsInput = z
-  .object({ monthlyUsd: usd.optional(), taskUsd: usd.optional() })
+  .object({
+    monthlyUsd: usd.optional(),
+    taskUsd: usd.optional(),
+    preparationUsd: usd.unwrap().optional(),
+  })
   .strict()
   .refine((value) => Object.keys(value).length > 0, 'Choose a limit to change.');
 
@@ -81,9 +86,7 @@ function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'
   if (id.startsWith('proactivity:'))
     return {
       source: 'check',
-      title: row.screened
-        ? 'Checked sources, nothing new to prepare'
-        : 'Checked sources and prepared work',
+      title: row.screened ? 'Checked source changes' : 'Assessed source changes',
     };
   if (id.startsWith('activity-check:'))
     return { source: 'check', title: 'Checked a connected app' };
@@ -237,6 +240,8 @@ export function createLedger({
 }) {
   const activeTurn = new AsyncLocalStorage<{ id: string; automatic: boolean }>();
   const pastLimit = new AsyncLocalStorage<true>();
+  const preparation = new AsyncLocalStorage<{ id: string; closed?: boolean }>();
+  let preparationDeclined: { month: number; maximumUsd: number } | undefined;
   const activeExecution = new AsyncLocalStorage<
     ExecutionScope & Pick<AgentSessionOptions, 'onEvent'>
   >();
@@ -267,7 +272,14 @@ export function createLedger({
       owner_id text PRIMARY KEY, monthly_usd double precision CHECK (monthly_usd > 0)
     );
     ALTER TABLE spending_limits ADD COLUMN IF NOT EXISTS task_usd double precision
-      DEFAULT ${defaultTaskUsd} CHECK (task_usd > 0);`);
+      DEFAULT ${defaultTaskUsd} CHECK (task_usd > 0);
+    ALTER TABLE spending_limits ADD COLUMN IF NOT EXISTS preparation_usd double precision
+      DEFAULT ${defaultPreparationUsd} CHECK (preparation_usd > 0);
+    CREATE TABLE IF NOT EXISTS preparation_reservations (
+      owner_id text NOT NULL, id uuid NOT NULL, month timestamptz NOT NULL,
+      maximum_usd double precision NOT NULL CHECK (maximum_usd >= 0),
+      PRIMARY KEY(owner_id,id,month)
+    );`);
   }
 
   function save(sql: string, values: unknown[]) {
@@ -296,6 +308,8 @@ export function createLedger({
     execution: ExecutionScope | null | undefined = activeExecution.getStore(),
   ) {
     const { id, costUsd, turnId, ...details } = usage;
+    if (preparation.getStore())
+      Object.assign(details, { preparation: true, preparationId: preparation.getStore()!.id });
     const attributedTurn =
       execution === null
         ? null
@@ -313,8 +327,10 @@ export function createLedger({
       JSON.stringify(details),
     ];
     const pending = pool.query(usageSql, values).then(
-      () => {
+      async () => {
         pendingUsage.delete(id);
+        const scope = preparation.getStore();
+        if (scope?.closed) await releasePreparation(scope.id);
       },
       (error) => logFailure('ledger_usage_failed', error, { turnId: attributedTurn }),
     );
@@ -323,6 +339,101 @@ export function createLedger({
     telemetry?.record({ ...usage, turnId: attributedTurn ?? undefined });
   }
 
+  async function preparationLimit(database: Pick<PoolClient, 'query'> = pool) {
+    const { rows } = await database.query(
+      `SELECT COALESCE((SELECT preparation_usd FROM spending_limits WHERE owner_id=$1),${defaultPreparationUsd})::float8 AS maximum, ${monthStart} AS month,
+        COALESCE((SELECT sum(COALESCE(cost_usd,(details->>'estimateUsd')::float8,0)) FROM model_usage
+          WHERE owner_id=$1 AND created_at>=${monthStart} AND details->>'preparation'='true'),0)::float8 AS spent,
+        COALESCE((SELECT sum(GREATEST(0,r.maximum_usd-COALESCE((SELECT sum(COALESCE(m.cost_usd,(m.details->>'estimateUsd')::float8,0))
+          FROM model_usage m WHERE m.owner_id=$1 AND m.details->>'preparationId'=r.id::text AND m.created_at>=r.month),0)))
+          FROM preparation_reservations r WHERE r.owner_id=$1 AND r.month=${monthStart}),0)::float8 AS reserved`,
+      [ownerId],
+    );
+    return {
+      monthlyUsd: rows[0].maximum as number,
+      spentUsd: rows[0].spent as number,
+      reservedUsd: rows[0].reserved as number,
+      reached:
+        rows[0].spent + rows[0].reserved >= rows[0].maximum ||
+        (preparationDeclined?.month === rows[0].month.getTime() &&
+          rows[0].spent + rows[0].reserved + preparationDeclined.maximumUsd > rows[0].maximum),
+    };
+  }
+
+  async function reserve(maximumUsd: number | null) {
+    const scope = preparation.getStore();
+    if (!scope) return async () => {};
+    if (scope.closed) throw new Error('This automatic preparation has stopped.');
+    if (maximumUsd === null || !Number.isFinite(maximumUsd) || maximumUsd < 0)
+      throw new Error('Automatic preparation stopped because this model has no cost estimate.');
+    await flushUsage();
+    let month: Date | undefined;
+    await transaction(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+        `preparation-budget:${ownerId}`,
+      ]);
+      const { rows } = await client.query(
+        `SELECT COALESCE((SELECT preparation_usd FROM spending_limits WHERE owner_id=$1),${defaultPreparationUsd})::float8 AS maximum,
+          ${monthStart} AS month,
+          (COALESCE((SELECT sum(COALESCE(m.cost_usd,(m.details->>'estimateUsd')::float8,0)) FROM model_usage m
+            WHERE m.owner_id=$1 AND m.created_at>=${monthStart} AND m.details->>'preparation'='true'
+              AND NOT EXISTS(SELECT 1 FROM preparation_reservations r WHERE r.owner_id=$1 AND r.id::text=m.details->>'preparationId' AND r.month=${monthStart})),0)
+          + COALESCE((SELECT sum(maximum_usd) FROM preparation_reservations WHERE owner_id=$1 AND month=${monthStart}),0))::float8 AS committed`,
+        [ownerId],
+      );
+      month = rows[0].month;
+      if (
+        rows[0].committed >= rows[0].maximum ||
+        rows[0].committed + maximumUsd > rows[0].maximum
+      ) {
+        preparationDeclined = { month: rows[0].month.getTime(), maximumUsd };
+        throw new Error(
+          `The next model request does not fit the $${rows[0].maximum} monthly preparation allowance. Change the preparation limit in Usage to continue.`,
+        );
+      }
+      preparationDeclined = undefined;
+      await client.query(
+        `INSERT INTO preparation_reservations(owner_id,id,month,maximum_usd) VALUES($1,$2,$3,$4)
+          ON CONFLICT(owner_id,id,month) DO UPDATE SET maximum_usd=preparation_reservations.maximum_usd+EXCLUDED.maximum_usd`,
+        [ownerId, scope.id, rows[0].month, maximumUsd],
+      );
+    }, pool);
+    let settled = false;
+    return async (spentUsd: number | null) => {
+      if (settled || spentUsd === null || !Number.isFinite(spentUsd) || spentUsd < 0) return;
+      settled = true;
+      await pool
+        .query(
+          'UPDATE preparation_reservations SET maximum_usd=GREATEST(0,maximum_usd+$4-$5) WHERE owner_id=$1 AND id=$2 AND month=$3',
+          [ownerId, scope.id, month, spentUsd, maximumUsd],
+        )
+        .catch((error) => logFailure('preparation_reservation_settle', error));
+      if (scope.closed) await releasePreparation(scope.id);
+    };
+  }
+
+  async function releasePreparation(id: string) {
+    await pool.query(
+      `DELETE FROM preparation_reservations r WHERE r.owner_id=$1 AND r.id=$2
+        AND r.maximum_usd<=COALESCE((SELECT sum(COALESCE(m.cost_usd,(m.details->>'estimateUsd')::float8,0))
+          FROM model_usage m WHERE m.owner_id=$1 AND m.details->>'preparationId'=$2::text
+          AND m.created_at>=r.month),0)+1e-12`,
+      [ownerId, id],
+    );
+  }
+
+  async function withPreparation<T>(id: string, run: () => Promise<T>): Promise<T> {
+    const scope = { id, closed: false };
+    return preparation.run(scope, async () => {
+      try {
+        return await run();
+      } finally {
+        scope.closed = true;
+        await flushUsage();
+        await releasePreparation(id);
+      }
+    });
+  }
   function agent(base: Agent): Agent {
     return {
       ...base,
@@ -485,6 +596,10 @@ export function createLedger({
         return base.defaultVoice;
       },
       async synthesize(text, signal, onUsage, options) {
+        if (preparation.getStore())
+          throw new Error(
+            'Automatic preparation cannot reserve the cost of speech generation. Ask for the audio in chat.',
+          );
         if (await limitReached()) throw new Error(spendingLimitReached);
         try {
           return await base.synthesize(
@@ -903,6 +1018,7 @@ export function createLedger({
         outside: [...outside].map(([kind, costUsd]) => ({ kind, costUsd })),
       },
       ...current,
+      preparation: await preparationLimit(),
       ...page,
     };
   }
@@ -975,13 +1091,14 @@ export function createLedger({
       );
       const before = (
         await client.query(
-          'SELECT monthly_usd,task_usd FROM spending_limits WHERE owner_id=$1 FOR UPDATE',
+          'SELECT monthly_usd,task_usd,preparation_usd FROM spending_limits WHERE owner_id=$1 FOR UPDATE',
           [ownerId],
         )
       ).rows[0];
       for (const [key, column] of [
         ['monthlyUsd', 'monthly_usd'],
         ['taskUsd', 'task_usd'],
+        ['preparationUsd', 'preparation_usd'],
       ] as const)
         if (body[key] !== undefined)
           await client.query(`UPDATE spending_limits SET ${column}=$2 WHERE owner_id=$1`, [
@@ -989,18 +1106,20 @@ export function createLedger({
             body[key],
           ]);
       const after = (
-        await client.query('SELECT monthly_usd,task_usd FROM spending_limits WHERE owner_id=$1', [
-          ownerId,
-        ])
+        await client.query(
+          'SELECT monthly_usd,task_usd,preparation_usd FROM spending_limits WHERE owner_id=$1',
+          [ownerId],
+        )
       ).rows[0];
       await client.query(
-        `DELETE FROM spending_limits WHERE owner_id=$1 AND monthly_usd IS NULL AND task_usd=${defaultTaskUsd}`,
+        `DELETE FROM spending_limits WHERE owner_id=$1 AND monthly_usd IS NULL AND task_usd=${defaultTaskUsd} AND preparation_usd=${defaultPreparationUsd}`,
         [ownerId],
       );
       afterCommit(client, () =>
         captureSettingChanges(capture, actor, before, after, {
           monthly_usd: 'monthly_spending_limit',
           task_usd: 'task_spending_limit',
+          preparation_usd: 'preparation_spending_limit',
         }),
       );
     };
@@ -1014,6 +1133,9 @@ export function createLedger({
 
   return {
     initialize,
+    reserve,
+    withPreparation,
+    preparationLimit,
     flush: flushUsage,
     agent,
     curator,

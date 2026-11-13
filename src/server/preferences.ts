@@ -33,7 +33,7 @@ export const defaultPreferences: Preferences = {
   quietHoursEnabled: true,
   quietStart: '22:00',
   quietEnd: '08:00',
-  proactivePaused: false,
+  proactivePaused: true,
 };
 type QuietHours = Pick<Preferences, 'quietHoursEnabled' | 'quietStart' | 'quietEnd' | 'timeZone'>;
 export function isQuietTime(preferences: QuietHours, now = new Date()) {

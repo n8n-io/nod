@@ -102,7 +102,6 @@ export function appToolArgs(tool: AppTool, args: Record<string, unknown>, connec
 }
 
 export const connectionSources = 'connections';
-const checkInterval = 30 * 60000;
 const fingerprint = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
@@ -212,7 +211,6 @@ export function createConnectionSources(options: {
           description: 'Read-only records from ' + source.service,
           revision: source.revision,
           readable: source.active,
-          pollIntervalMs: source.eventDriven ? undefined : checkInterval,
           changeToken: source.changeToken,
         })),
         ...accounts
@@ -226,7 +224,6 @@ export function createConnectionSources(options: {
             revision: fingerprint(account.binding),
             readable: true,
             tools: true,
-            pollIntervalMs: checkInterval,
           })),
       ];
     },

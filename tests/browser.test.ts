@@ -7577,7 +7577,7 @@ test('Quiet hours follow the clock preference and preserve canonical values', as
       window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
       window.HTMLElement.prototype.getClientRects = function() { return [{ top: 0, bottom: 40, left: 0, right: 640 }]; };
       let preferences = { quietHoursEnabled: true, quietStart: '22:00', quietEnd: '08:00',
-        locale: 'en-GB', timeZone: 'Europe/Lisbon', hourCycle: 'h23', speechReply: 'auto', speechVoice: null };
+        proactivePaused: true, locale: 'en-GB', timeZone: 'Europe/Lisbon', hourCycle: 'h23', speechReply: 'auto', speechVoice: null };
       globalThis.fetch = async (path, options = {}) => {
         if (path === '/api/preferences') {
           if (options.method === 'PATCH') preferences = { ...preferences, ...JSON.parse(options.body) };
@@ -7630,6 +7630,17 @@ test('Quiet hours follow the clock preference and preserve canonical values', as
           account, open: true, initialTab: 'General', openRequest: 0, onOpenChange() {},
         })));
         await settle();
+        const preparation = () => [...document.querySelectorAll('[role="switch"]')]
+          .find(element => document.getElementById(element.getAttribute('aria-labelledby'))?.textContent === 'Automatic preparation');
+        assert.equal(preparation().getAttribute('aria-checked'), 'false');
+        await click(preparation());
+        assert.equal(preferences.proactivePaused, true);
+        await save();
+        assert.equal(preferences.proactivePaused, false);
+        await click(preparation());
+        await click(button('Discard', document.querySelector('.settings-save-bar')));
+        assert.equal(preparation().getAttribute('aria-checked'), 'true');
+        assert.equal(preferences.proactivePaused, false);
         assert.equal(field('From hours')?.value, '22');
         await click(button('12-hour'));
         assert.equal(preferences.hourCycle, 'h12');

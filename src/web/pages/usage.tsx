@@ -72,7 +72,7 @@ function date(ms: number, format: DateFormat) {
   });
 }
 
-function saveLimits(body: { monthlyUsd: number | null }) {
+function saveLimits(body: { monthlyUsd?: number | null; preparationUsd?: number }) {
   return api('/api/trust/limit', { method: 'PUT', body: JSON.stringify(body) });
 }
 
@@ -225,19 +225,23 @@ function MonthlyLimit({
   view,
   resets,
   onSaved,
+  preparation = false,
 }: {
   view: TrustView;
+  preparation?: boolean;
   resets: string;
   onSaved(): void;
 }) {
-  const [draft, setDraft] = useState(String(view.limit?.monthlyUsd ?? ''));
+  const [draft, setDraft] = useState(
+    String(preparation ? (view.preparation?.monthlyUsd ?? 5) : (view.limit?.monthlyUsd ?? '')),
+  );
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   async function save(monthlyUsd: number | null) {
     setBusy(true);
     setError('');
     try {
-      await saveLimits({ monthlyUsd });
+      await saveLimits(preparation ? { preparationUsd: monthlyUsd! } : { monthlyUsd });
       onSaved();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -261,14 +265,18 @@ function MonthlyLimit({
           step={0.01}
           value={draft}
           autoFocus
-          aria-label="Monthly limit in US dollars"
+          aria-label={
+            preparation
+              ? 'Monthly preparation allowance in US dollars'
+              : 'Monthly limit in US dollars'
+          }
           onChange={(event) => setDraft(event.target.value)}
         />
       </label>
       <Button size="sm" type="submit" disabled={busy || !draft}>
         Save
       </Button>
-      {view.limit && (
+      {view.limit && !preparation && (
         <Button
           type="button"
           size="sm"
@@ -280,8 +288,13 @@ function MonthlyLimit({
         </Button>
       )}
       <small>
-        At the limit, new requests pause until {resets}.
-        {(view.month.planUsd > 0 || view.month.unpriced) && ' Only paid usage counts.'}
+        {preparation
+          ? 'At the allowance, automatic preparation pauses'
+          : 'At the limit, new requests pause'}{' '}
+        until {resets}.
+        {!preparation &&
+          (view.month.planUsd > 0 || view.month.unpriced) &&
+          ' Only paid usage counts.'}
       </small>
       {error && <Notice>{error}</Notice>}
     </form>
@@ -315,12 +328,37 @@ function UsageSummary({
       }}
     />
   );
+  const preparationLimit = view.preparation && (
+    <p className="usage-sentence">
+      Automatic preparation has used {money(view.preparation.spentUsd)} of{' '}
+      <StatementValue
+        text={money(view.preparation.monthlyUsd)}
+        label="Monthly preparation allowance"
+      >
+        {(close) => (
+          <MonthlyLimit
+            view={view}
+            resets={resets}
+            preparation
+            onSaved={() => {
+              close();
+              onSaved();
+            }}
+          />
+        )}
+      </StatementValue>{' '}
+      this month{view.preparation.reached ? ' and is paused' : ''}.
+      {Boolean(view.preparation.reservedUsd) &&
+        ` ${money(view.preparation.reservedUsd!)} is held for requests without a final cost.`}
+    </p>
+  );
   if (plan)
     return (
       <div className="usage-overview">
         <p className="statement-summary usage-sentence">
           Your usage comes from your <strong>{plan}</strong>.
         </p>
+        {preparationLimit}
         {limit?.reached && (
           <Notice kind="info">
             An existing API spending limit is pausing new requests. You can review it with an API
@@ -331,6 +369,7 @@ function UsageSummary({
     );
   return (
     <div className="usage-overview">
+      {preparationLimit}
       <p className="statement-summary usage-sentence">
         Your usage is{' '}
         <StatementValue

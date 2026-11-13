@@ -86,4 +86,5 @@ export interface TrustView extends TrustPage {
   };
   limit: { monthlyUsd: number; reached: boolean } | null;
   taskUsd: number | null;
+  preparation?: { monthlyUsd: number; spentUsd: number; reservedUsd?: number; reached: boolean };
 }

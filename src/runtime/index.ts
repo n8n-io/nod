@@ -583,21 +583,6 @@ export function createAgentRuntime(dependencies: {
     };
     try {
       signal.throwIfAborted();
-      if (dependencies.prepareMemory && !overBudget() && !context.spendingLimitReached) {
-        context.memoryBrief = await untilAborted(
-          dependencies.prepareMemory(
-            context,
-            { ...execution, onEvent: countUsage },
-            () => !stopped && !overBudget(),
-          ),
-          signal,
-        );
-        signal.throwIfAborted();
-        if (overBudget())
-          throw new Error(
-            `This work has used ${checkInUsed()}, past the ${dollars(context.checkIn!.budgetUsd)} check-in. Reply to keep going.`,
-          );
-      }
       const screenSources = () =>
         context.proactivity?.screen?.(
           {
@@ -626,6 +611,21 @@ export function createAgentRuntime(dependencies: {
         await context.emit('source_screened', '', { execution });
         completed = screened = true;
         return { status };
+      }
+      if (dependencies.prepareMemory && !overBudget() && !context.spendingLimitReached) {
+        context.memoryBrief = await untilAborted(
+          dependencies.prepareMemory(
+            context,
+            { ...execution, onEvent: countUsage },
+            () => !stopped && !overBudget(),
+          ),
+          signal,
+        );
+        signal.throwIfAborted();
+        if (overBudget())
+          throw new Error(
+            `This work has used ${checkInUsed()}, past the ${dollars(context.checkIn!.budgetUsd)} check-in. Reply to keep going.`,
+          );
       }
       await mkdir(context.workspacePath, { recursive: true, mode: 0o700 });
       const rootWorkspace = dependencies.workspace.open(context);

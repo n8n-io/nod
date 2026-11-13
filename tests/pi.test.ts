@@ -9170,3 +9170,59 @@ test('invalid tool calls stop before another model request and a valid repair re
       }
     });
 });
+
+test('preparation reserves model cost before dispatch and blocks a request without a price', async () => {
+  for (const priced of [true, false]) {
+    let calls = 0;
+    let reservations = 0;
+    const settlements: Array<number | null> = [];
+    const base = smallContextAccess('compatible', 'fixture-budget', 8192);
+    const access: ModelAccess = {
+      ...base,
+      definition: {
+        ...base.definition!,
+        spec: {
+          ...base.definition!.spec,
+          cost: priced
+            ? { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 2 }
+            : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        },
+      },
+      reserve: async (maximum) => {
+        reservations++;
+        assert.equal(calls, 0);
+        if (!priced) {
+          assert.equal(maximum, null);
+          throw new Error('Synthetic preparation price is unknown.');
+        }
+        assert.ok(maximum !== null && maximum > 0 && maximum < 0.02);
+        return async (spent) => {
+          settlements.push(spent);
+        };
+      },
+    };
+    const { runtime, model } = await createPiModelRuntime(access);
+    const result = await runtime.completeSimple(
+      model,
+      {
+        messages: [{ role: 'user', content: 'Synthetic budget check', timestamp: 1 }],
+      },
+      {
+        maxTokens: 100,
+        maxRetries: 0,
+        fetch: async () => {
+          calls++;
+          return Response.json(
+            { error: { message: 'Synthetic provider failure' } },
+            { status: 503 },
+          );
+        },
+      },
+    );
+    assert.equal(reservations, 1);
+    assert.equal(calls, priced ? 1 : 0);
+    assert.equal(result.stopReason, 'error');
+    assert.equal(settlements.length, priced ? 1 : 0);
+    if (!priced) assert.match(result.errorMessage!, /Synthetic preparation price is unknown/);
+  }
+});

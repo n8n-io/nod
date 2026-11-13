@@ -274,6 +274,7 @@ export function createModelService(options: {
     keyStore: options.keyStore,
   });
   let analytics: CaptureAnalytics | undefined;
+  let requestBudget: ModelAccess['reserve'];
   function connectionChanged(
     provider: ModelProvider,
     method: ModelMethod,
@@ -369,12 +370,18 @@ export function createModelService(options: {
     if (value) remember(value);
     return value;
   }
-  function requestAccess(row: ModelRecord): Pick<ModelAccess, 'read' | 'prepareRequest'> {
-    if (row.provider !== 'google') return { read: () => read(row.id) };
+  function requestAccess(
+    row: ModelRecord,
+  ): Pick<ModelAccess, 'read' | 'prepareRequest' | 'reserve'> {
+    const access = {
+      read: () => read(row.id),
+      reserve: async (maximumUsd: number | null) => requestBudget?.(maximumUsd) ?? (async () => {}),
+    };
+    if (row.provider !== 'google') return access;
     const tag = (value: ModelCredential | undefined) =>
       value && createHash('sha256').update(JSON.stringify(value)).digest('hex');
     return {
-      read: () => read(row.id),
+      ...access,
       async prepareRequest(modelId, automatic) {
         const credentialTag = tag(await read(row.id));
         const pauses = rows.find((item) => item.id === row.id)?.requestPauses;
@@ -1153,6 +1160,10 @@ export function createModelService(options: {
         ...requestAccess(row),
         needsReconnect: (credential) => needsReconnect(row.id, { models: row.models, credential }),
       };
+    },
+    reserve: async (maximumUsd: number | null) => requestBudget?.(maximumUsd) ?? (async () => {}),
+    setRequestBudget(reserve: NonNullable<ModelAccess['reserve']>) {
+      requestBudget = reserve;
     },
     async resolve(auxiliary = false): Promise<ModelAccess> {
       const selected = selection && { ...selection };

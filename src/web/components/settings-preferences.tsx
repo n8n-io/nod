@@ -26,7 +26,7 @@ import {
   usesTwelveHourClock,
 } from '../lib/date-format';
 
-const quietKeys = ['quietHoursEnabled', 'quietStart', 'quietEnd'] as const;
+const quietKeys = ['quietHoursEnabled', 'quietStart', 'quietEnd', 'proactivePaused'] as const;
 const clocks: Array<{ value: HourCycle; label: string }> = [
   { value: 'auto', label: 'Automatic' },
   { value: 'h12', label: '12-hour' },
@@ -326,6 +326,11 @@ export function QuietHours() {
       ? []
       : [
           {
+            label: 'Automatic preparation',
+            before: data.proactivePaused ? 'Off' : 'On',
+            after: draft.proactivePaused ? 'Off' : 'On',
+          },
+          {
             label: 'Quiet hours',
             before: data.quietHoursEnabled ? 'On' : 'Off',
             after: draft.quietHoursEnabled ? 'On' : 'Off',
@@ -399,6 +404,19 @@ export function QuietHours() {
     );
   return (
     <section className="account-region account-quiet-hours" aria-labelledby={`${id}-heading`}>
+      <div className="account-preference-row">
+        <span id={`${id}-preparation`}>Automatic preparation</span>
+        <Switch
+          checked={!draft.proactivePaused}
+          aria-labelledby={`${id}-preparation`}
+          disabled={busy}
+          onCheckedChange={(enabled) => setDraft({ ...draft, proactivePaused: !enabled })}
+        />
+      </div>
+      <p className="field-hint">
+        Prepare useful work from app changes. Spends from a $5 monthly allowance by default. Change
+        it in Usage.
+      </p>
       <div className="account-preference-row">
         <span id={`${id}-heading`}>Quiet hours</span>
         <Switch

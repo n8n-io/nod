@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { DecisionModel, DecisionQuestion } from '../ports/decisions.ts';
+import type { ModelAccess } from '../ports/models.ts';
 import type { OpenAIRegion } from '../shared/models.ts';
 import { openAIBaseUrl, openAIRequestError } from './openai/api.ts';
 import { ModelServiceError } from './model-error.ts';
@@ -149,6 +150,7 @@ export function createDecisionModel(options: {
   configured?: () => boolean;
   resolve(signal?: AbortSignal): Promise<DecisionConnection | undefined>;
   fetch?: typeof fetch;
+  reserve?: ModelAccess['reserve'];
 }): DecisionModel {
   const request = options.fetch ?? fetch;
   return {
@@ -208,6 +210,47 @@ export function createDecisionModel(options: {
       const started = performance.now();
       let usage: z.infer<typeof usageSchema> | undefined;
       let status: 'succeeded' | 'failed' | 'cancelled' = 'failed';
+      const requestBody = JSON.stringify({
+        model,
+        ...(connection.provider === 'openrouter' ? { provider: { allow_fallbacks: false } } : {}),
+        ...(connection.provider === 'openai'
+          ? {
+              input: JSON.stringify(input),
+              questions: questions.map((item, index) => ({
+                type: item.format === 'predicate' ? 'predicate' : 'choice',
+                name: item.name,
+                instructions: describe(item, index),
+                ...(item.format === 'predicate' ? {} : { choices: item.choices }),
+              })),
+            }
+          : {
+              state: input,
+              questions: Object.fromEntries(
+                questions.map((item, index) => [
+                  item.name,
+                  {
+                    type: item.format === 'predicate' ? 'noul' : 'choice',
+                    instructions: describe(item, index),
+                    ...(item.format === 'predicate'
+                      ? {}
+                      : {
+                          criteria: Object.fromEntries(
+                            item.choices.map(({ value, description }) => [
+                              String(value),
+                              description,
+                            ]),
+                          ),
+                        }),
+                  },
+                ]),
+              ),
+            }),
+      });
+      const settleBudget = await options.reserve?.(
+        priced
+          ? (Buffer.byteLength(requestBody) * Math.max(service.rate, 0.125)) / 1_000_000
+          : null,
+      );
       try {
         const url =
           connection.provider === 'openai'
@@ -221,44 +264,7 @@ export function createDecisionModel(options: {
             'content-type': 'application/json',
           },
           signal: AbortSignal.any([AbortSignal.timeout(45_000), ...(signal ? [signal] : [])]),
-          body: JSON.stringify({
-            model,
-            ...(connection.provider === 'openrouter'
-              ? { provider: { allow_fallbacks: false } }
-              : {}),
-            ...(connection.provider === 'openai'
-              ? {
-                  input: JSON.stringify(input),
-                  questions: questions.map((item, index) => ({
-                    type: item.format === 'predicate' ? 'predicate' : 'choice',
-                    name: item.name,
-                    instructions: describe(item, index),
-                    ...(item.format === 'predicate' ? {} : { choices: item.choices }),
-                  })),
-                }
-              : {
-                  state: input,
-                  questions: Object.fromEntries(
-                    questions.map((item, index) => [
-                      item.name,
-                      {
-                        type: item.format === 'predicate' ? 'noul' : 'choice',
-                        instructions: describe(item, index),
-                        ...(item.format === 'predicate'
-                          ? {}
-                          : {
-                              criteria: Object.fromEntries(
-                                item.choices.map(({ value, description }) => [
-                                  String(value),
-                                  description,
-                                ]),
-                              ),
-                            }),
-                      },
-                    ]),
-                  ),
-                }),
-          }),
+          body: requestBody,
         });
         if (!response.ok) {
           if (connection.provider === 'openai')
@@ -340,6 +346,15 @@ export function createDecisionModel(options: {
         const validCache = !usage || cacheRead + cacheWrite <= usage.input_tokens;
         const uncached =
           usage && validCache ? usage.input_tokens - cacheRead - cacheWrite : usage?.input_tokens;
+        await settleBudget?.(
+          usage
+            ? (usage.cost ??
+                (priced && validCache
+                  ? ((uncached ?? 0) * service.rate + cacheRead * 0.01 + cacheWrite * 0.125) /
+                    1_000_000
+                  : null))
+            : null,
+        );
         report?.({
           id,
           provider: connection.provider,

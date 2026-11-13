@@ -5,7 +5,11 @@ export type SettingActor = SettingChange['actor'];
 
 function state(setting: SettingChange['setting'], value: unknown): SettingChange['state'] {
   if (typeof value === 'boolean') return value ? 'on' : 'off';
-  if (setting === 'monthly_spending_limit' || setting === 'task_spending_limit')
+  if (
+    setting === 'monthly_spending_limit' ||
+    setting === 'task_spending_limit' ||
+    setting === 'preparation_spending_limit'
+  )
     return value === null ? 'off' : 'configured';
   if (value === null) return 'default';
   if (value === '') return 'cleared';

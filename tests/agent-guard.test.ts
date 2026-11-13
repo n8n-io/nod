@@ -643,6 +643,11 @@ test('a quiet source screen records its result without opening the agent', async
         screen: async () => true,
       },
     },
+    {
+      prepareMemory: async () => {
+        assert.fail('An unchanged source must not prepare model context.');
+      },
+    },
   );
   assert.equal(result.result.status, 'succeeded');
   assert.deepEqual(result.replies, []);

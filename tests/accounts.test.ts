@@ -6161,6 +6161,8 @@ describe('persisted setting analytics privacy', { skip: !process.env.TEST_DATABA
     const { createPreferencesStore } = await import('../src/server/preferences.ts');
     const f = await fixture(t);
     const preferences = createPreferencesStore(f.database, f.owner, f.analytics.forOwner(f.owner));
+    await preferences.update({ proactivePaused: false });
+    f.captured.length = 0;
     const privatePatch = {
       notificationRule: 'Synthetic private notification rule',
       rules: 'Synthetic private standing rule',
@@ -6238,8 +6240,14 @@ describe('persisted setting analytics privacy', { skip: !process.env.TEST_DATABA
       { setting: 'monthly_spending_limit', actor: 'agent', state: 'configured' },
       { setting: 'task_spending_limit', actor: 'agent', state: 'configured' },
     ]);
+    await ledger.setLimits({ preparationUsd: 3.17 }, 'owner');
+    assert.deepEqual(f.changes().at(-1), {
+      setting: 'preparation_spending_limit',
+      actor: 'owner',
+      state: 'configured',
+    });
     const count = f.changes().length;
-    await ledger.setLimits({ monthlyUsd: 37.42, taskUsd: 8.53 });
+    await ledger.setLimits({ monthlyUsd: 37.42, taskUsd: 8.53, preparationUsd: 3.17 });
     await assert.rejects(ledger.setLimits({ monthlyUsd: -1 }));
     assert.equal(f.changes().length, count);
     await ledger.setLimits({ monthlyUsd: null, taskUsd: null });

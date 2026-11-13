@@ -7,6 +7,8 @@ sidebar:
 
 Nod prepares useful work from your connected sources on its own and messages you when it's worth an interruption. That message is a nudge: what changed, what's ready and, when there's a next step, one short question that offers it, such as "Want me to send it?". The first nudge about a kind of thing also says, once, that Nod will keep flagging things like it. You answer in words, in Nod, Telegram or WhatsApp.
 
+Turn on **Automatic preparation** in **Settings → Notifications**. New profiles start with it off. Existing choices stay as saved.
+
 Nod first checks for a concrete open need, such as an unanswered request, a commitment, a problem, financial risk or recoverable payment that affects you, or work you asked it to watch. Ideas, backlog entries and routine updates alone start no plan, draft or task, even in private. Nod can still use a model to check for an open need. A possible improvement or missing detail does not make the idea urgent. Saving an idea does not ask Nod to develop it.
 
 ## What a nudge looks like
@@ -50,13 +52,17 @@ Only your own messages can snooze, close or dismiss a nudge. If you don't answer
 
 ## When Nod nudges you
 
-Nod saves useful work privately first and messages you only when it's worth an interruption. There's no daily count. Each matter nudges you once, however often its source repeats, and again only if something really changes. Quiet hours hold: a nudge that comes up at night goes out when they end. Only a high-impact one with strong evidence and a deadline before then goes out at once. At night, Nod also prepares only what may need you before quiet hours end; the rest waits until they end. Set them in **Settings → Notifications**, or tell Nod.
+Nod saves useful work privately first and messages you only when it's worth an interruption. There's no daily count. Each matter nudges you once, however often its source repeats, and again only if something really changes. Quiet hours hold: a nudge that comes up at night goes out when they end. Only a high-impact one with strong evidence and a deadline before then goes out at once. Due matters that can wait stay pending until quiet hours end. Set them in **Settings → Notifications**, or tell Nod.
 
 Tell Nod "Fewer of these" and it uses that next time. To stop preparation itself, tell Nod "Pause preparation", and "Resume preparation" to turn it back on. Pausing also stops the email checks on new Gmail mail and the planned checks of tasks Nod started; schedules and tasks you started keep running. Preparation runs when a source changes or a saved matter is due, and its cost counts toward your monthly limit in **Usage**, like everything else Nod does.
 
 ## What Nod reads
 
-Nod reads every app you connect, with nothing to turn on. Gmail is checked for new mail every 15 minutes, the work Nod saved for you is read as soon as it changes, and your primary Google Calendar is checked for changes every 30 minutes. Other apps, including MCP and HTTP connections, are read through their own read tools every 30 minutes, and only calls that read can run. A failed or partial check never means nothing needs you.
+Gmail is checked for new mail every 15 minutes. Your primary Google Calendar is checked for changes every 30 minutes. These change checks need no model. Saved work has its own change token. Other apps, including MCP and HTTP connections, need an app event to start preparation. They have no periodic model check. You can still ask Nod to read them in chat or in a schedule.
+
+A changed source goes to one small observer. There is no model assessment for each record. A failed or partial check leaves the source state unknown.
+
+Automatic preparation has a $5 monthly allowance by default. This covers its source reviews, email privacy checks, observer, and tasks. Change it in **Usage**. See [Automatic preparation allowance](/use/spending/#automatic-preparation-allowance).
 
 ## What stays private
 
