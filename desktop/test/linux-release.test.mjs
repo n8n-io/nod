@@ -73,9 +73,11 @@ test('Linux download links lead supported desktops to installation instructions'
     [{ platform: 'Linux aarch64' }, false],
     [{ platform: 'Linux x86_64', userAgent: 'Android' }, false],
   ]) {
+    const label = { textContent: 'Choose installer' };
     const link = {
       href: 'https://nod.n8n.io/docs/get-started/install-desktop/',
       dataset: { download: 'label' },
+      querySelector: (selector) => (selector === '[data-download-label]' ? label : null),
     };
     runInNewContext(`${source}\nstartDownload();`, {
       navigator,
@@ -84,6 +86,6 @@ test('Linux download links lead supported desktops to installation instructions'
     });
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(link.href.endsWith('#linux'), expected);
-    if (expected) assert.equal(link.textContent, 'Install for Linux');
+    if (expected) assert.equal(label.textContent, 'Install for Linux');
   }
 });
