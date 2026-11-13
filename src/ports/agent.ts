@@ -120,6 +120,7 @@ export interface RuntimeContext {
   audioCaption?: string;
   background?: boolean;
   channel?: string;
+  runtimeHost?: 'desktop' | 'server';
   timeZone?: string;
   locale?: string;
   hourCycle?: 'auto' | 'h12' | 'h23';
@@ -299,6 +300,19 @@ export interface SkillLibrary {
   core?: readonly string[];
   read(name: string, file?: string): { name: string; file: string; content: string };
 }
+export interface DocumentationSection {
+  id: string;
+  title: string;
+  heading: string;
+  url: string;
+}
+export interface Documentation {
+  search(query: string): Promise<Array<DocumentationSection & { excerpt: string }>>;
+  read(
+    id: string,
+    offset?: number,
+  ): Promise<DocumentationSection & { content: string; nextOffset?: number }>;
+}
 export type AgentEvent =
   | { type: 'provider_usage'; usage: ProviderUsageEvent }
   | { type: 'turn_start' }
@@ -310,6 +324,7 @@ export type AgentEvent =
     }
   | { type: 'text_delta'; text: string }
   | { type: 'thinking'; title: string }
+  | { type: 'retry'; model: string; attempt: number; attempts: number }
   | { type: 'final'; text: string }
   | ModelUsageObservation
   | { type: 'error'; message: string };
@@ -321,7 +336,12 @@ export interface AgentAudioInput {
   files: AgentAudio[];
   fallback: string;
 }
+export interface AgentToolOutcome {
+  name: string;
+  error?: string;
+}
 export interface AgentSessionOptions extends ExecutionScope {
+  automatic?: boolean;
   restricted?: boolean;
   ephemeral?: boolean;
   restartable?: boolean;
@@ -339,7 +359,7 @@ export interface AgentSessionOptions extends ExecutionScope {
     options?: { nested?: boolean },
   ): Promise<AgentToolResult>;
   onEvent(event: AgentEvent): void;
-  shouldStop(): boolean;
+  shouldStop(results?: AgentToolOutcome[]): boolean;
   readAudio?(audio: AgentAudio, signal: AbortSignal): Promise<Uint8Array>;
   nextMessages?(): Promise<Array<{ text: string; images: AgentImage[]; audio?: AgentAudioInput }>>;
 }

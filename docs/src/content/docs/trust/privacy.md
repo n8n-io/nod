@@ -110,6 +110,18 @@ For what Nod stores and for how long, see the [Security review guide](/trust/sec
 
 Your model keys stay encrypted on your installation. They never enter a prompt, Nod's workspace, or its browser.
 
+### Composio Zero Data Retention
+
+**Nod's default app connection service uses Composio with Zero Data Retention (ZDR) enabled.** For covered calls, Composio does not write request arguments, response data, or error text to its execution logs. It still stores call metadata, such as the tool name, time, and status. It also stores the access tokens needed to keep your apps connected.
+
+ZDR covers eligible tool calls and proxy requests. Files, trigger events, and tool-search queries have separate retention rules. Composio removes staged upload and download files after 24 hours. Nod disables Composio's session sandbox. Model services, destination apps, and Nod's local data follow their own rules.
+
+ZDR applies to new covered calls and does not delete older logs. Calls through Composio Managed OAuth apps require Enterprise for ZDR coverage. See [Composio's ZDR coverage](https://docs.composio.dev/docs/security/zero-data-retention) for the full scope.
+
+ZDR does not limit the permissions you grant to an app. Nod's [trust check](/trust/approvals/) checks each app action against your words. If you use another connection service, its operator controls the Composio project and retention settings.
+
+For the other controls, see [How Nod protects app connections](/connect/apps/#how-nod-protects-app-connections).
+
 ## Feedback
 
 **Send feedback** goes to the recipient the dialog names, which is the Nod team at n8n by default. It includes a diagnostic report unless you untick it. The report can include recent messages and tool results, with known secrets and recognized personal details masked. Select **Review** to check it before you send. On desktop, the draft also includes a screenshot of the Nod window, which you can remove.

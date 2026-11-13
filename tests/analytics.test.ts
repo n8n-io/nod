@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import Fastify from 'fastify';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -13,6 +14,7 @@ import { createN8nOnboardingEmail } from '../src/providers/n8n/onboarding-email.
 import {
   analyticsModel,
   createAnalytics,
+  registerAnalyticsRoutes,
   type AnalyticsDelivery,
 } from '../src/server/analytics.ts';
 import { analyticsEvent } from '../src/server/analytics-events.ts';
@@ -29,6 +31,49 @@ import {
   onboardingPersonProperties,
   onboardingProfileAnswers,
 } from '../src/shared/onboarding-analytics.ts';
+
+test('channel reconnect analytics count only accepted requests with bounded properties', async () => {
+  const app = Fastify();
+  const events: unknown[] = [];
+  let fail = false;
+  registerAnalyticsRoutes(app, (event) => {
+    events.push(event);
+  });
+  app.post('/api/channel-settings/:provider/reconnect', async (_request, reply) =>
+    reply.code(fail ? 503 : 200).send({ ok: !fail }),
+  );
+  try {
+    for (const provider of ['telegram', 'whatsapp']) {
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/channel-settings/${provider}/reconnect`,
+            payload: { token: 'synthetic-private-token', text: 'synthetic-private-content' },
+          })
+        ).statusCode,
+        200,
+      );
+      fail = true;
+      assert.equal(
+        (await app.inject({ method: 'POST', url: `/api/channel-settings/${provider}/reconnect` }))
+          .statusCode,
+        503,
+      );
+      fail = false;
+    }
+    await app.inject({ method: 'POST', url: '/api/channel-settings/private-provider/reconnect' });
+    assert.deepEqual(
+      events,
+      ['telegram', 'whatsapp'].map((channel) => ({
+        event: 'settings_updated',
+        properties: { section: 'channels', operation: 'connect_started', channel },
+      })),
+    );
+  } finally {
+    await app.close();
+  }
+});
 
 test('source analytics version uses explicit values or a clean checkout revision', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'nod-analytics-version-'));

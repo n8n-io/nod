@@ -673,7 +673,7 @@ export function createTasks(options: {
     const requests = messages.filter(
       (message) =>
         !placeholders.has(message.text) &&
-        !personalSecret.test(message.text) &&
+        !personalSecret(message.text) &&
         !credentialUrl.test(message.text) &&
         classifyVerificationReply(message.text).kind === 'ordinary',
     );
