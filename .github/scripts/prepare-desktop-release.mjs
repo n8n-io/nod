@@ -9,6 +9,46 @@ const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const maximumNotesBytes = 64 * 1024;
 const maximumHighlightsBytes = 8 * 1024;
 
+export function releaseVideoDigest(release) {
+  releaseVersion(release.version);
+  if (!/^[a-f0-9]{40}$/.test(release.source ?? ''))
+    throw new Error('The release video source must be a full Git commit hash.');
+  return createHash('sha256')
+    .update(
+      JSON.stringify([release.version, release.source, releaseHighlights(release.highlights)]),
+    )
+    .digest('hex');
+}
+
+export function releaseVideo(release) {
+  const video = release.video;
+  if (!video || typeof video !== 'object' || Array.isArray(video))
+    throw new Error('The release video is missing. Create and attach the release video.');
+  if (
+    Object.keys(video).sort().join(',') !== 'releaseSha256,url' ||
+    typeof video.url !== 'string' ||
+    !/^https:\/\/github\.com\/user-attachments\/assets\/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(
+      video.url,
+    )
+  )
+    throw new Error(
+      'The release video must use a GitHub attachment URL without credentials or query parameters.',
+    );
+  if (video.releaseSha256 !== releaseVideoDigest(release))
+    throw new Error(
+      'The release video does not match the version, source or highlights. Generate it again.',
+    );
+  return video.url;
+}
+
+export async function attachReleaseVideo(root, url, path = releaseFiles[1]) {
+  const release = await readJson(root, path);
+  release.video = { url, releaseSha256: releaseVideoDigest(release) };
+  releaseVideo(release);
+  await writeFile(resolve(root, path), JSON.stringify(release, null, 2) + '\n');
+  return release;
+}
+
 export function releaseHighlights(value) {
   if (value === undefined)
     throw new Error('No release highlights were supplied. Add public Markdown highlights.');
@@ -24,6 +64,7 @@ export function publicReleaseNotes(release, details, downloads = '') {
   if (!Object.hasOwn(release, 'highlights')) return details;
   return (
     [
+      ...(release.video ? [releaseVideo(release)] : []),
       releaseHighlights(release.highlights),
       downloads,
       `<details>\n<summary>All changes, installation requirements, and build details</summary>\n\n${details.trimEnd()}\n\n</details>`,
@@ -226,7 +267,7 @@ export function releaseNotes(root, version, previousTag, source, date, allowEmpt
   return notes;
 }
 
-export function automaticRelease(root, releases, sourceRepository, highlights) {
+export function automaticRelease(root, releases, sourceRepository, highlights, video) {
   const source = repository(root);
   if (git(root, ['status', '--porcelain', '--untracked-files=no']).trim())
     throw new Error('Automatic releases require clean tested source.');
@@ -273,6 +314,7 @@ export function automaticRelease(root, releases, sourceRepository, highlights) {
     source,
     date,
     ...(highlights === undefined ? {} : { highlights: releaseHighlights(highlights) }),
+    video: video ?? null,
     notes: releaseNotes(root, version, previousTag, source, date, true),
   };
 }
@@ -292,6 +334,7 @@ export async function checkReleasePlan(root, input, path, digest) {
     ![
       'date,notes,previousTag,source,version',
       'date,highlights,notes,previousTag,source,version',
+      'date,highlights,notes,previousTag,source,version,video',
     ].includes(Object.keys(plan).sort().join(',')) ||
     plan.version !== releaseVersion(input) ||
     plan.source !== source ||
@@ -307,6 +350,7 @@ export async function checkReleasePlan(root, input, path, digest) {
   )
     throw new Error('The release plan does not match the clean tested source.');
   if (Object.hasOwn(plan, 'highlights')) releaseHighlights(plan.highlights);
+  if (Object.hasOwn(plan, 'video')) releaseVideo(plan);
   if (plan.notes !== releaseNotes(root, plan.version, plan.previousTag, source, plan.date, true))
     throw new Error('The release plan notes do not match the source changes.');
   if (
@@ -358,6 +402,7 @@ export async function prepareRelease(root, input, highlights) {
     previousTag,
     source,
     ...(highlights === undefined ? {} : { highlights: releaseHighlights(highlights) }),
+    video: null,
   };
   const notes = releaseNotes(
     root,
@@ -406,13 +451,16 @@ export async function checkRelease(root, input) {
   if (
     releaseVersion(pkg.version) !== version ||
     manifest.version !== version ||
-    !['previousTag,source,version', 'highlights,previousTag,source,version'].includes(
-      Object.keys(manifest).sort().join(','),
-    ) ||
+    ![
+      'previousTag,source,version',
+      'highlights,previousTag,source,version',
+      'highlights,previousTag,source,version,video',
+    ].includes(Object.keys(manifest).sort().join(',')) ||
     !/^[a-f0-9]{40}$/.test(manifest.source ?? '')
   )
     throw new Error('Desktop release manifest and package versions are inconsistent.');
   if (Object.hasOwn(manifest, 'highlights')) releaseHighlights(manifest.highlights);
+  if (Object.hasOwn(manifest, 'video')) releaseVideo(manifest);
   if (git(root, ['merge-base', '--is-ancestor', manifest.source, head], true) === null)
     throw new Error('The release source must be an ancestor of the current commit.');
   if (
@@ -445,10 +493,13 @@ export async function checkRelease(root, input) {
 async function main() {
   const args = process.argv.slice(2);
   if (
-    args.length > (args[0] === '--notes' ? 2 : 1) ||
-    (args.length && !['--check', '--notes'].includes(args[0]))
+    args.length > (args[0] === '--video' ? 3 : args[0] === '--notes' ? 2 : 1) ||
+    (args[0] === '--video' && !args[1]) ||
+    (args.length && !['--check', '--notes', '--video'].includes(args[0]))
   )
-    throw new Error('Usage: prepare-desktop-release.mjs [--check | --notes [output-file]]');
+    throw new Error(
+      'Usage: prepare-desktop-release.mjs [--check | --notes [output-file] | --video URL [metadata-file]]',
+    );
   const root = process.cwd();
   let version;
   if (!args.length) {
@@ -467,6 +518,10 @@ async function main() {
         ),
       );
     process.stdout.write(`Prepared nod-v${version} from ${manifest.source}.\n`);
+  } else if (args[0] === '--video') {
+    const release = await attachReleaseVideo(root, args[1], args[2]);
+    version = release.version;
+    process.stdout.write(`Recorded the video for nod-v${version}.\n`);
   } else {
     version = releaseVersion(
       process.env.NOD_RELEASE_VERSION || (await configuredRelease(root)).version,
@@ -476,7 +531,10 @@ async function main() {
       const notes = publicReleaseNotes(release, release.notes);
       if (args[1]) await writeFile(resolve(root, args[1]), notes);
       else process.stdout.write(notes);
-    } else process.stdout.write(`Validated nod-v${version}.\n`);
+    } else {
+      releaseVideo(release);
+      process.stdout.write(`Validated nod-v${version}.\n`);
+    }
   }
   if (process.env.GITHUB_OUTPUT)
     await appendFile(process.env.GITHUB_OUTPUT, `version=${version}\n`);

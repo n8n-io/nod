@@ -48,6 +48,8 @@ jobs:
       - name: Prepare the release PR description
         run: |
           cat > "$RUNNER_TEMP/release-pr.md" <<'TEXT'
+          This draft needs a release video. The coding agent that prepares the release must use the feature-video skill, attach the MP4 here, and record its URL with node .github/scripts/prepare-desktop-release.mjs --video URL. Commit the manifest, check the notes and video, then mark this PR ready. Releases that contain only fixes need a video too. Follow https://nod.n8n.io/docs/contribute/desktop-releases/#make-the-release-video.
+
           Merge this PR after review and CI. CI on the merge commit builds Mac Intel, Mac ARM, Windows x64 and Linux x64 packages. It checks all four bundles and publishes one regular Nod GitHub release. Linux is a Flatpak preview. Its bundle includes the runtime and arrives in numbered parts with checksums.
 
           If main changes before merge, run Release desktop again to update this PR.
@@ -61,6 +63,7 @@ jobs:
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
         with:
           branch: release/desktop
+          draft: always-true
           base: main
           title: 'chore(release): Nod desktop ${{ steps.version.outputs.version }}'
           commit-message: 'chore(release): Nod desktop ${{ steps.version.outputs.version }}'

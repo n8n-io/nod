@@ -21,6 +21,7 @@ import {
   isReleaseMerge,
   publicReleaseNotes,
   releaseHighlights,
+  releaseVideo,
 } from './prepare-desktop-release.mjs';
 import { linuxReleaseFiles } from '../../desktop/scripts/linux-release.mjs';
 
@@ -333,8 +334,10 @@ async function plan() {
           .map((line) => JSON.parse(line)),
         sourceRepository,
         releaseHighlights(process.env.NOD_RELEASE_HIGHLIGHTS),
+        process.env.NOD_RELEASE_VIDEO ? JSON.parse(process.env.NOD_RELEASE_VIDEO) : undefined,
       )
     : await configuredRelease(root);
+  releaseVideo(release);
   if (process.env.APPLE_CONFIGURED !== 'true')
     throw new Error('Configure signing credentials and public certificate metadata in release.');
   const runs = api(

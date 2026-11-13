@@ -1,13 +1,13 @@
 ---
 name: feature-video
-description: Make a short square video that shows a Nod feature or a whole release, animated over captures of the real app UI with made-up data, with a synthesized soundtrack, rendered frame by frame to MP4. Use this when a pull request adds or changes something a user can see and the author wants a clip for the PR, or when someone asks for a feature video, a release video, a launch clip or a demo of something Nod does. It is for features, not for fixes.
+description: Make a short square video of a Nod feature or release with real frontend captures, made-up data, and synthesized music. Use for a requested feature demo or when preparing a desktop release. Every release needs a video, including releases that contain only fixes. Skip individual fix, refactor, and docs PRs.
 ---
 
 # Feature video
 
 Produces a 1080×1080, 60 fps, 20–30 s MP4 (H.264 High + AAC, −14 LUFS). Each video is an HTML page whose `render(t)` draws any moment deterministically. Headless Chrome captures every frame, a Node synth writes the music, and ffmpeg muxes them. The app scenes are captures of the real Nod frontend running on made-up data. The cursor, camera and cuts are composed over them, so every frame is exact and repeatable.
 
-Make one for a user-facing feature or a release. A fix has nothing to show, so say that instead of making a video.
+Make one for a requested user-facing feature or each desktop release. An individual fix PR needs no video. A release that contains only fixes still needs one: show how those fixes improve Nod.
 
 Paths below are relative to this skill's directory (`<skill>`). Work in a temporary folder outside the repository, and never commit captures, pages or videos.
 
@@ -18,7 +18,7 @@ You need Node 22 or later, ffmpeg, Chrome or Chromium (set `CHROME` to its binar
 The video may be shared in public, so every claim must be true of the code it shows.
 
 - **Behaviour and limits:** read the feature's docs page in `docs/src/content/docs/` and the code for exact UI strings.
-- **Release content:** `gh release view nod-vX.Y.Z` and its highlights are the copy source for a release video. Keep their wording.
+- **Release content:** during release preparation, use `version`, `source`, and `highlights` from `desktop/release.json`. The release need not exist yet. For a published release, use `gh release view nod-vX.Y.Z`. Keep the highlights' wording and check every claim against that source.
 - **Jobs:** show a job finishing only when you have seen Nod finish it, or the docs show it. Otherwise show it as a prompt the viewer could type.
 - **Names and data:** only made-up companies and people (Brightline Studio, Sara Kim, Fernway Hosting, Northwind Office, Metro Taxi). No real accounts, keys, emails or private content.
 - **Logos:** no third-party logos. Product names in text are fine.
@@ -28,7 +28,7 @@ The video may be shared in public, so every claim must be true of the code it sh
 
 A viewer should see the feature the way they will meet it in Nod. So the app scenes are screenshots of the real frontend, never a rebuilt look-alike. `scripts/capture.mjs` runs the frontend of a Nod checkout with Vite, answers every `/api` request from a fixtures file, drives headless Chrome through a plan, and saves 2× screenshots plus the positions of the controls you name. It starts no server, database or container, and reads no real account.
 
-1. **Pick the checkout.** For a pull request, use the branch you are on. For a release, add a worktree at its tag outside this folder (`git worktree add --detach ../nod-capture nod-vX.Y.Z`) and install its dependencies with `pnpm install --frozen-lockfile --ignore-scripts`.
+1. **Pick the checkout.** For a pull request, use the branch you are on. During release preparation, add a detached worktree at `desktop/release.json.source` outside the repository. For a published release, use its tag. Install that checkout's dependencies with `pnpm install --frozen-lockfile --ignore-scripts`.
 2. **Write fixtures:** one JSON object keyed by request (`"/api/trust"`, `"POST /api/schedules/s1/run"`; a key without a query matches any query). Start from `references/example-capture/release/fixtures.json`, which boots the app shell (`linux/` has the welcome screen and a chat). Take the response shapes from `src/shared/contracts.ts` and the other files in `src/shared`. Requests with no fixture are listed at the end of a run; add the ones the screen needs. A response can also change later responses: `{ "$respond": …, "$then": { other fixtures } }` answers with `$respond` and then puts the `$then` fixtures in place, so a click that starts a run is followed by the running state.
 3. **Write a plan** (`references/example-capture/release/plan.json`): a viewport, a fixed `time`, and steps: `goto`, `click` and `hover` (by `selector` or visible `text`), `fixtures` (swap responses mid-flow, such as before a click that starts a run), `eval`, `wait`, and `shot`. A shot takes named `rects` for every control the cursor, camera or highlight will use, and an optional `clip` (crop to an element, or from it down with `toBottom`). The fixtures file is never changed; swaps last only for that run.
 4. **Run it:** `node <skill>/scripts/capture.mjs <checkout> fixtures.json plan.json <workdir>/shots`. Read every screenshot before you use it.
@@ -39,7 +39,7 @@ Rules:
 - **One interaction per feature:** the action that explains it (open a row, select **Run now**). Capture the state before, the state after, and any state in between that the app really shows.
 - **Trim the data, not the UI.** If something doesn't fit, shorten the fixture text or drop a row. Never hide, restyle or redraw a control.
 - **Real states only.** Every state must come from the app reacting to the plan's steps, or to fixtures a real server could return.
-- **Fallback.** Use `list` rows only for an "Also in this release" beat or a change with no screen. A video has at most one `list` beat. The `chat` kind is a recreated chat; prefer a captured one, as `linux/` shows.
+- **Fallback.** Use `list` rows for an "Also in this release" beat or a change with no screen. A feature video has at most one `list` beat. A release that contains only fixes can use the text summary below. The `chat` kind is a recreated chat; prefer a captured one, as `linux/` shows.
 
 ## 3. Pick a template
 
@@ -49,6 +49,12 @@ Rules:
 | `feature-linux` | platform, install or setup news                              | A typed terminal install, a desktop top bar, and an app window that plays captures (`welcome-top`, `welcome-bottom`, `chat-working`, `chat-done` from `references/example-capture/linux`) with a **Get started** click, then requirement rows.                          |
 
 Read `references/storyboard.md` before you change structure. It has the timing grid, copy rules, brand tokens and the fields of each panel kind.
+
+### Releases that contain only fixes
+
+Keep the same visual quality, motion, music, and 20–30 second length. Make the first frame say that this version improves Nod. Use the version in `hook.eyebrow` and a large `hook.title`, such as “A little polish.” / “A better Nod.” Pick copy that fits the actual fixes.
+
+Show two or three specific improvements from the highlights. Use real captures when the corrected behavior is visible. For fixes without a useful screen, use one `list` beat per improvement. Three beats with `len: 6` last 25.5 seconds with the hook and end card. Two beats with `len: 8` last 23.5 seconds. Give each beat its own large benefit headline and short rows that say what now works. Do not invent a screen, a feature, a completed job, or a before-and-after demonstration. Do not claim faster, safer, or more reliable behavior without evidence. The end card should invite the viewer to update for those fixes.
 
 ## 4. Build
 
@@ -88,7 +94,8 @@ node <skill>/scripts/render.mjs video <name>.html silent.mp4
 ## 7. Report
 
 - Give the full path and a short scene-by-scene summary with timestamps.
-- For a pull request, tell the author to drag the MP4 into the **Summary** of the PR description. Don't post or upload it yourself.
+- For an ordinary feature PR, tell the author to drag the MP4 into its **Summary**. Leave that upload to the author.
+- For an authorized release PR, follow [Make the release video](../../../docs/src/content/docs/contribute/desktop-releases.mdx#make-the-release-video). Attach the MP4 to that draft PR, record its URL with `node .github/scripts/prepare-desktop-release.mjs --video URL`, and commit the manifest. Check that the public video loads and matches the notes. Regenerate after changes to the version, source, or highlights. Do not merge or publish without authorization.
 - State the caveats: the music is synthesized and you have not listened to it; `app` scenes are the real frontend with made-up data and composed motion; any other app scene is a recreation; which jobs are shown finishing and why.
 
 ## Gotchas
