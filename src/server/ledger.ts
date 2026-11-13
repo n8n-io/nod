@@ -280,7 +280,12 @@ export function createLedger({
       maximum_usd numeric NOT NULL CHECK (maximum_usd >= 0),
       PRIMARY KEY(owner_id,id,month)
     );
-    ALTER TABLE preparation_reservations ALTER COLUMN maximum_usd TYPE numeric USING maximum_usd::text::numeric;`);
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='preparation_reservations'::regclass
+        AND attname='maximum_usd' AND atttypid='double precision'::regtype AND NOT attisdropped) THEN
+        ALTER TABLE preparation_reservations ALTER COLUMN maximum_usd TYPE numeric USING maximum_usd::text::numeric;
+      END IF;
+    END $$;`);
   }
 
   function save(sql: string, values: unknown[]) {
