@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, shell } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, shell } from 'electron';
 import { createArtifactFiles, canOpenArtifact } from './artifact-files.mjs';
 
 export function registerArtifactFileHandlers({ isEngine, origin, headers, window, icon }) {
@@ -13,7 +13,8 @@ export function registerArtifactFileHandlers({ isEngine, origin, headers, window
         : params.selectionText
           ? ['copy', 'selectAll']
           : [];
-      if (!roles.length) return;
+      const linkURL = typeof params.linkURL === 'string' ? params.linkURL : '';
+      if (!roles.length && !linkURL) return;
       const entries = roles.map((role) => ({
         role,
         enabled:
@@ -27,7 +28,19 @@ export function registerArtifactFileHandlers({ isEngine, origin, headers, window
             contents.replaceMisspelling(word);
         },
       }));
-      Menu.buildFromTemplate([...suggestions, ...entries]).popup({
+      const linkEntries = linkURL
+        ? [
+            ...(suggestions.length || entries.length ? [{ type: 'separator' }] : []),
+            {
+              label: 'Copy link address',
+              click: () => {
+                if (isEngine({ sender: contents, senderFrame: params.frame }))
+                  clipboard.writeText(linkURL);
+              },
+            },
+          ]
+        : [];
+      Menu.buildFromTemplate([...suggestions, ...entries, ...linkEntries]).popup({
         window: BrowserWindow.fromWebContents(contents),
       });
     });

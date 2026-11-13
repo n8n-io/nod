@@ -3744,8 +3744,9 @@ root=createRoot(document.getElementById('root'));
 await render();
 await waitFor(()=>document.querySelector('[data-step="email"]'));
 assert.ok(rendererReady>0,'The email screen must become visible before account discovery finishes');
-assert.equal(button('Skip for now').disabled,false);
-await act(async()=>button('Skip for now').click());
+const emailSkip=()=>document.querySelector('[data-step="email"] .ob-footer-end button:not(.ob-next)');
+assert.equal(emailSkip().disabled,false);
+await act(async()=>emailSkip().click());
 await waitFor(()=>document.querySelector('[data-step="about"]'));
 for(let at=0;at<10&&!document.querySelector('[data-step="privacy"]');at++){await act(async()=>{await new Promise(resolve=>setTimeout(resolve,1000))});if(button('Not now'))await act(async()=>button('Not now').click())}
 await waitFor(()=>document.querySelector('[data-step="privacy"]'));

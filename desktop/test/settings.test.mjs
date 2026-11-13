@@ -267,6 +267,63 @@ test('artifact downloads clean terminal failures without discarding resumable do
   assert.deepEqual(f.errors, [undefined]);
 });
 
+test('desktop link context menus copy the address with or without selected text', async () => {
+  const source = (
+    await readFile(new URL('../main/artifact-file-handlers.mjs', import.meta.url), 'utf8')
+  )
+    .replace(/^import[\s\S]*?;\n/gm, '')
+    .replace('export function', 'function');
+  const contents = new EventEmitter();
+  const frame = { url: 'http://127.0.0.1:4310/' };
+  contents.mainFrame = frame;
+  const menus = [];
+  const copied = [];
+  const context = {
+    app: Object.assign(new EventEmitter(), { getPath: () => tmpdir() }),
+    ipcMain: { handle() {} },
+    createArtifactFiles: () => ({ dispose() {} }),
+    BrowserWindow: { fromWebContents: () => ({}) },
+    Menu: {
+      buildFromTemplate(entries) {
+        return { popup: () => menus.push(entries) };
+      },
+    },
+    clipboard: { writeText: (value) => copied.push(value) },
+  };
+  runInNewContext(`${source}\nglobalThis.register = registerArtifactFileHandlers;`, context);
+  context.register({
+    isEngine: ({ sender, senderFrame }) =>
+      sender === contents && senderFrame === contents.mainFrame,
+    origin: () => 'http://127.0.0.1:4310',
+    headers: () => ({}),
+    window: () => ({ webContents: contents }),
+    icon: 'synthetic-icon.png',
+  });
+  const linkURL = 'https://example.test/path?item=1';
+  const open = (params) =>
+    contents.emit('context-menu', {}, { frame, isEditable: false, editFlags: {}, ...params });
+
+  open({ linkURL, selectionText: '' });
+  const unselectedCopy = menus.at(-1)?.find((entry) => typeof entry.click === 'function')?.click;
+  assert.ok(unselectedCopy);
+  unselectedCopy();
+  assert.deepEqual(copied, [linkURL]);
+
+  open({ linkURL, selectionText: 'Example' });
+  const selectedCopy = menus.at(-1)?.find((entry) => typeof entry.click === 'function')?.click;
+  assert.ok(selectedCopy);
+  selectedCopy();
+  assert.deepEqual(copied, [linkURL, linkURL]);
+
+  const shown = menus.length;
+  open({ linkURL: '', selectionText: '' });
+  contents.emit('context-menu', {}, { frame: { ...frame }, linkURL, editFlags: {} });
+  assert.equal(menus.length, shown);
+  contents.mainFrame = { ...frame };
+  selectedCopy();
+  assert.deepEqual(copied, [linkURL, linkURL]);
+});
+
 test('storage starts the normal backend before workspace readiness and quit closes it before the runtime', async () => {
   const storage = deferred();
   const resources = deferred();
@@ -569,7 +626,11 @@ async function runningDesktop(
       },
     }),
     session: { fromPartition },
-    screen: { getAllDisplays: () => displays },
+    screen: {
+      getAllDisplays: () => displays,
+      getPrimaryDisplay: () => displays[0],
+      getDisplayMatching: () => displays[0],
+    },
     protocol: { registerSchemesAsPrivileged() {} },
     dialog: { showMessageBox: async (options) => prompt(options) },
     Menu: {
@@ -1990,6 +2051,38 @@ test('native onboarding starts one normal backend at storage readiness and keeps
   }
 });
 
+test('onboarding and app windows open inside the usable display area', async (t) => {
+  for (const area of [
+    { x: 0, y: 25, width: 1366, height: 675 },
+    { x: 50, y: 25, width: 640, height: 525 },
+  ]) {
+    for (const initialState of ['fresh', 'running']) {
+      await t.test(`${area.width}×${area.height} ${initialState}`, async (t) => {
+        const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+          initialState,
+          displays: [{ workArea: area }],
+        });
+        try {
+          if (initialState === 'fresh') await f.launch();
+          else f.showEngine();
+          const window = f.windows.at(-1);
+          assert.ok(window);
+          const bounds = window.getBounds();
+          assert.ok(bounds.x >= area.x);
+          assert.ok(bounds.y >= area.y);
+          assert.ok(bounds.x + bounds.width <= area.x + area.width);
+          assert.ok(bounds.y + bounds.height <= area.y + area.height);
+          assert.ok(window.options.minWidth <= bounds.width);
+          assert.ok(window.options.minHeight <= bounds.height);
+        } finally {
+          if (initialState === 'running') f.crash();
+          await f.close();
+        }
+      });
+    }
+  }
+});
+
 test('runtime handoff and readiness respect closed, minimized and background windows', async (t) => {
   for (const scenario of [
     'closed',
@@ -3123,7 +3216,7 @@ test('quit removes temporary files and stops downloads before the updater can qu
 });
 
 test('an update restart keeps Nod on screen and reopens it as it was', async (t) => {
-  for (const scenario of ['open', 'minimized', 'setup', 'closed', 'offscreen'])
+  for (const scenario of ['open', 'minimized', 'setup', 'closed', 'offscreen', 'short-display'])
     await t.test(scenario, async (t) => {
       let shown;
       const request = async (url) =>
@@ -3168,6 +3261,9 @@ test('an update restart keeps Nod on screen and reopens it as it was', async (t)
         initialState: 'upgrade',
         allowStart: true,
         platform: 'darwin',
+        ...(scenario === 'short-display'
+          ? { displays: [{ workArea: { x: 0, y: 25, width: 1366, height: 675 } }] }
+          : {}),
       });
       try {
         await next.launch();
@@ -3182,8 +3278,11 @@ test('an update restart keeps Nod on screen and reopens it as it was', async (t)
             reopened.sent.find(([channel]) => channel === 'nod:navigate'),
             scenario === 'setup' ? undefined : ['nod:navigate', '/usage'],
           );
+        } else if (scenario === 'short-display') {
+          assert.deepEqual(reopened.bounds, { x: 140, y: 25, width: 1000, height: 675 });
+          assert.equal(reopened.isMaximized(), true);
         } else {
-          assert.deepEqual(reopened.bounds, { x: 0, y: 0, width: 1200, height: 860 });
+          assert.deepEqual(reopened.bounds, { x: 360, y: 110, width: 1200, height: 860 });
           assert.equal(reopened.isMaximized(), false);
         }
         assert.equal(

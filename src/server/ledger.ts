@@ -3,6 +3,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
+import type { Nodes } from 'mdast';
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
+import remarkGfm from 'remark-gfm';
 import type { Agent, AgentSessionOptions } from '../ports/agent.ts';
 import type { ExecutionScope } from '../shared/execution.ts';
 import type { ProviderUsageEvent, UsageTelemetry } from '../ports/provider-usage.ts';
@@ -65,13 +69,42 @@ const planUsage = `(cost_usd IS NULL AND (details->>'estimateUsd')::float8>0)`;
 const unpricedUsage = `(details->>'status'='succeeded' AND COALESCE(cost_usd,(details->>'estimateUsd')::float8,0)=0)`;
 const cost = (value: number | null | undefined) =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+const titleMarkdown = unified().use(remarkParse).use(remarkGfm);
+
+function visibleText(node: Nodes): string {
+  if (node.type === 'html') return '';
+  if (node.type === 'image') return node.alt ?? '';
+  if (node.type === 'break') return '\n';
+  if ('value' in node) return node.value;
+  if ('children' in node)
+    return node.children
+      .map(visibleText)
+      .join(
+        node.type === 'tableRow'
+          ? ' | '
+          : ['root', 'blockquote', 'list', 'listItem', 'table'].includes(node.type)
+            ? '\n'
+            : '',
+      );
+  return '';
+}
+
+function messageTitle(value: string | null) {
+  const excerpt = value?.trim().slice(0, 2_000);
+  return excerpt
+    ? (visibleText(titleMarkdown.parse(excerpt)).trim().split('\n', 1)[0]?.trim().slice(0, 120) ??
+        '')
+    : '';
+}
 
 function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'> {
   const id: string = row.source_id ?? '';
   const first = (text: string | null) => text?.trim().split('\n')[0]?.slice(0, 120);
   const task = row.task as { title: string; started: boolean } | null;
-  if (row.source === 'user') return { source: 'chat', title: first(row.text) || 'Your message' };
-  if (row.source === 'task') return { source: 'task', title: first(row.text) || 'Task work' };
+  if (row.source === 'user')
+    return { source: 'chat', title: messageTitle(row.text) || 'Your message' };
+  if (row.source === 'task')
+    return { source: 'task', title: messageTitle(row.text) || 'Task work' };
   if (row.source === 'schedule')
     return { source: 'schedule', title: first(row.schedule) || 'Scheduled task' };
   if (id.startsWith('task-check:'))

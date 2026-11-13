@@ -81,6 +81,7 @@ export async function initializeDatabase() {
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS start_after timestamptz;
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS withdrawn boolean NOT NULL DEFAULT false;
     CREATE INDEX IF NOT EXISTS turns_withdrawn_message ON turns(message_id) WHERE withdrawn;
+    CREATE INDEX IF NOT EXISTS turns_reaction_message ON turns(owner_id,message_id) WHERE starts_with(source_id,'reaction-reply:');
     CREATE OR REPLACE FUNCTION turns_session() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
       NEW.session_id := COALESCE(NEW.session_id, CASE WHEN NEW.background THEN NEW.id ELSE NEW.thread_id END);
       RETURN NEW;
