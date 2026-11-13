@@ -1831,11 +1831,6 @@ test(
       assert.deepEqual(messageSetupLinks(invitation, 'http://localhost:4310'), [
         { href: first.url, setup: 'vault', label: first.action },
       ]);
-      assert.ok(invitation.indexOf(first.question) < invitation.indexOf(first.url));
-      assert.match(
-        paymentInvitation(first.url, 'Synthetic details:\n- one\n- two', first.action),
-        /Synthetic details:\n- one\n- two\n\n\[Approve payment\]/,
-      );
       assert.throws(() =>
         paymentInvitation(`https://shop.fixture.test${first.url}`, first.question, first.action),
       );

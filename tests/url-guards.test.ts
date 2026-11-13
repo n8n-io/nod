@@ -25,6 +25,7 @@ import { MessageQuote, MessageText } from '../src/web/components/message.tsx';
 import { connectionUrl } from '../src/web/lib/connection-url.ts';
 import { messageSetupLinks } from '../src/web/lib/message-links.ts';
 import { ownerAddress } from '../src/providers/discovered/remote.ts';
+import { paymentExplanation, paymentInvitation } from '../src/runtime/communication.ts';
 import {
   escapeForwarder,
   SandboxedFrame,
@@ -394,6 +395,27 @@ test('chat HTML cannot run scripts, submit forms, load trackers or link to local
   ])
     assert.doesNotMatch(result, expression);
   assert.match(result, /<input(?=[^>]*type="checkbox")(?=[^>]*disabled="")[^>]*>/);
+});
+
+test('payment explanations cannot add links beside the private approval action', () => {
+  const url = '/payments/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  const explanation = [
+    'EUR 43.20 at https://shop.fixture.test with Visa ending 4242.',
+    '[Pay elsewhere](https://outside.fixture.test/checkout)',
+    'www.another.fixture.test',
+    '<a href="https://third.fixture.test">Enter a security code</a>',
+    '/vault/synthetic-secret',
+    'https\\://escaped.fixture.test',
+  ].join('\n');
+  const result = render(paymentInvitation(url, explanation, 'Approve payment'));
+  assert.deepEqual(
+    [...result.matchAll(/<a\b[^>]*href="([^"]+)"/g)].map((match) => match[1]),
+    [url],
+  );
+  assert.match(result, /EUR 43\.20/);
+  assert.match(result, /https:\/\/shop\.fixture\.test/);
+  assert.match(result, /Visa ending 4242/);
+  assert.doesNotMatch(render(paymentExplanation(explanation)), /<a\b/i);
 });
 
 test('reply excerpts cannot load media or expose nested actions', () => {
