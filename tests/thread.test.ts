@@ -2592,6 +2592,23 @@ test(
         assert.equal(ran(background), undefined);
       });
 
+      await t.test('a scheduled turn continues when cache policy lookup fails', async (t) => {
+        const previous = dependencies.scheduleCache;
+        dependencies.scheduleCache = async () => {
+          throw new Error('Synthetic cache policy lookup failure');
+        };
+        t.after(() => {
+          dependencies.scheduleCache = previous;
+        });
+        const turnId = await thread.enqueueTurn('schedule cache lookup failure fixture', {
+          source: 'schedule',
+          sourceId: randomUUID(),
+        });
+        await waitFor(settled(turnId));
+        assert.equal(await turnStatus(turnId), 'succeeded');
+        assert.equal(ran(turnId)?.scheduleCache, undefined);
+      });
+
       await t.test(
         'separate queued questions each receive an answer while work continues',
         async () => {
@@ -6914,6 +6931,9 @@ test(
           let version = 'v1';
           let afterRead = async () => {};
           let changeToken: string | undefined;
+          let sourceFailure: Error | undefined;
+          let sourceReads = 0;
+          let toolSource = false;
           const options = {
             pool: db.pool,
             ownerId,
@@ -6928,10 +6948,13 @@ test(
                       changeToken,
                       readable: true,
                       revision,
+                      tools: toolSource,
                     },
                   ]
                 : [],
             read: async (_turn: unknown, input: Record<string, unknown>) => {
+              sourceReads++;
+              if (sourceFailure) throw sourceFailure;
               const snapshot = {
                 checkedAt: new Date().toISOString(),
                 records: [
@@ -7002,6 +7025,9 @@ test(
             connected = true;
             revision = 'account-one';
             changeToken = undefined;
+            sourceFailure = undefined;
+            sourceReads = 0;
+            toolSource = false;
             engine.release(turnId);
             await db.pool.query('DELETE FROM proactive_issues WHERE owner_id=$1', [ownerId]);
             await db.pool.query('DELETE FROM proactive_closures WHERE owner_id=$1', [ownerId]);
@@ -7020,6 +7046,105 @@ test(
             });
           }
           try {
+            await t.test(
+              'failed service reads wait for another check and allow recovery',
+              async () => {
+                await reset();
+                sourceFailure = Object.assign(new Error('Synthetic invalid source arguments.'), {
+                  statusCode: 502,
+                  upstreamStatus: 400,
+                });
+                await assert.rejects(
+                  engine.read(ref, { sourceId }, new AbortController().signal),
+                  sourceFailure,
+                );
+                sourceFailure = undefined;
+                await engine.read(ref, { sourceId }, new AbortController().signal);
+                assert.equal(sourceReads, 2);
+                await reset();
+                sourceFailure = Object.assign(new Error('Synthetic service unavailable.'), {
+                  status: 503,
+                });
+                await assert.rejects(
+                  engine.read(ref, { sourceId }, new AbortController().signal),
+                  sourceFailure,
+                );
+                const count = sourceReads;
+                sourceFailure = undefined;
+                for (let i = 0; i < 20; i++)
+                  await assert.rejects(
+                    engine.read(ref, { sourceId }, new AbortController().signal),
+                    (error: Error) => {
+                      assert.match(error.message, /next scheduled check/);
+                      assert.match(error.message, /503/);
+                      assert.match(error.message, /Synthetic service unavailable/);
+                      return true;
+                    },
+                  );
+                assert.equal(sourceReads, count);
+                assert.equal((await engine.view()).coverage[0].status, 'unavailable');
+                const next = { turnId: randomUUID(), threadId: currentThread };
+                await db.pool.query(
+                  "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,proactive,started_at) VALUES($1,$2,$3,'event','Synthetic recovery check','running',true,true,now())",
+                  [next.turnId, ownerId, currentThread],
+                );
+                try {
+                  await engine.read(next, { sourceId }, new AbortController().signal);
+                  assert.equal(sourceReads, count + 1);
+                  assert.equal((await engine.view()).coverage[0].status, 'ready');
+                } finally {
+                  engine.release(next.turnId);
+                  await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [
+                    next.turnId,
+                  ]);
+                }
+              },
+            );
+            await t.test(
+              'evidence failures identify the record and preserve every save fence',
+              async () => {
+                await reset();
+                toolSource = true;
+                const earlier = randomUUID();
+                await db.pool.query(
+                  "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,proactive) VALUES($1,$2,$3,'event','Synthetic earlier check','succeeded',true,true)",
+                  [earlier, ownerId, currentThread],
+                );
+                const read = () =>
+                  engine.read(
+                    ref,
+                    { sourceId, query: 'Read the synthetic record.' },
+                    new AbortController().signal,
+                  );
+                for (const [table, patch, reason] of [
+                  ['proactive_evidence', `turn_id='${earlier}'`, /earlier turn/],
+                  ['proactive_evidence', "version='v2'", /version changed/],
+                  ['proactive_evidence', "checked_at=now()-interval '3 minutes'", /two minutes/],
+                  ['proactive_evidence', "source_revision='old-account'", /connection changed/],
+                  ['proactive_sources', "status='unavailable'", /not ready/],
+                ] as const) {
+                  await read();
+                  await db.pool.query(`UPDATE ${table} SET ${patch} WHERE owner_id=$1`, [ownerId]);
+                  await assert.rejects(save(), (error: Error) => {
+                    assert.match(error.message, reason);
+                    assert.ok(error.message.includes(sourceId));
+                    assert.ok(error.message.includes('thread1'));
+                    return true;
+                  });
+                  assert.equal((await engine.view()).issues.length, 0);
+                  assert.equal(await delivered(), 0);
+                }
+                await read();
+                await assert.rejects(
+                  save({ sources: [{ sourceId, id: 'missing', version }] }),
+                  /missing/,
+                );
+                assert.equal(
+                  ((await save({ delivery: 'private' })) as { status: string }).status,
+                  'prepared',
+                );
+              },
+            );
             await t.test(
               'prepared outcomes and owner controls emit only committed bounded changes',
               async () => {
@@ -9182,6 +9307,13 @@ test(
                 /retry delay is about 24 hours\. Check its daily limit or choose another model\./,
             },
             {
+              prompt: 'model-daily-quota-message-fixture',
+              error: prefix + 'HTTP 429: Daily quota exceeded; retryDelay: 30s',
+              reason: /Daily quota exceeded/,
+              advice:
+                /retry delay is about 30 seconds\. Check its daily limit or choose another model\./,
+            },
+            {
               prompt: 'model-rate-limit-code-fixture',
               error: prefix + 'rate_limit_error',
               reason: /rate_limit_error/,
@@ -9360,7 +9492,7 @@ test(
                   text,
                   /synthetic-private-provider-detail|synthetic-fixture-secret|usage limits and billing/,
                 );
-              if (!item.error.includes('{')) assert.equal(turn.error, item.error);
+              if (!item.error.includes('{') && !item.advice) assert.equal(turn.error, item.error);
             }
           } finally {
             for (const item of cases) modelErrors.delete(item.prompt);
@@ -11277,7 +11409,7 @@ test(
         CREATE TABLE messages(id uuid PRIMARY KEY, owner_id text, turn_id uuid, role text, created_at timestamptz DEFAULT now())`);
       const { createActivity } = await import('../src/server/activity.ts');
       const owner = 'activity-fixture-owner';
-      const activity = createActivity({ pool, ownerId: owner });
+      const activity = createActivity({ pool, ownerId: owner, model: () => 'Synthetic Model' });
       const threadId = randomUUID();
       const chat = randomUUID();
       const followUp = randomUUID();
@@ -11340,6 +11472,18 @@ test(
       item = await live();
       assert.equal(item.doing, 'tool');
       assert.equal(item.site, null);
+      assert.equal(item.tool, undefined);
+      assert.equal(item.model, 'Synthetic Model');
+      const codeCall = randomUUID();
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,call_id) VALUES($1,'tool_start','codemode',$2)",
+        [chat, codeCall],
+      );
+      assert.ok((await live()).tool);
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,call_id) VALUES($1,'tool_complete','codemode',$2)",
+        [chat, codeCall],
+      );
       await pool.query(
         "INSERT INTO turn_events(turn_id,type,summary,call_id) VALUES($1,'tool_complete','Wait for result',$2)",
         [chat, unlabeledCall],
@@ -11352,6 +11496,18 @@ test(
       item = await live();
       assert.equal(item.step, null);
       assert.equal(item.received, undefined);
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary) VALUES($1,'retry','Synthetic retry note')",
+        [chat],
+      );
+      assert.equal((await live()).step, 'Synthetic retry note');
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,call_id) VALUES($1,'tool_start','codemode',$2)",
+        [chat, randomUUID()],
+      );
+      item = await live();
+      assert.equal(item.step, null);
+      assert.ok(item.tool);
       const taskSession = randomUUID();
       const taskTurn = randomUUID();
       const observerTurn = randomUUID();

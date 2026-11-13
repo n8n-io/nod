@@ -275,13 +275,15 @@ test(
                   const result = await options.tools
                     .find((tool) => tool.name === (plan.tool ?? 'manage_personal_context'))!
                     .execute(
-                      plan.tool === 'read_source'
-                        ? { input: plan.args }
-                        : plan.tool === 'browser' ||
-                            plan.tool === 'sign_in' ||
-                            plan.tool === 'files'
-                          ? { action: plan.action, ...plan.args }
-                          : { action: plan.action, args: plan.args },
+                      plan.tool === 'send_message'
+                        ? plan.args
+                        : plan.tool === 'read_source'
+                          ? { input: plan.args }
+                          : plan.tool === 'browser' ||
+                              plan.tool === 'sign_in' ||
+                              plan.tool === 'files'
+                            ? { action: plan.action, ...plan.args }
+                            : { action: plan.action, args: plan.args },
                     );
                   results.set(options.turnId, result);
                   return;
@@ -1265,6 +1267,69 @@ test(
           }
         },
       );
+
+      await t.test('manual schedule runs deliver once and cannot create schedules', async () => {
+        const schedule = await reminder();
+        const input = { requestId: randomUUID(), expectedRevision: 0 };
+        const response = await request('POST', `/api/schedules/${schedule.id}/run`, input);
+        assert.equal(response.statusCode, 200, response.body);
+        const turnId = response.json().turnId;
+        await waitFor(turnId, 'succeeded');
+        const { prompt } = (await pool.query('SELECT prompt FROM turns WHERE id=$1', [turnId]))
+          .rows[0];
+        plans.set(prompt, {
+          tool: 'send_message',
+          action: '',
+          args: { text: 'The synthetic schedule finished.' },
+        });
+        const deliveryInput = { ...input, requestId: randomUUID() };
+        const delivered = await request('POST', `/api/schedules/${schedule.id}/run`, deliveryInput);
+        assert.equal(delivered.statusCode, 200, delivered.body);
+        const deliveredTurn = delivered.json().turnId;
+        await waitFor(deliveredTurn, 'succeeded');
+        const messages = await pool.query(
+          "SELECT text FROM messages WHERE turn_id=$1 AND role='assistant'",
+          [deliveredTurn],
+        );
+        assert.equal(messages.rowCount, 1);
+        assert.equal(messages.rows[0].text, 'The synthetic schedule finished.');
+        const repeated = await request('POST', `/api/schedules/${schedule.id}/run`, deliveryInput);
+        assert.equal(repeated.statusCode, 200, repeated.body);
+        assert.deepEqual(repeated.json(), { turnId: deliveredTurn, activeRun: null });
+        assert.equal(
+          (await pool.query('SELECT 1 FROM schedule_runs WHERE schedule_id=$1', [schedule.id]))
+            .rowCount,
+          2,
+        );
+        plans.set(prompt, {
+          action: 'schedule_create',
+          args: {
+            title: 'Another synthetic reminder',
+            prompt: 'Return a synthetic result.',
+            kind: 'once',
+            runAt: '2099-01-02T09:00:00Z',
+            timeZone: 'UTC',
+          },
+        });
+        const before = (await pool.query('SELECT count(*)::int AS count FROM schedules')).rows[0]
+          .count;
+        const refused = await request('POST', `/api/schedules/${schedule.id}/run`, {
+          ...input,
+          requestId: randomUUID(),
+        });
+        assert.equal(refused.statusCode, 200, refused.body);
+        await waitFor(refused.json().turnId, 'failed');
+        const failure = (
+          await pool.query('SELECT error FROM turns WHERE id=$1', [refused.json().turnId])
+        ).rows[0];
+        assert.match(failure.error, /scheduled run cannot create schedules/i);
+        assert.equal(
+          (await pool.query('SELECT count(*)::int AS count FROM schedules')).rows[0].count,
+          before,
+        );
+        plans.delete(prompt);
+        await request('DELETE', `/api/schedules/${schedule.id}`);
+      });
 
       await t.test(
         'direct schedule pause or deletion retires an outstanding chat confirmation',

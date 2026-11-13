@@ -14,6 +14,7 @@ import {
   type QuestionAnswer,
 } from '../shared/answer-choices.ts';
 import { logFailure } from './failure-log.ts';
+import { modelQuotaFailure } from '../shared/model-quota.ts';
 import { pendingAnswerChoicesSql } from './answer-choices.ts';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -171,6 +172,7 @@ export interface ThreadDependencies {
   ) => Promise<void>;
   spendingLimit?: () => Promise<{ monthlyUsd: number } | null>;
   checkIn?: (sessionId: string, turnId: string) => Promise<RuntimeContext['checkIn']>;
+  scheduleCache?: (turnId: string) => Promise<RuntimeContext['scheduleCache']>;
   skipTurn?: (sourceId: string) => Promise<boolean>;
   accountProfile?: () => Promise<RuntimeContext['account']>;
   connectedApps?: () => Promise<NonNullable<RuntimeContext['connectedApps']>>;
@@ -1132,21 +1134,19 @@ async function finishTurn(
 const interrupted = 'Interrupted.';
 
 function modelRecoveryAdvice(text: string) {
-  if (/\bHTTP 429\b/.test(text) && /\b(?:quotaValue|limit):\s*0(?!\d|\.\d)/i.test(text))
+  const quota = modelQuotaFailure(text);
+  if (quota?.kind === 'credits_depleted')
+    return 'This account has no prepayment credits. Add credits with the provider or choose another connection.';
+  if (quota?.kind === 'zero_quota')
     return 'This account has no quota for this model. Check its access or choose another model.';
   const oversized = text.match(
     /\brequest too large\b.{0,250}?\btokens per minute\s*\(TPM\):\s*Limit\s+(\d{1,9}),\s*Requested\s+(\d{1,9})/is,
   );
   if (oversized && Number(oversized[1]) > 0 && Number(oversized[2]) > Number(oversized[1]))
     return 'Shorten the conversation or choose a model with a higher tokens-per-minute limit.';
-  if (
-    !/\bHTTP 429\b/.test(text) ||
-    !/\b(?:GenerateRequestsPerDay\w*|requests?\s*(?:\/|per\s+)day)\b/i.test(text)
-  )
-    return '';
-  const retry = text.match(/\bretryDelay:\s*(\d{1,6}(?:\.\d+)?)s\b/i);
-  const seconds = retry ? Number(retry[1]) : 0;
-  if (!seconds) return '';
+  if (quota?.kind !== 'daily_quota') return '';
+  const seconds = (quota.retryAfterMs ?? 0) / 1000;
+  if (!seconds) return 'Check this connection’s daily limit or choose another model.';
   const amount =
     seconds < 60
       ? seconds
@@ -1951,6 +1951,13 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       mode: (await dependencies.audioReplies?.()) ?? defaultPreferences.speechReply,
       available: Boolean(dependencies.speech.configured),
     };
+    let scheduleCache: RuntimeContext['scheduleCache'];
+    if (turn.source === 'schedule')
+      try {
+        scheduleCache = await dependencies.scheduleCache?.(turnId);
+      } catch (error) {
+        logFailure('schedule_cache_policy_failed', error, { threadId, turnId });
+      }
     const result = await dependencies.runTurn({
       threadId,
       turnId,
@@ -1958,6 +1965,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       resumed: turn.source === 'resume' || Boolean(turn.parent_turn_id),
       prompt: turn.prompt,
       background: turn.background,
+      ...(scheduleCache ? { scheduleCache } : {}),
       channel: String(turn.channel).split(':')[0],
       ...loaded.context,
       speech,

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { CalendarClock, Sparkles } from '../components/icons';
+import { CalendarClock, LoaderCircle, Play, Sparkles } from '../components/icons';
 import type { Schedule, ScheduleHistory, ScheduleRun } from '../../shared/contracts';
 import { StatusIcon, statusLabels } from '../components/turn-status';
 import { usePageData } from '../hooks/use-page-data';
-import { api } from '../lib/api';
+import { api, errorMessage, requestAccountVersion } from '../lib/api';
+import { pageDataCache } from '../lib/page-data-cache';
+import { schedulesPath, uncertainScheduleMutation } from '../lib/schedule-reconciliation';
 import { scheduleDate, scheduleLabel } from '../lib/schedules';
 import { useDateFormat } from '../lib/date-format';
 import { DeletePlan } from '../components/delete-plan';
@@ -26,13 +28,76 @@ export function ScheduleRow({
 }) {
   const dateFormat = useDateFormat();
   const [showRuns, setShowRuns] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [runError, setRunError] = useState('');
+  const [resultTurnId, setResultTurnId] = useState<string>();
+  const pendingRun = useRef<{ requestId: string; expectedRevision: number } | null>(null);
+  const working = useRef(false);
   const change = useDirectChange(schedule.id);
   const date = (value: string) => scheduleDate(value, schedule.timeZone, dateFormat);
   const canPause =
     schedule.enabled ||
     schedule.kind !== 'once' ||
     Boolean(schedule.runAt && Date.parse(schedule.runAt) > Date.now());
-  const ranOnce = schedule.kind === 'once' && schedule.lastRun?.scheduledFor === schedule.runAt;
+  const ranOnce =
+    schedule.kind === 'once' &&
+    !schedule.enabled &&
+    schedule.lastRun &&
+    Boolean(schedule.runAt && Date.parse(schedule.runAt) <= Date.now());
+  const runLabel = starting
+    ? 'Starting…'
+    : schedule.activeRun
+      ? statusLabels[schedule.activeRun.status]
+      : pendingRun.current
+        ? 'Try again'
+        : 'Run now';
+  async function runNow() {
+    if (working.current || schedule.activeRun) return;
+    working.current = true;
+    setStarting(true);
+    setRunError('');
+    setShowRuns(true);
+    setDetailsOpen(true);
+    const accountVersion = requestAccountVersion();
+    const input = pendingRun.current ?? {
+      requestId: crypto.randomUUID(),
+      expectedRevision: schedule.revision,
+    };
+    pendingRun.current = input;
+    try {
+      const run = await api<{ turnId: string; activeRun: Schedule['activeRun'] }>(
+        `${schedulesPath}/${encodeURIComponent(schedule.id)}/run`,
+        { method: 'POST', body: JSON.stringify(input), signal: AbortSignal.timeout(45_000) },
+      );
+      if (accountVersion !== requestAccountVersion()) return;
+      pendingRun.current = null;
+      setResultTurnId(run.turnId);
+      pageDataCache.update<Schedule[]>(
+        schedulesPath,
+        (items) =>
+          items?.map((item) =>
+            item.id === schedule.id ? { ...item, activeRun: run.activeRun } : item,
+          ) ?? null,
+      );
+    } catch (cause) {
+      if (accountVersion !== requestAccountVersion()) return;
+      const uncertain = uncertainScheduleMutation(cause);
+      if (!uncertain) pendingRun.current = null;
+      setRunError(
+        uncertain
+          ? `Could not confirm that the run started. ${errorMessage(cause)} Select Try again to check or start the same run.`
+          : errorMessage(cause),
+      );
+    } finally {
+      working.current = false;
+      setStarting(false);
+      if (accountVersion === requestAccountVersion()) {
+        pageDataCache.revalidateActive('/api/schedule-runs');
+        void pageDataCache.refresh(schedulesPath, true);
+      }
+    }
+  }
   return (
     <article className="saved-plan">
       <div className="saved-plan-title">
@@ -63,13 +128,34 @@ export function ScheduleRow({
         {schedule.timeZone !== dateFormat.timeZone && <span>{schedule.timeZone}</span>}
         {schedule.monthlyUsd !== null && <span>≈{money(schedule.monthlyUsd)} a month</span>}
       </p>
+      {runError && <Notice>{runError}</Notice>}
       <PlanDetails
         label={schedule.title}
+        open={detailsOpen}
         onOpenChange={(open) => {
+          setDetailsOpen(open);
           if (open) setShowRuns(true);
         }}
         actions={
           <>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={starting || Boolean(schedule.activeRun) || change.busy || change.uncertain}
+              aria-label={`${runLabel} for ${schedule.title}`}
+              aria-busy={starting}
+              aria-live="polite"
+              onClick={() => void runNow()}
+            >
+              {starting ? (
+                <LoaderCircle size={16} className="spin" aria-hidden="true" />
+              ) : schedule.activeRun ? (
+                <StatusIcon status={schedule.activeRun.status} />
+              ) : (
+                <Play size={16} aria-hidden="true" />
+              )}
+              {runLabel}
+            </Button>
             <ScheduleEditor schedule={schedule} change={change} />
             <Button
               variant="ghost"
@@ -95,14 +181,18 @@ export function ScheduleRow({
             {date(schedule.baselineObservation.checkedAt)}
           </p>
         )}
-        {showRuns && <ScheduleRuns schedule={schedule} />}
+        {showRuns && <ScheduleRuns schedule={schedule} resultTurnId={resultTurnId} />}
       </PlanDetails>
     </article>
   );
 }
 
-function ScheduleRunRow({ run }: { run: ScheduleRun }) {
+function ScheduleRunRow({ run, openResult }: { run: ScheduleRun; openResult: boolean }) {
   const dateFormat = useDateFormat();
+  const [open, setOpen] = useState(openResult);
+  useEffect(() => {
+    if (openResult) setOpen(true);
+  }, [openResult]);
   const date = (value: string) => scheduleDate(value, run.timeZone, dateFormat);
   return (
     <li className="schedule-run">
@@ -133,7 +223,12 @@ function ScheduleRunRow({ run }: { run: ScheduleRun }) {
         </p>
       )}
       {run.messageId && (
-        <PlanDetails label={`${run.title}, ${date(run.scheduledFor)}`} summary={run.messagePreview}>
+        <PlanDetails
+          label={`${run.title}, ${date(run.scheduledFor)}`}
+          summary={run.messagePreview}
+          open={open}
+          onOpenChange={setOpen}
+        >
           <MessageText text={run.messageText ?? run.messagePreview ?? ''} />
         </PlanDetails>
       )}
@@ -141,7 +236,7 @@ function ScheduleRunRow({ run }: { run: ScheduleRun }) {
   );
 }
 
-function ScheduleRuns({ schedule }: { schedule: Schedule }) {
+function ScheduleRuns({ schedule, resultTurnId }: { schedule: Schedule; resultTurnId?: string }) {
   const history = useScheduleHistory(schedule.id);
   return (
     <section className="schedule-runs" aria-label={`Runs for ${schedule.title}`}>
@@ -164,7 +259,7 @@ function ScheduleRuns({ schedule }: { schedule: Schedule }) {
       {history.runs.length > 0 && (
         <ol className="schedule-runs-list">
           {history.runs.map((run) => (
-            <ScheduleRunRow key={run.id} run={run} />
+            <ScheduleRunRow key={run.id} run={run} openResult={run.turnId === resultTurnId} />
           ))}
         </ol>
       )}

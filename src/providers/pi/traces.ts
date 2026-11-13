@@ -18,7 +18,12 @@ const memory = (name: string, args: Record<string, unknown> | undefined) =>
 const privateCall = (name: string, args?: Record<string, unknown>) =>
   name === 'codemode' || memory(name, args);
 
+export interface ModelRequestFacts {
+  requestPhase: 'prepare' | 'payload' | 'request' | 'response' | 'stream';
+}
+
 export interface PiModelCall {
+  request?: ModelRequestFacts;
   model: Model<Api>;
   context: Context;
   message: AssistantMessage;
@@ -152,6 +157,14 @@ export function piModelTrace(
     ...(message.stopReason === 'error' || message.stopReason === 'aborted'
       ? { error: message.errorMessage || message.stopReason }
       : {}),
-    metadata: { ...metadata, stop_reason: message.stopReason },
+    metadata: {
+      ...metadata,
+      stop_reason: message.stopReason,
+      ...(call.request
+        ? {
+            request_phase: call.request.requestPhase,
+          }
+        : {}),
+    },
   };
 }
