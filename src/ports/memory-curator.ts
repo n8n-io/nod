@@ -22,6 +22,7 @@ export interface MemoryCurator {
       instructions: string;
       input: object;
       images?: AgentImage[];
+      automatic?: boolean;
     },
     signal?: AbortSignal,
     report?: (

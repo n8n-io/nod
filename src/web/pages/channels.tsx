@@ -46,6 +46,8 @@ const providers = [
 const channelStatus = {
   'needs-setup': 'Needs setup',
   'coming-soon': 'Coming soon',
+  'connection-failed': 'Connection failed',
+  connecting: 'Connecting',
 };
 const whatsappSteps = [
   'Before you begin',
@@ -236,6 +238,9 @@ function ChannelCard({
   busy,
   onConnect,
   onPair,
+  onReconnect,
+  available,
+  error,
 }: {
   provider: (typeof providers)[number];
   setup?: ChannelSetupSummary;
@@ -244,6 +249,9 @@ function ChannelCard({
   busy: boolean;
   onConnect(): void;
   onPair(): void;
+  onReconnect(): void;
+  available?: boolean;
+  error?: string;
 }) {
   const comingSoon = 'comingSoon' in provider;
   const needsDelivery = Boolean(
@@ -256,13 +264,33 @@ function ChannelCard({
     ((provider.id === 'telegram' && (!setup.allowedUserId || setup.pairingExpiresAt)) ||
       (setup.mode === 'linked' && setup.connectionState !== 'connected')),
   );
+  const retrying =
+    setup?.mode === 'linked' &&
+    (setup.connectionState === 'connecting' || setup.connectionState === 'disconnected');
   const status: keyof typeof channelStatus | null = connected
-    ? needsDelivery || needsPairing || !configured
-      ? 'needs-setup'
-      : null
+    ? retrying
+      ? 'connecting'
+      : setup?.connectionState === 'awaiting_scan'
+        ? 'needs-setup'
+        : available === false
+          ? 'connection-failed'
+          : needsDelivery || needsPairing || !configured
+            ? 'needs-setup'
+            : null
     : comingSoon
       ? 'coming-soon'
       : null;
+  const reconnect = setup?.enabled ? (
+    <Button
+      variant="outline"
+      size="sm"
+      aria-label={`Reconnect ${provider.name}`}
+      disabled={busy}
+      onClick={onReconnect}
+    >
+      Reconnect
+    </Button>
+  ) : null;
   return (
     <IntegrationCard
       id={`channel-${provider.id}`}
@@ -270,7 +298,13 @@ function ChannelCard({
       name={provider.name}
       logo={<img src={`/logos/${provider.id}.svg`} alt="" width={24} height={24} />}
       description={provider.description}
-      detail={setup?.managed ? 'Managed by your server' : undefined}
+      detail={
+        error
+          ? `${setup?.managed ? 'Managed by your server. ' : ''}${error}`
+          : setup?.managed
+            ? 'Managed by your server'
+            : undefined
+      }
       badge={
         status && (
           <span className="channel-chip" data-status={status}>
@@ -280,15 +314,11 @@ function ChannelCard({
       }
       actions={
         setup?.managed ? (
-          setup.enabled && configured && setup.mode === 'linked' && needsPairing ? (
-            <Button variant="outline" size="sm" disabled={busy} onClick={onPair}>
-              Link WhatsApp
-              <ArrowRight size={16} />
-            </Button>
-          ) : null
+          reconnect
         ) : connected ? (
           <div className="channel-account-actions">
-            {(provider.id === 'telegram' && needsDelivery) || needsPairing ? (
+            {reconnect}
+            {provider.id === 'telegram' && (needsDelivery || needsPairing) ? (
               <Button variant="outline" size="sm" disabled={busy} onClick={onPair}>
                 {needsDelivery ? 'Retry connection' : 'Finish setup'}
                 <ArrowRight size={16} />
@@ -368,6 +398,7 @@ export function Channels() {
     save,
     telegramAction: telegramRequest,
     remove,
+    reconnect,
   } = useChannelSettings({
     watchTelegram: editing === 'telegram',
     watchWhatsApp: editing === 'whatsapp',
@@ -387,10 +418,18 @@ export function Channels() {
   const removeProvider = useRef<ChannelProvider | null>(null);
   const channels = providers.map((provider) => {
     const setup = settings?.channels.find((item) => item.provider === provider.id);
+    const live = data?.channels.find((item) => item.provider === provider.id);
     const configured = Boolean(
       data?.channels.some((item) => item.provider === provider.id && item.status === 'configured'),
     );
-    return { provider, setup, configured, connected: Boolean(setup?.enabled || configured) };
+    return {
+      provider,
+      setup,
+      configured,
+      connected: Boolean(setup?.enabled || configured),
+      available: live?.available,
+      error: live?.error,
+    };
   });
   const telegramSetup = channels[0].setup;
   const telegramStatus = telegramState(telegramSetup);
@@ -509,11 +548,15 @@ export function Channels() {
           <ChannelCard
             key={channel.provider.id}
             {...channel}
-            busy={busy || resuming || !settings?.ready}
+            busy={busy || resuming || (!settings?.ready && !channel.setup?.managed)}
             onConnect={() => open(channel.provider.id)}
             onPair={() =>
               channel.provider.id === 'whatsapp' ? open('whatsapp') : void resumeTelegram()
             }
+            onReconnect={async () => {
+              if ((await reconnect(channel.provider.id)) && channel.setup?.mode === 'linked')
+                open('whatsapp');
+            }}
           />
         ))}
       </div>
@@ -523,6 +566,10 @@ export function Channels() {
     <div className="content-page secondary-page channels-page" ref={page}>
       <header className="page-heading secondary-heading">
         <PageTitle path="/channels" />
+        <p className="channel-runtime-note">
+          Nod must be running to receive messages. If Nod runs on this computer, keep the computer
+          awake.
+        </p>
       </header>
       {(error || loadError) && !editing && <Notice>{error || loadError}</Notice>}
       {loadError && !editing && (
@@ -530,7 +577,9 @@ export function Channels() {
           {loading ? 'Retrying…' : 'Retry loading'}
         </Button>
       )}
-      {data?.error && <Notice>{data.error}</Notice>}
+      {data?.error && !data.channels.some((channel) => channel.error === data.error) && (
+        <Notice>{data.error}</Notice>
+      )}
       {settings && !settings.ready && (
         <Notice>The secure key store needs local setup before you can save a channel.</Notice>
       )}
@@ -542,7 +591,7 @@ export function Channels() {
         <>
           {connected.length > 0 && (
             <section className="channels-group" aria-labelledby="channels-connected">
-              <h2 id="channels-connected">Connected</h2>
+              <h2 id="channels-connected">Your channels</h2>
               {cards(connected)}
             </section>
           )}
@@ -778,7 +827,9 @@ export function Channels() {
                 error={error}
                 onSave={async (input) => (await save('whatsapp', input)).ok}
                 onRefresh={load}
-                onDisconnect={() => confirmDisconnect('whatsapp')}
+                onDisconnect={
+                  selected?.setup?.managed ? undefined : () => confirmDisconnect('whatsapp')
+                }
                 onCloud={() => {
                   setFields({ connection: 'cloud' });
                   setPolicy(false);

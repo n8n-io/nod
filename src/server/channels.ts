@@ -13,6 +13,7 @@ import { languageText } from './communication.ts';
 import { ChannelMediaFailure, type ChannelMedia } from './channel-media.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type { LiveWork } from './activity.ts';
+import { MessagingConnectionError } from '../ports/messaging.ts';
 import type {
   ChannelPairingRequest,
   InboundMessage,
@@ -334,6 +335,14 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     missing: channel.missing,
   }));
   function updateConfiguration() {
+    for (const channel of transport.channels)
+      if (
+        channel.error &&
+        channel.error !== channels.find((previous) => previous.id === channel.id)?.error
+      )
+        logFailure('channel_connection_failed', new MessagingConnectionError(channel.error), {
+          provider: channel.id,
+        });
     channels = transport.channels.map((channel) => ({
       ...channel,
       allowedSenderIds: [...channel.allowedSenderIds],
@@ -342,6 +351,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       provider: channel.id,
       status: channel.status,
       missing: channel.missing,
+      ...(channel.available === undefined ? {} : { available: channel.available }),
+      ...(channel.error ? { error: channel.error } : {}),
     }));
   }
   await pool.query(`CREATE TABLE IF NOT EXISTS channel_inbox (
@@ -1442,7 +1453,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     closed || replacing || options.admission?.paused || options.admission?.closed;
   const activityStatus = (item?: LiveWork) => {
     const site = item?.doing === 'tool' ? item.site : null;
-    return [item?.title, item?.step?.trim() || (site && `Using ${site}`)]
+    const tool = item?.doing === 'tool' ? item.tool : null;
+    return [item?.title, item?.step?.trim() || (site && `Using ${site}`) || tool]
       .filter(Boolean)
       .join(': ');
   };
@@ -1699,7 +1711,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     const release = options.admission?.enter();
     if (options.admission && !release) return Promise.resolve();
     running = (async () => {
-      let pollingFailed = false;
+      let pollingError: string | null = null;
       let processingFailed = false;
       try {
         while (drainRequested && !closed && !replacing && !options.admission?.paused) {
@@ -1710,8 +1722,12 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
               completePairing,
               (reaction) => acceptReaction(reaction, reaction.channelId),
             );
+            pollingError = null;
           } catch (cause) {
-            pollingFailed = true;
+            pollingError =
+              cause instanceof MessagingConnectionError
+                ? cause.message
+                : 'Channels could not check for new messages. Check the channel setup.';
             logFailure('channel_poll_failed', cause);
           }
           const attempt = async (step: () => Promise<unknown>) => {
@@ -1738,9 +1754,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       } finally {
         lastError = processingFailed
           ? 'Channel processing needs attention. Check the local database and thread service.'
-          : pollingFailed
-            ? 'Telegram could not check for new messages. Check its channel setup.'
-            : null;
+          : pollingError;
         running = undefined;
         release?.();
       }
@@ -1790,6 +1804,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         provider: channel.id,
         status: channel.status,
         missing: channel.missing,
+        ...(channel.available === undefined ? {} : { available: channel.available }),
+        ...(channel.error ? { error: channel.error } : {}),
       }));
       lastError = null;
     } finally {

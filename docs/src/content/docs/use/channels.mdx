@@ -11,6 +11,8 @@ You can chat with Nod from Telegram or WhatsApp. It's the same conversation, mem
 
 With a [self-hosted server](/deploy/self-host/), channels stay connected while the server runs. You can close the web or desktop app.
 
+If the desktop app runs Nod, quitting it stops Telegram and WhatsApp replies. The computer must stay awake. Reconnect cannot receive messages while Nod is stopped.
+
 Nod replies in the app you wrote from. A message from Telegram gets its answer on Telegram, and a schedule you set up there sends its results there too. Everything also shows in the chat in the Nod app.
 
 Nod uses your conversation language for pairing notices and private-step guidance. Its model writes the message; the server adds permitted file links and keeps private sign-in and payment links out of chat apps. If an attachment cannot be read, its caption still helps set the recovery message’s language; the failed attachment does not start a task.
@@ -71,7 +73,7 @@ Nod ignores groups, status updates, other senders and message history. In self-c
 
 The QR code updates automatically. When WhatsApp accepts the code, Nod hides it while the connection starts. If the code expires or Nod cannot check the connection, Nod hides it until a new check succeeds. Select **Start again** if setup does not continue.
 
-Closing an unfinished setup cancels that setup. Once connected, closing the panel keeps WhatsApp connected. Nod keeps the device credentials and Signal keys encrypted on your installation. Select **Disconnect** to remove them. You can also remove Nod from **Linked Devices** on your phone. To get a new link after a sign-out, select **Finish setup**, then **Start again**.
+Closing an unfinished setup cancels that setup. Once connected, closing the panel keeps WhatsApp connected. Nod keeps the device credentials and Signal keys encrypted on your installation. Select **Disconnect** to remove them. You can also remove Nod from **Linked Devices** on your phone. To get a new link after a sign-out, select **Reconnect**, then **Start again**.
 
 <details>
 <summary>Use the Meta Cloud API</summary>
@@ -138,6 +140,14 @@ Nod saves the WhatsApp device keys encrypted in its database. The keys stay on t
 
 After a restart or network loss, Nod uses the saved link to connect again. Replies that have not started sending wait while WhatsApp is disconnected. A send with an unclear result is not repeated automatically. This prevents duplicate messages; check Nod if a reply does not arrive.
 
+If messages stop, open **Channels** and select **Reconnect** for Telegram or WhatsApp. Nod restarts message delivery with the saved settings. It keeps your paired Telegram account and saved WhatsApp device keys. A saved Telegram webhook is registered again. Telegram polling errors show the service's status and reason on this page.
+
+**Reconnect** also works for server-managed channels. Their settings still come from the server environment. For WhatsApp, the connection panel opens after reconnecting. If WhatsApp has signed out the device, select **Start again** and scan a new code.
+
+Telegram can change its update numbers after seven days without messages. Nod stops using the saved update number after 24 hours without a received update. Telegram keeps pending updates for 24 hours.
+
+The Channels page checks status every five seconds while visible. During Telegram pairing, or with the WhatsApp connection panel open, it checks every two seconds. **Connecting** means WhatsApp is trying to reconnect. **Connection failed** shows a stopped connection and its reason. WhatsApp errors distinguish a signed-out device, a replaced connection, a rejected session or device version, an incorrect bot account, and local storage or message errors. The connection panel shows the same reason. Connection failures also enter the local diagnostic log, without WhatsApp phone numbers, QR codes, or device keys.
+
 ## Private steps happen in the Nod app
 
 Passwords, saved logins, app sign-ins and payment approvals never go through a chat app. When a task started on Telegram or WhatsApp needs one, Nod asks you to open Nod. Finish the step there, and the task carries on and replies in the chat app.
@@ -166,7 +176,7 @@ Taking over [Nod's browser](/use/browser/) also needs the Nod app, because chat 
 
 While Nod works on something you asked for in this chat, including a task it started for you, you see **typing…**.
 
-- **Telegram** adds a quoted progress section when a task's first message or chat's opening message arrives as one short text message. Named steps use your conversation language. Without a named step, a running labeled tool appears as **Using Gmail**, **Using Slack**, or **Using local files**. The same English fallback applies to other apps, websites, and MCP servers. The section updates quietly in place and disappears when work stops. The answer arrives separately. You can keep typing and sending messages, or reply to the first message to correct the task. Long or split messages, attachments, visual cards, files and private sign-in or payment links keep typing status only.
+- **Telegram** adds a quoted progress section when a task's first message or chat's opening message arrives as one short text message. Named steps use your conversation language. Without a named step, a running labeled tool appears as **Using Gmail**, **Using Slack**, or **Using local files**. The same fallback applies to other apps, websites, and MCP servers. Known tools without a label, such as code, commands and web searches, appear by their kind of work, such as **Running code** or **Searching the web**. These fallbacks, and the note shown while Nod retries a failed model request, are in English. The section updates quietly in place and disappears when work stops. The answer arrives separately. You can keep typing and sending messages, or reply to the first message to correct the task. Long or split messages, attachments, visual cards, files and private sign-in or payment links keep typing status only.
 - **WhatsApp** shows **typing…** while connected. The Meta Cloud API also marks your latest message as read and stops typing after its 24-hour reply window closes. The QR connection has no reply window.
 - **A message you send while Nod works** gets a 👀 reaction in both apps until Nod reads it, so you know it's queued. Nod leaves its own reaction to that message alone.
 

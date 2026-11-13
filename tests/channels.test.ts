@@ -610,6 +610,8 @@ test(
           let downloads = 0;
           let logouts = 0;
           let failSend = false;
+          let failConnect = false;
+          let blockedSave: Promise<void> | undefined;
           let failClear = false;
           let failLogout = false;
           let abortDownload: AbortController | undefined;
@@ -621,6 +623,10 @@ test(
           const jid = `${owner}@s.whatsapp.net`;
           const store = createChannelSessionStore({ pool, ownerId: `fixture-${mode}`, keyStore });
           const createSocket: Factory = (config) => {
+            if (failConnect)
+              throw Object.assign(new Error('synthetic-private-connect-error'), {
+                code: 'ECONNRESET',
+              });
             const events = new EventEmitter();
             sockets.push({ events, config });
             return {
@@ -674,6 +680,10 @@ test(
                   const session = await store.open();
                   return {
                     ...session,
+                    async set(values: Parameters<typeof session.set>[0]) {
+                      if (blockedSave) await blockedSave;
+                      await session.set(values);
+                    },
                     async clear() {
                       if (failClear) {
                         failClear = false;
@@ -1115,6 +1125,7 @@ test(
               lastDisconnect: { error: { output: { statusCode: 428 } } },
             });
             assert.equal((await transport.pairing!()).state, 'disconnected');
+            assert.match((await transport.pairing!()).error ?? '', /428/);
             assert.equal(
               await transport.cancelPairing!((await transport.pairing!()).pairingId!),
               false,
@@ -1134,6 +1145,57 @@ test(
             assert.ok(sockets.length > beforeDisconnect);
             sockets.at(-1)!.events.emit('connection.update', { connection: 'open' });
             assert.equal(sent.length, attempts);
+            assert.equal((await transport.pairing!()).state, 'connected');
+            assert.equal((await transport.pairing!()).error, undefined);
+            failConnect = true;
+            sockets.at(-1)!.events.emit('connection.update', {
+              connection: 'close',
+              lastDisconnect: { error: { output: { statusCode: 428 } } },
+            });
+            const failedDeadline = Date.now() + 3000;
+            while ((await transport.pairing!()).state !== 'failed' && Date.now() < failedDeadline)
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            assert.equal((await transport.pairing!()).state, 'failed');
+            assert.match((await transport.pairing!()).error ?? '', /ECONNRESET/);
+            assert.equal(
+              JSON.stringify(await transport.pairing!()).includes(
+                'synthetic-private-connect-error',
+              ),
+              false,
+            );
+            failConnect = false;
+            await transport.close();
+            transport = open();
+            await transport.pairing!();
+            sockets.at(-1)!.events.emit('connection.update', { connection: 'open' });
+            let rejectSave: (error: Error) => void = () => {};
+            blockedSave = new Promise<void>((_resolve, reject) => {
+              rejectSave = reject;
+            });
+            void blockedSave.catch(() => {});
+            const lateSave = Promise.resolve(
+              sockets.at(-1)!.config.auth.keys.set({ session: { late: Uint8Array.from([4]) } }),
+            );
+            const failedSave = assert.rejects(lateSave, /synthetic late save failure/);
+            sockets.at(-1)!.events.emit('connection.update', {
+              connection: 'close',
+              lastDisconnect: {
+                error: { message: 'synthetic-private-provider-text', output: { statusCode: 440 } },
+              },
+            });
+            const failed = await transport.pairing!();
+            assert.equal(failed.state, 'failed');
+            assert.match(failed.error ?? '', /another session.*440/);
+            assert.equal(JSON.stringify(failed).includes('synthetic-private-provider-text'), false);
+            assert.equal(transport.channels[0].error, failed.error);
+            rejectSave(new Error('synthetic late save failure'));
+            await failedSave;
+            blockedSave = undefined;
+            assert.equal((await transport.pairing!()).error, failed.error);
+            await transport.close();
+            transport = open();
+            await transport.pairing!();
+            sockets.at(-1)!.events.emit('connection.update', { connection: 'open' });
             assert.equal((await transport.pairing!()).state, 'connected');
             failClear = true;
             failLogout = true;

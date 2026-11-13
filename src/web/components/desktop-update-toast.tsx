@@ -38,7 +38,16 @@ export function DesktopUpdateToast() {
       </span>
       <div className="desktop-update-toast-content">
         <strong>Nod {version} is ready</strong>
-        <p>Restart to use the new version.</p>
+        <p>
+          Restart to use the new version.{' '}
+          <a
+            href={`https://github.com/n8n-io/nod/releases/tag/nod-v${encodeURIComponent(version)}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Release notes
+          </a>
+        </p>
         {failed && <p role="alert">Nod could not restart. Try again.</p>}
         <div className="desktop-update-toast-actions">
           <Button

@@ -1,6 +1,7 @@
 import type { Api, Model } from '@earendil-works/pi-ai';
 import { z } from 'zod';
 import { ModelAuthError, type ModelCredential } from '../../ports/models.ts';
+import { ModelServiceError, modelServiceError } from '../model-error.ts';
 import {
   cloudflareAccountPattern,
   cloudflareGatewayPattern,
@@ -25,6 +26,7 @@ const catalogEndpoints = {
   moonshotai: 'https://api.moonshot.ai/v1/models',
   'moonshotai-cn': 'https://api.moonshot.cn/v1/models',
   together: 'https://api.together.xyz/v1/models',
+  nvidia: 'https://integrate.api.nvidia.com/v1/models',
 } as const;
 
 export const nativeAudioModel: Model<'openai-completions'> = {
@@ -113,19 +115,23 @@ export async function nativeCatalog(
         signal: AbortSignal.timeout(15000),
       });
       if (!response.ok) {
-        await response.body?.cancel();
+        const error = await modelServiceError(
+          response,
+          `${modelProviderNames[provider]} model discovery`,
+          Object.values(headers).map((value) => value.replace(/^Bearer /, '')),
+        );
         if (
           response.status === 401 ||
           response.status === 403 ||
           (provider === 'google' && response.status === 400) ||
           (provider === 'cloudflare-ai-gateway' && response.status === 404)
         )
-          throw denied();
-        throw failed();
+          throw new ModelAuthError(`${denied().message} ${error.message}`);
+        throw error;
       }
       return (await response.json()) as unknown;
     } catch (error) {
-      if (error instanceof ModelAuthError) throw error;
+      if (error instanceof ModelAuthError || error instanceof ModelServiceError) throw error;
       throw failed();
     }
   };
