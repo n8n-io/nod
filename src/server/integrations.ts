@@ -2288,9 +2288,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             if (stop.signal.aborted) {
               await (client ?? pool).query(
                 `UPDATE app_connections SET inbox_poll_at=now(),inbox_claim_id=NULL
-                 WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND watch_revision=$5 AND inbox_claim_id=$6
-                 AND watch_requested AND account_active AND NOT revoked
-                 AND ($7::text IS NULL OR configuration_id=$7)`,
+                 WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND watch_revision=$5 AND inbox_claim_id=$6`,
                 [
                   row.id,
                   configuredOwner,
@@ -2298,7 +2296,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                   row.account_id,
                   row.watch_revision,
                   row.inbox_claim_id,
-                  provider.configurationId ?? null,
                 ],
               );
               return;

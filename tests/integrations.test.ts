@@ -6002,6 +6002,46 @@ test(
 );
 
 test(
+  'shutdown releases a claimed inbox poll after the account becomes inactive',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15_000 },
+  async (t) => {
+    const f = await appsFixture(t);
+    f.provider.webhooksConfigured = false;
+    const selected = await f.connect('gmail');
+    let enter = () => {};
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    f.provider.pollInbox = async (_account, _cursor, signal) => {
+      enter();
+      return new Promise<never>((_resolve, reject) => {
+        if (signal.aborted) reject(signal.reason);
+        else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    };
+    const running = f.service.pollInboxes();
+    await entered;
+    await f.pool.query('UPDATE app_connections SET account_active=false WHERE id=$1', [
+      selected.connectionId,
+    ]);
+    await f.app.close();
+    await running;
+    const row = (
+      await f.pool.query<{
+        account_active: boolean;
+        inbox_claim_id: string | null;
+        inbox_poll_at: Date;
+      }>('SELECT account_active,inbox_claim_id,inbox_poll_at FROM app_connections WHERE id=$1', [
+        selected.connectionId,
+      ])
+    ).rows[0];
+    assert.equal(row.account_active, false);
+    assert.equal(row.inbox_claim_id, null);
+    assert.ok(row.inbox_poll_at.getTime() <= Date.now() + 5_000);
+  },
+);
+
+test(
   'disconnect during a claimed event prevents admission and cannot revive discarded delivery',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 15_000 },
   async (t) => {
