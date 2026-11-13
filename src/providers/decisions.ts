@@ -251,11 +251,18 @@ export function createDecisionModel(options: {
           : null,
       );
       const started = performance.now();
+      let dispatched = false;
       try {
         const url =
           connection.provider === 'openai'
             ? `${openAIBaseUrl(connection.region)}/decisions`
             : service.url;
+        const requestSignal = AbortSignal.any([
+          AbortSignal.timeout(45_000),
+          ...(signal ? [signal] : []),
+        ]);
+        requestSignal.throwIfAborted();
+        dispatched = true;
         const response = await request(url, {
           method: 'POST',
           redirect: 'error',
@@ -263,7 +270,7 @@ export function createDecisionModel(options: {
             authorization: `Bearer ${connection.key}`,
             'content-type': 'application/json',
           },
-          signal: AbortSignal.any([AbortSignal.timeout(45_000), ...(signal ? [signal] : [])]),
+          signal: requestSignal,
           body: requestBody,
         });
         if (!response.ok) {
@@ -346,15 +353,16 @@ export function createDecisionModel(options: {
         const validCache = !usage || cacheRead + cacheWrite <= usage.input_tokens;
         const uncached =
           usage && validCache ? usage.input_tokens - cacheRead - cacheWrite : usage?.input_tokens;
-        await settleBudget?.(
-          usage
+        const costUsd = !dispatched
+          ? 0
+          : usage
             ? (usage.cost ??
-                (priced && validCache
-                  ? ((uncached ?? 0) * service.rate + cacheRead * 0.01 + cacheWrite * 0.125) /
-                    1_000_000
-                  : null))
-            : null,
-        );
+              (priced && validCache
+                ? ((uncached ?? 0) * service.rate + cacheRead * 0.01 + cacheWrite * 0.125) /
+                  1_000_000
+                : null))
+            : null;
+        await settleBudget?.(costUsd);
         report?.({
           id,
           provider: connection.provider,
@@ -374,15 +382,10 @@ export function createDecisionModel(options: {
             ? { cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite }
             : {}),
           outputTokens: usage?.output_tokens,
-          costUsd: usage
-            ? (usage.cost ??
-              (priced && validCache
-                ? ((uncached ?? 0) * service.rate + cacheRead * 0.01 + cacheWrite * 0.125) /
-                  1_000_000
-                : null))
-            : null,
-          pricing:
-            usage?.cost !== undefined
+          costUsd,
+          pricing: !dispatched
+            ? 'sdk_estimate'
+            : usage?.cost !== undefined
               ? 'reported'
               : usage && priced && validCache
                 ? 'sdk_estimate'

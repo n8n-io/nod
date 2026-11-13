@@ -21,7 +21,7 @@ For sources with native readers, the server reads a bounded batch through the no
 
 The observer reads current facts and relevant memory, then saves useful work. It keeps its context while the provider cache is warm. Saved matters carry the state between sessions. Events that arrive during a read stay pending for the next check.
 
-The observer uses your selected model for useful work. The batch check uses the existing small classification model. It returns only whether the observer must inspect the batch. It cannot prepare work or grant permission. Due matters and changes to cited records bypass this check. An invalid decision reaches the observer. A failed request leaves the batch pending. Oversized or incomplete batches reach the observer directly. Work that needs normal tools starts a separate task. Both stages share the preparation allowance. Server code controls permission, freshness, and delivery.
+The observer uses your selected model for useful work. The batch check uses the existing small classification model. Without that model, changed batches reach the selected model directly. It returns only whether the observer must inspect the batch. It cannot prepare work or grant permission. Due matters and changes to cited records bypass this check. An invalid decision reaches the observer. A failed request leaves the batch pending. Oversized or incomplete batches reach the observer directly. Work that needs normal tools starts a separate task. Both stages share the preparation allowance. Server code controls permission, freshness, and delivery.
 
 ```mermaid
 flowchart TD

@@ -45,6 +45,8 @@ Keep automatic preparation on in both versions. Otherwise an opt-out can look li
 
 Measure idle checks separately from useful-work cases. Also compare a mixed replay with idle ticks, routine changes, useful needs, and owner completions. Include every source review and batch decision in its cost. A compressed replay does not measure cold caches or a full day of live use. Include repeated events, later pages, outages, dismissal, snooze, changed goals, and hostile source data. Report missed important work with cost. A cheap run that misses needed work is a failure.
 
+Replay quiet hours separately. Deliver routine changes during the wait and confirm that they stay pending without model calls. End quiet hours and check the next bounded batch. Include a queued check whose poll was set for later. Check known high-impact matters with strong evidence and a deadline before quiet hours end.
+
 Reserve separate cases for validation after a design change. Keep failed attempts and infrastructure failures in the report. Repeat infrastructure failures without deleting their costs. Store raw traces outside the repository.
 
 ## Compare fairly

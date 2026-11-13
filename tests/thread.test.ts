@@ -8306,6 +8306,44 @@ test(
                 );
               },
             );
+            await t.test('a failed batch decision keeps its source change pending', async () => {
+              await reset();
+              const gated = createProactivity({
+                ...options,
+                curator: {
+                  id: 'fixture',
+                  configured: true,
+                  curate: async () => {
+                    throw new Error('Synthetic attention service failed (HTTP 503).');
+                  },
+                },
+              });
+              await transaction(
+                (client) => gated.signal(sourceId, client, 'Synthetic changed record'),
+                db.pool,
+              );
+              await db.pool.query(
+                'UPDATE proactive_sources SET claimed_turn=$3,claimed_signal=signal_version WHERE owner_id=$1 AND source_id=$2',
+                [ownerId, sourceId, turnId],
+              );
+              const context = (await gated.context(ref))!;
+              await assert.rejects(
+                context.screen!({}, new AbortController().signal),
+                /Synthetic attention service failed/,
+              );
+              await db.pool.query("UPDATE turns SET status='failed' WHERE id=$1", [turnId]);
+              await preferences.update({ proactivePaused: true });
+              await gated.due();
+              const state = (
+                await db.pool.query(
+                  'SELECT inspected_signal,signal_version,change_token FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                  [ownerId, sourceId],
+                )
+              ).rows[0];
+              assert.equal(Number(state.inspected_signal), 0);
+              assert.equal(Number(state.signal_version), 1);
+              assert.equal(state.change_token, null);
+            });
             await t.test(
               'one native batch decision sees every record and a changed saved matter bypasses it',
               async () => {
@@ -8539,6 +8577,53 @@ test(
                 );
               },
             );
+            await t.test('preparation reservations use exact decimal boundaries', async () => {
+              const decimalOwner = `synthetic-decimal-${randomUUID()}`;
+              const exact = createLedger({ pool: db.pool, ownerId: decimalOwner });
+              await exact.initialize();
+              try {
+                await db.pool.query(
+                  'INSERT INTO preferences(owner_id,proactive_paused) VALUES($1,false)',
+                  [decimalOwner],
+                );
+                await exact.setLimits({ preparationUsd: 1 });
+                await exact.withPreparation(randomUUID(), async () => {
+                  for (let request = 0; request < 10; request++) await exact.reserve(0.1);
+                  assert.equal((await exact.preparationLimit()).reservedUsd, 1);
+                  assert.equal((await exact.preparationLimit()).reached, true);
+                  await assert.rejects(exact.reserve(1e-17), /preparation allowance/);
+                });
+                await db.pool.query('DELETE FROM preparation_reservations WHERE owner_id=$1', [
+                  decimalOwner,
+                ]);
+                const scope = randomUUID();
+                const actual = 0.1 + 0.2;
+                await exact.withPreparation(scope, async () => {
+                  const settle = await exact.reserve(0.5);
+                  await db.pool.query(
+                    'INSERT INTO model_usage(id,owner_id,cost_usd,details) VALUES($1,$2,$3,$4::jsonb)',
+                    [
+                      randomUUID(),
+                      decimalOwner,
+                      actual,
+                      JSON.stringify({ preparation: true, preparationId: scope }),
+                    ],
+                  );
+                  await settle(actual);
+                });
+                assert.equal((await exact.preparationLimit()).reservedUsd, 0);
+                assert.equal((await exact.preparationLimit()).spentUsd, actual);
+              } finally {
+                await db.pool.query('DELETE FROM model_usage WHERE owner_id=$1', [decimalOwner]);
+                await db.pool.query('DELETE FROM preparation_reservations WHERE owner_id=$1', [
+                  decimalOwner,
+                ]);
+                await db.pool.query('DELETE FROM spending_limits WHERE owner_id=$1', [
+                  decimalOwner,
+                ]);
+                await db.pool.query('DELETE FROM preferences WHERE owner_id=$1', [decimalOwner]);
+              }
+            });
             await t.test('all spending limit changes use the preparation lock', async () => {
               const previous = await ledger.limits();
               const previousPreparation = await ledger.preparationLimit();
@@ -8617,6 +8702,7 @@ test(
               'preparation reserves concurrent requests, settles usage once, and keeps chat outside its allowance',
               async () => {
                 await reset();
+                const previous = await ledger.preparationLimit();
                 await ledger.setLimits({ preparationUsd: 1 });
                 const scope = randomUUID();
                 const lateScope = randomUUID();
@@ -8758,7 +8844,7 @@ test(
                   assert.match(String(await delayed), /has stopped/);
                   assert.equal((await ledger.preparationLimit()).reservedUsd, 0);
                 } finally {
-                  await ledger.setLimits({ preparationUsd: 5 });
+                  await ledger.setLimits({ preparationUsd: previous.monthlyUsd });
                   await db.pool.query(
                     "DELETE FROM model_usage WHERE turn_id=$1 OR details->>'preparationId'=$2",
                     [first.turnId, lateScope],

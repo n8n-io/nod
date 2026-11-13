@@ -38,6 +38,50 @@ import {
   createTextRedactor,
 } from '../src/server/redaction.ts';
 
+test('decision reservations release only requests that did not reach dispatch', async () => {
+  for (const phase of ['before dispatch', 'provider error', 'transport error']) {
+    const controller = new AbortController();
+    const settled: Array<number | null> = [];
+    const usage: ProviderUsageEvent[] = [];
+    let calls = 0;
+    const model = createDecisionModel({
+      resolve: async () => ({ provider: 'openai', key: 'synthetic-decision-key' }),
+      reserve: async () => {
+        if (phase === 'before dispatch') controller.abort();
+        return async (cost) => {
+          settled.push(cost);
+        };
+      },
+      fetch: async () => {
+        calls++;
+        if (phase === 'transport error')
+          throw new Error('Synthetic connection lost after dispatch.');
+        return new Response('', { status: 503 });
+      },
+    });
+    await assert.rejects(
+      model.check(
+        {
+          instructions: 'Check synthetic access.',
+          input: {},
+          question: {
+            name: 'access',
+            choices: [
+              { value: false, description: 'Ordinary mail.' },
+              { value: true, description: 'Access secret.' },
+            ],
+          },
+        },
+        controller.signal,
+        (event) => usage.push(event),
+      ),
+    );
+    assert.equal(calls, phase === 'before dispatch' ? 0 : 1);
+    assert.deepEqual(settled, [phase === 'before dispatch' ? 0 : null]);
+    assert.equal(usage[0]?.costUsd, phase === 'before dispatch' ? 0 : null);
+  }
+});
+
 test('decision selection uses the LLM only when no decision connection is available', async () => {
   let resolutions = 0;
   let llm = 0;

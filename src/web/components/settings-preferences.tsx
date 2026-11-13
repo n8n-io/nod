@@ -416,7 +416,7 @@ export function QuietHours() {
         </div>
         <p className="field-hint">
           Prepare useful work from app changes. Spends from a $5 monthly allowance by default.
-          Change it in Usage.
+          Change it in Usage. Turning this off also pauses automatic email checks.
         </p>
       </section>
       <section className="account-region account-quiet-hours" aria-labelledby={`${id}-heading`}>

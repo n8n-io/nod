@@ -1104,28 +1104,17 @@ async function initializeApplication(
     trash: adapters.trash,
     available: Boolean(adapters.trash),
   });
+  const preparationPaused = async () => {
+    const prefs = await speechPreferences.get();
+    return prefs.proactivePaused || isQuietTime(prefs) || (await ledger.preparationLimit()).reached;
+  };
   const integrations = await createIntegrations(pool, {
     localFiles,
     mailCheck: async (...args) => {
-      const prefs = await speechPreferences.get();
-      if (
-        prefs.proactivePaused ||
-        isQuietTime(prefs) ||
-        (adapters.models && !adapters.models.hasClassificationModel()) ||
-        (await ledger.preparationLimit()).reached
-      )
-        return args[0].map(() => undefined);
+      if (await preparationPaused()) return args[0].map(() => undefined);
       return ledger.withPreparation(randomUUID(), () => mailCheck(...args));
     },
-    paused: async () => {
-      const prefs = await speechPreferences.get();
-      return (
-        prefs.proactivePaused ||
-        isQuietTime(prefs) ||
-        Boolean(adapters.models && !adapters.models.hasClassificationModel()) ||
-        (await ledger.preparationLimit()).reached
-      );
-    },
+    paused: preparationPaused,
     analytics: captureAnalytics,
     analyticsConsent,
     admission,

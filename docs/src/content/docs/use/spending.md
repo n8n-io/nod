@@ -88,9 +88,9 @@ Automatic preparation has a separate $5 monthly allowance. It starts off for new
 
 In **Usage**, select the preparation allowance to change it. You can also say "Set my preparation allowance to $3". The minimum is $1.
 
-The allowance covers email privacy checks, source reviews, the observer, and tasks Nod starts from those changes. Plan usage counts at its API-price estimate. Your chat requests, schedules, and tasks keep their normal limits.
+The allowance covers email privacy checks, source reviews, the observer, and tasks Nod starts from those changes. Plan usage counts toward preparation only at a known positive API-price estimate. A plan request without a known price does not start. Plan usage does not count toward the normal monthly spending limit. Your chat requests, schedules, and tasks keep their normal limits.
 
-Nod reserves an estimated maximum before each model request. Parallel requests share the same allowance. A request that cannot fit does not start. Usage shows held funds when the final cost is not yet recorded. An unknown model price blocks automatic preparation. Automatic preparation cannot generate speech. Request audio in chat.
+Nod reserves an estimated maximum before each model request. Parallel requests share the same allowance. A request that cannot fit does not start. Usage shows held funds when the final cost is not yet recorded. An unknown model price blocks automatic preparation. All-zero prices also block it, because those values can mean that the price is unknown. Automatic preparation cannot generate speech. Request audio in chat.
 
 Conservative bounds can pause preparation before its recorded spending reaches the allowance. Preparation can continue next month, or after you raise the allowance. Your normal monthly limit and task check-ins still apply.
 

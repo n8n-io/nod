@@ -58,7 +58,7 @@ export const limitsInput = z
 
 const zone = `COALESCE((SELECT time_zone FROM preferences WHERE owner_id=$1),'UTC')`;
 const monthStart = `(date_trunc('month', now() AT TIME ZONE ${zone}) AT TIME ZONE ${zone})`;
-const spentThisMonth = `COALESCE((SELECT sum(cost_usd::numeric) FROM model_usage WHERE owner_id=$1 AND created_at>=${monthStart}),0)::float8`;
+const spentThisMonth = `COALESCE((SELECT sum(cost_usd::text::numeric) FROM model_usage WHERE owner_id=$1 AND created_at>=${monthStart}),0)::float8`;
 const pageSize = 30;
 const planUsage = `(cost_usd IS NULL AND (details->>'estimateUsd')::float8>0)`;
 const unpricedUsage = `(details->>'status'='succeeded' AND COALESCE(cost_usd,(details->>'estimateUsd')::float8,0)=0)`;
@@ -277,9 +277,10 @@ export function createLedger({
       DEFAULT ${defaultPreparationUsd} CHECK (preparation_usd > 0);
     CREATE TABLE IF NOT EXISTS preparation_reservations (
       owner_id text NOT NULL, id uuid NOT NULL, month timestamptz NOT NULL,
-      maximum_usd double precision NOT NULL CHECK (maximum_usd >= 0),
+      maximum_usd numeric NOT NULL CHECK (maximum_usd >= 0),
       PRIMARY KEY(owner_id,id,month)
-    );`);
+    );
+    ALTER TABLE preparation_reservations ALTER COLUMN maximum_usd TYPE numeric USING maximum_usd::text::numeric;`);
   }
 
   function save(sql: string, values: unknown[]) {
@@ -341,23 +342,26 @@ export function createLedger({
 
   async function preparationLimit(database: Pick<PoolClient, 'query'> = pool) {
     const { rows } = await database.query(
-      `SELECT COALESCE((SELECT preparation_usd FROM spending_limits WHERE owner_id=$1),${defaultPreparationUsd})::float8 AS maximum, ${monthStart} AS month,
-        COALESCE((SELECT sum(COALESCE(cost_usd,(details->>'estimateUsd')::float8,0)) FROM model_usage
-          WHERE owner_id=$1 AND created_at>=${monthStart} AND details->>'preparation'='true'),0)::float8 AS spent,
-        COALESCE((SELECT sum(GREATEST(0,r.maximum_usd-COALESCE((SELECT sum(COALESCE(m.cost_usd,(m.details->>'estimateUsd')::float8,0))
+      `WITH budget AS (SELECT COALESCE((SELECT preparation_usd FROM spending_limits WHERE owner_id=$1),${defaultPreparationUsd})::text::numeric AS maximum, ${monthStart} AS month,
+        COALESCE((SELECT sum(COALESCE(cost_usd::text::numeric,(details->>'estimateUsd')::numeric,0)) FROM model_usage
+          WHERE owner_id=$1 AND created_at>=${monthStart} AND details->>'preparation'='true'),0) AS spent,
+        COALESCE((SELECT sum(GREATEST(0,r.maximum_usd-COALESCE((SELECT sum(COALESCE(m.cost_usd::text::numeric,(m.details->>'estimateUsd')::numeric,0))
           FROM model_usage m WHERE m.owner_id=$1 AND m.details->>'preparationId'=r.id::text AND m.created_at>=r.month),0)))
-          FROM preparation_reservations r WHERE r.owner_id=$1 AND r.month=${monthStart}),0)::float8 AS reserved`,
-      [ownerId],
+          FROM preparation_reservations r WHERE r.owner_id=$1 AND r.month=${monthStart}),0) AS reserved)
+        SELECT maximum::float8,spent::float8,reserved::float8,
+          spent+reserved>=maximum OR (COALESCE(month=$2::timestamptz,false) AND spent+reserved+$3::numeric>maximum) AS reached
+        FROM budget`,
+      [
+        ownerId,
+        preparationDeclined ? new Date(preparationDeclined.month) : null,
+        preparationDeclined?.maximumUsd ?? 0,
+      ],
     );
     return {
       monthlyUsd: rows[0].maximum as number,
       spentUsd: rows[0].spent as number,
       reservedUsd: rows[0].reserved as number,
-      reached:
-        rows[0].spent + rows[0].reserved >= rows[0].maximum ||
-        (preparationDeclined !== undefined &&
-          preparationDeclined.month === rows[0].month.getTime() &&
-          rows[0].spent + rows[0].reserved + preparationDeclined.maximumUsd > rows[0].maximum),
+      reached: rows[0].reached as boolean,
     };
   }
 
@@ -379,25 +383,23 @@ export function createLedger({
         [ownerId],
       );
       const { rows } = await client.query(
-        `SELECT COALESCE((SELECT preparation_usd FROM spending_limits WHERE owner_id=$1),${defaultPreparationUsd})::float8 AS maximum,
+        `WITH budget AS (SELECT COALESCE((SELECT preparation_usd FROM spending_limits WHERE owner_id=$1),${defaultPreparationUsd})::text::numeric AS maximum,
           ${monthStart} AS month,
           COALESCE((SELECT proactive_paused FROM preferences WHERE owner_id=$1),true) AS paused,
-          (COALESCE((SELECT sum(COALESCE(m.cost_usd,(m.details->>'estimateUsd')::float8,0)) FROM model_usage m
+          (COALESCE((SELECT sum(COALESCE(m.cost_usd::text::numeric,(m.details->>'estimateUsd')::numeric,0)) FROM model_usage m
             WHERE m.owner_id=$1 AND m.created_at>=${monthStart} AND m.details->>'preparation'='true'
               AND NOT EXISTS(SELECT 1 FROM preparation_reservations r WHERE r.owner_id=$1 AND r.id::text=m.details->>'preparationId' AND r.month=${monthStart})),0)
-          + COALESCE((SELECT sum(GREATEST(r.maximum_usd,COALESCE((SELECT sum(COALESCE(m.cost_usd,(m.details->>'estimateUsd')::float8,0))
+          + COALESCE((SELECT sum(GREATEST(r.maximum_usd,COALESCE((SELECT sum(COALESCE(m.cost_usd::text::numeric,(m.details->>'estimateUsd')::numeric,0))
             FROM model_usage m WHERE m.owner_id=$1 AND m.details->>'preparationId'=r.id::text AND m.created_at>=r.month),0)))
-            FROM preparation_reservations r WHERE r.owner_id=$1 AND r.month=${monthStart}),0))::float8 AS committed`,
-        [ownerId],
+            FROM preparation_reservations r WHERE r.owner_id=$1 AND r.month=${monthStart}),0)) AS committed)
+          SELECT maximum::float8,month,paused,committed>=maximum OR committed+$2::numeric>maximum AS exceeded FROM budget`,
+        [ownerId, maximumUsd],
       );
       if (scope.closed) throw new Error('This automatic preparation has stopped.');
       if (rows[0].paused && activeTurn.getStore()?.automatic !== false)
         throw new Error('Automatic preparation is paused.');
       month = rows[0].month;
-      if (
-        rows[0].committed >= rows[0].maximum ||
-        rows[0].committed + maximumUsd > rows[0].maximum
-      ) {
+      if (rows[0].exceeded) {
         preparationDeclined = { month: rows[0].month.getTime(), maximumUsd };
         throw new Error(
           `The next model request does not fit the $${rows[0].maximum} monthly preparation allowance. Change the preparation limit in Usage to continue.`,
@@ -416,7 +418,7 @@ export function createLedger({
       settled = true;
       await pool
         .query(
-          'UPDATE preparation_reservations SET maximum_usd=GREATEST(0,maximum_usd+$4-$5) WHERE owner_id=$1 AND id=$2 AND month=$3',
+          'UPDATE preparation_reservations SET maximum_usd=GREATEST(0,maximum_usd+$4::numeric-$5::numeric) WHERE owner_id=$1 AND id=$2 AND month=$3',
           [ownerId, scope.id, month, spentUsd, maximumUsd],
         )
         .catch((error) => logFailure('preparation_reservation_settle', error));
@@ -433,9 +435,9 @@ export function createLedger({
     await pool
       .query(
         `DELETE FROM preparation_reservations r WHERE r.owner_id=$1 AND r.id=$2
-        AND r.maximum_usd<=COALESCE((SELECT sum(COALESCE(m.cost_usd,(m.details->>'estimateUsd')::float8,0))
+        AND r.maximum_usd<=COALESCE((SELECT sum(COALESCE(m.cost_usd::text::numeric,(m.details->>'estimateUsd')::numeric,0))
           FROM model_usage m WHERE m.owner_id=$1 AND m.details->>'preparationId'=$2::text
-          AND m.created_at>=r.month),0)+1e-12`,
+          AND m.created_at>=r.month),0)`,
         [ownerId, id],
       )
       .catch((error) => logFailure('preparation_reservation_release', error));
