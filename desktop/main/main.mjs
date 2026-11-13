@@ -204,6 +204,7 @@ let status = {
 const knownSecrets = new Set();
 const engineWindows = new Set();
 const zoomStates = new WeakMap();
+let lastZoomWindow;
 let zoomPersistence = Promise.resolve();
 let downloadShown = false;
 let bounceWhenReady = false;
@@ -421,6 +422,13 @@ function applyPreferences(saved) {
 
 function persistZoomFactor(contents) {
   const factor = contents.getZoomFactor();
+  for (const window of engineWindows)
+    if (
+      !window.isDestroyed() &&
+      window.webContents !== contents &&
+      zoomStates.get(window.webContents)?.ready
+    )
+      window.webContents.setZoomFactor(factor);
   const operation = zoomPersistence.then(async () => {
     if ((await settings.get()).zoomFactor !== factor) await settings.save({ zoomFactor: factor });
   });
@@ -434,6 +442,7 @@ function persistCurrentZoomFactor() {
   );
   const window =
     windows.find((candidate) => candidate.isFocused()) ??
+    windows.find((candidate) => candidate === lastZoomWindow) ??
     windows.find((candidate) => candidate === engineWindow) ??
     windows[0];
   return window ? persistZoomFactor(window.webContents) : zoomPersistence;
@@ -449,15 +458,23 @@ function trackZoomFactor(window) {
     }),
   };
   zoomStates.set(contents, state);
+  if (window.isFocused()) lastZoomWindow = window;
+  window.on('focus', () => {
+    lastZoomWindow = window;
+  });
   contents.once('did-finish-load', () => {
     void (async () => {
       await zoomPersistence;
-      const current = [...engineWindows].find(
+      const windows = [...engineWindows].filter(
         (candidate) =>
           candidate !== window &&
           !candidate.isDestroyed() &&
           zoomStates.get(candidate.webContents)?.ready,
       );
+      const current =
+        windows.find((candidate) => candidate.isFocused()) ??
+        windows.find((candidate) => candidate === lastZoomWindow) ??
+        windows[0];
       const zoomFactor = current
         ? current.webContents.getZoomFactor()
         : (await settings.get()).zoomFactor;
@@ -473,7 +490,16 @@ function trackZoomFactor(window) {
   for (const event of ['blur', 'hide', 'close'])
     window.on(event, () => {
       if (!state.ready || window.isDestroyed()) return;
-      void persistZoomFactor(contents).catch(
+      const focused = [...engineWindows].find(
+        (candidate) =>
+          !candidate.isDestroyed() &&
+          candidate.isFocused() &&
+          zoomStates.get(candidate.webContents)?.ready,
+      );
+      const source = event === 'blur' ? window : (focused ?? lastZoomWindow);
+      if (!source || source.isDestroyed() || !zoomStates.get(source.webContents)?.ready) return;
+      lastZoomWindow = source;
+      void persistZoomFactor(source.webContents).catch(
         (error) => void writeDiagnostic(error.message).catch(() => {}),
       );
     });

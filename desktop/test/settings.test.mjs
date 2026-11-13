@@ -3742,6 +3742,46 @@ test('desktop zoom captures native menu changes on blur and normal quit', async 
   assert.equal((await f.storage.reopen().get()).zoomFactor, 4.5);
 });
 
+test('popup zoom updates the app and stale background window events cannot replace focused zoom', async (t) => {
+  const f = await runningDesktop(t, () => assert.fail('Zoom must not make an engine request.'));
+  f.showEngine();
+  const main = f.windows.at(-1);
+  const mainEvent = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
+  assert.equal(await f.handlers.get('nod:zoom:get')(mainEvent), 1);
+  const Popup = main.constructor;
+  const popup = new Popup({ show: false });
+  main.webContents.emit('did-create-window', popup);
+  await popup.loadURL('http://127.0.0.1:4310/settings');
+  const popupEvent = { sender: popup.webContents, senderFrame: popup.webContents.mainFrame };
+  assert.equal(await f.handlers.get('nod:zoom:get')(popupEvent), 1);
+
+  const writes = [];
+  const originalSave = f.storage.store.save.bind(f.storage.store);
+  t.mock.method(f.storage.store, 'save', async (input) => {
+    if (input.zoomFactor !== undefined) writes.push(input.zoomFactor);
+    return originalSave(input);
+  });
+  popup.focus();
+  assert.equal(await f.handlers.get('nod:zoom:set')(popupEvent, 1.5), 1.5);
+  assert.equal(main.webContents.getZoomFactor(), 1.5);
+
+  main.focus();
+  main.webContents.setZoomFactor(1.75);
+  popup.webContents.setZoomFactor(1.5);
+  popup.emit('hide');
+  popup.emit('close');
+  await waitFor(async () => assert.equal((await f.storage.reopen().get()).zoomFactor, 1.75), {
+    attempts: 100,
+    interval: 5,
+  });
+  main.webContents.setZoomFactor(2);
+  popup.webContents.setZoomFactor(1);
+  f.crash();
+  await f.quit(async () => {});
+  assert.equal((await f.storage.reopen().get()).zoomFactor, 2);
+  assert.deepEqual(writes, [1.5, 1.75, 2]);
+});
+
 test('engine exit saves focused native zoom before destroying the window and restoring a new one', async (t) => {
   const f = await runningDesktop(
     t,

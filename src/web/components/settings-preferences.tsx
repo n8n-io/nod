@@ -111,7 +111,15 @@ function FontSizeControls() {
       const saved = await setDesktopZoomFactor(value);
       if (revision.current === current) setFactor(saved);
     } catch (cause) {
-      if (revision.current === current) setError(errorMessage(cause));
+      if (revision.current === current) {
+        setError(errorMessage(cause));
+        try {
+          const actual = await getDesktopZoomFactor();
+          if (revision.current === current) setFactor(actual);
+        } catch {
+          if (revision.current === current) setFactor(null);
+        }
+      }
     } finally {
       pending.current = false;
       setBusy(false);
