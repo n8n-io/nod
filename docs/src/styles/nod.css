@@ -613,6 +613,53 @@ body.lp {
 .lp-hard-ones-sub.wide {
   width: 720px;
 }
+.lp-labs {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  max-width: 760px;
+  margin-top: 64px;
+  padding: 32px;
+  border-radius: var(--radius-xl);
+  background: var(--gray-15);
+  box-shadow:
+    inset -8px -8px 12px 0 var(--deboss-br),
+    inset 8px 8px 12px 0 var(--deboss-tl);
+  text-align: left;
+}
+.lp-labs h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+.lp-labs p {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.5;
+  color: var(--gray-70);
+}
+.lp-labs a {
+  color: var(--black);
+  text-decoration: underline;
+  text-decoration-color: var(--gray-50);
+  text-underline-offset: 3px;
+}
+.lp-labs a:hover {
+  text-decoration-color: currentColor;
+}
+.lp-labs a:focus-visible {
+  outline: 2px solid var(--black);
+  outline-offset: 5px;
+  border-radius: var(--radius-xs);
+}
+@media (max-width: 600px) {
+  .lp-labs {
+    padding: 24px;
+  }
+}
 
 .lp-stack {
   display: flex;
