@@ -135,6 +135,7 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/nod/
 | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `read`, `bash`, `edit`, `write`, `find`, `ls`                       | Pi's native tools. They run inside the workspace container.                                                                                 |
 | `skills`                                                            | Reads a [guide](/how-it-works/skills/) or [learned skill](/how-it-works/memory/#learned-skills); only owner-started work writes one.        |
+| `nod_docs`                                                          | Searches the documentation shipped with Nod and reads relevant sections with source links.                                                  |
 | `set_status`                                                        | Replaces the live activity description for a chat or saved task. It sends no chat message.                                                  |
 | `send_message`                                                      | Sends a message now. Schedule and event runs use explicit delivery; saved tasks also deliver their final reply.                             |
 | `ask_user`                                                          | Asks one question and ends the turn as waiting.                                                                                             |
@@ -155,6 +156,14 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/nod/
 | `codemode`                                                          | Runs a model-written script that calls workspace, web and connected MCP server tools.                                                       |
 
 The `pi-web-access` extension runs in the server process with the server's permissions, but has no direct access to workspace files and never uses the server's own logins, such as a GitHub CLI session. Its connections go only to public addresses, checked when each connection opens, IP addresses included. Nod drops any proxy, whether the model names it or the settings file sets it. Its settings live in `NOD_DATA_ROOT/pi/web-search.json`.
+
+### Questions about Nod
+
+Nod searches its own documentation before answering any question about Nod. This covers setup, models, channels, schedules, memory, privacy, safety, troubleshooting, and development. It reads the relevant sections and links to them. The same rule applies when Nod uses its shorter instructions for a small model context.
+
+The `nod_docs` tool builds an index on its first use and keeps it in memory. Search ignores case and accents, while keeping different words distinct. It gives more weight to section titles and terms that occur in fewer sections. Search adjusts for section length and limits the effect of repeated words. Search returns up to five results with short excerpts. A read returns up to 8,000 characters. Longer sections include an offset to read the next part. Neither action calls a model or sends a network request.
+
+Desktop packages and self-hosted images include the Markdown and MDX pages from the same source as the application. The tool reads only indexed sections. It accepts no file path or website address. Documentation is data, not permission to act. Nod still uses live tools to check current account state and owner settings.
 
 ## The turn guard
 

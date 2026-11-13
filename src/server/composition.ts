@@ -146,6 +146,7 @@ import { createAccountSession } from './account.ts';
 import { connectedGmail } from '../shared/onboarding.ts';
 import { createPostgresObjectStore } from './object-storage.ts';
 import { loadPrivacyNoticeFile, registerPrivacyNotice } from './privacy.ts';
+import { createDocumentation } from './documentation.ts';
 import { initializeDatabase, pool } from './db.ts';
 import { events, refresh } from './events.ts';
 import { createIntegrations } from './integrations.ts';
@@ -836,6 +837,9 @@ async function initializeApplication(
       ((images, request, signal, execution) =>
         ledger.withExecution(execution, () => analyzeImages(images, request, signal))),
     skills: skillLibrary,
+    documentation: createDocumentation(
+      fileURLToPath(new URL('../../docs/src/content/docs/', import.meta.url)),
+    ),
     computer,
     workspace,
     redactError: createErrorRedactor(secrets),

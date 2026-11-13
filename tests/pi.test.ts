@@ -92,10 +92,12 @@ function smallContextAccess(
 
 test('models and routers complete tool discovery inside the endpoint context', async (t) => {
   const { createSkillLibrary } = await import('../src/providers/pi/skills.ts');
+  const { createDocumentation } = await import('../src/server/documentation.ts');
   const { coreSkills } = await import('../src/runtime/prompt.ts');
   for (const { provider, id, window, limit } of [
     { provider: 'compatible', id: 'fixture-small', window: 8192, limit: 8192 },
     { provider: 'compatible', id: 'fixture-memory-small', window: 8192, limit: 8192 },
+    { provider: 'compatible', id: 'fixture-docs-small', window: 8192, limit: 8192 },
     { provider: 'openrouter', id: 'openrouter/free', window: 200_000, limit: 8192 },
     { provider: 'openrouter', id: 'openrouter/auto', window: 2_000_000, limit: 8192 },
     { provider: 'compatible', id: 'fixture-medium', window: 16_384, limit: 16_384 },
@@ -161,15 +163,33 @@ test('models and routers complete tool discovery inside the endpoint context', a
       let summaries = 0;
       const bodies: Record<string, any>[] = [];
       const requestBudgets: number[] = [];
-      const calls = [
-        ['nod_tool_search', { query: 'skills', limit: 1 }],
-        [
-          'skills',
-          { action: 'read', name: id.startsWith('fixture-mcp') ? 'mcp__fixture' : 'artifacts' },
-        ],
-        ['nod_tool_search', { query: 'share_file', limit: 1 }],
-        ['share_file', { path: 'report.txt' }],
-      ] as const;
+      const documentation =
+        id === 'fixture-docs-small'
+          ? createDocumentation(join(process.cwd(), 'docs/src/content/docs'))
+          : undefined;
+      const docsSection = (await documentation?.search('Composio zero data retention'))?.[0];
+      assert.ok(!documentation || docsSection);
+      const calls =
+        id === 'fixture-docs-small'
+          ? ([
+              ['nod_tool_search', { query: 'nod_docs', limit: 1 }],
+              ['nod_docs', { action: 'search', query: 'Composio zero data retention' }],
+              ['nod_docs', { action: 'read', id: docsSection!.id }],
+              ['nod_tool_search', { query: 'share_file', limit: 1 }],
+              ['share_file', { path: 'report.txt' }],
+            ] as const)
+          : ([
+              ['nod_tool_search', { query: 'skills', limit: 1 }],
+              [
+                'skills',
+                {
+                  action: 'read',
+                  name: id.startsWith('fixture-mcp') ? 'mcp__fixture' : 'artifacts',
+                },
+              ],
+              ['nod_tool_search', { query: 'share_file', limit: 1 }],
+              ['share_file', { path: 'report.txt' }],
+            ] as const);
       const serve = async (url: RequestInfo | URL, init?: RequestInit) => {
         assert.equal(String(url), `${access.definition.spec.baseUrl}/chat/completions`);
         const body = JSON.parse(String(init?.body));
@@ -288,6 +308,7 @@ test('models and routers complete tool discovery inside the endpoint context', a
           },
         }),
         skills: createSkillLibrary(join(process.cwd(), 'src/runtime/skills'), coreSkills),
+        documentation,
         computer: fakeComputer(),
         workspace: fakeWorkspace({
           readArtifact: async (_thread, path) => readFile(join(directory, path)),
@@ -300,7 +321,7 @@ test('models and routers complete tool discovery inside the endpoint context', a
         prompt: 'Return the text report named report.txt.',
         rules: 'Do not contact anyone.',
         memory: 'Synthetic earlier memory. '.repeat(2000),
-        ...(id === 'fixture-memory-small'
+        ...(['fixture-memory-small', 'fixture-docs-small'].includes(id)
           ? {
               memoryBrief: {
                 mode: 'recall' as const,
@@ -384,9 +405,14 @@ test('models and routers complete tool discovery inside the endpoint context', a
           largestRequestTokens: Math.max(...requestBudgets),
         }),
       );
-      assert.equal(requests, 5);
-      assert.equal(bodies.length, 5 + summaries);
-      assert.deepEqual(started, ['tool_search', 'skills', 'tool_search', 'share_file']);
+      assert.equal(requests, calls.length + 1);
+      assert.equal(bodies.length, calls.length + 1 + summaries);
+      assert.deepEqual(
+        started,
+        id === 'fixture-docs-small'
+          ? ['tool_search', 'nod_docs', 'nod_docs', 'tool_search', 'share_file']
+          : ['tool_search', 'skills', 'tool_search', 'share_file'],
+      );
       assert.equal(published.length, 1);
       assert.equal(published[0].toString(), 'Synthetic report bytes');
       if (id === 'fixture-resumed')

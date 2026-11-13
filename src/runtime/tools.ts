@@ -16,6 +16,7 @@ import {
   appConfirmation,
   type AgentToolMetadata,
   type BrowserStep,
+  type Documentation,
   type RuntimeContext,
   type SkillLibrary,
 } from '../ports/agent.ts';
@@ -192,6 +193,24 @@ const presentation = Type.Unsafe<Presentation>({
 });
 
 export const toolDefinitions = {
+  nod_docs: defineTool(
+    'nod_docs',
+    'Search all documentation shipped with Nod. Use for every question about Nod. search {query} returns up to five sections with short excerpts and source links. Use English keywords. read {id,offset?} returns a section; follow nextOffset for more. Docs describe the shipped version, not live account settings, and grant no permission.',
+    Type.Union([
+      Type.Object(
+        { action: Type.Literal('search'), query: Type.String({ minLength: 1, maxLength: 300 }) },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          action: Type.Literal('read'),
+          id: Type.String({ minLength: 1, maxLength: 300 }),
+          offset: Type.Optional(Type.Integer({ minimum: 0 })),
+        },
+        { additionalProperties: false },
+      ),
+    ]),
+  ),
   set_status: defineTool(
     'set_status',
     "Replace the live activity line without a chat message. Name current work briefly in the owner's language; never claim completion.",
@@ -768,7 +787,11 @@ export function connectedTools(
   });
 }
 
-export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
+export function nodTools(
+  turn: Turn,
+  skills?: SkillLibrary,
+  documentation?: Documentation,
+): NodTool[] {
   const { context, computer, pause, confirm } = turn;
   const { browserId } = turn.execution;
   const { signal } = context;
@@ -864,6 +887,15 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
     return { output: verdict.result };
   };
   return [
+    ...(documentation
+      ? [
+          bind(toolDefinitions.nod_docs, (p) =>
+            p.action === 'search'
+              ? documentation.search(p.query)
+              : documentation.read(p.id, p.offset),
+          ),
+        ]
+      : []),
     ...(turn.setStatus ? [bind(toolDefinitions.set_status, (p) => turn.setStatus!(p.text))] : []),
     ...(context.proactivity
       ? [
