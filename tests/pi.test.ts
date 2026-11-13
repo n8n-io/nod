@@ -7557,3 +7557,97 @@ test('Ollama models with on or off thinking complete tasks without a named effor
     assert.deepEqual(enabled, thinking ? [true, onlyOn] : [undefined, undefined]);
   }
 });
+
+test('invalid tool calls stop before another model request and a valid repair resets the limit', async (t) => {
+  for (const [repair, toolName] of [
+    [false, 'task'],
+    [true, 'task'],
+    [false, 'sign_in'],
+  ] as const)
+    await t.test(`${toolName} ${repair ? 'repair' : 'stop'}`, async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'nod-tool-recovery-'));
+      t.after(() => rm(directory, { recursive: true, force: true }));
+      let requests = 0;
+      let writes = 0;
+      const runtime = createAgentRuntime({
+        agent: createPiAgent({
+          provider: 'openai',
+          apiKey: 'fixture-key-never-live',
+          sessionRoot: join(directory, 'sessions'),
+          createSession: async (options) => {
+            const result = await createAgentSession(options);
+            result.session.setActiveToolsByName([toolName]);
+            result.session.agent.streamFunction = () => {
+              requests++;
+              assert.ok(requests <= 11, 'The invalid call loop must stop.');
+              const done = repair && requests === 11;
+              const valid = repair && requests % 5 === 0;
+              const message = fauxAssistantMessage(
+                done
+                  ? 'Synthetic work was accepted.'
+                  : [
+                      {
+                        type: 'toolCall',
+                        id: `fixture-task-${requests}`,
+                        name: toolName,
+                        arguments:
+                          toolName === 'sign_in'
+                            ? {
+                                origin: 'https://signin.example.test',
+                                label: 'Synthetic login',
+                                message: 'Sign in to the synthetic account.',
+                                action: 'Sign in',
+                                kind: 'method',
+                              }
+                            : valid
+                              ? {
+                                  action: 'start',
+                                  title: 'Synthetic task',
+                                  doneWhen: 'The synthetic result exists.',
+                                  now: 'Read the synthetic source.',
+                                  message: 'Starting the synthetic task.',
+                                }
+                              : { action: 'start' },
+                      },
+                    ],
+                { stopReason: done ? 'stop' : 'toolUse' },
+              );
+              const stream = createAssistantMessageEventStream();
+              stream.push({ type: 'start', partial: message });
+              stream.push({ type: 'done', reason: done ? 'stop' : 'toolUse', message });
+              return stream;
+            };
+            return result;
+          },
+        }),
+        computer: fakeComputer(),
+        workspace: fakeWorkspace(),
+      });
+      t.after(() => runtime.dispose());
+      const run = () =>
+        runtime.runTurn({
+          ...context(directory),
+          turnId: randomUUID(),
+          task: async () => {
+            writes++;
+            return { id: randomUUID(), status: 'running' };
+          },
+        });
+      if (repair) {
+        assert.equal((await run()).status, 'succeeded');
+        assert.equal(requests, 11);
+        assert.equal(writes, 2);
+      } else {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          requests = 0;
+          await assert.rejects(run(), (error: Error) => {
+            assert.match(error.message, /failed five times/);
+            assert.match(error.message, toolName === 'sign_in' ? /\/methods:/ : /\/doneWhen:/);
+            return true;
+          });
+          assert.equal(requests, 5);
+          assert.equal(writes, 0);
+        }
+      }
+    });
+});

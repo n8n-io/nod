@@ -58,6 +58,8 @@ If a model request stops your task, the failure message links to **Settings > Mo
 
 After Google reports a daily or zero quota, Nod pauses automatic requests for that model on that connection. This includes background checks, background helpers, and cache warming. The pause survives a restart. Other connections stay available. You can still ask again, replace the key, or select another model. Helpers required by your new request can also run. A successful request you start clears the pause. A provider retry delay permits another automatic attempt after that delay; it does not promise a quota reset. Without a delay, automatic work stays paused until recovery. Reloading the model list does not prove that quota is available.
 
+If Google explicitly reports depleted prepayment credits, Nod pauses automatic requests for every model on that connection. You can still start a request yourself. A successful request you start clears this credit pause. An ordinary rate limit does not establish a credit problem.
+
 To change to an available model, you can also tell Nod which model and service to use. This works in Nod, Telegram, and WhatsApp. Nod changes the saved selection for the next turn. Connecting a new service or signing in again still needs the private flow in the app.
 
 <Tabs syncKey="model-service">

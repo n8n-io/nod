@@ -190,6 +190,7 @@ export function createProactivity(options: {
   const { pool, ownerId } = options;
   const preferences = createPreferencesStore(pool, ownerId);
   const issuedReads = new Map<string, number>();
+  const failedSources = new Map<string, Map<string, string>>();
   const publicIssue = (row: Row): ProactiveIssue => ({
     id: row.id,
     url: `/prepared/${row.id}`,
@@ -385,6 +386,15 @@ export function createProactivity(options: {
     if (expectedPolicy && fingerprint([prefs.notificationRule, prefs.rules]) !== expectedPolicy)
       throw new Error('The monitoring rules changed. Start a new assessment.');
     if (prefs.proactivePaused) throw new Error('Private preparation is paused.');
+    const descriptor = (await sourceCatalog(signal)).find(
+      (item) => item.id === input.sourceId && item.readable && item.mode !== 'classic',
+    );
+    const sourceKey = JSON.stringify([input.sourceId, descriptor?.revision]);
+    const previousFailure = failedSources.get(turn.turnId)?.get(sourceKey);
+    if (previousFailure)
+      throw new Error(
+        `This source failed during this check: ${previousFailure} Its state is unknown. Wait for its next scheduled check instead of reading it again now.`,
+      );
     if (!saving) {
       const count = (issuedReads.get(turn.turnId) ?? 0) + 1;
       if (count > readLimit)
@@ -393,9 +403,6 @@ export function createProactivity(options: {
         );
       issuedReads.set(turn.turnId, count);
     }
-    const descriptor = (await sourceCatalog(signal)).find(
-      (item) => item.id === input.sourceId && item.readable && item.mode !== 'classic',
-    );
     if (!descriptor) throw new Error('This source has no registered read-only reader.');
     if (Boolean(descriptor.tools) !== Boolean(input.query || input.tool))
       throw new Error(
@@ -477,6 +484,19 @@ export function createProactivity(options: {
       signal.throwIfAborted();
     } catch (error) {
       if ((error as { refused?: boolean } | undefined)?.refused) throw error;
+      const failure = error as
+        { upstreamStatus?: number; status?: number; statusCode?: number } | undefined;
+      const status = failure?.upstreamStatus ?? failure?.status ?? failure?.statusCode;
+      if (status === 429 || (status !== undefined && status >= 500 && status <= 599)) {
+        const failed = failedSources.get(turn.turnId) ?? new Map<string, string>();
+        failed.set(
+          sourceKey,
+          (options.redact ?? publicText)(
+            `HTTP ${status}: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
+        failedSources.set(turn.turnId, failed);
+      }
       if (error instanceof ObservationCursorExpired)
         await writeSource((client) =>
           client.query(
@@ -679,22 +699,36 @@ export function createProactivity(options: {
     for (const ref of references) {
       const row = (
         await client.query(
-          `SELECT e.*,s.label,s.revision FROM proactive_evidence e JOIN proactive_sources s ON s.owner_id=e.owner_id AND s.source_id=e.source_id
-        WHERE e.owner_id=$1 AND e.source_id=$2 AND e.resource_id=$3 AND e.version=$4
-        AND e.source_revision=s.revision AND e.turn_id=$5 AND e.checked_at>clock_timestamp()-${interval(freshness)} AND s.status='ready'`,
-          [ownerId, ref.sourceId, ref.id, ref.version, turn.turnId],
+          `SELECT e.*,s.label,s.revision,s.status AS source_status,
+            e.checked_at>clock_timestamp()-${interval(freshness)} AS fresh
+          FROM proactive_evidence e JOIN proactive_sources s ON s.owner_id=e.owner_id AND s.source_id=e.source_id
+          WHERE e.owner_id=$1 AND e.source_id=$2 AND e.resource_id=$3`,
+          [ownerId, ref.sourceId, ref.id],
         )
       ).rows[0];
-      if (!row)
+      const reason = !row
+        ? 'the evidence is missing'
+        : row.source_revision !== row.revision
+          ? 'the source connection changed'
+          : row.source_status !== 'ready'
+            ? 'the source is not ready'
+            : row.turn_id !== turn.turnId
+              ? 'the evidence belongs to an earlier turn'
+              : row.version !== ref.version
+                ? 'the record version changed'
+                : !row.fresh
+                  ? 'the read is more than two minutes old'
+                  : undefined;
+      if (reason)
         throw new Error(
-          'Read each source again before saving this result. Its evidence is missing, changed, or stale.',
+          `Read source ${ref.sourceId} record ${ref.id} again before saving: ${reason}.`,
         );
       if (row.available === null)
         throw new Error(
-          'This record could not be checked. It cannot support preparation or resolution.',
+          `Source ${ref.sourceId} record ${ref.id} could not be checked. It cannot support preparation or resolution.`,
         );
       if (input.action === 'save' && !row.available)
-        throw new Error('This source record is no longer available.');
+        throw new Error(`Source ${ref.sourceId} record ${ref.id} is no longer available.`);
       result.push({
         ...ref,
         label: row.label,
@@ -1585,6 +1619,9 @@ export function createProactivity(options: {
     signal,
     view,
     control,
-    release: (turnId: string) => issuedReads.delete(turnId),
+    release: (turnId: string) => {
+      issuedReads.delete(turnId);
+      failedSources.delete(turnId);
+    },
   };
 }

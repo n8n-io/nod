@@ -323,6 +323,10 @@ export interface AgentAudioInput {
   files: AgentAudio[];
   fallback: string;
 }
+export interface AgentToolOutcome {
+  name: string;
+  error?: string;
+}
 export interface AgentSessionOptions extends ExecutionScope {
   automatic?: boolean;
   restricted?: boolean;
@@ -342,7 +346,7 @@ export interface AgentSessionOptions extends ExecutionScope {
     options?: { nested?: boolean },
   ): Promise<AgentToolResult>;
   onEvent(event: AgentEvent): void;
-  shouldStop(): boolean;
+  shouldStop(results?: AgentToolOutcome[]): boolean;
   readAudio?(audio: AgentAudio, signal: AbortSignal): Promise<Uint8Array>;
   nextMessages?(): Promise<Array<{ text: string; images: AgentImage[]; audio?: AgentAudioInput }>>;
 }
