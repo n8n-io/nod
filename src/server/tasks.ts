@@ -25,6 +25,7 @@ import { createPreferencesStore, deliveryTime, isQuietTime } from './preferences
 import { personalSecret } from './memory-tree.ts';
 import { texts as codeTexts } from './chat-verification.ts';
 import { waitingTurnSql, withdrawnSql } from './turn-chain.ts';
+import { resemblesTaskAcknowledgement } from '../shared/task-ack.ts';
 
 const now = z.string().trim().min(1);
 const waits = z.array(
@@ -357,6 +358,8 @@ export function createTasks(options: {
     raw: unknown,
     sourceMessageId?: string | null,
     capture?: CaptureAnalytics,
+    priorMessageId?: string,
+    priorHandoff = false,
   ) {
     const request = input.parse(raw);
     if (request.action === 'list') return { tasks: await read(client) };
@@ -420,9 +423,23 @@ export function createTasks(options: {
       const independent = current.proactive || current.session_id === turn.threadId;
       if (independent && !current.proactive && !sourceMessageId)
         throw failure('A new task needs an owner request.');
+      const prior =
+        priorMessageId && sourceMessageId
+          ? (
+              await client.query<{ id: string; text: string }>(
+                `SELECT m.id,m.text FROM messages m WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3
+                 AND m.turn_id=$4 AND m.role='assistant' AND m.hidden_at IS NULL
+                 AND m.attachments='[]'::jsonb AND m.presentation IS NULL AND m.answer_choices IS NULL
+                 AND NOT EXISTS(SELECT 1 FROM tasks t WHERE t.owner_id=m.owner_id AND t.message_id=m.id)`,
+                [priorMessageId, ownerId, turn.threadId, turn.turnId],
+              )
+            ).rows[0]
+          : undefined;
       const messageId = current.proactive
         ? null
-        : await insertAssistantMessage(client, turn, request.message);
+        : prior && resemblesTaskAcknowledgement(prior.text, request.message, priorHandoff)
+          ? prior.id
+          : await insertAssistantMessage(client, turn, request.message);
       const sessionId = independent ? id : current.session_id;
       await client.query(
         `INSERT INTO tasks(id,owner_id,turn_id,session_id,source_message_id,message_id,title,done_when,brief,now_text,steps,waiting_for,next_check,applied_revision,activity_key)
@@ -813,13 +830,19 @@ export function createTasks(options: {
     };
   }
 
-  async function execute(turn: TurnRef, raw: unknown, sourceMessageId: string | null) {
+  async function execute(
+    turn: TurnRef,
+    raw: unknown,
+    sourceMessageId: string | null,
+    priorMessageId?: string,
+    priorHandoff?: boolean,
+  ) {
     const capture = snapshotAnalytics(options.analytics);
     const result = await transaction(async (client) => {
       await lockThread(client);
       return withTurnLock(
         turn.turnId,
-        () => act(client, turn, raw, sourceMessageId, capture),
+        () => act(client, turn, raw, sourceMessageId, capture, priorMessageId, priorHandoff),
         client,
       );
     }, pool);

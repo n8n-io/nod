@@ -1,5 +1,7 @@
 import type { ChannelLinkStatus } from '../shared/contracts.ts';
 
+export class MessagingConnectionError extends Error {}
+
 export class MessagingAttachmentError extends Error {
   constructor(readonly maxBytes: number) {
     super('The channel file is too large.');
@@ -15,6 +17,7 @@ export interface MessagingChannel {
   replyWindowMs?: number;
   supportsAttachments?: boolean;
   available?: boolean;
+  error?: string;
   presenceMs?: number;
 }
 

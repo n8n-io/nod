@@ -169,6 +169,8 @@ Native first opens from builds that can emit `server_connection_verified` includ
 | `memory_changed`                                        | Note/skill, save/forget/archive/clear, and owner/agent/background actor.                                                                                                             |
 | `vault_changed`, `vault_imported`                       | Login/card kind and operation, or number imported. No domains or inventory.                                                                                                          |
 
+Channel reconnect requests use `settings_updated` with operation `connect_started`, like Telegram setup and QR renewal. This counts accepted requests, not confirmed connections.
+
 An execution segment ends with `succeeded`, a waiting state, `failed`, `cancelled`, `interrupted`, or `skipped`. Success means execution finished; it doesn't verify the whole task. A crash can leave a start without a completion. One turn can handle several queued messages.
 
 Task completion records a declared status, not verified success. `notified` means an offer message was saved, not that an external notification arrived or was read. Prepared-work feedback records the requested action, which can be performed through Nod's tools. It isn't a survey or a rating for every task. Rejected, rolled-back, and unchanged writes don't count. These events exclude task identifiers, titles, prepared content, and feedback text.

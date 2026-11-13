@@ -213,12 +213,23 @@ function connectionFailure(phase: IntegrationConnectionError['phase'], signal?: 
                 : typeof status === 'number' && status >= 400 && status <= 499
                   ? 'invalid_request'
                   : undefined;
-    if (reason)
+    if (reason) {
+      const body = (error as { error?: { error?: unknown } }).error;
+      const code = z
+        .enum([
+          'installation_busy',
+          'public_budget_exceeded',
+          'service_unavailable',
+          'security_service_unavailable',
+        ])
+        .safeParse(body?.error);
       throw new IntegrationConnectionError(
         reason,
         phase,
         typeof status === 'number' ? status : undefined,
+        code.success ? code.data : undefined,
       );
+    }
     throw error;
   };
 }

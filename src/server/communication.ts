@@ -163,14 +163,14 @@ export function createCommunication(options: {
       );
       signal?.throwIfAborted();
       if (confirmationReview.safeParse(reviewed).success) return text;
-      if (attempt)
-        throw new Error(
-          'Nod could not write an accurate confirmation for this action, so it did not run. Nothing was sent or changed.',
-        );
       const rejected = z
         .object({ valid: z.literal(false), reason: z.string().trim().min(1).max(2000) })
         .strict()
         .safeParse(reviewed);
+      if (attempt)
+        throw new Error(
+          `Nod could not write an accurate confirmation for this action, so it did not run. Nothing was sent or changed. Review failed: ${rejected.success ? publicText(rejected.data.reason) : 'The review did not return a valid verdict.'}`,
+        );
       repair = {
         draft: text,
         issue: rejected.success

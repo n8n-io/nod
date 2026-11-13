@@ -6,6 +6,7 @@ import { run } from './release-tools.mjs';
 export async function copyEngineSource({ root, target, platform = 'darwin' }) {
   for (const path of [
     'src',
+    'docs/src/content/docs',
     'dist/web',
     'LICENSE',
     'NOTICE',

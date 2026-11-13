@@ -8993,7 +8993,7 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
 test('Composio connection requests classify HTTP failures without repeating consent or exposing provider details', async (t) => {
   const { createServer } = await import('node:http');
   const { IntegrationConnectionError } = await import('../src/ports/integrations.ts');
-  let failure: { phase: string; status: number } | undefined;
+  let failure: { phase: string; status: number; code?: string } | undefined;
   let rejected = 0;
   const server = createServer(async (request, response) => {
     const path = new URL(request.url!, 'http://localhost').pathname;
@@ -9002,7 +9002,9 @@ test('Composio connection requests classify HTTP failures without repeating cons
     if (failure && failure.phase === phase && phase) {
       rejected++;
       response.statusCode = failure.status;
-      response.end(JSON.stringify({ error: { message: 'synthetic-private-provider-body' } }));
+      response.end(
+        JSON.stringify({ error: failure.code ?? { message: 'synthetic-private-provider-body' } }),
+      );
       return;
     }
     if (path.endsWith('/toolkits')) {
@@ -9073,6 +9075,21 @@ test('Composio connection requests classify HTTP failures without repeating cons
       });
       assert.equal(rejected, before + 1);
     }
+  }
+  for (const code of [
+    'installation_busy',
+    'public_budget_exceeded',
+    'service_unavailable',
+    'security_service_unavailable',
+  ]) {
+    failure = { phase: 'session', status: code.includes('unavailable') ? 503 : 429, code };
+    await assert.rejects(connect(), (error: unknown) => {
+      assert.ok(error instanceof IntegrationConnectionError);
+      assert.equal(error.code, code);
+      assert.ok(error.message.includes(code));
+      assert.ok(error.message.includes(String(failure!.status)));
+      return true;
+    });
   }
   failure = undefined;
   assert.equal((await connect()).accountId, 'fixture-account');
@@ -10485,6 +10502,21 @@ test(
     const prepared = await f.service.prepare(owner, 'GITHUB_LIST_REPOSITORIES', {
       connectionId: connected.connectionId,
     });
+    const execute = f.session.execute;
+    for (const status of [400, 429, 503]) {
+      f.session.execute = async () => {
+        throw Object.assign(new Error('Synthetic upstream failure.'), { status });
+      };
+      await assert.rejects(
+        f.service.executeApproved(owner, 'GITHUB_LIST_REPOSITORIES', prepared),
+        (error: Error & { statusCode?: number; upstreamStatus?: number }) => {
+          assert.equal(error.statusCode, 502);
+          assert.equal(error.upstreamStatus, status);
+          return true;
+        },
+      );
+    }
+    f.session.execute = execute;
     const executions = f.executed.length;
     await f.pool.query('UPDATE app_connections SET account_active=false WHERE id=$1', [
       connected.connectionId,
@@ -10642,11 +10674,23 @@ test('proactive readers use fixed GET paths, preserve pages, and check exact sou
     },
   });
   let fail = false;
+  let failStatus = 503;
   const proxyExecute = async (input: Parameters<Composio['tools']['proxyExecute']>[0]) => {
     assert.equal(input.method, 'GET');
     assert.equal(input.connectedAccountId, 'fixture-account');
     calls.push(input);
-    if (fail) return { status: 503, data: {} };
+    if (fail)
+      return {
+        status: failStatus,
+        data: {
+          error: {
+            message: 'Synthetic upstream reason.',
+            status: 'UPSTREAM_FAILURE',
+            token: 'synthetic-source-secret',
+          },
+          content: 'Synthetic unrelated private response content.',
+        },
+      };
     if (input.endpoint.endsWith('/missing')) return { status: 404, data: {} };
     if (input.endpoint.endsWith('/threads'))
       return { status: 200, data: { threads: [{ id: 'thread1' }], nextPageToken: 'page2' } };
@@ -10721,8 +10765,18 @@ test('proactive readers use fixed GET paths, preserve pages, and check exact sou
   await assert.rejects(readActivity(client, 'gmail', 'fixture-account', {}, AbortSignal.abort()));
   assert.equal(calls.length, before);
   fail = true;
-  await assert.rejects(read('gmail', {}), /could not be checked/);
+  for (const status of [401, 403, 429, 503]) {
+    failStatus = status;
+    await assert.rejects(read('gmail', {}), (error: Error & { status?: number }) => {
+      assert.equal(error.status, status);
+      assert.ok(error.message.includes(String(status)));
+      assert.match(error.message, /Synthetic upstream reason/);
+      assert.doesNotMatch(error.message, /synthetic-source-secret|unrelated private/);
+      return true;
+    });
+  }
   const isolatedCalls: Array<Parameters<Composio['tools']['proxyExecute']>[0]> = [];
+  let recordFailureStatus = 400;
   const isolated = {
     proxyExecute: async (input: Parameters<Composio['tools']['proxyExecute']>[0]) => {
       isolatedCalls.push(input);
@@ -10735,7 +10789,7 @@ test('proactive readers use fixed GET paths, preserve pages, and check exact sou
             nextPageToken: 'next-page',
           },
         };
-      if (item === 'bad') return { status: 503, data: {} };
+      if (item === 'bad') return { status: recordFailureStatus, data: {} };
       if (input.endpoint.includes('/messages/')) {
         const full = input.parameters?.some(
           (parameter) => parameter.name === 'format' && parameter.value === 'full',
@@ -10776,6 +10830,23 @@ test('proactive readers use fixed GET paths, preserve pages, and check exact sou
   assert.equal(partial.records.find((record) => record.id === 'bad')?.error, 'unavailable');
   assert.equal(partial.records.find((record) => record.id === 'large')?.available, true);
   assert.equal(partial.records.find((record) => record.id === 'good')?.available, true);
+  for (const status of [429, 503]) {
+    recordFailureStatus = status;
+    await assert.rejects(
+      readActivity(
+        isolated,
+        'gmail',
+        'fixture-account',
+        { ids: ['bad'] },
+        new AbortController().signal,
+      ),
+      (error: Error & { status?: number }) => {
+        assert.equal(error.status, status);
+        assert.ok(error.message.includes(String(status)));
+        return true;
+      },
+    );
+  }
   assert.ok(
     isolatedCalls
       .filter((call) => call.endpoint.includes('/threads/'))
@@ -10795,6 +10866,43 @@ test('proactive readers use fixed GET paths, preserve pages, and check exact sou
   );
   assert.equal(exact.records.find((record) => record.id === 'large')?.error, 'unavailable');
   assert.equal(exact.records.find((record) => record.id === 'good')?.available, true);
+  for (const status of [429, 503]) {
+    let entered!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let activeSignal: AbortSignal | undefined;
+    const stop = new AbortController();
+    const interrupted = {
+      proxyExecute: async (
+        input: Parameters<Composio['tools']['proxyExecute']>[0],
+        options?: { signal?: AbortSignal },
+      ) => {
+        if (input.endpoint.endsWith('/bad')) {
+          await pending;
+          return { status, data: {} };
+        }
+        activeSignal = options?.signal;
+        entered();
+        return new Promise<never>(() => {});
+      },
+    } as unknown as Pick<Composio['tools'], 'proxyExecute'>;
+    try {
+      await assert.rejects(
+        readActivity(
+          interrupted,
+          'gmail',
+          'fixture-account',
+          { ids: ['bad', 'waiting'] },
+          stop.signal,
+        ),
+        (error: Error & { status?: number }) => error.status === status,
+      );
+      assert.equal(activeSignal?.aborted, true);
+    } finally {
+      stop.abort();
+    }
+  }
   const slow = {
     proxyExecute: async (input: Parameters<Composio['tools']['proxyExecute']>[0]) => {
       if (input.endpoint.endsWith('/threads'))

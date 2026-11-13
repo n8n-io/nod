@@ -13,6 +13,11 @@
 !public/**
 !src/
 !src/**
+!docs/
+!docs/src/
+!docs/src/content/
+!docs/src/content/docs/
+!docs/src/content/docs/**
 !deployment/
 !deployment/self-host/
 !deployment/self-host/Dockerfile

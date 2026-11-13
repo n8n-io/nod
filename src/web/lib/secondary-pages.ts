@@ -105,6 +105,8 @@ type ChannelStatus = {
   provider: string;
   status: 'disabled' | 'setup_required' | 'configured';
   missing: string[];
+  available?: boolean;
+  error?: string;
 };
 export type ChannelResponse = { channels: ChannelStatus[]; error: string | null };
 export type ChannelSettings = { ready: boolean; channels: ChannelSetupSummary[] };

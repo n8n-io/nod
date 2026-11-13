@@ -39,6 +39,8 @@ While the switch is on, each request Nod makes to your model becomes one trace, 
 
 Each trace includes the Nod version as `app_version` metadata when a valid release version or source revision is available.
 
+When available, a trace also records the observed request phase. A prepared payload does not prove that the request reached the provider. This field contains no transport headers or request content.
+
 n8n's service sees the sending machine's IP address when it receives a trace. For a self-hosted assistant, that is the server's address. It doesn't add the address to the trace.
 
 ## What Nod removes first

@@ -17,7 +17,7 @@ To run Nod on a VPS, cloud VM, or Mac mini and reach it from other devices, use 
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Node.js          | 24.21.0 or newer                                                                                                                                                     |
 | pnpm             | 10.34.5, enabled through Corepack                                                                                                                                    |
-| Docker           | With Compose v2, running. For a Docker VM such as Colima, start with two CPUs and 8 GB of memory.                                                                    |
+| Docker           | With Compose v2 and the Buildx plugin, running. For a Docker VM such as Colima, start with two CPUs and 8 GB of memory.                                              |
 | Git              | Any recent version                                                                                                                                                   |
 | Model connection | A [supported model service](/connect/models/) with its required credentials, a ChatGPT plan that supports sign-in, or a [local model](/connect/local-models/) server |
 
@@ -121,12 +121,13 @@ Settings live in `.env`, and you need to restart after you change them. See [Con
 
 ## Troubleshooting
 
-| You see                           | Do this                                                                                                                                                       |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Use Node.js 24.21.0 or newer.`   | Install a newer Node.js and run `pnpm start` again.                                                                                                           |
-| Docker errors on start            | Make sure Docker is running and `docker compose version` reports v2.                                                                                          |
-| A missing or unreadable Vault key | Restore the original key and check its permissions. Don't generate a replacement for encrypted data. See [Vault configuration](/deploy/configuration/#vault). |
-| The port is in use                | Set another `PORT` in `.env`. The default is `4310`.                                                                                                          |
+| You see                                | Do this                                                                                                                                                                                                                                   |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Use Node.js 24.21.0 or newer.`        | Install a newer Node.js and run `pnpm start` again.                                                                                                                                                                                       |
+| Docker errors on start                 | Make sure Docker is running and `docker compose version` reports v2.                                                                                                                                                                      |
+| `the --chmod option requires BuildKit` | Install the [Docker Buildx plugin](https://github.com/docker/buildx#installing) and check that `docker buildx version` works. If `DOCKER_BUILDKIT=0` is set in your environment, remove it or set it to `1`. Then run `pnpm start` again. |
+| A missing or unreadable Vault key      | Restore the original key and check its permissions. Don't generate a replacement for encrypted data. See [Vault configuration](/deploy/configuration/#vault).                                                                             |
+| The port is in use                     | Set another `PORT` in `.env`. The default is `4310`.                                                                                                                                                                                      |
 
 ## Related resources
 
