@@ -12,6 +12,7 @@ import type {
   AgentImage,
   AgentSession,
   AgentTool,
+  AgentToolOutcome,
   AgentToolResult,
   RuntimeContext,
   RuntimeObservation,
@@ -41,6 +42,33 @@ import type { MemoryBrief } from '../ports/memory-recall.ts';
 import { delimit } from './untrusted.ts';
 
 const imageBytes = (5 * 1024 * 1024 * 3) / 4;
+function toolProgress() {
+  const failures = new Map<string, { count: number; error: string }>();
+  return {
+    get error() {
+      const failed = [...failures].find(([, failure]) => failure.count >= 5);
+      return failed
+        ? `The ${failed[0]} tool failed five times without a successful call. Last failure: ${failed[1].error}`
+        : undefined;
+    },
+    stopped(results: AgentToolOutcome[] = []) {
+      for (const result of results) {
+        if (result.error === undefined) failures.delete(result.name);
+        else if (
+          /^(?:Validation failed for tool |Invalid (?:arguments for tool |[\w ]+ (?:input[.:]|arguments(?: at|[.:])))|Tool \S+ not found|This source (?:failed during this check|check has reached its read limit)|Nod could not confirm it was still on the page and control it checked|(?:This connected|The selected) account changed\.|The trust check couldn|The action review model is unavailable|Nod could not write an accurate confirmation)/.test(
+            result.error,
+          )
+        ) {
+          failures.set(result.name, {
+            count: (failures.get(result.name)?.count ?? 0) + 1,
+            error: result.error,
+          });
+        }
+      }
+      return [...failures.values()].some((failure) => failure.count >= 5);
+    },
+  };
+}
 const inlineChars = 40_000;
 const imageBudget = 16 * 1024 * 1024;
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
@@ -191,6 +219,7 @@ export function createAgentRuntime(dependencies: {
     let stopped = false;
     let modelError: string | undefined;
     let modelIncomplete: 'output' | 'context' | undefined;
+    const progress = toolProgress();
     let completed = false;
     let lastReply = '';
     let lastPresentation = '';
@@ -778,6 +807,7 @@ export function createAgentRuntime(dependencies: {
         let failure: string | undefined;
         let incomplete = false;
         let completed = false;
+        const childProgress = toolProgress();
         await context.emit('agent_start', title, { execution: source });
         let child: AgentSession | undefined;
         try {
@@ -795,7 +825,7 @@ export function createAgentRuntime(dependencies: {
             timeZone: context.timeZone,
             runTool: (name, params, run, options) =>
               guard(name, params, run, { ...options, execution: source }),
-            shouldStop: () => stopped || overBudget(),
+            shouldStop: (results) => stopped || overBudget() || childProgress.stopped(results),
             onEvent: (event) => {
               countUsage(event);
               if (event.type === 'final') answer = event.text;
@@ -816,6 +846,8 @@ export function createAgentRuntime(dependencies: {
             `${currentUserTime(context.timeZone)}\nYou are a subagent doing one part of the owner's request: ${title}\n${instruction}\nYour working directory is ${childPath}. Write new files there. The shared workspace is ${workspace.path}. Give complete file paths in your answer. Return any question or browser blocker to the parent agent. Do not hand your browser to the owner. Your final answer goes back to the parent agent, so include every result it needs.`,
             [],
           );
+          if (childProgress.error)
+            throw new Error((dependencies.redactError ?? String)(childProgress.error));
           if (failure) throw new Error(`The subagent model request failed: ${failure}`);
           if (incomplete) throw new Error('The subagent response was incomplete.');
           assertActive();
@@ -963,8 +995,9 @@ export function createAgentRuntime(dependencies: {
         ...(context.readAudio ? { readAudio: context.readAudio } : {}),
         timeZone: context.timeZone,
         runTool: guard,
-        shouldStop: () => {
+        shouldStop: (results) => {
           if (stopped || finalDelivered) return true;
+          if (progress.stopped(results)) return true;
           if (checkInBlocked) checkInStrikes++;
           checkInBlocked = false;
           return (checkInStopped = checkInStrikes >= 2);
@@ -1133,6 +1166,7 @@ export function createAgentRuntime(dependencies: {
       );
       await pendingReplies;
       signal.throwIfAborted();
+      if (progress.error) throw new Error((dependencies.redactError ?? String)(progress.error));
       const paused = () =>
         `Paused at the ${dollars(context.checkIn!.budgetUsd)} check-in. Reply to keep going.`;
       if (modelError)

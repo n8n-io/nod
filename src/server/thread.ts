@@ -1127,6 +1127,8 @@ const interrupted = 'Interrupted.';
 
 function modelRecoveryAdvice(text: string) {
   const quota = modelQuotaFailure(text);
+  if (quota?.kind === 'credits_depleted')
+    return 'This account has no prepayment credits. Add credits with the provider or choose another connection.';
   if (quota?.kind === 'zero_quota')
     return 'This account has no quota for this model. Check its access or choose another model.';
   const oversized = text.match(
