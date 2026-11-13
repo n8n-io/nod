@@ -44,6 +44,7 @@ export function useChannelSettings({
   const waiting =
     (watchTelegram && telegramState(telegram).waiting) ||
     (watchWhatsApp && whatsapp?.enabled && whatsapp.mode === 'linked');
+  const enabled = settings?.channels.some((channel) => channel.enabled);
 
   async function load() {
     request.current?.abort();
@@ -65,6 +66,7 @@ export function useChannelSettings({
       if (!current.signal.aborted) setLoadError(errorMessage(cause));
     } finally {
       if (!current.signal.aborted) setLoading(false);
+      if (request.current === current) request.current = null;
     }
   }
 
@@ -80,10 +82,16 @@ export function useChannelSettings({
   }, []);
 
   useEffect(() => {
-    if (!waiting) return;
-    const timer = setInterval(() => void load(), 2000);
+    if (!waiting && !enabled) return;
+    const timer = setInterval(
+      () => {
+        if (document.visibilityState === 'visible' && !request.current && !action.current)
+          void load();
+      },
+      waiting ? 2000 : 5000,
+    );
     return () => clearInterval(timer);
-  }, [waiting]);
+  }, [waiting, enabled]);
 
   function accept(channel: ChannelSetupSummary) {
     request.current?.abort();
@@ -184,6 +192,17 @@ export function useChannelSettings({
     return result ? '' : failure || null;
   }
 
+  async function reconnect(provider: ChannelProvider) {
+    setError('');
+    const result = await perform(
+      `/api/channel-settings/${provider}/reconnect`,
+      { method: 'POST' },
+      (message) => setError(message),
+    );
+    if (result) await load();
+    return Boolean(result);
+  }
+
   return {
     data,
     settings,
@@ -199,5 +218,6 @@ export function useChannelSettings({
     save,
     telegramAction,
     remove,
+    reconnect,
   };
 }
