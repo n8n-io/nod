@@ -295,6 +295,31 @@
   gap: 12px;
   max-width: 620px;
 }
+.account-font-size {
+  max-width: 620px;
+  margin-top: 16px;
+}
+.account-font-size-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+.account-font-size-stepper .button {
+  width: 32px;
+  min-height: 32px;
+  padding: 6px;
+  color: var(--foreground);
+}
+.account-font-size-stepper output {
+  min-width: 52px;
+  text-align: center;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.account-region .account-font-size-hint {
+  margin-top: -3px;
+}
 .account-theme-previews > button {
   min-width: 0;
   padding: 8px;
@@ -593,7 +618,8 @@
 }
 @container account-settings (max-width: 400px) {
   .account-preference-row:has(.search-picker-trigger),
-  .account-preference-row:has(.settings-segmented) {
+  .account-preference-row:has(.settings-segmented),
+  .account-font-size {
     flex-wrap: wrap;
   }
   .account-settings-body .search-picker-trigger {

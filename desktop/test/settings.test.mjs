@@ -424,6 +424,7 @@ async function runningDesktop(
     now = Date.now,
     initialState = 'running',
     storedProfile,
+    enginePort = 4310,
     prepareRuntime,
     nativePageLoaded,
     enginePageLoaded,
@@ -733,6 +734,10 @@ async function runningDesktop(
           },
           isLoadingMainFrame: () => Boolean(this.loading),
           getURL: () => this.webContents.mainFrame.url,
+          getZoomFactor: () => this.zoomFactor ?? 1,
+          setZoomFactor: (factor) => {
+            this.zoomFactor = factor;
+          },
           send: (channel, value) => {
             this.sent.push([channel, value]);
           },
@@ -849,7 +854,7 @@ async function runningDesktop(
     engine = {};
     enginePreferencesReady = true;
     engineRuntimeReady = true;
-    engineOrigin = 'http://127.0.0.1:4310';
+    engineOrigin = ${JSON.stringify(`http://127.0.0.1:${enginePort}`)};
     engineBound = true;
     onboardingCompleted = true;
     status.phase = 'ready';
@@ -3649,6 +3654,134 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
     { sender: setup, senderFrame: { url: setup.mainFrame.url } },
   ])
     await assert.rejects(invoke('nod:runtime:install-wsl', rejected));
+});
+
+test('desktop zoom controls the owned engine page and rejects untrusted requests', async (t) => {
+  const f = await runningDesktop(t, () => assert.fail('Zoom must not make an engine request.'));
+  f.showEngine();
+  const contents = f.windows.at(-1).webContents;
+  const event = { sender: contents, senderFrame: contents.mainFrame };
+  const invoke = (channel, target = event, value) =>
+    Promise.resolve().then(() => f.handlers.get(channel)(target, value));
+
+  assert.equal(await invoke('nod:zoom:get'), 1);
+  contents.setZoomFactor(1.2);
+  assert.equal(await invoke('nod:zoom:get'), 1.2);
+  assert.equal(await invoke('nod:zoom:set', event, 1.5), 1.5);
+  assert.equal(contents.getZoomFactor(), 1.5);
+
+  for (const value of [undefined, null, '1.25', NaN, Infinity, 0.49, 3.01])
+    await assert.rejects(invoke('nod:zoom:set', event, value), /zoom level/);
+  assert.equal(contents.getZoomFactor(), 1.5);
+
+  for (const rejected of [
+    { sender: contents, senderFrame: { ...contents.mainFrame } },
+    { sender: { mainFrame: contents.mainFrame }, senderFrame: contents.mainFrame },
+  ]) {
+    await assert.rejects(invoke('nod:zoom:get', rejected), /unavailable/);
+    await assert.rejects(invoke('nod:zoom:set', rejected, 2), /unavailable/);
+  }
+  contents.mainFrame.url = 'https://example.test/';
+  await assert.rejects(invoke('nod:zoom:get'), /unavailable/);
+  await assert.rejects(invoke('nod:zoom:set', event, 2), /unavailable/);
+  assert.equal(contents.getZoomFactor(), 1.5);
+});
+
+test('desktop zoom survives an engine port change and is not reapplied on reload or theme saves', async (t) => {
+  const first = await runningDesktop(t, () => assert.fail('Zoom must not make an engine request.'));
+  first.showEngine();
+  const original = first.windows.at(-1).webContents;
+  const originalEvent = { sender: original, senderFrame: original.mainFrame };
+  assert.equal((await first.storage.reopen().get()).zoomFactor, 1);
+  await first.handlers.get('nod:zoom:set')(originalEvent, 1.5);
+  assert.equal((await first.storage.reopen().get()).zoomFactor, 1.5);
+
+  const second = await runningDesktop(
+    t,
+    () => assert.fail('Zoom must not make an engine request.'),
+    {
+      storedProfile: first.storage,
+      enginePort: 4311,
+    },
+  );
+  second.showEngine();
+  const next = second.windows.at(-1).webContents;
+  await waitFor(() => assert.equal(next.getZoomFactor(), 1.5), { attempts: 100, interval: 5 });
+  assert.equal(new URL(next.mainFrame.url).port, '4311');
+  const nextEvent = { sender: next, senderFrame: next.mainFrame };
+  next.setZoomFactor(2);
+  await second.handlers.get('nod:preferences:theme')(nextEvent, 'dark');
+  next.emit('did-finish-load');
+  await new Promise(setImmediate);
+  assert.equal(next.getZoomFactor(), 2);
+  const Popup = second.windows.at(-1).constructor;
+  const popup = new Popup({ show: false });
+  next.emit('did-create-window', popup);
+  await popup.loadURL('http://127.0.0.1:4311/settings');
+  await waitFor(() => assert.equal(popup.webContents.getZoomFactor(), 2), {
+    attempts: 100,
+    interval: 5,
+  });
+});
+
+test('desktop zoom captures native menu changes on blur and normal quit', async (t) => {
+  const f = await runningDesktop(t, () => assert.fail('Zoom must not make an engine request.'));
+  f.showEngine();
+  const window = f.windows.at(-1);
+  const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+  assert.equal(await f.handlers.get('nod:zoom:get')(event), 1);
+  window.webContents.setZoomFactor(1.25);
+  window.emit('blur');
+  await waitFor(async () => assert.equal((await f.storage.reopen().get()).zoomFactor, 1.25), {
+    attempts: 100,
+    interval: 5,
+  });
+  window.webContents.setZoomFactor(4.5);
+  f.crash();
+  await f.quit(async () => {});
+  assert.equal((await f.storage.reopen().get()).zoomFactor, 4.5);
+});
+
+test('engine exit saves focused native zoom before destroying the window and restoring a new one', async (t) => {
+  const f = await runningDesktop(
+    t,
+    async (url) => {
+      assert.equal(new URL(url).pathname, '/api/health');
+      return Response.json({ ok: true });
+    },
+    { allowStart: true },
+  );
+  f.crash();
+  assert.equal((await f.prepare()).phase, 'ready');
+  f.showEngine();
+  const previous = f.windows.at(-1);
+  const event = { sender: previous.webContents, senderFrame: previous.webContents.mainFrame };
+  assert.equal(await f.handlers.get('nod:zoom:get')(event), 1);
+
+  const read = previous.webContents.getZoomFactor.bind(previous.webContents);
+  let capturedBeforeDestroy = false;
+  t.mock.method(previous.webContents, 'getZoomFactor', () => {
+    capturedBeforeDestroy = !previous.isDestroyed();
+    return read();
+  });
+  previous.focus();
+  previous.webContents.setZoomFactor(1.75);
+  f.children[0].emit('exit', 1);
+  assert.equal(capturedBeforeDestroy, true);
+  assert.equal(previous.isDestroyed(), true);
+  await waitFor(async () => assert.equal((await f.storage.reopen().get()).zoomFactor, 1.75), {
+    attempts: 100,
+    interval: 5,
+  });
+
+  assert.equal((await f.prepare({ retry: true })).phase, 'ready');
+  f.showEngine();
+  const current = f.windows.at(-1);
+  await waitFor(() => assert.equal(current.webContents.getZoomFactor(), 1.75), {
+    attempts: 100,
+    interval: 5,
+  });
+  assert.equal((await f.storage.reopen().get()).zoomFactor, 1.75);
 });
 
 test('native notification confirmation follows only successful owned enable transitions', async (t) => {

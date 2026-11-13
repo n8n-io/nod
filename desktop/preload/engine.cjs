@@ -75,6 +75,8 @@ contextBridge.exposeInMainWorld('nodDesktop', {
   openExternal: (url) => invoke('nod:external', url),
   getSettings: () => invoke('nod:settings:get'),
   saveSettings: (input) => invoke('nod:settings:save', input),
+  getZoomFactor: () => invoke('nod:zoom:get'),
+  setZoomFactor: (factor) => invoke('nod:zoom:set', factor),
   removeAllData: () => invoke('nod:data:remove'),
   onOpenSettings: (listener) => {
     if (typeof listener !== 'function') throw new TypeError('A settings listener is required.');

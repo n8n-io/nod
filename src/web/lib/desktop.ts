@@ -72,6 +72,8 @@ type DesktopWindow = Window & {
     restartUpdate?(): Promise<void>;
     prepare?(options?: { retry: boolean }): Promise<DesktopStatus>;
     saveSettings(input: DesktopSettingsChange): Promise<DesktopSettings>;
+    getZoomFactor?(): Promise<number>;
+    setZoomFactor?(factor: number): Promise<number>;
     removeAllData(): Promise<void>;
     onOpenSettings(listener: (section: DesktopSettingsSection) => void): () => void;
     onNavigate?(listener: (path: string) => void): () => void;
@@ -106,6 +108,11 @@ export function desktopSettingsAvailable() {
   return typeof (window as DesktopWindow).nodDesktop?.getSettings === 'function';
 }
 
+export function desktopZoomAvailable() {
+  const bridge = (window as DesktopWindow).nodDesktop;
+  return typeof bridge?.getZoomFactor === 'function' && typeof bridge.setZoomFactor === 'function';
+}
+
 export function subscribeDesktopNavigation(listener: (path: string) => void) {
   return (window as DesktopWindow).nodDesktop?.onNavigate?.(listener);
 }
@@ -136,6 +143,18 @@ export function getDesktopSettings() {
 
 export function saveDesktopSettings(change: DesktopSettingsChange) {
   return settingsBridge().saveSettings(change);
+}
+
+export function getDesktopZoomFactor() {
+  const bridge = settingsBridge();
+  return bridge.getZoomFactor?.() ?? Promise.reject(new Error('Desktop zoom is unavailable.'));
+}
+
+export function setDesktopZoomFactor(factor: number) {
+  const bridge = settingsBridge();
+  return (
+    bridge.setZoomFactor?.(factor) ?? Promise.reject(new Error('Desktop zoom is unavailable.'))
+  );
 }
 
 export function removeDesktopData() {
