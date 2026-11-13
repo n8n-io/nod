@@ -3844,6 +3844,57 @@ test('channel presentation isolates private links from the model and rejects uns
   await assert.rejects(channelReply('/credentials/request-id', { threadId: 'owned-thread' }));
 });
 
+test('a task message that needs Nod links to that task page in a chat app', async () => {
+  const taskId = randomUUID();
+  const link = `https://nod.n8n.io/docs/open/#/tasks/${taskId}`;
+  const inputs: unknown[] = [];
+  const handoff = await channelReply('Take over the synthetic checkout page.', {
+    threadId: 'owned-thread',
+    browserHandoff: true,
+    taskId,
+    present: async (_thread, input) => {
+      inputs.push(input);
+      return `Continua [aqui](/tasks/${taskId}).`;
+    },
+  });
+  assert.deepEqual(inputs.at(-1), {
+    kind: 'delivery',
+    text: 'Take over the synthetic checkout page.',
+    attachments: 'none',
+    secureAction: true,
+    continueAt: `/tasks/${taskId}`,
+  });
+  assert.equal(handoff.split(link).length, 2);
+  const missing = await channelReply('Open the synthetic file in Nod.', {
+    threadId: 'owned-thread',
+    hasAttachments: true,
+    taskId,
+    present: async () => 'Abre o ficheiro na Nod.',
+  });
+  assert.equal(missing, `Abre o ficheiro na Nod.\n\n${link}`);
+  const ordinary = await channelReply('The synthetic report is ready.', {
+    threadId: 'owned-thread',
+    taskId,
+    present: async () => assert.fail('Ordinary task text needs no presentation'),
+  });
+  assert.equal(ordinary, 'The synthetic report is ready.');
+  const untasked = await channelReply('Take over the synthetic checkout page.', {
+    threadId: 'owned-thread',
+    browserHandoff: true,
+    present: async (_thread, input) => {
+      inputs.push(input);
+      return 'Continua na Nod.';
+    },
+  });
+  assert.equal(untasked, 'Continua na Nod.');
+  assert.equal((inputs.at(-1) as { continueAt?: string }).continueAt, undefined);
+  for (const value of [`/tasks/${taskId}/stop`, `/tasks/${taskId}?approve=yes`, '/tasks/not-an-id'])
+    assert.doesNotMatch(
+      await channelReply(`[Task](${value})`, { threadId: 'owned-thread' }),
+      /nod\.n8n\.io/,
+    );
+});
+
 test(
   'Chat SDK channel fixture authenticates owner messages, commits turn dedupe, and routes replies by turn channel',
   { skip: !process.env.TEST_DATABASE_URL },

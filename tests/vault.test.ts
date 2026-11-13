@@ -3569,6 +3569,8 @@ test('analytics routes collapse private paths to known pages', async () => {
     ['/prepared/00000000-0000-4000-8000-000000000705?private=synthetic', '/prepared'],
     ['/prepared/synthetic-private-id', '/not-found'],
     ['/prepared/00000000-0000-4000-8000-000000000705/extra', '/not-found'],
+    ['/tasks/00000000-0000-4000-8000-000000000706?private=synthetic', '/tasks'],
+    ['/tasks/synthetic-private-id', '/not-found'],
     ['/settings', '/settings'],
     ['/settings/models?private=synthetic', '/settings'],
     ['/settings/apps#synthetic', '/not-found'],

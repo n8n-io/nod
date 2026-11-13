@@ -286,6 +286,10 @@ export interface TaskWait {
   who: string;
   via: string;
 }
+export interface TaskAction {
+  label: string;
+  at: string;
+}
 export interface Task {
   id: string;
   title: string;
@@ -306,6 +310,8 @@ export interface Task {
   stepIndex?: number;
   revision?: number;
   appliedRevision?: number;
+  lastAction?: TaskAction | null;
+  uncertainAction?: TaskAction | null;
 }
 export interface TaskDetail {
   task: Task;

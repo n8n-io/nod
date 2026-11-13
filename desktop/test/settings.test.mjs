@@ -76,6 +76,8 @@ test('external app links can only open named screens without action data', () =>
     assert.equal(appOpenPath(`nod://open${path}`, appPages), path);
   const prepared = `/prepared/${randomUUID()}`;
   assert.equal(appOpenPath(`nod://open${prepared}`, appPages), prepared);
+  const task = `/tasks/${randomUUID()}`;
+  assert.equal(appOpenPath(`nod://open${task}`, appPages), task);
   for (const value of [
     undefined,
     'https://example.test/settings/models',
@@ -92,6 +94,9 @@ test('external app links can only open named screens without action data', () =>
     `nod://open${prepared}?action=send`,
     `nod://open${prepared}#secret`,
     `nod://open${prepared}/../apps`,
+    'nod://open/tasks/not-an-id',
+    `nod://open${task}?reply=yes`,
+    `nod://open${task}/stop`,
   ])
     assert.equal(appOpenPath(value, appPages), null);
 });

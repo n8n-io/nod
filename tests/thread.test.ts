@@ -49,6 +49,8 @@ import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createAnalytics, snapshotAnalytics } from '../src/server/analytics.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 import { suggestedTaskStatus } from '../src/web/lib/chat-messages.ts';
+import { appPagePath, taskPath } from '../src/shared/app-links.ts';
+import { taskNext } from '../src/shared/task-status.ts';
 
 test(
   'one thread runs every turn in order on the same session and workspace',
@@ -9636,6 +9638,193 @@ test(
             dependencies.readArtifact = previousRead;
             release(pending);
             if (active) await waitFor(settled(active.turnId));
+          }
+        },
+      );
+      await t.test(
+        'a task page, a browser handback and a web reply reach the same task session without repeating its actions',
+        async () => {
+          await waitFor(settledThread);
+          const asked = await thread.enqueueTurn('ask-question', {
+            source: 'event',
+            channel: 'telegram:fixture',
+          });
+          await waitFor(settled(asked));
+          const origin = (
+            await db.pool.query(
+              `SELECT u.session_id,u.thread_id,m.id AS message_id FROM turns u
+               JOIN messages m ON m.turn_id=u.id AND m.role='assistant'
+               WHERE u.id=$1 ORDER BY m.created_at DESC LIMIT 1`,
+              [asked],
+            )
+          ).rows[0];
+          const taskId = randomUUID();
+          const foreignTask = randomUUID();
+          const approval = randomUUID();
+          const later = randomUUID();
+          const repeated = randomUUID();
+          await db.pool.query(
+            `INSERT INTO tasks(id,owner_id,turn_id,session_id,message_id,title,done_when,now_text) VALUES
+               ($1,$2,$3,$4,$5,'Synthetic order','Order confirmed','Waiting for the account'),
+               ($6,'foreign-owner',$3,$4,$5,'Foreign synthetic order','Never','Hidden')`,
+            [taskId, ownerId, asked, origin.session_id, origin.message_id, foreignTask],
+          );
+          await db.pool.query('UPDATE turns SET task_id=$1 WHERE id=$2', [taskId, asked]);
+          await db.pool.query(
+            `INSERT INTO app_actions(owner_id,turn_id,action,basis) VALUES
+               ($1,$2,'GMAIL_FETCH_EMAILS','{"kind":"read"}'),
+               ($1,$2,'GMAIL_SEND_EMAIL','{"kind":"approved"}')`,
+            [ownerId, asked],
+          );
+          await db.pool.query(
+            `INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,status)
+             VALUES($1,$2,$3,$4,'SLACK_SEND_MESSAGE',$5,'uncertain')`,
+            [
+              approval,
+              ownerId,
+              origin.thread_id,
+              asked,
+              JSON.stringify({
+                channel: 'synthetic-private-channel',
+                text: 'synthetic-private-body',
+              }),
+            ],
+          );
+          await db.pool.query('UPDATE turns SET handoff_browser_id=session_id::text WHERE id=$1', [
+            asked,
+          ]);
+          try {
+            assert.equal(appPagePath(taskPath(taskId)), `/tasks/${taskId}`);
+            const page = await request('GET', `/api/tasks/${taskId}`);
+            const shown = page.json<{ task: Task }>().task;
+            assert.equal(shown.status, 'needs_you');
+            assert.equal(shown.browserHandoff, true);
+            assert.equal(taskNext(shown), 'open_browser');
+            assert.equal(shown.questionMessageId, origin.message_id);
+            assert.equal(shown.lastAction?.label, 'Gmail: Send email');
+            assert.equal(shown.uncertainAction?.label, 'Slack: Send message');
+            assert.doesNotMatch(page.body, /synthetic-private/);
+            assert.deepEqual(
+              (await request('GET', '/api/tasks'))
+                .json<Task[]>()
+                .find((task) => task.id === taskId),
+              shown,
+            );
+            assert.equal((await request('GET', `/api/tasks/${foreignTask}`)).statusCode, 404);
+            assert.ok(
+              !(await request('GET', '/api/tasks'))
+                .json<Task[]>()
+                .some((task) => task.id === foreignTask),
+            );
+
+            assert.equal(await thread.resumeAfterHandoff(asked), true);
+            const handback = (
+              await db.pool.query(
+                'SELECT id,session_id,task_id FROM turns WHERE source_id=$1 AND owner_id=$2',
+                [`handoff:${asked}`, ownerId],
+              )
+            ).rows[0];
+            await waitFor(settled(handback.id));
+            assert.equal(handback.session_id, origin.session_id);
+            assert.equal(
+              (await db.pool.query('SELECT task_id FROM turns WHERE id=$1', [handback.id])).rows[0]
+                .task_id,
+              taskId,
+            );
+            assert.equal(await thread.resumeAfterHandoff(asked), false);
+
+            const returned = (await request('GET', '/api/tasks'))
+              .json<Task[]>()
+              .find((task) => task.id === taskId)!;
+            const target = returned.questionMessageId ?? returned.messageId!;
+            const answer = await userMessages.submit('Use the synthetic work account', [], {
+              channel: 'web',
+              replyToMessageId: target,
+            });
+            await waitFor(settled(answer.turnId));
+            assert.equal(ran(answer.turnId)?.sessionId, origin.session_id);
+            const sessions = (
+              await db.pool.query(
+                'SELECT DISTINCT session_id FROM turns WHERE owner_id=$1 AND task_id=$2',
+                [ownerId, taskId],
+              )
+            ).rows;
+            assert.deepEqual(sessions, [{ session_id: origin.session_id }]);
+            assert.equal(
+              (
+                await db.pool.query(
+                  'SELECT count(*)::int AS count FROM tasks WHERE owner_id=$1 AND session_id=$2',
+                  [ownerId, origin.session_id],
+                )
+              ).rows[0].count,
+              1,
+            );
+            assert.equal(
+              (
+                await db.pool.query(
+                  "SELECT count(*)::int AS count FROM app_actions a JOIN turns u ON u.id=a.turn_id WHERE u.task_id=$1 AND a.action='GMAIL_SEND_EMAIL'",
+                  [taskId],
+                )
+              ).rows[0].count,
+              1,
+            );
+            assert.equal(
+              (await db.pool.query('SELECT status FROM approvals WHERE id=$1', [approval])).rows[0]
+                .status,
+              'uncertain',
+            );
+            const after = (await request('GET', `/api/tasks/${taskId}`)).json<{ task: Task }>()
+              .task;
+            assert.equal(after.uncertainAction?.label, 'Slack: Send message');
+            assert.equal(after.lastAction?.label, 'Gmail: Send email');
+
+            await db.pool.query(
+              `INSERT INTO app_actions(owner_id,turn_id,action,basis,created_at)
+               VALUES($1,$2,'SLACK_SEND_MESSAGE','{"kind":"approved"}',now()+interval '1 second')`,
+              [ownerId, asked],
+            );
+            await db.pool.query(
+              `INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,status,created_at)
+               VALUES($1,$2,$3,$4,'SLACK_SEND_MESSAGE',$5,'completed',now()+interval '1 second')`,
+              [
+                later,
+                ownerId,
+                origin.thread_id,
+                asked,
+                JSON.stringify({
+                  channel: 'synthetic-other-channel',
+                  text: 'synthetic-other-body',
+                }),
+              ],
+            );
+            assert.equal(
+              (await request('GET', `/api/tasks/${taskId}`)).json<{ task: Task }>().task
+                .uncertainAction?.label,
+              'Slack: Send message',
+            );
+            await db.pool.query(
+              `INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,status,created_at)
+               SELECT $1,owner_id,thread_id,turn_id,action,args,'completed',now()+interval '1 second'
+               FROM approvals WHERE id=$2`,
+              [repeated, approval],
+            );
+            assert.equal(
+              (await request('GET', `/api/tasks/${taskId}`)).json<{ task: Task }>().task
+                .uncertainAction,
+              null,
+            );
+          } finally {
+            await db.pool.query('DELETE FROM approvals WHERE id=ANY($1::uuid[])', [
+              [approval, later, repeated],
+            ]);
+            await db.pool.query(
+              "DELETE FROM app_actions WHERE turn_id=$1 AND action IN ('GMAIL_FETCH_EMAILS','GMAIL_SEND_EMAIL','SLACK_SEND_MESSAGE')",
+              [asked],
+            );
+            await db.pool.query('DELETE FROM tasks WHERE id=$1', [foreignTask]);
+            await db.pool.query("UPDATE tasks SET state='done',closed_at=now() WHERE id=$1", [
+              taskId,
+            ]);
           }
         },
       );

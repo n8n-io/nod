@@ -120,6 +120,7 @@ type AnalyticsEvents = {
       | 'stop'
       | 'show_in_chat'
       | 'open_browser'
+      | 'open_page'
       | 'show_activity'
       | 'show_commands'
       | 'reply';
@@ -263,6 +264,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
       'stop',
       'show_in_chat',
       'open_browser',
+      'open_page',
       'show_activity',
       'show_commands',
       'reply',

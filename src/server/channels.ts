@@ -23,7 +23,7 @@ import type {
 } from '../ports/messaging.ts';
 import { loopbackHost } from '../shared/loopback.ts';
 import type { ChatConfirmationInput } from './approvals.ts';
-import { appPagePath, appPages, appPageUrl } from '../shared/app-links.ts';
+import { appPagePath, appPages, appPageUrl, taskPath } from '../shared/app-links.ts';
 import { pendingAnswerChoicesSql } from './answer-choices.ts';
 
 const replyCommand = /^\/(memory|context|usage)(?:@[A-Za-z0-9_]+)?$/i;
@@ -36,6 +36,7 @@ export type ChannelPresentation =
       attachments: 'none' | 'pending' | 'in_nod';
       secureAction: boolean;
       files?: string[];
+      continueAt?: string;
     }
   | { kind: 'verification_refused' }
   | {
@@ -158,6 +159,7 @@ interface OutboxRow extends ChannelIdentity {
   answer_choices: unknown;
   answer_choices_pending: boolean;
   browser_handoff: boolean;
+  task_id: string | null;
 }
 const messageSchema = z
   .object({
@@ -285,6 +287,7 @@ export async function channelReply(
     browserHandoff?: boolean;
     present?: ChannelOptions['present'];
     fallbackText?: string;
+    taskId?: string | null;
   },
 ) {
   const safe = channelText(text);
@@ -300,13 +303,25 @@ export async function channelReply(
     attachments === 'in_nod' ||
     (attachments === 'pending' && Boolean(safe.text)) ||
     (!safe.text && !fallback && attachments === 'none');
-  return needsPresentation
-    ? await presentChannelText(
-        options.threadId,
-        { kind: 'delivery', text: safe.text, attachments, secureAction: safe.secureAction },
-        options.present,
-      )
-    : safe.text || fallback;
+  if (!needsPresentation) return safe.text || fallback;
+  const continueAt =
+    options.taskId && (safe.secureAction || attachments === 'in_nod')
+      ? taskPath(options.taskId)
+      : undefined;
+  const presented = await presentChannelText(
+    options.threadId,
+    {
+      kind: 'delivery',
+      text: safe.text,
+      attachments,
+      secureAction: safe.secureAction,
+      ...(continueAt ? { continueAt } : {}),
+    },
+    options.present,
+  );
+  return !continueAt || presented.includes(appPageUrl(continueAt))
+    ? presented
+    : `${presented}\n\n${appPageUrl(continueAt)}`;
 }
 
 export async function createChannels(pool: Pool, options: ChannelOptions) {
@@ -1163,7 +1178,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       ) RETURNING message_id,source_id,presentation
     ) SELECT c.message_id,m.owner_id,m.thread_id AS message_thread_id,i.provider,i.account_id,i.sender_id,i.thread_id,m.text,m.attachments,m.reply_to_message_id,c.presentation,m.presentation AS message_presentation,m.answer_choices,(${pendingAnswerChoicesSql}) AS answer_choices_pending,
       EXISTS (SELECT 1 FROM turns u WHERE u.id=m.turn_id AND u.owner_id=m.owner_id AND u.handoff_browser_id IS NOT NULL
-        AND m.id=(SELECT id FROM messages WHERE turn_id=u.id AND owner_id=u.owner_id AND role='assistant' ORDER BY created_at DESC,id DESC LIMIT 1)) AS browser_handoff
+        AND m.id=(SELECT id FROM messages WHERE turn_id=u.id AND owner_id=u.owner_id AND role='assistant' ORDER BY created_at DESC,id DESC LIMIT 1)) AS browser_handoff,
+      (SELECT to_jsonb(u)->>'task_id' FROM turns u WHERE u.id=m.turn_id AND u.owner_id=m.owner_id) AS task_id
       FROM claimed c JOIN channel_inbox i ON i.source_id=c.source_id JOIN messages m ON m.id=c.message_id`,
       [ownerId, claimId, unavailable],
     );
@@ -1263,6 +1279,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           browserHandoff: row.browser_handoff,
           present: options.present,
           fallbackText: fallback,
+          taskId: row.task_id,
         },
       );
       if (fallback && text !== fallback) text = [text, fallback].filter(Boolean).join('\n\n');

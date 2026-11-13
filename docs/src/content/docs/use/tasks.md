@@ -31,18 +31,29 @@ Select **Rules** to ask Nod in chat to show the rules that apply to every task. 
 
 ## What a card shows
 
-| Part           | What it tells you                                                                 |
-| -------------- | --------------------------------------------------------------------------------- |
-| Title          | The task in a few words                                                           |
-| Status         | Where the task stands, such as **Working** or **Needs you**                       |
-| Now line       | What Nod is doing, with the website it's working in, or the question it asked you |
-| **Waiting on** | Who Nod is waiting for, and how, such as an email reply                           |
-| **Next check** | When Nod will look again                                                          |
-| **Done when**  | What finished looks like                                                          |
+| Part             | What it tells you                                                                 |
+| ---------------- | --------------------------------------------------------------------------------- |
+| Title            | The task in a few words                                                           |
+| Status           | Where the task stands, such as **Working** or **Needs you**                       |
+| Now line         | What Nod is doing, with the website it's working in, or the question it asked you |
+| **Next for you** | What you do next: answer its question, open its browser or reply to continue      |
+| **May have run** | An outside action that failed or was interrupted, so check it before asking again |
+| **Last action**  | The latest outside action the task finished, such as _Gmail: Send email_          |
+| **Waiting on**   | Who Nod is waiting for, and how, such as an email reply                           |
+| **Next check**   | When Nod will look again                                                          |
+| **Done when**    | What finished looks like                                                          |
 
 A compact task preview appears in chat with its title, status and current activity. While a task works, its card has its own live line: the current step, the website or app it's working in, and how long it has been quiet. The chat's status line stays with your messages. While it works, a pulsing dot just above the top-right corner of the message box stands for it, and a pink dot with a question mark shows when it needs you. Hover over or focus the dot to see the task's title, or select it to open the card.
 
 Select the preview to see its controls and, when it has planned steps, its plan as a checklist; select it again to close it. Inside, **Show activity** lists Nod's steps and messages with its tool steps in between, never private model reasoning.
+
+**Last action** and **May have run** name the action only, such as the app and what it does. They never show what the action sent, a page's text, a saved sign-in or a card.
+
+## Open a task page
+
+Every task has its own page in Nod. Select **Task page** on its card in chat or on **Scheduled** to open it. The page shows the same card, open, with the same controls. Its address stays the same for the life of the task, so you can come back to it later.
+
+From the page, **Show in chat** takes you to the task's message in chat and opens its card, and **Open browser** takes you to the browser it handed you. Your reply there, or **Return to Nod** in the browser, continues the same saved task. It doesn't start the task again or repeat an action that already ran or may have run.
 
 Tasks Nod starts on its own, such as a reply your notification rule asks for, show the same line on their card, with no typing indicator or chat status line. Useful, verified milestones arrive as chat messages, with what is complete and what remains.
 
@@ -94,7 +105,7 @@ Mobile web uses the same compact previews. Open a preview to read the steps, rep
 
 ![Compact task previews in mobile web chat.](../../../assets/screens/task-sessions-mobile.png)
 
-## Telegram and WhatsApp without a task page
+## Telegram and WhatsApp
 
 Telegram and WhatsApp show each task as messages Nod writes in your language. The first one says what it is starting. Questions, approval requests and the result reply to that message, so they stay linked to the task.
 
@@ -109,6 +120,8 @@ Use the chat app's **Reply** control to send an update or answer to a task. Othe
 The task list sends one message per task. You can reply to that message, the task's first message, a question, a file, a result or a status response. If Nod cannot match a reply to a task, `/stop` asks you to select a task. It does not stop all work.
 
 A status message that shows a pending question keeps a link to that exact question. Your approval applies only to the saved action it shows. An old status message cannot approve a later action.
+
+When a task message needs Nod, because the task handed you its browser, needs a private form or has a file the chat app can't show, the message ends with a link to the task's page. The link opens a page on nod.n8n.io that opens Nod on your computer at that task. It works only where Nod is installed and carries no task content. `/tasks` and `/status` also say what each task needs from you next and name any action that may have run.
 
 Telegram, WhatsApp and web use the same task record and saved session. Task commands do not grant permission for an outside action. Private sign-in and payment steps still use Nod's private forms.
 
