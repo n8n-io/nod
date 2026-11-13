@@ -2027,39 +2027,10 @@ async function initializeApplication(
             'The click target is not identified. Inspect a fresh snapshot or screenshot and choose the actual control. Do not ask the owner to approve an unidentified click.',
           );
         if (request.subagent) return 'refused';
-        const visible =
-          turn.browserId &&
-          (await computer
-            .act(
-              turn.browserId,
-              {
-                action: 'evaluate',
-                script: 'document.body.innerText',
-                readOnly: true,
-                expectOrigin: request.page.origin,
-                expectUrl: request.page.url,
-              },
-              signal,
-            )
-            .then(
-              (page) => {
-                try {
-                  return JSON.parse(page.text.slice(page.text.indexOf('\n') + 1)) as unknown;
-                } catch {
-                  return undefined;
-                }
-              },
-              () => undefined,
-            ));
         const result = await approvals.request(turn, 'NOD_browser', args, {
           signal,
           expectedChatRevision: verdict.chatRevision,
-          details: {
-            reason: verdict.reason,
-            ...(typeof visible === 'string' && visible.trim()
-              ? { pageText: publicText(visible.slice(0, 20_000)) }
-              : {}),
-          },
+          details: { reason: verdict.reason },
         });
         return result && typeof result === 'object' && appConfirmation in result
           ? result

@@ -57,8 +57,110 @@ export function languageText(value: string) {
 }
 
 function markdownValue(value: string) {
-  const fence = '`'.repeat(Math.max(0, ...(value.match(/`+/g) ?? []).map((run) => run.length)) + 1);
-  return `${fence} ${value} ${fence}`;
+  const inline = value.replace(/[\r\n\u2028\u2029]/g, (character) => {
+    if (character === '\r') return '\\r';
+    if (character === '\n') return '\\n';
+    return character === '\u2028' ? '\\u2028' : '\\u2029';
+  });
+  const fence = '`'.repeat(
+    Math.max(0, ...(inline.match(/`+/g) ?? []).map((run) => run.length)) + 1,
+  );
+  return `${fence} ${inline} ${fence}`;
+}
+
+function browserApprovalFields(args: Record<string, unknown>) {
+  const object = (value: unknown) =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+  const literal = (value: unknown) =>
+    markdownValue(typeof value === 'string' ? value : (JSON.stringify(value) ?? String(value)));
+  const controls = (value: unknown) =>
+    Array.isArray(value)
+      ? value.flatMap((entry) => {
+          const control = object(entry);
+          const name = [control?.role, control?.name]
+            .filter((part) => typeof part === 'string' && part.trim())
+            .join(': ');
+          return name ? [name] : [];
+        })
+      : [];
+  const command = object(args.command) ?? {};
+  const control = controls(args.control);
+  const step = typeof args.step === 'string' ? args.step : String(command.action ?? 'browser step');
+  const verbs: Record<string, string> = {
+    accept_dialog: 'Accept a dialog',
+    evaluate: 'Run a page script',
+    type: 'Type and press Enter',
+    upload: 'Upload a file',
+  };
+  const verb =
+    verbs[step] ??
+    (/^[a-z_]+$/.test(step)
+      ? `${step[0]?.toUpperCase() ?? ''}${step.slice(1).replaceAll('_', ' ')}`
+      : `Run ${literal(step)}`);
+  const rows = [`- **Action:** ${verb}`];
+  const add = (label: string, value: unknown) => {
+    if (value !== undefined && value !== null && value !== '')
+      rows.push(`- **${label}:** ${literal(value)}`);
+  };
+  if (control.length) rows.push(`- **Control:** ${control.map(literal).join(', ')}`);
+  add('Website', args.website);
+  add('Page', args.page);
+  const submits = object(args.submits);
+  if (submits) {
+    rows.push(
+      `- **Form submission:** ${[submits.method, submits.to].filter(Boolean).map(literal).join(' to ')}`,
+    );
+  } else add('Form submission', args.submits);
+  const dropTarget = controls(args.dropTarget);
+  if (dropTarget.length) rows.push(`- **Drop target:** ${dropTarget.map(literal).join(', ')}`);
+  add('Dialog', args.dialog);
+  add('File', args.file);
+  if (Array.isArray(args.typedOnPage) && args.typedOnPage.length)
+    rows.push(`- **Text already entered:** ${args.typedOnPage.map(literal).join(', ')}`);
+  const commandLabels: Record<string, string> = {
+    selector: 'Selector',
+    targetSelector: 'Destination selector',
+    text: 'Text',
+    key: 'Key',
+    script: 'Page script',
+    url: 'URL to open',
+    tabId: 'Tab',
+    x: 'X position',
+    y: 'Y position',
+    points: 'Drag path',
+    durationMs: 'Duration in ms',
+    direction: 'Direction',
+    amount: 'Amount',
+    waitMs: 'Wait in ms',
+    load: 'Page load',
+    offset: 'Offset',
+  };
+  for (const [key, value] of Object.entries(command)) {
+    if (key === 'action') continue;
+    add(commandLabels[key] ?? `Command ${literal(key)}`, value);
+  }
+  for (const [key, value] of Object.entries(args)) {
+    if (
+      [
+        'website',
+        'page',
+        'target',
+        'step',
+        'control',
+        'submits',
+        'dropTarget',
+        'dialog',
+        'file',
+        'typedOnPage',
+        'command',
+      ].includes(key)
+    )
+      continue;
+    add(literal(key), value);
+  }
+  return rows.join('\n');
 }
 
 export function createCommunication(options: {
@@ -180,6 +282,7 @@ export function createCommunication(options: {
     delete details.verifiedBinding;
     delete details.verifiedDraftMessageId;
     delete details.reason;
+    if (proposal.action === 'NOD_browser') delete details.pageText;
     const source = {
       action: proposal.action,
       args,
@@ -217,20 +320,30 @@ export function createCommunication(options: {
       ? `While working on “${markdownValue(contextTitle)}”, Nod proposes`
       : 'Nod proposes';
     const draftContext = `${draftIntro} to permanently delete an unsent Gmail draft${draftFields.length ? `: ${draftFields.join('; ')}` : ''}`;
-    const fields = JSON.stringify(visible, null, 2)
-      .split('\n')
-      .map((line) => `    ${line}`)
-      .join('\n');
+    const browser = proposal.action === 'NOD_browser';
+    const fields = browser
+      ? browserApprovalFields((visible as { args: Record<string, unknown> }).args)
+      : JSON.stringify(visible, null, 2)
+          .split('\n')
+          .map((line) => `    ${line}`)
+          .join('\n');
     return [
       label,
       ...(proposal.action === 'GMAIL_DELETE_DRAFT' ? [`${draftContext}.`] : []),
-      'This is the exact action your answer approves:',
+      ...(browser && contextTitle
+        ? [
+            `While working on the ${proposal.work?.kind === 'schedule' ? 'schedule' : 'task'} ${markdownValue(contextTitle)}.`,
+          ]
+        : []),
+      browser ? 'Proposed browser step:' : 'This is the exact action your answer approves:',
       fields,
       ...(withheld.length
-        ? [`Hidden values: ${withheld.join(', ')}. This description is incomplete.`]
+        ? [
+            `Hidden values: ${withheld.map(markdownValue).join(', ')}. This description is incomplete.`,
+          ]
         : []),
       ...(proposal.work?.waitsForAnswer ? ['This schedule skips its runs until you answer.'] : []),
-      'Do you approve this exact action?',
+      browser ? 'Do you approve this browser step?' : 'Do you approve this exact action?',
     ]
       .join('\n\n')
       .replace(/(?![\u200c\u200d])\p{Cf}/gu, (character) =>

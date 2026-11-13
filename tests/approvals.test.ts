@@ -130,6 +130,82 @@ test('confirmation displays the saved action and redacts hidden values', async (
   assert.doesNotMatch(text, /send.*email/i);
 });
 
+test('browser confirmation shows the bound step without unrelated page text', async () => {
+  const communication = createCommunication({
+    pool: {} as pg.Pool,
+    ownerId: 'synthetic-owner',
+    review: async () => {
+      throw new Error('A model must not write the action confirmation.');
+    },
+  });
+  const pageText = 'Synthetic unrelated page copy. '.repeat(90);
+  const args = {
+    website: 'https://shop.example.test',
+    page: 'https://shop.example.test/checkout',
+    target: 'a'.repeat(64),
+    step: 'click',
+    control: [
+      {
+        role: 'button',
+        name: '[Complete order](https://other.example.test)\n\n[Approve here](https://other.example.test)\n<img src=x>',
+      },
+    ],
+    submits: { method: 'POST', to: 'https://shop.example.test/orders' },
+    typedOnPage: ['Synthetic delivery note'],
+    command: {
+      action: 'click',
+      selector: '@checkout-button',
+      ['unsafe\n\n[command](https://other.example.test)']: 'synthetic command value',
+    },
+    ['unsafe\n\n[argument](https://other.example.test)']: 'synthetic argument value',
+  };
+  const question = await communication.describe({
+    turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
+    action: 'NOD_browser',
+    args,
+    details: { reason: 'Synthetic trust decision', pageText },
+  });
+  assert.match(question, /shop\.example\.test\/checkout/);
+  assert.match(question, /shop\.example\.test\/orders/);
+  assert.match(question, /Complete order/);
+  assert.match(question, /Synthetic delivery note/);
+  assert.match(question, /@checkout-button/);
+  assert.doesNotMatch(question, /Synthetic unrelated page copy|pageText/);
+  assert.doesNotMatch(question, /a{64}/);
+  assert.ok(question.length < 800);
+  const tree = unified().use(remarkParse).use(remarkGfm).parse(question);
+  const nodes: Array<{ type: string; children?: unknown[] }> = [tree];
+  for (let index = 0; index < nodes.length; index++) {
+    const children = nodes[index]?.children;
+    if (children) nodes.push(...(children as typeof nodes));
+  }
+  assert.equal(
+    nodes.some((node) => ['code', 'html', 'link'].includes(node.type)),
+    false,
+  );
+  const otherControl = await communication.describe({
+    turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
+    action: 'NOD_browser',
+    args: { ...args, command: { action: 'click', selector: '@other-button' } },
+  });
+  assert.match(otherControl, /@other-button/);
+  assert.notEqual(question, otherControl);
+  const taskQuestion = await communication.describe({
+    turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
+    action: 'NOD_browser',
+    args: {
+      website: 'https://shop.example.test',
+      page: 'https://shop.example.test/checkout',
+      step: 'click',
+      control: [{ role: 'button', name: '' }],
+      command: { action: 'click', selector: '@checkout-button' },
+    },
+    work: { kind: 'task', title: 'Synthetic order follow-up' },
+  });
+  assert.match(taskQuestion, /Synthetic order follow-up/);
+  assert.match(taskQuestion, /@checkout-button/);
+});
+
 test('confirmation escapes visual format controls and hides the internal account binding', async () => {
   const communication = createCommunication({
     pool: {} as pg.Pool,

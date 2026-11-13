@@ -848,6 +848,9 @@ test(
             expectOrigin: 'https://bank.example.test',
           };
           const before = clicks().length;
+          const pageReads = browserActs.filter(
+            (act) => act.action === 'evaluate' && act.script === 'document.body.innerText',
+          ).length;
           const since = new Date();
           const held = await propose('click', { selector: '@e7' }, 'browser');
           const [card] = await approvalsFor(held);
@@ -855,6 +858,12 @@ test(
           assert.equal(card.action, 'NOD_browser');
           assert.equal(card.args.website, 'https://bank.example.test');
           assert.deepEqual(card.args.control, [{ role: 'button', name: 'Authorize payment' }]);
+          assert.equal(
+            browserActs.filter(
+              (act) => act.action === 'evaluate' && act.script === 'document.body.innerText',
+            ).length,
+            pageReads,
+          );
           assert.deepEqual(
             (
               fallbackChecks as Array<{
