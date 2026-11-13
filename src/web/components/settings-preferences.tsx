@@ -125,12 +125,13 @@ function FontSizeControls() {
       setBusy(false);
     }
   }
+  const percent = factor === null ? null : Math.round(factor * 100);
   const smaller =
-    factor === null
+    percent === null
       ? undefined
-      : [...fontSizeSteps].reverse().find((value) => value < factor - 0.001);
+      : [...fontSizeSteps].reverse().find((value) => Math.round(value * 100) < percent);
   const larger =
-    factor === null ? undefined : fontSizeSteps.find((value) => value > factor + 0.001);
+    percent === null ? undefined : fontSizeSteps.find((value) => Math.round(value * 100) > percent);
   return (
     <>
       <div className="account-preference-row account-font-size">
@@ -149,9 +150,7 @@ function FontSizeControls() {
             >
               <Minus size={16} aria-hidden="true" />
             </Button>
-            <output aria-live="polite">
-              {factor === null ? '—' : `${Math.round(factor * 100)}%`}
-            </output>
+            <output aria-live="polite">{percent === null ? '—' : `${percent}%`}</output>
             <Button
               type="button"
               size="icon"
