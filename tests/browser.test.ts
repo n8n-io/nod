@@ -4413,6 +4413,27 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
             await assertVisiblePaste(sent, literalPaste);
           }
         }
+        const atLimitPaste = 'x'.repeat(100_000);
+        await act(async () => replaceText(''));
+        await paste(atLimitPaste);
+        await settle(() => currentText.length === 100_000);
+        assert.equal(document.querySelector('[aria-label="Send message"]').disabled, false);
+        const sentBeforeAtLimit = sends.length;
+        await submit();
+        assert.equal(sends.length, sentBeforeAtLimit + 1);
+        assert.equal(sends.at(-1).text, atLimitPaste);
+        const longPaste = 'name;email\n' + 'x'.repeat(100_001 - 'name;email\n'.length);
+        await act(async () => replaceText(''));
+        await paste(longPaste);
+        await settle(() => currentText.length === 100_001);
+        assert.equal(document.querySelector('[aria-label="Send message"]').disabled, true);
+        const sentBeforeLongPaste = sends.length;
+        await submit();
+        assert.equal(sends.length, sentBeforeLongPaste);
+        assert.equal(currentText, longPaste);
+        assert.ok(document.querySelector('.composer-wrap [role="alert"]'));
+        await act(async () => replaceText(''));
+        await settle(() => !document.querySelector('.composer-wrap [role="alert"]'));
         const spacedPaste = '  ["__init__", "<after>", "ada@example.test"]  \n';
         await act(async () => replaceText(''));
         await paste(spacedPaste);
