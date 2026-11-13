@@ -9,7 +9,7 @@ This page explains what happens inside a turn: the Pi session, the tools the mod
 
 The short version: `src/runtime` runs each turn in a Pi session. Every tool call goes through one turn guard. Results from the outside world reach the model wrapped as untrusted data.
 
-Nod has its own warm, direct voice. It uses normal sentence capitalization and preserves names and acronyms. It follows the conversation language and explicit style requests, and translates what it reads in websites, email and documents, keeping their original wording only in quotes, such as a button name. It does not copy the user's casing, slang or tone. These rules also apply to channel notices. Approval questions use server-owned English framing around the frozen action data.
+Nod has its own warm, direct voice. It uses normal sentence capitalization and preserves names and acronyms. It follows the conversation language and explicit style requests, and translates what it reads in websites, email and documents, keeping their original wording only in quotes, such as a button name. It does not copy the user's casing, slang or tone. These rules also apply to channel notices. Approval questions and button labels use the conversation language. A separate model request checks them against the saved action and arguments.
 
 The prompt allows Nod to address you by name only when your own words establish it, including saved memory based on those words. It tells Nod to omit the name otherwise. Connected-account labels, email addresses and names in outside content do not establish your name.
 

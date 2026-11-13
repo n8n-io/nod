@@ -250,7 +250,7 @@ The same server checks still decide app actions, sign-ins and payments. A smalle
 
 ## Decision checks
 
-Nod can use a decision model to check action permission, read confirmation replies, and check emails that give account access. The server formats confirmation questions from the frozen proposed action and arguments with fixed English framing; you can answer in any language. Nod selects each checker before its request. A failed check never switches models.
+Nod can use a decision model to check action permission, read confirmation replies, and check emails that give account access. Your selected text model writes confirmation questions and button labels in your conversation language. A separate request checks them against the saved action and arguments. You can answer in any language. Nod selects each checker before its request. A failed check never switches models.
 
 ### Select the action checker
 
@@ -280,7 +280,7 @@ These keys can come from a connection other than your chat model. ChatGPT subscr
 NOD_TRUST_MODEL=decision
 ```
 
-There is no separate decision-model setting. Nod selects the model. The server formats confirmation questions from the frozen proposed action. The action and reply classifiers still use the selected trust mode.
+There is no separate decision-model setting. Nod selects the model. Your selected text model writes and checks confirmation questions and button labels from the saved action. The action and reply classifiers still use the selected trust mode.
 
 The gate receives the complete action, owner messages and rules. It receives no tool results or page text. It must preserve exact targets and terms. The server obtains a permission quote from the selected owner source and checks it against the original words. Choosing a source cannot authorize an action by itself.
 

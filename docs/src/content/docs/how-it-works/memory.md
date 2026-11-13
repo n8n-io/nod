@@ -193,7 +193,7 @@ Learned skills are procedures Nod writes for itself after a task, as [Hermes Age
 The owner sees, edits and forgets learned skills under **Skills** in **Settings → Memory**, and **Export** includes them. Clearing memory clears them too. The code is in [`src/server/learned-skills.ts`](https://github.com/n8n-io/nod/blob/main/src/server/learned-skills.ts).
 
 :::caution[Skills come from what Nod read]
-Nod writes a skill from what it did and read, so a web page or an email can shape one. A skill is guidance, never permission. It never counts as the owner's words: the trust check does not see it, and server-formatted approval questions do not use it. Saving a note still needs the owner's own messages, quoted, and forgetting a note, turning memory off or clearing it, and changes to schedules, notification rules and limits still go through the check.
+Nod writes a skill from what it did and read, so a web page or an email can shape one. A skill is guidance, never permission. It never counts as the owner's words: the trust check does not see it, and the confirmation writer does not receive it. Saving a note still needs the owner's own messages, quoted, and forgetting a note, turning memory off or clearing it, and changes to schedules, notification rules and limits still go through the check.
 :::
 
 ## Related resources

@@ -34,6 +34,9 @@ const nodActions: Array<[string, string]> = [
   ['NOD_limits_update', 'Change spending limits'],
   ['NOD_model_select', 'Change the model'],
   ['NOD_notification_preferences_update', 'Change notifications'],
+  ['NOD_schedule_pause', 'Pause a schedule'],
+  ['NOD_schedule_cancel', 'Pause a schedule'],
+  ['NOD_schedule_create', 'Create a schedule'],
   ['NOD_schedule_', 'Change a schedule'],
   ['NOD_memory_', 'Change memory'],
   ['NOD_rules', 'Change your rules'],
@@ -41,6 +44,10 @@ const nodActions: Array<[string, string]> = [
 ];
 
 export function approvalTitle(action: string) {
+  if (action === 'GMAIL_DELETE_MESSAGE')
+    return { title: 'Permanently delete an email', app: 'Gmail', slug: 'gmail' };
+  if (action === 'GMAIL_DELETE_DRAFT')
+    return { title: 'Permanently delete an unsent draft', app: 'Gmail', slug: 'gmail' };
   const nod = nodActions.find(([prefix]) => action.startsWith(prefix));
   if (nod) return { title: nod[1], app: '', slug: '' };
   const mcp = action.startsWith('mcp__');

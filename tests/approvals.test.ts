@@ -17,9 +17,6 @@ import { join } from 'node:path';
 import test from 'node:test';
 import Fastify from 'fastify';
 import pg from 'pg';
-import remarkGfm from 'remark-gfm';
-import remarkParse from 'remark-parse';
-import { unified } from 'unified';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { createAnalytics, snapshotAnalytics } from '../src/server/analytics.ts';
@@ -42,41 +39,190 @@ import { createCommunication } from '../src/server/communication.ts';
 import { createE2eCurators } from '../scripts/e2e-curators.ts';
 import { createPiMemoryCurator } from '../src/providers/pi/memory-curator.ts';
 
-test('server confirmation uses the saved action without model calls', async () => {
-  const misleading =
-    'I have not sent anything. Do you want me to send the thank-you email to alex@example.test?';
-  let modelCalls = 0;
+test('confirmation repairs rejected wording against the unchanged saved action', async () => {
+  const proposal: ApprovalDescription = {
+    turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
+    action: 'GMAIL_FETCH_EMAILS',
+    args: { query: 'Synthetic receipts' },
+  };
+  for (const mode of [
+    'wrong_action',
+    'wrong_label',
+    'format',
+    'invalid_review',
+    'rejected',
+  ] as const) {
+    let drafts = 0;
+    let checks = 0;
+    const expected = { question: 'Search Gmail for Synthetic receipts?', action: 'Search Gmail' };
+    const communication = createCommunication({
+      pool: { query: async () => ({ rows: [] }) } as unknown as pg.Pool,
+      ownerId: 'synthetic-owner',
+      review: async (_instructions, input) => {
+        const request = input as Record<string, any>;
+        assert.deepEqual(request.data.args, proposal.args);
+        assert.equal(request.data.action, proposal.action);
+        if (request.purpose === 'confirmation_review') {
+          checks++;
+          assert.equal(request.repair, undefined);
+          if (mode === 'invalid_review' && checks === 1) return { valid: 'true' };
+          return request.text === expected.question &&
+            request.action === expected.action &&
+            mode !== 'rejected'
+            ? { valid: true }
+            : {
+                valid: false,
+                reason: 'The question or label describes sending instead of searching.',
+              };
+        }
+        drafts++;
+        request.data.args.query = 'A mutated draft must not change the saved action';
+        if (drafts === 1) {
+          if (mode === 'format') return { text: expected.question };
+          if (mode === 'wrong_action' || mode === 'rejected')
+            return { text: 'Send the receipts?', action: 'Send email' };
+          if (mode === 'wrong_label') return { text: expected.question, action: 'Send email' };
+          return { text: expected.question, action: expected.action };
+        }
+        assert.ok(request.repair.issue);
+        return { text: expected.question, action: expected.action };
+      },
+    });
+    if (mode === 'rejected')
+      await assert.rejects(communication.describe(proposal), /sending instead of searching/);
+    else assert.deepEqual(await communication.describe(proposal), expected);
+    assert.equal(drafts, 2);
+    assert.equal(checks, mode === 'format' ? 1 : 2);
+    assert.deepEqual(proposal.args, { query: 'Synthetic receipts' });
+  }
+});
+
+test('browser confirmation uses the page as context without displaying its action data', async () => {
+  const question =
+    'Can I submit order SYNTHETIC-42 to the ticket shop to check whether these tickets can be cancelled?';
+  let calls = 0;
   const communication = createCommunication({
     pool: { query: async () => ({ rows: [] }) } as unknown as pg.Pool,
     ownerId: 'synthetic-owner',
     review: async (_instructions, input) => {
-      modelCalls++;
-      return 'purpose' in input && input.purpose === 'confirmation_review'
-        ? { valid: true }
-        : { text: misleading };
+      calls++;
+      const request = input as Record<string, any>;
+      assert.equal(
+        request.data.details.pageText,
+        'Enter your order number to check ticket cancellation.',
+      );
+      assert.deepEqual(request.data.args.typedOnPage, ['SYNTHETIC-42']);
+      assert.equal(request.data.args.connectionId, undefined);
+      assert.equal(request.data.details.verifiedBinding, undefined);
+      assert.equal(request.data.args.api_key, '[redacted]');
+      assert.ok(request.withheld.includes('args.api_key'));
+      if (request.purpose === 'confirmation_review') {
+        assert.equal(
+          request.text,
+          question + ' Some details are hidden. This description is incomplete.',
+        );
+        assert.equal(request.action, 'Submit to the ticket shop');
+        return { valid: true };
+      }
+      return {
+        text: question + ' Some details are hidden. This description is incomplete.',
+        action: 'Submit to the ticket shop',
+      };
     },
   });
   const result = await communication.describe({
     turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
-    action: 'GMAIL_FETCH_EMAILS',
-    args: { query: 'Northstar' },
+    action: 'NOD_browser',
+    args: {
+      website: 'https://tickets.example.test',
+      step: 'click',
+      control: [{ role: 'button', name: 'Submit' }],
+      typedOnPage: ['SYNTHETIC-42'],
+      command: { action: 'click', selector: '@e17' },
+      connectionId: 'synthetic-private-connection',
+      api_key: 'synthetic-secret',
+    },
+    details: {
+      pageText: 'Enter your order number to check ticket cancellation.',
+      verifiedBinding: 'synthetic-private-binding',
+    },
   });
-  assert.notEqual(result, misleading);
-  assert.match(result, /GMAIL_FETCH_EMAILS/);
-  assert.match(result, /Northstar/);
-  assert.doesNotMatch(result, /send.*email/i);
-  assert.equal(modelCalls, 0);
+  assert.equal(calls, 2);
+  assert.doesNotMatch(
+    result.question,
+    /NOD_browser|@e17|Entered values|synthetic-secret|private-binding/,
+  );
 });
 
-test('payment presentation repairs a missing action and keeps it separate from the message', async () => {
-  let drafts = 0;
+test('confirmation stops on cancellation and refuses an unverified question', async () => {
+  for (const cancel of [true, false]) {
+    const controller = new AbortController();
+    const communication = createCommunication({
+      pool: { query: async () => ({ rows: [] }) } as unknown as pg.Pool,
+      ownerId: 'synthetic-owner',
+      review: async (_instructions, input) => {
+        if ((input as { purpose: string }).purpose === 'confirmation_review') {
+          if (cancel) controller.abort(new Error('Synthetic stop'));
+          return { valid: 'true' };
+        }
+        return { text: 'Submit the synthetic request?', action: 'Submit request' };
+      },
+    });
+    await assert.rejects(
+      communication.describe(
+        {
+          turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
+          action: 'SYNTHETIC_ACTION',
+          args: {},
+        },
+        controller.signal,
+      ),
+      cancel ? /Synthetic stop/ : /did not return a valid verdict/,
+    );
+    assert.throws(
+      () => communication.present(null, { kind: 'confirmation' }),
+      /saved action description/,
+    );
+  }
+});
+
+test('confirmation reviews the text after private links and direction controls are removed', async () => {
+  const marker = String.fromCharCode(0x202e);
+  const communication = createCommunication({
+    pool: { query: async () => ({ rows: [] }) } as unknown as pg.Pool,
+    ownerId: 'synthetic-owner',
+    review: async (_instructions, input) => {
+      const request = input as Record<string, any>;
+      if (request.purpose === 'confirmation_review') {
+        assert.equal(request.text.includes(marker), false);
+        assert.equal(request.text.includes('/vault/synthetic-private'), false);
+        assert.ok(request.text.includes('\\u{202e}'));
+        return { valid: true };
+      }
+      return {
+        text: `Submit the synthetic request ${marker} /vault/synthetic-private?`,
+        action: 'Submit request',
+      };
+    },
+  });
+  const result = await communication.describe({
+    turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
+    action: 'SYNTHETIC_ACTION',
+    args: {},
+  });
+  assert.doesNotMatch(result.question, /\p{Cf}/u);
+  assert.doesNotMatch(result.question, /synthetic-private/);
+});
+
+test('payment presentation repairs a missing action label', async () => {
+  let calls = 0;
   const communication = createCommunication({
     pool: {} as pg.Pool,
     ownerId: 'synthetic-owner',
     review: async (_instructions, input) => {
       assert.equal((input as { purpose: string }).purpose, 'payment');
-      drafts++;
-      return drafts === 1
+      calls++;
+      return calls === 1
         ? { text: 'Synthetic payment details.' }
         : { text: 'Synthetic payment details.', action: 'Approve payment' };
     },
@@ -85,183 +231,7 @@ test('payment presentation repairs a missing action and keeps it separate from t
     question: 'Synthetic payment details.',
     action: 'Approve payment',
   });
-  assert.equal(drafts, 2);
-  const confirmation = await communication.describe({
-    turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
-    action: 'GMAIL_FETCH_EMAILS',
-    args: { query: 'Northstar' },
-  });
-  assert.match(confirmation, /GMAIL_FETCH_EMAILS/);
-  assert.equal(drafts, 2);
-  assert.throws(
-    () => communication.present(null, { kind: 'confirmation' }),
-    /Confirmations require a saved action description/,
-  );
-});
-
-test('confirmation displays the saved action and redacts hidden values', async () => {
-  const communication = createCommunication({
-    pool: {} as pg.Pool,
-    ownerId: 'synthetic-owner',
-    review: async () => {
-      throw new Error('A model must not write the action confirmation.');
-    },
-  });
-  const text = await communication.describe({
-    turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
-    action: 'GMAIL_CREATE_EMAIL_DRAFT',
-    args: {
-      recipient_email: 'alex@example.test',
-      subject: 'Northstar review',
-      api_key: 'synthetic-secret-value',
-      connectionId: 'synthetic-internal-connection',
-      pathId: 'synthetic-internal-path',
-    },
-    details: { account: 'tester@example.test', reason: 'unrequested' },
-  });
-  assert.match(text, /GMAIL_CREATE_EMAIL_DRAFT/);
-  assert.match(text, /alex@example.test/);
-  assert.match(text, /Northstar review/);
-  assert.match(text, /tester@example.test/);
-  assert.doesNotMatch(text, /synthetic-secret-value/);
-  assert.doesNotMatch(text, /synthetic-internal-connection|synthetic-internal-path/);
-  assert.doesNotMatch(text, /unrequested/);
-  assert.match(text, /redacted/);
-  assert.doesNotMatch(text, /send.*email/i);
-});
-
-test('confirmation escapes visual format controls and hides the internal account binding', async () => {
-  const communication = createCommunication({
-    pool: {} as pg.Pool,
-    ownerId: 'synthetic-owner',
-    review: async () => {
-      throw new Error('A model must not write the action confirmation.');
-    },
-  });
-  const bidiOverride = String.fromCharCode(0x202e);
-  const joiner = String.fromCharCode(0x200d);
-  const nonJoiner = String.fromCharCode(0x200c);
-  const question = await communication.describe({
-    turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
-    action: 'GMAIL_DELETE_MESSAGE',
-    args: { message_id: 'synthetic-message' },
-    details: {
-      target: {
-        subject: `Northstar ${bidiOverride}review ${joiner}joined ${nonJoiner}Persian`,
-        from: 'alex@example.test',
-      },
-      verifiedBinding: 'synthetic-internal-binding',
-    },
-  });
-  assert.match(question, /GMAIL_DELETE_MESSAGE/);
-  assert.match(question, /\\u202e/);
-  assert.ok(question.includes(joiner));
-  assert.ok(question.includes(nonJoiner));
-  assert.doesNotMatch(question, /(?![\u200c\u200d])\p{Cf}/u);
-  assert.doesNotMatch(question, /synthetic-internal-binding/);
-  const draft = await communication.describe({
-    turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
-    action: 'GMAIL_DELETE_DRAFT',
-    args: { draft_id: 'synthetic-draft' },
-    details: {
-      target: {
-        draftId: 'synthetic-draft',
-        subject: 'Synthetic team summary',
-        to: 'cleanup@example.test',
-      },
-      verifiedDraftMessageId: 'synthetic-internal-draft-message',
-    },
-    work: { kind: 'task', title: 'Email summaries for the team' },
-  });
-  assert.match(draft, /Email summaries for the team/);
-  assert.match(draft, /Synthetic team summary/);
-  assert.match(draft, /cleanup@example.test/);
-  assert.doesNotMatch(draft, /synthetic-internal-draft-message/);
-  const ccOnly = await communication.describe({
-    turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
-    action: 'GMAIL_DELETE_DRAFT',
-    args: { draft_id: 'synthetic-cc-draft' },
-    details: {
-      target: {
-        draftId: 'synthetic-cc-draft',
-        cc: 'cc@example.test',
-        bcc: 'bcc@example.test',
-      },
-    },
-  });
-  const ccTree = unified().use(remarkParse).use(remarkGfm).parse(ccOnly);
-  const ccContext = ccTree.children.find(
-    (node) =>
-      node.type === 'paragraph' && node.children.some((child) => child.type === 'inlineCode'),
-  );
-  assert.ok(ccContext?.type === 'paragraph');
-  assert.deepEqual(
-    ccContext.children.flatMap((child) => (child.type === 'inlineCode' ? [child.value] : [])),
-    ['cc@example.test', 'bcc@example.test'],
-  );
-});
-
-test('draft cleanup context renders untrusted names as text without links or HTML', async () => {
-  const communication = createCommunication({
-    pool: {} as pg.Pool,
-    ownerId: 'synthetic-owner',
-    review: async () => {
-      throw new Error('A model must not write the action confirmation.');
-    },
-  });
-  const title = 'Review [board](https://task.example.test) <b>today</b> `status`';
-  const subject = 'Summary <img src=x> https://subject.example.test ``draft``';
-  const to = 'alex@example.test';
-  const cc = 'www.example.test';
-  const bcc = '[audit](https://bcc.example.test)';
-  const question = await communication.describe({
-    turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
-    action: 'GMAIL_DELETE_DRAFT',
-    args: { draft_id: 'synthetic-draft' },
-    details: { target: { draftId: 'synthetic-draft', subject, to, cc, bcc } },
-    work: { kind: 'task', title },
-  });
-  const tree = unified().use(remarkParse).use(remarkGfm).parse(question);
-  const context = tree.children.find(
-    (node) =>
-      node.type === 'paragraph' &&
-      node.children.some((child) => child.type === 'text' && child.value.includes('Nod proposes')),
-  );
-  assert.ok(context?.type === 'paragraph');
-  for (const child of context.children) {
-    assert.ok(child.type === 'text' || child.type === 'inlineCode');
-  }
-  assert.deepEqual(
-    context.children.flatMap((child) => (child.type === 'inlineCode' ? [child.value] : [])),
-    [title, subject, to, cc, bcc],
-  );
-});
-
-test('confirmation stops on cancellation and rejects an unbound presentation', async () => {
-  const communication = createCommunication({
-    pool: {} as pg.Pool,
-    ownerId: 'synthetic-owner',
-    review: async () => {
-      throw new Error('A model must not write the action confirmation.');
-    },
-  });
-  const controller = new AbortController();
-  controller.abort(new Error('Synthetic stop'));
-  await assert.rejects(
-    communication.describe(
-      {
-        turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
-        action: 'GMAIL_FETCH_EMAILS',
-        args: { query: 'Northstar' },
-      },
-      controller.signal,
-    ),
-    /Synthetic stop/,
-  );
-  assert.throws(
-    () => communication.present(null, { kind: 'confirmation', action: 'GMAIL_FETCH_EMAILS' }),
-    /saved action description/,
-  );
+  assert.equal(calls, 2);
 });
 
 test('Gmail delete target metadata must match the bound message ID', () => {

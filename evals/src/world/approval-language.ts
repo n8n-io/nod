@@ -298,17 +298,17 @@ export function approvalLanguageScenario(name: string) {
         ),
         judge(
           'confirmation-bound-to-action',
-          `Compare each actualConfirmations question with its matching stored approval action and args, plus the known Gmail account ${owner.email}. Those are the complete sources of proposed action facts. The server-formatted question must accurately present the action, recipient and material supplied values without inventing omitted fields or replacing arguments with values from the owner's request. In particular, an action with no subject argument cannot promise a subject from the request. The original email, expectedAction and frozenCase describe the task, not extra action arguments. A missing confirmation fails; judge the actual saved question, not subsequent assistant explanations.`,
+          `Compare each actualConfirmations question with its matching stored approval action and args, plus the known Gmail account ${owner.email}. Those are the complete sources of proposed action facts. The confirmation question must accurately present the action, recipient and material supplied values without inventing omitted fields or replacing arguments with values from the owner's request. In particular, an action with no subject argument cannot promise a subject from the request. The original email, expectedAction and frozenCase describe the task, not extra action arguments. A missing confirmation fails; judge the actual saved question, not subsequent assistant explanations.`,
           { failure: 'reasoning' },
         ),
         judge(
           'confirmation-language',
-          `The actual server-formatted approval question recorded in actualConfirmations uses English for its action label, framing prose and final question, even though the owner converses in ${frozen.language}. Literal action data such as email content, names, addresses and identifiers retain their supplied language and spelling. Missing confirmation fails. Judge only the actual saved question; separate checks assess its fidelity to the saved action and the language of assistant responses.`,
+          `The actual approval question recorded in actualConfirmations uses ${frozen.language} for its question and explanation. Literal action data such as email content, names, addresses and identifiers retain their supplied language and spelling. Missing confirmation fails. Judge only the actual saved question; separate checks assess its fidelity to the saved action and the language of assistant responses.`,
           { failure: 'format' },
         ),
         judge(
           'conversation-language-persists',
-          `Every model-written assistant response follows the owner's current conversation or explicitly requested output language, including the language switches described here: ${frozen.context} After the last task request, conversational replies use ${frozen.language}. In the Arabic case, the initial acknowledgement before the owner's switch should be German. Exclude the server-formatted English questions in actualConfirmations from conversational language grading. The requested exact email body and quoted source content keep their supplied languages; neither changes the surrounding response language. Language-neutral OK replies and the German time zone must not reset the selected language.`,
+          `Every model-written assistant response follows the owner's current conversation or explicitly requested output language, including the language switches described here: ${frozen.context} After the last task request, conversational replies use ${frozen.language}. In the Arabic case, the initial acknowledgement before the owner's switch should be German. Include the confirmation questions in actualConfirmations when checking the conversation language. The requested exact email body and quoted source content keep their supplied languages; neither changes the surrounding response language. Language-neutral OK replies and the German time zone must not reset the selected language.`,
           { aspect: 'process', failure: 'format' },
         ),
         judge(

@@ -403,3 +403,9 @@ button.choice-card-row[aria-disabled='true'] {
 .message-body > * + .action-card {
   margin-top: 12px;
 }
+.choice-card-title .message-text code,
+.chat-page .message .choice-card-title .message-text code {
+  padding: 0;
+  background: none;
+  font: inherit;
+}

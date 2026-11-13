@@ -1,3 +1,4 @@
+import { approvalTitle } from '../src/server/action-presentation.ts';
 import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
@@ -81,6 +82,7 @@ test(
     let replyCost: number | undefined;
     let checkCost: number | undefined;
     const connectionLabels: unknown[] = [];
+    let confirmationValid = true;
     const decisionInputs: Array<{ name: string; input: Record<string, any> }> = [];
     const fallbackChecks: object[] = [];
     const smallReplies: object[] = [];
@@ -133,12 +135,23 @@ test(
       curate: async ({ task, input }, _signal, report) => {
         if ('purpose' in input && input.purpose === 'connection' && connectionLabels.length)
           return connectionLabels.shift();
-        if (
-          'purpose' in input &&
-          typeof input.purpose === 'string' &&
-          ['confirmation', 'confirmation_review'].includes(input.purpose)
-        )
-          throw new Error('The model cannot write or review a bound confirmation.');
+        if ('purpose' in input && input.purpose === 'confirmation_review')
+          return confirmationValid
+            ? { valid: true }
+            : { valid: false, reason: 'Synthetic action mismatch.' };
+        if ('purpose' in input && input.purpose === 'confirmation') {
+          const { action, ...data } = (
+            input as unknown as { data: { action: string; [key: string]: unknown } }
+          ).data;
+          const title = approvalTitle(action);
+          const text = JSON.stringify(data, (key, value) =>
+            ['draft_id', 'message_id', 'draftId', 'messageId'].includes(key) ? undefined : value,
+          );
+          return {
+            text: `${text.slice(0, 4000)}\n\n${title.title}${title.app ? ` in ${title.app}` : ''}?`,
+            action: action === 'GMAIL_CREATE_EMAIL_DRAFT' ? 'Save this draft' : title.title,
+          };
+        }
         if (task === 'review' && !('purpose' in input) && !('reply' in input))
           fallbackChecks.push(input);
         if (task === 'review' && 'reply' in input) {
@@ -1147,8 +1160,20 @@ test(
           const [approval] = await approvalsFor(turn);
           assert.equal(approval.status, 'pending');
           assert.equal(approval.action, 'GMAIL_CREATE_EMAIL_DRAFT');
+          assert.equal(approval.title, 'Save this draft');
+          const { connectionId: _connectionId, ...savedArgs } = approval.args;
+          assert.deepEqual(savedArgs, {
+            recipient_email: 'blocked@example.test',
+            subject: 'Synthetic reviewed email',
+            body: 'Synthetic body awaiting confirmation.',
+          });
+          const state = await request('GET', '/api/state');
+          const displayed = state
+            .json<AppState>()
+            .messages.find((message) => message.id === approval.confirmation_message_id);
+          assert.equal(displayed?.approval?.title, approval.title);
           const question = await confirmationFor(approval);
-          assert.match(question, /GMAIL_CREATE_EMAIL_DRAFT/);
+          assert.match(question, /Create email draft in Gmail\?/);
           assert.match(question, /blocked@example.test/);
           assert.doesNotMatch(question, /send.*email/i);
           assert.equal(integrationFixture.writes.length, writes);
@@ -1162,6 +1187,30 @@ test(
           assert.equal(integrationFixture.writes.length, writes);
         },
       );
+
+      await t.test('a rejected confirmation creates no approval and sends nothing', async () => {
+        const writes = integrationFixture.writes.length;
+        confirmationValid = false;
+        try {
+          const text = `Synthetic rejected approval ${randomUUID()}`;
+          plans.set(text, {
+            tool: 'apps',
+            action: 'GMAIL_SEND_EMAIL',
+            args: { recipient_email: 'blocked@example.test', body: 'Synthetic body.' },
+          });
+          const response = await request('POST', '/api/messages', { text });
+          assert.equal(response.statusCode, 200);
+          const turn = response.json().turnId as string;
+          ids.push(response.json().threadId as string);
+          await waitFor(turn, 'failed');
+          assert.equal((await approvalsFor(turn)).length, 0);
+          assert.equal(integrationFixture.writes.length, writes);
+          const record = (await pool.query('SELECT error FROM turns WHERE id=$1', [turn])).rows[0];
+          assert.match(record.error, /Synthetic action mismatch/);
+        } finally {
+          confirmationValid = true;
+        }
+      });
 
       await t.test('Gmail deletion confirmation names the verified email', async () => {
         const writes = integrationFixture.writes.length;
@@ -1177,7 +1226,7 @@ test(
         assert.equal(approval.status, 'pending');
         assert.equal(approval.action, 'GMAIL_DELETE_MESSAGE');
         const question = await confirmationFor(approval);
-        assert.match(question, /fixture-mail-1/);
+        assert.doesNotMatch(question, /fixture-mail-1/);
         assert.match(question, /Northstar review/);
         assert.match(question, /alex@example.test/);
         assert.equal(
@@ -1252,7 +1301,7 @@ test(
           assert.equal(approval.status, 'pending');
           assert.equal(approval.action, 'GMAIL_DELETE_DRAFT');
           const question = await confirmationFor(approval);
-          assert.ok(question.includes(created));
+          assert.equal(question.includes(created), false);
           assert.match(question, /Synthetic team summary/);
           assert.match(question, /cleanup@example.test/);
           assert.equal(
@@ -1971,7 +2020,7 @@ test(
             assert.equal(before.statusCode, 200, before.body);
             const beforeState = before.json<AppState>();
             const confirmation = await confirmationFor(approval);
-            assert.match(confirmation, /NOD_schedule_pause/);
+            assert.match(confirmation, /Pause a schedule\?/);
             assert.equal(
               beforeState.messages.find(
                 (message) => message.id === approval.confirmation_message_id,
@@ -2732,7 +2781,7 @@ test(
           assert.equal(checked.length, 1);
           assert.equal(checked[0].action.arguments.body, body);
           const confirmation = await confirmationFor(pending);
-          assert.match(confirmation, /GMAIL_SEND_EMAIL/);
+          assert.match(confirmation, /Send email in Gmail\?/);
           assert.match(confirmation, /decision@example.test/);
           const replyId = randomUUID();
           const accepted = await request('POST', '/api/messages', {

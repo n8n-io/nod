@@ -46,6 +46,11 @@ export interface ApprovalDescription {
   work?: ApprovalWork;
 }
 
+export interface ApprovalPresentation {
+  question: string;
+  action: string;
+}
+
 export interface ChatConfirmationInput {
   text: string;
   displayText?: string;
@@ -257,7 +262,10 @@ export async function createApprovals(
     client?: PoolClient,
   ) => Promise<void>,
   interpret?: (reply: string) => Promise<boolean | undefined>,
-  describe?: (proposal: ApprovalDescription, signal?: AbortSignal) => Promise<string>,
+  describe?: (
+    proposal: ApprovalDescription,
+    signal?: AbortSignal,
+  ) => Promise<string | ApprovalPresentation>,
   analytics?: CaptureAnalytics,
 ) {
   const changed = (
@@ -427,6 +435,7 @@ export async function createApprovals(
       };
     };
     let question: string | undefined;
+    let title: string | undefined;
     if (!allowed) {
       const existing = await withTurnLock(turn.turnId, (client) => inspect(client, true));
       if ('cached' in existing) {
@@ -434,7 +443,7 @@ export async function createApprovals(
         return { [appConfirmation]: existing.question as string };
       }
       if (!describe) throw new Error('The confirmation formatter is unavailable.');
-      question = await describe(
+      const presentation = await describe(
         {
           turn: { ...turn },
           action,
@@ -444,9 +453,13 @@ export async function createApprovals(
         },
         options.signal,
       );
+      question = typeof presentation === 'string' ? presentation : presentation.question;
+      title = typeof presentation === 'string' ? undefined : presentation.action;
       options.signal?.throwIfAborted();
       if (typeof question !== 'string' || !question.trim())
         throw new Error('The confirmation formatter did not produce a valid question.');
+      if (title !== undefined && (!title.trim() || title.length > 64 || /[\r\n]/.test(title)))
+        throw new Error('The confirmation model did not produce a valid action label.');
     }
     const saveProposal = async (client: PoolClient) => {
       if (options.expectedChatRevision !== undefined) {
@@ -481,7 +494,7 @@ export async function createApprovals(
       );
       const approval = (
         await client.query(
-          "INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,status,source_message_id,confirmation_message_id,expected_revision,details) VALUES($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10::jsonb) RETURNING *",
+          "INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,status,source_message_id,confirmation_message_id,expected_revision,details,title) VALUES($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10::jsonb,$11) RETURNING *",
           [
             randomUUID(),
             ownerId,
@@ -493,6 +506,7 @@ export async function createApprovals(
             messageId,
             expectedRevision ?? null,
             details ?? null,
+            title ?? null,
           ],
         )
       ).rows[0];
