@@ -233,7 +233,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
   }
 
   function lateNote(schedule: ScheduleRow) {
-    const due = schedule.nextRun!;
+    const due = schedule.kind === 'once' ? schedule.runAt! : schedule.nextRun!;
     const started = now();
     if (started.getTime() - due.getTime() <= lateAfterMs) return '';
     const format = new Intl.DateTimeFormat('en-GB', {
@@ -411,6 +411,12 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       )
         return false;
       job.signal.throwIfAborted();
+      const busy = await activeRun(client, row.id);
+      if (row.kind === 'once' && busy) {
+        await enqueue(client, row, new Date(now().getTime() + 60_000));
+        job.signal.throwIfAborted();
+        return true;
+      }
       if (row.kind === 'once') {
         await client.query('UPDATE schedules SET enabled=false WHERE id=$1 AND owner_id=$2', [
           row.id,
@@ -424,7 +430,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           nextOccurrence(row, new Date(Math.max(now().getTime(), row.nextRun!.getTime()))),
         );
       }
-      if (await activeRun(client, row.id)) return true;
+      if (busy) return true;
       const unchanged = marker ? `${row.revision}:${marker}` : null;
       if (unchanged) {
         if (
@@ -444,7 +450,13 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           unchanged,
         ]);
       }
-      await startRun(client, row, job.id, row.nextRun!, lateNote(row));
+      await startRun(
+        client,
+        row,
+        job.id,
+        row.kind === 'once' ? row.runAt! : row.nextRun!,
+        lateNote(row),
+      );
       job.signal.throwIfAborted();
       return true;
     });

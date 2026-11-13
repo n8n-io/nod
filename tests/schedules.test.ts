@@ -321,6 +321,53 @@ test(
         clock = before;
       });
 
+      await t.test(
+        'a due one-time schedule waits for a manual run and keeps its due time',
+        async () => {
+          const before = clock;
+          const schedule = await create({
+            kind: 'once',
+            runAt: new Date(clock.getTime() + 60_000).toISOString(),
+          });
+          const manual = await runNow(schedule);
+          assert.equal(manual.statusCode, 200, manual.body);
+          const manualTurn = manual.json().turnId;
+          const originalJob = await jobFor(schedule.id);
+          clock = new Date(Date.parse(schedule.runAt!) + 11 * 60_000);
+          await deliver([originalJob]);
+          assert.equal((await saved(schedule.id)).enabled, true);
+          assert.equal((await saved(schedule.id)).runAt, schedule.runAt);
+          assert.equal((await runs(schedule.id)).length, 1);
+          let deferred = await jobFor(schedule.id);
+          assert.notEqual(deferred.id, originalJob.id);
+          assert.equal(Date.parse(deferred.data.scheduledFor), clock.getTime() + 60_000);
+          await db.pool.query("UPDATE turns SET status='waiting',started_at=now() WHERE id=$1", [
+            manualTurn,
+          ]);
+          clock = new Date(deferred.data.scheduledFor);
+          await deliver([deferred]);
+          assert.equal((await saved(schedule.id)).enabled, true);
+          assert.equal((await runs(schedule.id)).length, 1);
+          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [manualTurn]);
+          deferred = await jobFor(schedule.id);
+          clock = new Date(deferred.data.scheduledFor);
+          await deliver([deferred]);
+          const [timed] = (await runs(schedule.id)).filter((run) => run.turnId !== manualTurn);
+          assert.equal(timed!.scheduledFor, schedule.runAt);
+          assert.equal((await saved(schedule.id)).enabled, false);
+          assert.equal((await saved(schedule.id)).nextRun, null);
+          assert.match(
+            (await db.pool.query('SELECT prompt FROM turns WHERE id=$1', [timed!.turnId])).rows[0]
+              .prompt,
+            /This run was due/,
+          );
+          await deliver([originalJob, deferred]);
+          assert.equal((await runs(schedule.id)).length, 2);
+          await request('DELETE', `/api/schedules/${schedule.id}`);
+          clock = before;
+        },
+      );
+
       await t.test('completed tasks produce isolated, reviewable schedule drafts', async (t) => {
         const seed = async (
           messages: string[],
