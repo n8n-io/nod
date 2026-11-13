@@ -80,9 +80,11 @@ function visibleText(node: Nodes): string {
     return node.children
       .map(visibleText)
       .join(
-        ['root', 'blockquote', 'list', 'listItem', 'table', 'tableRow'].includes(node.type)
-          ? '\n'
-          : '',
+        node.type === 'tableRow'
+          ? ' | '
+          : ['root', 'blockquote', 'list', 'listItem', 'table'].includes(node.type)
+            ? '\n'
+            : '',
       );
   return '';
 }

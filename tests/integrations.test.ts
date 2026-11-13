@@ -9367,6 +9367,10 @@ test(
         ['# First line\nSecond line', 'First line'],
         ['- First\n- Second', 'First'],
         ['> First\n>\n> Second', 'First'],
+        [
+          '| Berlin time | 8am on Monday |\n| --- | --- |\n| Europe | Berlin |',
+          'Berlin time | 8am on Monday',
+        ],
       ]) {
         await pool.query('UPDATE turns SET prompt=$2 WHERE id=$1', [chat, prompt]);
         const entry = (await app.inject('/api/trust'))
