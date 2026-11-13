@@ -239,6 +239,7 @@ const tools: Record<string, string> = {
 };
 
 export function toolTitle(summary: string) {
+  if (tools[summary]) return tools[summary];
   const browser = /^browser ([a-z_]+)$/.exec(summary)?.[1];
   if (browser) return `Browser: ${browser.replaceAll('_', ' ')}`;
   const server = /^mcp {2}(.+?) {2}.+$/.exec(summary)?.[1];

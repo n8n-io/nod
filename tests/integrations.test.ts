@@ -9239,9 +9239,11 @@ test(
         },
       });
       const activity = createActivityLog({
-        requests: ledger.within,
+        bounds: ledger.bounds,
+        within: ledger.within,
+        chunk: ledger.chunk,
         vault: vaultAccess.within,
-        steps: ledger.steps,
+        steps: (turnIds) => ledger.steps(turnIds),
       });
       activity.registerRoutes(app);
       const usage = (turnId: string, costUsd: number | null): AgentEvent => ({
@@ -9513,6 +9515,28 @@ test(
       const scoped = cells((await app.inject(`/api/trust/export?session=${scheduled}`)).body);
       assert.deepEqual([...new Set(scoped.slice(1).map((row) => row[1]))], ['Morning brief']);
       assert.deepEqual((await activity.read({ from: '2000-01-01' }, 200)).entries, []);
+      const tied = Array.from({ length: 5 }, () => randomUUID());
+      await pool.query(
+        `INSERT INTO turns(id,owner_id,source,prompt,thread_id,session_id,created_at)
+         SELECT id,'owner','user','Tied request',$2,id,'2026-01-01T00:00:00.123456Z' FROM unnest($1::uuid[]) id`,
+        [tied, conversation],
+      );
+      await pool.query(
+        `INSERT INTO app_actions(owner_id,turn_id,action,basis) SELECT 'owner',id,'GMAIL_FETCH_EMAILS','{"kind":"read"}' FROM unnest($1::uuid[]) id`,
+        [tied],
+      );
+      const span = await ledger.bounds({});
+      const paged: string[] = [];
+      let cursor: { at: string; id: string } | null = null;
+      for (;;) {
+        const page = await ledger.chunk(span, cursor, 2);
+        paged.push(...page.entries.map((entry) => entry.id));
+        if (page.entries.length < 2 || !page.next) break;
+        cursor = page.next;
+      }
+      assert.equal(new Set(paged).size, paged.length);
+      assert.ok(tied.every((id) => paged.includes(id)));
+      assert.ok(!paged.includes(foreign));
       await pool.query(
         "DELETE FROM app_actions WHERE action='SLACK_SEND_MESSAGE' OR (turn_id=$1 AND action='GMAIL_FETCH_EMAILS')",
         [scheduled],

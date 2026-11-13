@@ -1734,9 +1734,11 @@ async function initializeApplication(
     refresh,
   });
   const activityLog = createActivityLog({
-    requests: ledger.within,
+    bounds: ledger.bounds,
+    within: ledger.within,
+    chunk: ledger.chunk,
     vault: vaultAccess.within,
-    steps: ledger.steps,
+    steps: (turnIds) => ledger.steps(turnIds),
   });
   payments = await createPayments(pool, {
     ownerId,

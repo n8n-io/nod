@@ -54,6 +54,7 @@ const zone = `COALESCE((SELECT time_zone FROM preferences WHERE owner_id=$1),'UT
 const monthStart = `(date_trunc('month', now() AT TIME ZONE ${zone}) AT TIME ZONE ${zone})`;
 const spentThisMonth = `COALESCE((SELECT sum(cost_usd::numeric) FROM model_usage WHERE owner_id=$1 AND created_at>=${monthStart}),0)::float8`;
 const pageSize = 30;
+const stepPage = 200;
 const planUsage = `(cost_usd IS NULL AND (details->>'estimateUsd')::float8>0)`;
 const unpricedUsage = `(details->>'status'='succeeded' AND COALESCE(cost_usd,(details->>'estimateUsd')::float8,0)=0)`;
 const cost = (value: number | null | undefined) =>
@@ -157,7 +158,7 @@ function presentStep(row: Record<string, any>): TrustStep {
         .replaceAll('**', ''),
     };
   if (row.type === 'step' || row.type === 'thought')
-    return { at, kind: 'note', title: String(row.summary), ...helper };
+    return { at, kind: 'note', title: String(row.summary).slice(0, 500), ...helper };
   return {
     at,
     kind: 'tool',
@@ -577,12 +578,14 @@ export function createLedger({
 
   async function select({
     before,
+    after,
     session,
     start,
     end,
     limit,
   }: {
     before?: { at: string; id: string };
+    after?: { at: string; id: string } | null;
     session?: string;
     start?: Date | null;
     end?: Date | null;
@@ -590,6 +593,7 @@ export function createLedger({
   }) {
     const { rows } = await pool.query(
       `SELECT u.id,u.source,u.source_id,u.channel,u.status,u.error,u.created_at,
+         to_char(u.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor,
          (SELECT m.id FROM messages m JOIN threads th ON th.id=m.thread_id
            WHERE m.owner_id=$1 AND th.owner_id=$1 AND th.archived_at IS NULL AND m.hidden_at IS NULL
              AND m.thread_id=u.thread_id AND ((m.turn_id=u.id AND m.role='assistant') OR m.id=u.message_id)
@@ -615,8 +619,9 @@ export function createLedger({
        WHERE u.owner_id=$1 AND ($2::timestamptz IS NULL OR (u.created_at,u.id)<($2,$3::uuid))
          AND ($4::uuid IS NULL OR u.session_id=$4)
          AND ($5::timestamptz IS NULL OR u.created_at>=$5) AND ($6::timestamptz IS NULL OR u.created_at<$6)
+         AND ($8::timestamptz IS NULL OR (u.created_at,u.id)>($8,$9::uuid))
          AND (c.used>0 OR EXISTS(SELECT 1 FROM app_actions a WHERE a.turn_id=u.id AND a.owner_id=$1))
-       ORDER BY u.created_at DESC,u.id DESC LIMIT $7`,
+       ORDER BY u.created_at ${after === undefined ? 'DESC' : 'ASC'},u.id ${after === undefined ? 'DESC' : 'ASC'} LIMIT $7`,
       [
         ownerId,
         before?.at ?? null,
@@ -625,9 +630,12 @@ export function createLedger({
         start ?? null,
         end ?? null,
         limit,
+        after?.at ?? null,
+        after?.id ?? null,
       ],
     );
-    return rows.map((row): TrustEntry => ({
+    const cursors = rows.map((row) => ({ at: String(row.cursor), id: String(row.id) }));
+    const entries = rows.map((row): TrustEntry => ({
       id: row.id,
       messageId: row.message_id ?? null,
       at: row.created_at.toISOString(),
@@ -665,10 +673,11 @@ export function createLedger({
         },
       ),
     }));
+    return { entries, cursors };
   }
 
   async function entries(before?: { at: string; id: string }, session?: string) {
-    const rows = await select({ before, session, limit: pageSize + 1 });
+    const rows = (await select({ before, session, limit: pageSize + 1 })).entries;
     const page = rows.slice(0, pageSize);
     const last = page.at(-1);
     return {
@@ -677,10 +686,7 @@ export function createLedger({
     };
   }
 
-  async function steps(turnIds: string[]) {
-    const { rows } = await pool.query(
-      `SELECT * FROM (
-         SELECT e.turn_id,e.created_at AS at,'event' AS kind,e.type,e.summary,e.site AS detail,NULL::jsonb AS basis,
+  const stepUnion = `         SELECT e.turn_id,e.created_at AS at,'event' AS kind,e.type,e.summary,e.site AS detail,NULL::jsonb AS basis,
            false AS said,false AS whole,NULL::jsonb AS usage,NULL::float8 AS cost,e.parent_run_id IS NOT NULL AS helper,e.id::text AS id
          FROM turn_events e JOIN turns u ON u.id=e.turn_id AND u.owner_id=$1
          WHERE e.turn_id=ANY($2::uuid[]) AND e.type IN ('step','thought','tool_complete','tool_failed')
@@ -697,18 +703,32 @@ export function createLedger({
          FROM model_usage WHERE owner_id=$1 AND turn_id=ANY($2::uuid[])
          UNION ALL
          SELECT turn_id,created_at,'reply',NULL,left(text,300),NULL,NULL,false,false,NULL,NULL,false,id::text
-         FROM messages WHERE owner_id=$1 AND turn_id=ANY($2::uuid[]) AND role='assistant' AND hidden_at IS NULL AND text<>''
-       ) s ORDER BY s.at,s.id`,
-      [ownerId, turnIds],
+         FROM messages WHERE owner_id=$1 AND turn_id=ANY($2::uuid[]) AND role='assistant' AND hidden_at IS NULL AND text<>''`;
+
+  async function steps(turnIds: string[], page?: { offset: number; limit: number }) {
+    const { rows } = await pool.query(
+      `SELECT * FROM (${stepUnion}) s ORDER BY s.at,s.id OFFSET $3 LIMIT $4`,
+      [ownerId, turnIds, page?.offset ?? 0, page ? page.limit : null],
     );
     const grouped = new Map<string, TrustStep[]>();
-    for (const row of rows)
-      grouped.set(row.turn_id, [...(grouped.get(row.turn_id) ?? []), presentStep(row)]);
+    for (const row of rows) {
+      const list = grouped.get(row.turn_id);
+      if (list) list.push(presentStep(row));
+      else grouped.set(row.turn_id, [presentStep(row)]);
+    }
     return grouped;
   }
 
-  async function within(range: ActivityRange, limit: number | null) {
-    const bounds = (
+  async function stepCount(turnId: string) {
+    const { rows } = await pool.query<{ total: number }>(
+      `SELECT count(*)::int AS total FROM (${stepUnion}) s`,
+      [ownerId, [turnId]],
+    );
+    return rows[0]?.total ?? 0;
+  }
+
+  async function bounds(range: ActivityRange) {
+    const row = (
       await pool.query<{
         zone: string;
         locale: string | null;
@@ -721,20 +741,39 @@ export function createLedger({
         [ownerId, range.from ?? null, range.to ?? range.from ?? null],
       )
     ).rows[0]!;
-    const rows = await select({
-      session: range.session,
-      start: bounds.start_at,
-      end: bounds.end_at,
-      limit: limit === null ? null : limit + 1,
-    });
     return {
-      timeZone: bounds.zone,
-      locale: formattingLocale(localeRegion(bounds.locale) ?? timeZoneRegion(bounds.zone)),
-      start: bounds.start_at,
-      end: bounds.end_at,
-      entries: limit === null ? rows : rows.slice(0, limit),
-      complete: limit === null || rows.length <= limit,
+      session: range.session,
+      timeZone: row.zone,
+      locale: formattingLocale(localeRegion(row.locale) ?? timeZoneRegion(row.zone)),
+      start: row.start_at,
+      end: row.end_at,
     };
+  }
+
+  async function within(range: ActivityRange, limit: number) {
+    const span = await bounds(range);
+    const { entries } = await select({
+      session: span.session,
+      start: span.start,
+      end: span.end,
+      limit: limit + 1,
+    });
+    return { ...span, entries: entries.slice(0, limit), complete: entries.length <= limit };
+  }
+
+  async function chunk(
+    span: Awaited<ReturnType<typeof bounds>>,
+    after: { at: string; id: string } | null,
+    size: number,
+  ) {
+    const { entries, cursors } = await select({
+      session: span.session,
+      start: span.start,
+      end: span.end,
+      after,
+      limit: size,
+    });
+    return { entries, next: cursors.at(-1) ?? null };
   }
 
   async function read(): Promise<TrustView> {
@@ -878,7 +917,15 @@ export function createLedger({
     });
     app.get<{ Params: { id: string } }>('/api/trust/entries/:id/steps', async (request) => {
       const id = z.uuid().parse(request.params.id);
-      return { steps: (await steps([id])).get(id) ?? [] };
+      const { offset } = z
+        .object({ offset: z.coerce.number().int().min(0).default(0) })
+        .strict()
+        .parse(request.query);
+      const [found, total] = await Promise.all([
+        steps([id], { offset, limit: stepPage }),
+        stepCount(id),
+      ]);
+      return { steps: found.get(id) ?? [], total };
     });
     app.put('/api/trust/limit', (request) => setLimits(request.body));
   }
@@ -957,6 +1004,8 @@ export function createLedger({
     ) => activeExecution.run(execution, run),
     read,
     within,
+    bounds,
+    chunk,
     steps,
     report,
     registerRoutes,

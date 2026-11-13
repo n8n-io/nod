@@ -165,6 +165,10 @@
 .vault-use.usage-row {
   grid-template-columns: 28px minmax(0, 1fr) auto 16px;
 }
+.usage .vault-day > ul > li {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 56px;
+}
 .usage-chevron {
   color: var(--muted-foreground);
   transition: transform 150ms var(--ease-enter);
@@ -177,6 +181,14 @@
     transition: none;
   }
 }
+@media (max-width: 640px) {
+  .vault-use.usage-row {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+  }
+  .usage-chevron {
+    display: none;
+  }
+}
 .usage-log {
   display: grid;
   justify-items: start;
@@ -185,21 +197,25 @@
   padding: 4px 0 4px 26px;
   border-left: 1px solid var(--border);
 }
-.usage-log ol {
-  display: grid;
+.usage-log-rows {
+  position: relative;
   width: 100%;
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.usage-log li {
+.usage-log-rows li {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
   display: grid;
   grid-template-columns: 76px minmax(0, 1fr) auto;
   gap: 12px;
-  align-items: baseline;
-  padding: 3px 0;
+  align-items: center;
+  height: 26px;
   font-size: 13px;
-  line-height: 1.45;
+  white-space: nowrap;
 }
 .usage-log time {
   color: var(--muted-foreground);
@@ -208,7 +224,8 @@
 }
 .usage-log-text {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .usage-log-text b {
   font-weight: 500;
@@ -231,6 +248,13 @@
 }
 .usage-log li.is-failed b {
   color: var(--error);
+}
+.usage-log-pending {
+  grid-column: 1 / -1;
+  height: 8px;
+  width: 60%;
+  border-radius: 4px;
+  background: var(--surface-subtle);
 }
 .usage-log-cost {
   color: var(--muted-foreground);

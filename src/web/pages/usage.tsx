@@ -370,36 +370,134 @@ function UsageSummary({
   );
 }
 
-function TrustLog({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean }) {
+type StepPage = { steps: TrustStep[]; total: number };
+const stepHeight = 26;
+const stepPage = 200;
+const stepOverscan = 30;
+
+function StepLine({ step, showCosts }: { step: TrustStep; showCosts: boolean }) {
   const format = useDateFormat();
-  const log = usePageData<{ steps: TrustStep[] }>(`/api/trust/entries/${entry.id}/steps`);
+  const text = [step.title, step.detail, step.because && becauseText(step.because)]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <>
+      <time dateTime={step.at}>{formatTime(step.at, format, { seconds: true })}</time>
+      <span className="usage-log-text" title={text}>
+        <b>{step.title}</b>
+        {step.detail && <span> · {step.detail}</span>}
+        {step.because && <small> · {becauseText(step.because)}</small>}
+      </span>
+      {showCosts && step.costUsd !== undefined && (
+        <span className="usage-log-cost">{money(step.costUsd)}</span>
+      )}
+    </>
+  );
+}
+
+function TrustLog({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean }) {
+  const path = `/api/trust/entries/${entry.id}/steps`;
+  const first = usePageData<StepPage>(path);
+  const total = first.data?.total ?? 0;
+  const [pages, setPages] = useState<Map<number, TrustStep[]>>(() => new Map());
+  const [range, setRange] = useState<[number, number]>([0, stepOverscan * 2]);
+  const [error, setError] = useState('');
+  const loading = useRef(new Set<number>());
+  const list = useRef<HTMLOListElement>(null);
+  useEffect(() => {
+    const last = Math.floor(Math.max(total - 1, 0) / stepPage);
+    setPages((current) => {
+      if (!current.has(last)) return current;
+      const next = new Map(current);
+      next.delete(last);
+      return next;
+    });
+  }, [total]);
+  useEffect(() => {
+    const target = list.current;
+    if (!target || !total) return;
+    const scroller = target.closest<HTMLElement>('.main-workspace');
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const box = target.getBoundingClientRect();
+      const view = scroller?.getBoundingClientRect() ?? { top: 0, bottom: window.innerHeight };
+      const start = Math.max(0, Math.floor((view.top - box.top) / stepHeight) - stepOverscan);
+      const end = Math.min(total, Math.ceil((view.bottom - box.top) / stepHeight) + stepOverscan);
+      setRange((current) =>
+        current[0] === start && current[1] === end ? current : [start, Math.max(start, end)],
+      );
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(measure);
+    };
+    measure();
+    const source = scroller ?? window;
+    source.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    return () => {
+      cancelAnimationFrame(frame);
+      source.removeEventListener('scroll', schedule);
+      window.removeEventListener('resize', schedule);
+    };
+  }, [total]);
+  useEffect(() => {
+    if (!total || error) return;
+    const from = Math.floor(range[0] / stepPage);
+    const to = Math.floor(Math.max(range[1] - 1, 0) / stepPage);
+    for (let page = Math.max(from, 1); page <= to; page++) {
+      if (pages.has(page) || loading.current.has(page)) continue;
+      loading.current.add(page);
+      api<StepPage>(`${path}?offset=${page * stepPage}`)
+        .then(
+          (result) => setPages((current) => new Map(current).set(page, result.steps)),
+          (cause) => setError(errorMessage(cause)),
+        )
+        .finally(() => loading.current.delete(page));
+    }
+  }, [error, pages, path, range, total]);
+  const stepAt = (index: number) =>
+    index < stepPage
+      ? first.data?.steps[index]
+      : pages.get(Math.floor(index / stepPage))?.[index % stepPage];
   return (
     <div className="usage-log" id={`usage-log-${entry.id}`}>
-      {log.error ? (
-        <Notice>{log.error}</Notice>
-      ) : !log.data ? (
+      {first.error ? (
+        <Notice>{first.error}</Notice>
+      ) : !first.data ? (
         <Loading label="Opening the log…" />
       ) : (
-        <ol>
-          {log.data.steps.map((step, index) => (
-            <li
-              key={`${step.at}${index}`}
-              data-kind={step.kind}
-              data-helper={step.helper ? 'true' : undefined}
-              className={step.failed ? 'is-failed' : undefined}
-            >
-              <time dateTime={step.at}>{formatTime(step.at, format, { seconds: true })}</time>
-              <span className="usage-log-text">
-                <b>{step.title}</b>
-                {step.detail && <span> · {step.detail}</span>}
-                {step.because && <small> · {becauseText(step.because)}</small>}
-              </span>
-              {showCosts && step.costUsd !== undefined && (
-                <span className="usage-log-cost">{money(step.costUsd)}</span>
-              )}
-            </li>
-          ))}
+        <ol ref={list} className="usage-log-rows" style={{ height: total * stepHeight }}>
+          {Array.from({ length: Math.max(0, range[1] - range[0]) }, (_, offset) => {
+            const index = range[0] + offset;
+            const step = stepAt(index);
+            return (
+              <li
+                key={index}
+                aria-setsize={total}
+                aria-posinset={index + 1}
+                style={{ transform: `translateY(${index * stepHeight}px)` }}
+                data-kind={step?.kind}
+                data-helper={step?.helper ? 'true' : undefined}
+                className={step?.failed ? 'is-failed' : undefined}
+              >
+                {step ? (
+                  <StepLine step={step} showCosts={showCosts} />
+                ) : (
+                  <span className="usage-log-pending" aria-label="Loading" />
+                )}
+              </li>
+            );
+          })}
         </ol>
+      )}
+      {error && (
+        <Notice>
+          {error}{' '}
+          <button type="button" onClick={() => setError('')}>
+            Try again
+          </button>
+        </Notice>
       )}
       {entry.messageId && (
         <button
