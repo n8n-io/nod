@@ -1868,9 +1868,10 @@ test(
       await until(() => edits.length === 5);
       assert.equal(edits[4]!.messageId, 'provider-2');
       assert.equal(edits[4]!.status, null);
-      assert.equal(
-        (await pool.query('SELECT 1 FROM channel_outbox WHERE live_status IS NOT NULL')).rowCount,
-        0,
+      await until(
+        async () =>
+          (await pool.query('SELECT 1 FROM channel_outbox WHERE live_status IS NOT NULL'))
+            .rowCount === 0,
       );
     } finally {
       await channels.close();
