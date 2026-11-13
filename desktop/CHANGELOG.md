@@ -2,6 +2,45 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.7.3 - 2026-11-12
+
+### Features
+
+- **desktop:** Link update notices to release notes. [#784](https://github.com/n8n-io/nod/pull/784) (ad45a5e)
+
+### Fixes
+
+- **release:** Wait up to five minutes for GitHub to list a published release. [#806](https://github.com/n8n-io/nod/pull/806) (8bb2d56)
+- **chat:** Give useful ideas before app setup. [commit](https://github.com/n8n-io/nod/commit/2746e8e30d6fecb184d1b3ab5f5273f742beae33) (2746e8e)
+- **backend:** Stop memory treating long link IDs as card numbers. [#764](https://github.com/n8n-io/nod/pull/764) (9ee5770)
+- **traces:** Include the Nod version in trace metadata. [#798](https://github.com/n8n-io/nod/pull/798) (3eef252)
+- **approvals:** Preserve task continuation after non-answer. [#787](https://github.com/n8n-io/nod/pull/787) (08ca218)
+- **chat:** Keep Stop separate from Send. [#781](https://github.com/n8n-io/nod/pull/781) (67dd237)
+- **onboarding:** Skip work-use follow-up for personal scope. [#780](https://github.com/n8n-io/nod/pull/780) (2f2f014)
+- Honor clock preference in quiet hours. [#778](https://github.com/n8n-io/nod/pull/778) (1039be5)
+- Fit source containers to Docker CPU allocation. [#776](https://github.com/n8n-io/nod/pull/776) (970060f)
+- **feedback:** Separate notice from diagnostic scroll area. [#777](https://github.com/n8n-io/nod/pull/777) (aebc9d8)
+- **desktop:** Clarify local setup heading. [#775](https://github.com/n8n-io/nod/pull/775) (9423daa)
+- **approvals:** Give confirmation repair specific feedback. [#782](https://github.com/n8n-io/nod/pull/782) (9acf7e1)
+- **history:** Open turn references returned by search. [#783](https://github.com/n8n-io/nod/pull/783) (1b17108)
+
+<details>
+<summary>Maintenance (1 changes)</summary>
+
+- Stabilize scheduled task integration fixtures. [#773](https://github.com/n8n-io/nod/pull/773) (19fe8cf)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.7.2...8bb2d5672f89e2a2ddcca45fdbc8fb726c0cd8ec)
+
+<details>
+<summary>Build details</summary>
+
+Source: `8bb2d5672f89e2a2ddcca45fdbc8fb726c0cd8ec`
+Previous release: `nod-v0.7.2`
+
+</details>
+
 ## 0.7.2 - 2026-11-12
 
 ### Features

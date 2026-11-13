@@ -296,15 +296,16 @@ export function WhatsAppSetup({
               <p>
                 {state === 'connecting'
                   ? 'Connecting to WhatsApp…'
-                  : 'WhatsApp is disconnected. Nod is trying to connect again.'}
+                  : (link?.error ?? 'WhatsApp is disconnected. Nod is trying to connect again.')}
               </p>
             ) : (
               <Notice>
-                {state === 'expired'
-                  ? 'The QR setup expired. Start again to get a new code.'
-                  : state === 'logged_out'
-                    ? 'WhatsApp signed out this device. Link the account again.'
-                    : 'WhatsApp could not connect. Check your connection, then try again.'}
+                {link?.error ??
+                  (state === 'expired'
+                    ? 'The QR setup expired. Start again to get a new code.'
+                    : state === 'logged_out'
+                      ? 'WhatsApp signed out this device. Link the account again.'
+                      : 'WhatsApp could not connect. Check your connection, then try again.')}
               </Notice>
             )}
           </div>

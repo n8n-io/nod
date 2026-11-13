@@ -13,6 +13,7 @@ import type {
   MessagingWebhookResult,
 } from '../../ports/messaging.ts';
 import { telegramSecret, telegramUserId } from '../../ports/channel-settings.ts';
+import { MessagingConnectionError } from '../../ports/messaging.ts';
 import { telegramMessage, telegramPairing, telegramAttachments } from './telegram.ts';
 import { telegramText, whatsappText } from './format.ts';
 import { contactCards, sharedLocation } from '../../shared/channel-content.ts';
@@ -351,10 +352,12 @@ export function createChatSdkTransport(
     async poll(accept, pair, react) {
       if (closed || polling || !telegram || env.TELEGRAM_MODE !== 'polling') return;
       polling = true;
+      let requesting = false;
       try {
         offsetsReady ??= pool
           .query(
-            'CREATE TABLE IF NOT EXISTS channel_poll_offsets(provider text NOT NULL,account_id text NOT NULL,next_offset bigint NOT NULL,PRIMARY KEY(provider,account_id))',
+            `CREATE TABLE IF NOT EXISTS channel_poll_offsets(provider text NOT NULL,account_id text NOT NULL,next_offset bigint NOT NULL,PRIMARY KEY(provider,account_id));
+             ALTER TABLE channel_poll_offsets ADD COLUMN IF NOT EXISTS updated_at timestamptz`,
           )
           .catch((error) => {
             offsetsReady = undefined;
@@ -363,9 +366,10 @@ export function createChatSdkTransport(
         await offsetsReady;
         const accountId = env.TELEGRAM_BOT_TOKEN!.split(':')[0];
         const saved = await pool.query<{ next_offset: string }>(
-          "SELECT next_offset FROM channel_poll_offsets WHERE provider='telegram' AND account_id=$1",
+          "SELECT CASE WHEN updated_at > now() - interval '24 hours' THEN next_offset ELSE 0 END AS next_offset FROM channel_poll_offsets WHERE provider='telegram' AND account_id=$1",
           [accountId],
         );
+        requesting = true;
         const response = await request(
           `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getUpdates`,
           {
@@ -380,7 +384,25 @@ export function createChatSdkTransport(
             signal: AbortSignal.timeout(10_000),
           },
         );
-        if (!response.ok) throw new Error('Telegram polling is unavailable.');
+        const body: unknown = await response.json().catch(() => undefined);
+        if (!response.ok || (body as { ok?: unknown } | null)?.ok === false) {
+          const failure = z
+            .object({
+              description: z.string().max(2000).optional(),
+              error_code: z.number().optional(),
+            })
+            .safeParse(body);
+          let reason = failure.success
+            ? (failure.data.description ?? response.statusText)
+            : response.statusText;
+          for (const secret of [env.TELEGRAM_BOT_TOKEN, env.TELEGRAM_WEBHOOK_SECRET_TOKEN])
+            if (secret)
+              for (const value of [secret, encodeURIComponent(secret)])
+                reason = reason.replaceAll(value, '[redacted]');
+          throw new MessagingConnectionError(
+            `Telegram polling failed (HTTP ${response.status}${failure.success && failure.data.error_code ? `, code ${failure.data.error_code}` : ''})${reason ? `: ${reason}` : '.'}`,
+          );
+        }
         const updates = z
           .object({
             ok: z.literal(true),
@@ -388,7 +410,11 @@ export function createChatSdkTransport(
               .array(z.object({ update_id: z.number().int().nonnegative() }).passthrough())
               .max(100),
           })
-          .parse(await response.json());
+          .parse(body);
+        requesting = false;
+        const channel = channels.find((channel) => channel.id === 'telegram')!;
+        channel.available = true;
+        channel.error = undefined;
         for (const update of updates.result) {
           if (closed) break;
           const parsed = await transport.receive({
@@ -404,13 +430,32 @@ export function createChatSdkTransport(
           for (const reaction of parsed.reactions ?? []) await react?.(reaction);
           if (parsed.pairing) await pair?.(parsed.pairing);
           await pool.query(
-            `INSERT INTO channel_poll_offsets(provider,account_id,next_offset) VALUES('telegram',$1,$2)
-            ON CONFLICT(provider,account_id) DO UPDATE SET next_offset=GREATEST(channel_poll_offsets.next_offset,EXCLUDED.next_offset)`,
+            `INSERT INTO channel_poll_offsets(provider,account_id,next_offset,updated_at) VALUES('telegram',$1,$2,now())
+            ON CONFLICT(provider,account_id) DO UPDATE SET next_offset=CASE WHEN channel_poll_offsets.updated_at > now() - interval '24 hours' THEN GREATEST(channel_poll_offsets.next_offset,EXCLUDED.next_offset) ELSE EXCLUDED.next_offset END,updated_at=now()`,
             [accountId, update.update_id + 1],
           );
         }
-      } catch {
-        throw new Error('Telegram polling is unavailable. Check the bot configuration.');
+      } catch (cause) {
+        const channel = channels.find((channel) => channel.id === 'telegram')!;
+        const source = cause as { code?: unknown; cause?: { code?: unknown } } | undefined;
+        const code = source?.code ?? source?.cause?.code;
+        const detail =
+          typeof code === 'string' && /^(?:[0-9A-Z]{5}|[A-Z][A-Z0-9_]{0,31})$/.test(code)
+            ? ` (${code})`
+            : '';
+        const failure =
+          cause instanceof MessagingConnectionError
+            ? cause
+            : new MessagingConnectionError(
+                requesting
+                  ? `Telegram could not receive messages${detail}. Select Reconnect.`
+                  : `Telegram message processing failed${detail}.`,
+              );
+        if (requesting) {
+          channel.available = false;
+          channel.error = failure.message;
+        }
+        throw failure;
       } finally {
         polling = false;
       }

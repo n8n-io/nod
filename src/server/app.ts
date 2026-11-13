@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import type { SpeechService } from './speech.ts';
 import { messageInput, registerAudioMessages } from './audio-messages.ts';
+import { messageTooLongError } from '../shared/message-limits.ts';
 import type { ServerResponse } from 'node:http';
 import { z } from 'zod';
 import { pool } from './db.ts';
@@ -260,6 +261,15 @@ export async function createApp(dependencies: AppDependencies = {}) {
         ? (error as Error & { statusCode?: number; retryable?: boolean; code?: string })
         : undefined;
     const status = error instanceof z.ZodError ? 400 : known?.statusCode || 500;
+    const messageTooLong =
+      (request.routeOptions.url === '/api/messages' ||
+        request.routeOptions.url === '/api/messages/audio') &&
+      (known?.code === 'message_too_long' ||
+        (error instanceof z.ZodError &&
+          error.issues.some(
+            (issue) =>
+              issue.code === 'too_big' && issue.path.length === 1 && issue.path[0] === 'text',
+          )));
     if (status >= 500)
       logFailure('request_failed', error, {
         method: request.method,
@@ -271,8 +281,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
       ...(status === 409 && known?.code === 'question_unavailable'
         ? { code: 'question_unavailable' }
         : {}),
-      error:
-        error instanceof z.ZodError
+      ...(messageTooLong ? { code: 'message_too_long' } : {}),
+      error: messageTooLong
+        ? messageTooLongError
+        : error instanceof z.ZodError
           ? 'Check the supplied values.'
           : status < 500
             ? known?.message

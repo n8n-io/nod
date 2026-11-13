@@ -2992,6 +2992,172 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     await assert.rejects(owner.resolve());
   });
 
+  test('daily Google quota stops automatic requests across restart and keeps owner recovery available', async (t) => {
+    const f = await fixture(t);
+    const { createPiMemoryCurator } = await import('../src/providers/pi/memory-curator.ts');
+    const { createPiModelRuntime } = await import('../src/providers/pi/models.ts');
+    const definitions = await f.backend.catalog('google', 'api_key');
+    const definition = definitions.find((item) => item.choice.id === 'gemini-3.8-flash')!;
+    const primary = {
+      ...definition,
+      choice: { ...definition.choice, id: 'fixture-google-primary', name: 'Synthetic primary' },
+      spec: { ...definition.spec, id: 'fixture-google-primary' },
+    };
+    const backend = {
+      ...f.backend,
+      catalog: async () =>
+        [definition, primary].map((item) => ({
+          ...item,
+          spec: {
+            ...item.spec,
+            api: 'openai-completions',
+            baseUrl: 'https://model.example/v1',
+          },
+        })),
+    };
+    let service = await f.create('fixture-quota-owner', backend);
+    const connectionId = await service.addKey('google', 'fixture-quota-key');
+    const other = await f.create('fixture-other-quota-owner', backend);
+    await other.addKey('google', 'fixture-other-quota-key');
+    const original = globalThis.fetch;
+    t.after(() => {
+      globalThis.fetch = original;
+    });
+    let calls = 0;
+    let rejected = true;
+    let quotaId = 'GenerateRequestsPerDayPerProjectPerModel-FreeTier';
+    let quotaValue = '20';
+    let prepaid = false;
+    globalThis.fetch = async (input) => {
+      assert.ok(String(input).startsWith('https://model.example/'));
+      calls++;
+      if (rejected)
+        return Response.json(
+          {
+            error: {
+              code: prepaid ? 402 : 429,
+              message: prepaid ? 'Your prepayment credits are depleted.' : 'Quota exceeded.',
+              ...(prepaid ? { status: 'RESOURCE_EXHAUSTED' } : {}),
+              details: prepaid
+                ? []
+                : [
+                    {
+                      quotaId,
+                      quotaValue,
+                      retryDelay: '82800.5s',
+                    },
+                  ],
+            },
+          },
+          { status: prepaid ? 402 : 429 },
+        );
+      return new Response(
+        'data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"{\\"ready\\":true}"}}]}\n\ndata: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        { headers: { 'content-type': 'text/event-stream' } },
+      );
+    };
+    const curator = createPiMemoryCurator({ provider: 'google', resolve: () => service.resolve() });
+    const request = {
+      task: 'plan' as const,
+      instructions: 'Prepare the synthetic task.',
+      input: {},
+    };
+    await assert.rejects(curator.curate(request), /quota/i);
+    assert.equal(calls, 1);
+    const selection = service.view().selection!;
+    await service.select({ ...selection, modelId: primary.choice.id });
+    assert.equal(await service.automaticRequestsAllowed(), false);
+    await service.select(selection);
+    await assert.rejects(curator.curate(request), /Automatic requests are paused/);
+    assert.equal(calls, 1);
+    await service.refreshCatalog(connectionId);
+    await assert.rejects(curator.curate(request), /Automatic requests are paused/);
+    await service.close();
+    service = await f.create('fixture-quota-owner', backend);
+    await assert.rejects(curator.curate(request), /Automatic requests are paused/);
+    assert.equal(calls, 1);
+    assert.doesNotMatch(
+      JSON.stringify(service.view()),
+      /credentialTag|requestPauses|fixture-quota-key/,
+    );
+    await (await other.resolve()).prepareRequest?.(definition.choice.id, true);
+    rejected = false;
+    const access = await service.resolve();
+    const { runtime, model } = await createPiModelRuntime(access);
+    assert.equal(
+      (
+        await runtime.completeSimple(model, {
+          messages: [{ role: 'user', content: 'Try the synthetic task again.', timestamp: 1 }],
+        })
+      ).stopReason,
+      'stop',
+    );
+    assert.deepEqual(await curator.curate(request), { ready: true });
+    assert.equal(calls, 3);
+    assert.equal(service.view().selection?.connectionId, connectionId);
+    rejected = true;
+    quotaId = 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier';
+    await assert.rejects(curator.curate(request), /quota/i);
+    assert.equal(calls, 4);
+    assert.equal(await service.automaticRequestsAllowed(), true);
+    quotaValue = '0';
+    await assert.rejects(curator.curate(request), /quota/i);
+    assert.equal(calls, 5);
+    assert.equal(await service.automaticRequestsAllowed(), false);
+    await assert.rejects(curator.curate(request), /zero quota/);
+    assert.equal(calls, 5);
+    const ledger = createLedger({
+      pool: { query: async () => ({ rows: [] }) } as never,
+      ownerId: 'fixture-quota-owner',
+    });
+    const scoped = ledger.curator(curator);
+    await assert.rejects(
+      ledger.withTurn(randomUUID(), () => scoped.curate(request)),
+      /zero quota/,
+    );
+    rejected = false;
+    assert.deepEqual(
+      await ledger.withTurn(randomUUID(), () => scoped.curate(request), false, false),
+      { ready: true },
+    );
+    assert.equal(calls, 6);
+    assert.equal(await service.automaticRequestsAllowed(), true);
+    rejected = prepaid = true;
+    await assert.rejects(curator.curate(request), /prepayment credits are depleted/);
+    assert.equal(calls, 7);
+    await service.close();
+    service = await f.create('fixture-quota-owner', backend);
+    await service.select({ ...selection, modelId: primary.choice.id });
+    const paused = await service.resolve();
+    await assert.rejects(
+      paused.prepareRequest!(primary.choice.id, true),
+      /prepayment credits.*Automatic requests are paused/,
+    );
+    assert.equal(await service.automaticRequestsAllowed(), false);
+    assert.equal(calls, 7);
+    rejected = false;
+    const recovered = await createPiModelRuntime(paused);
+    assert.equal(
+      (
+        await recovered.runtime.completeSimple(recovered.model, {
+          messages: [
+            { role: 'user', content: 'Check the repaired synthetic account.', timestamp: 2 },
+          ],
+        })
+      ).stopReason,
+      'stop',
+    );
+    assert.equal(calls, 8);
+    assert.equal(await service.automaticRequestsAllowed(), true);
+    const concurrent = await service.resolve();
+    const ownerCompleted = await concurrent.prepareRequest!(primary.choice.id, false);
+    const automaticCompleted = await concurrent.prepareRequest!(definition.choice.id, true);
+    await automaticCompleted('Your prepayment credits are depleted.');
+    assert.equal(await service.automaticRequestsAllowed(), false);
+    await ownerCompleted();
+    assert.equal(await service.automaticRequestsAllowed(), true);
+  });
+
   test('model setup chooses capable defaults, preserves explicit choices and requires valid cloud accounts', async (t) => {
     const f = await fixture(t);
     const backend = {
