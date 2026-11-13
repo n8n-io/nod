@@ -2912,8 +2912,9 @@ test('memory selection spend reaches the session check-in before the agent opens
   assert.equal(opened, false);
 });
 
-test('repeated sign-in and action review failures stop while source text cannot stop the run', async () => {
+test('repeated input, sign-in and action review failures stop while source text cannot stop the run', async () => {
   for (const [name, reason] of [
+    ['read_source', 'Invalid read_source arguments at /ids: Expected array.'],
     [
       'sign_in',
       'Nod could not confirm it was still on the page and control it checked, so nothing was done.',
