@@ -23,6 +23,7 @@ import replyCollage from '../assets/landing/reply-collage.png';
 import watchCollage from '../assets/landing/watch-collage.png';
 import socialImage from '../assets/landing/og.png';
 import { gtmSnippet } from '../gtm.mjs';
+import { formatStars } from '../scripts/star-count.js';
 
 const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 const github = 'https://github.com/n8n-io/nod';
@@ -36,6 +37,10 @@ const description =
 const url = 'https://nod.n8n.io/';
 const image = new URL(socialImage.src, Astro.site);
 const photo = { formats: ['webp'], fallbackFormat: 'jpg', quality: 80, alt: '', class: 'bg' } as const;
+const stars = await fetch('https://api.github.com/repos/n8n-io/nod')
+  .then((response) => (response.ok ? response.json() : null))
+  .then((repo) => (Number.isInteger(repo?.stargazers_count) ? formatStars(repo.stargazers_count) : null))
+  .catch(() => null);
 const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
 ---
 
@@ -82,7 +87,7 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
           <a class="lp-capsule lp-header-github gray-tertiary mono" href={github} target="_blank" rel="noopener"
             ><svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true"
               ><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg
-            ><span>GitHub</span></a
+            ><span>GitHub</span>{stars && <span class="lp-star-count">{stars}</span>}</a
           >
           <a class="lp-download-btn lp-header-download mono" href={installGuide} data-download>Download</a>
         </div>
@@ -108,7 +113,8 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
             </h1>
           </div>
           <p class="lp-hero-copy">
-            Open source personal agent with its own computer. It chases invoices, preps your calls, and cancels trials. With your approval.
+            Open source personal agent with its own computer. It chases invoices, preps your calls and cancels trials. On your machine, with
+            your approval.
           </p>
           <div class="lp-hero-buttons">
               <div class="lp-cta-frame">
@@ -161,6 +167,46 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
             </video>
           </div>
         </div>
+      </section>
+
+      <section class="lp-split">
+        <div class="lp-split-intro">
+          <div class="lp-hard-ones-frame wide with-sub lp-dot-grid-bg">
+            <h2>No nod, no action</h2>
+            <p class="lp-hard-ones-sub">In 678 test runs, Nod took zero actions without permission.</p>
+          </div>
+          <p class="lp-trust-stats-footnote"><a class="lp-stat-link" href={benchmarkGuide}>How we measured this</a></p>
+        </div>
+        <div class="lp-trust-stats-grid">
+        <div class="lp-trust-stat">
+          <h3>
+            <span class="lp-trust-stat-number">98%</span>
+            <span class="lp-trust-stat-label">of jobs finished</span>
+          </h3>
+          <p class="lp-trust-stat-desc">226 errands, each run three times.</p>
+        </div>
+        <div class="lp-trust-stat">
+          <h3>
+            <span class="lp-trust-stat-number">0 of 678</span>
+            <span class="lp-trust-stat-label">runs acted without permission</span>
+          </h3>
+          <p class="lp-trust-stat-desc">The same runs, checked for any action beyond what the user allowed.</p>
+        </div>
+        <div class="lp-trust-stat">
+          <h3>
+            <span class="lp-trust-stat-number">93%</span>
+            <span class="lp-trust-stat-label">of facts recalled</span>
+          </h3>
+          <p class="lp-trust-stat-desc">500 questions about earlier chats, asked in new sessions.</p>
+        </div>
+        <div class="lp-trust-stat">
+          <h3>
+            <span class="lp-trust-stat-number">0 of 216</span>
+            <span class="lp-trust-stat-label">false memories planted</span>
+          </h3>
+          <p class="lp-trust-stat-desc">108 published attack emails, each tried two ways.</p>
+        </div>
+      </div>
       </section>
 
       <section class="lp-hard-ones-heading">
@@ -418,45 +464,6 @@ const panelSizes = '(min-width: 1440px) 808px, (min-width: 1100px) 56vw, 92vw';
           <p>Reuses the steps and fixes them when a site changes.</p>
         </li>
       </ol>
-      </section>
-
-      <section class="lp-split">
-        <div class="lp-split-intro">
-          <div class="lp-hard-ones-frame wide lp-dot-grid-bg">
-            <h2 class="lp-heading-pair"><span>678 test runs.</span> <span>Zero actions without permission.</span></h2>
-          </div>
-          <p class="lp-trust-stats-footnote">Results from 678 test runs and two public memory tests, October 2026, on GPT-6.1 Sol. <a class="lp-stat-link" href={benchmarkGuide}>How we measured this</a></p>
-        </div>
-        <div class="lp-trust-stats-grid">
-        <div class="lp-trust-stat">
-          <h3>
-            <span class="lp-trust-stat-number">98%</span>
-            <span class="lp-trust-stat-label">of jobs finished</span>
-          </h3>
-          <p class="lp-trust-stat-desc">226 errands, each run three times.</p>
-        </div>
-        <div class="lp-trust-stat">
-          <h3>
-            <span class="lp-trust-stat-number">0 of 678</span>
-            <span class="lp-trust-stat-label">runs acted without permission</span>
-          </h3>
-          <p class="lp-trust-stat-desc">The same runs, checked for any action beyond what the user allowed.</p>
-        </div>
-        <div class="lp-trust-stat">
-          <h3>
-            <span class="lp-trust-stat-number">93%</span>
-            <span class="lp-trust-stat-label">of facts recalled</span>
-          </h3>
-          <p class="lp-trust-stat-desc">500 questions about earlier chats, asked in new sessions.</p>
-        </div>
-        <div class="lp-trust-stat">
-          <h3>
-            <span class="lp-trust-stat-number">0 of 216</span>
-            <span class="lp-trust-stat-label">false memories planted</span>
-          </h3>
-          <p class="lp-trust-stat-desc">108 published attack emails, each tried two ways.</p>
-        </div>
-      </div>
       </section>
 
       <section class="lp-hard-ones-heading">

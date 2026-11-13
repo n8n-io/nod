@@ -178,6 +178,12 @@ body.lp {
 .lp-capsule.gray-tertiary {
   background: var(--gray-20);
 }
+.lp-star-count {
+  margin-left: 4px;
+  padding-left: 12px;
+  border-left: 1px solid var(--gray-50);
+  font-variant-numeric: tabular-nums;
+}
 
 .lp-dot-grid-bg {
   position: relative;
@@ -280,7 +286,7 @@ body.lp {
   color: var(--black);
   text-align: center;
   text-wrap: balance;
-  width: 600px;
+  width: 720px;
   max-width: 100%;
 }
 .lp-hero-buttons {
@@ -566,15 +572,6 @@ body.lp {
   white-space: nowrap;
   text-align: center;
 }
-.lp-hard-ones-frame h2.lp-heading-pair {
-  line-height: 1.15;
-  white-space: normal;
-}
-@media (min-width: 640px) {
-  .lp-heading-pair span {
-    white-space: nowrap;
-  }
-}
 .lp-hard-ones-sub {
   font-size: 18px;
   width: 624px;
@@ -596,6 +593,10 @@ body.lp {
 }
 .lp-split-intro {
   display: contents;
+}
+.lp-split .lp-hard-ones-sub {
+  color: var(--text-secondary);
+  text-wrap: balance;
 }
 .lp-split .lp-trust-stats-footnote {
   order: 1;
