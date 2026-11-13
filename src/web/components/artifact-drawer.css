@@ -841,6 +841,9 @@
 
 .app-shell:has(.chat-route:not([hidden]) .artifact-drawer) .desktop-toolbar {
   right: var(--artifact-drawer-space, 0px);
+}
+
+.app-shell:has(.chat-route:not([hidden]) .artifact-drawer:not([hidden])) .desktop-toolbar {
   padding-right: 16px;
 }
 
