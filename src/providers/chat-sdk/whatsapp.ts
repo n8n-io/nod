@@ -757,11 +757,7 @@ export function createWhatsAppLinkedTransport(options: {
         try {
           await clearSaved();
         } catch (cause) {
-          stop(
-            'failed',
-            'Nod could not remove the WhatsApp device keys. Try Disconnect again.',
-            cause,
-          );
+          stop('failed', 'Nod could not remove the WhatsApp device keys.', cause);
           throw cause;
         }
         channel.available = false;

@@ -546,7 +546,7 @@ export function Channels() {
           <ChannelCard
             key={channel.provider.id}
             {...channel}
-            busy={busy || resuming || !settings?.ready}
+            busy={busy || resuming || (!settings?.ready && !channel.setup?.managed)}
             onConnect={() => open(channel.provider.id)}
             onPair={() =>
               channel.provider.id === 'whatsapp' ? open('whatsapp') : void resumeTelegram()
