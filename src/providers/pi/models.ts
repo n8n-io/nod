@@ -7,6 +7,7 @@ import {
   createAssistantMessageEventStream,
   type Api,
   type AssistantMessage,
+  type Context,
   type Model,
   type CredentialStore,
 } from '@earendil-works/pi-ai';
@@ -1024,6 +1025,28 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
   };
 }
 
+function portableToolCallIds(messages: Context['messages'], model: string): Context['messages'] {
+  const ids = new Map<string, string>();
+  return messages.map((message) => {
+    if (message.role === 'toolResult') {
+      const id = ids.get(message.toolCallId);
+      return id ? { ...message, toolCallId: id } : message;
+    }
+    if (message.role !== 'assistant') return message;
+    ids.clear();
+    if (message.model === model) return message;
+    return {
+      ...message,
+      content: message.content.map((part) => {
+        if (part.type !== 'toolCall' || /^[A-Za-z0-9]{9}$/.test(part.id)) return part;
+        const id = createHash('sha256').update(part.id).digest('hex').slice(0, 9);
+        ids.set(part.id, id);
+        return { ...part, id };
+      }),
+    };
+  });
+}
+
 export async function createPiModelRuntime(
   access: ModelAccess,
   {
@@ -1171,7 +1194,12 @@ export async function createPiModelRuntime(
       access.provider === 'cloudflare-ai-gateway' ||
       (access.provider === 'openai' && !subscription) ||
       Boolean(usage);
-    const upstream = stream(target, audio?.context ?? context, {
+    const sent = audio?.context ?? context;
+    const replay =
+      access.provider === 'compatible'
+        ? { ...sent, messages: portableToolCallIds(sent.messages, target.id) }
+        : sent;
+    const upstream = stream(target, replay, {
       ...options,
       maxTokens:
         options?.maxTokens && target.maxTokens > 0

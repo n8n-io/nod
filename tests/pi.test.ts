@@ -5170,6 +5170,45 @@ test('OpenAI-compatible servers get tool models, a system message and one attemp
   );
   assert.equal(nativeRedirect.stopReason, 'error');
   assert.equal(bodies.length, 2);
+  const called = (id: string, from: string, timestamp: number) => [
+    {
+      ...fauxAssistantMessage(''),
+      provider: model.provider,
+      api: model.api,
+      model: from,
+      stopReason: 'toolUse' as const,
+      content: [{ type: 'toolCall' as const, id, name: 'read_fixture', arguments: {} }],
+      timestamp,
+    },
+    {
+      role: 'toolResult' as const,
+      toolCallId: id,
+      toolName: 'read_fixture',
+      content: [{ type: 'text' as const, text: 'Synthetic data' }],
+      isError: false,
+      timestamp,
+    },
+  ];
+  await runtime.completeSimple(
+    model,
+    {
+      messages: [
+        { role: 'user', content: 'Synthetic fixture', timestamp: 1 },
+        ...called('functions.read_fixture:12', 'fixture-other:8b', 2),
+        ...called('functions.read_fixture:13', model.id, 3),
+        { role: 'user', content: 'Synthetic follow-up', timestamp: 4 },
+      ],
+    },
+    {},
+  );
+  assert.equal(bodies.length, 3);
+  const replayed = (
+    bodies[2] as { messages: { tool_calls?: { id: string }[]; tool_call_id?: string }[] }
+  ).messages;
+  const calls = replayed.flatMap(({ tool_calls }) => tool_calls?.map(({ id }) => id) ?? []);
+  assert.match(calls[0], /^[A-Za-z0-9]{9}$/);
+  assert.equal(calls[1], 'functions.read_fixture:13');
+  assert.deepEqual(replayed.flatMap(({ tool_call_id }) => tool_call_id ?? []), calls);
 });
 
 test('LM Studio servers list tool-trained chat models with their loaded context and vision', async (t) => {
