@@ -92,10 +92,12 @@ function smallContextAccess(
 
 test('models and routers complete tool discovery inside the endpoint context', async (t) => {
   const { createSkillLibrary } = await import('../src/providers/pi/skills.ts');
+  const { createDocumentation } = await import('../src/server/documentation.ts');
   const { coreSkills } = await import('../src/runtime/prompt.ts');
   for (const { provider, id, window, limit } of [
     { provider: 'compatible', id: 'fixture-small', window: 8192, limit: 8192 },
     { provider: 'compatible', id: 'fixture-memory-small', window: 8192, limit: 8192 },
+    { provider: 'compatible', id: 'fixture-docs-small', window: 8192, limit: 8192 },
     { provider: 'openrouter', id: 'openrouter/free', window: 200_000, limit: 8192 },
     { provider: 'openrouter', id: 'openrouter/auto', window: 2_000_000, limit: 8192 },
     { provider: 'compatible', id: 'fixture-medium', window: 16_384, limit: 16_384 },
@@ -161,15 +163,33 @@ test('models and routers complete tool discovery inside the endpoint context', a
       let summaries = 0;
       const bodies: Record<string, any>[] = [];
       const requestBudgets: number[] = [];
-      const calls = [
-        ['nod_tool_search', { query: 'skills', limit: 1 }],
-        [
-          'skills',
-          { action: 'read', name: id.startsWith('fixture-mcp') ? 'mcp__fixture' : 'artifacts' },
-        ],
-        ['nod_tool_search', { query: 'share_file', limit: 1 }],
-        ['share_file', { path: 'report.txt' }],
-      ] as const;
+      const documentation =
+        id === 'fixture-docs-small'
+          ? createDocumentation(join(process.cwd(), 'docs/src/content/docs'))
+          : undefined;
+      const docsSection = (await documentation?.search('Composio zero data retention'))?.[0];
+      assert.ok(!documentation || docsSection);
+      const calls =
+        id === 'fixture-docs-small'
+          ? ([
+              ['nod_tool_search', { query: 'nod_docs', limit: 1 }],
+              ['nod_docs', { action: 'search', query: 'Composio zero data retention' }],
+              ['nod_docs', { action: 'read', id: docsSection!.id }],
+              ['nod_tool_search', { query: 'share_file', limit: 1 }],
+              ['share_file', { path: 'report.txt' }],
+            ] as const)
+          : ([
+              ['nod_tool_search', { query: 'skills', limit: 1 }],
+              [
+                'skills',
+                {
+                  action: 'read',
+                  name: id.startsWith('fixture-mcp') ? 'mcp__fixture' : 'artifacts',
+                },
+              ],
+              ['nod_tool_search', { query: 'share_file', limit: 1 }],
+              ['share_file', { path: 'report.txt' }],
+            ] as const);
       const serve = async (url: RequestInfo | URL, init?: RequestInit) => {
         assert.equal(String(url), `${access.definition.spec.baseUrl}/chat/completions`);
         const body = JSON.parse(String(init?.body));
@@ -288,6 +308,7 @@ test('models and routers complete tool discovery inside the endpoint context', a
           },
         }),
         skills: createSkillLibrary(join(process.cwd(), 'src/runtime/skills'), coreSkills),
+        documentation,
         computer: fakeComputer(),
         workspace: fakeWorkspace({
           readArtifact: async (_thread, path) => readFile(join(directory, path)),
@@ -300,7 +321,7 @@ test('models and routers complete tool discovery inside the endpoint context', a
         prompt: 'Return the text report named report.txt.',
         rules: 'Do not contact anyone.',
         memory: 'Synthetic earlier memory. '.repeat(2000),
-        ...(id === 'fixture-memory-small'
+        ...(['fixture-memory-small', 'fixture-docs-small'].includes(id)
           ? {
               memoryBrief: {
                 mode: 'recall' as const,
@@ -384,9 +405,14 @@ test('models and routers complete tool discovery inside the endpoint context', a
           largestRequestTokens: Math.max(...requestBudgets),
         }),
       );
-      assert.equal(requests, 5);
-      assert.equal(bodies.length, 5 + summaries);
-      assert.deepEqual(started, ['tool_search', 'skills', 'tool_search', 'share_file']);
+      assert.equal(requests, calls.length + 1);
+      assert.equal(bodies.length, calls.length + 1 + summaries);
+      assert.deepEqual(
+        started,
+        id === 'fixture-docs-small'
+          ? ['tool_search', 'nod_docs', 'nod_docs', 'tool_search', 'share_file']
+          : ['tool_search', 'skills', 'tool_search', 'share_file'],
+      );
       assert.equal(published.length, 1);
       assert.equal(published[0].toString(), 'Synthetic report bytes');
       if (id === 'fixture-resumed')
@@ -1150,6 +1176,113 @@ test('a restarted proactive check within the hour reads its stable context from 
       blocks.some((block: any) => /FIRST-BATCH/.test(block.text) && !('cache_control' in block)),
     );
   }
+});
+
+test('fresh scheduled sessions put their stable first request on a one-hour Anthropic cache', async (t) => {
+  const backend = createPiModelBackend({
+    fetch: async () => {
+      throw new Error('No live catalog request is allowed.');
+    },
+  });
+  const definition = (await backend.catalog('anthropic', 'api_key')).find(
+    ({ choice }) => choice.id === 'claude-opus-5-5',
+  )!;
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-scheduled-cache-'));
+  const bodies: Array<Record<string, any>> = [];
+  const stream = [
+    {
+      type: 'message_start',
+      message: {
+        id: 'msg_fixture',
+        type: 'message',
+        role: 'assistant',
+        model: 'claude-opus-5-5',
+        content: [],
+        stop_reason: null,
+        usage: { input_tokens: 10, output_tokens: 1 },
+      },
+    },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Checked.' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2 } },
+    { type: 'message_stop' },
+  ]
+    .map((event) => 'event: ' + event.type + '\ndata: ' + JSON.stringify(event) + '\n\n')
+    .join('');
+  t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (!url.includes('/v1/messages')) throw new Error('Unexpected request to ' + url);
+    bodies.push(JSON.parse(String(init?.body)));
+    return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+  });
+  const runtime = createAgentRuntime({
+    agent: createPiAgent({
+      provider: 'anthropic',
+      resolve: async () => ({
+        provider: 'anthropic',
+        method: 'api_key',
+        definition,
+        effort: 'low',
+        read: async () => ({ type: 'api_key', key: 'fixture-key' }),
+      }),
+      sessionRoot: join(directory, 'sessions'),
+    }),
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  const threadId = 'test-' + randomUUID();
+  const fire = (label: string) =>
+    runtime.runTurn({
+      ...({} as RuntimeContext),
+      ...({ scheduleCache: 'long' } as { scheduleCache: 'long' }),
+      threadId,
+      turnId: randomUUID(),
+      sessionId: randomUUID(),
+      background: true,
+      resumed: false,
+      prompt: 'Scheduled task: synthetic status check ' + label,
+      memory: 'about/name: The owner is Alex.',
+      history: [
+        { role: 'user', text: 'Earlier owner message', createdAt: new Date().toISOString() },
+      ],
+      workspacePath: directory,
+      signal: new AbortController().signal,
+      attachments: [],
+      emit: async () => {},
+      reply: async () => {},
+      delta: () => {},
+    });
+  try {
+    await fire('FIRST-RUN');
+    await fire('SECOND-RUN');
+  } finally {
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+  assert.equal(bodies.length, 2);
+  const blocks = (body: Record<string, any>) =>
+    body.messages.flatMap((message: { content: unknown }) =>
+      Array.isArray(message.content) ? message.content : [],
+    );
+  const stable = bodies.map((body) =>
+    blocks(body).filter((block: any) => block.cache_control?.ttl === '1h'),
+  );
+  assert.equal(stable[0].length, 2);
+  assert.match(stable[0][0].text, /^Owner context/);
+  assert.match(stable[0][1].text, /^Respond to currentInstruction/);
+  assert.deepEqual(
+    stable[0].map((block: any) => block.text),
+    stable[1].map((block: any) => block.text),
+  );
+  for (const [index, body] of bodies.entries()) {
+    const tail = blocks(body).at(-1);
+    assert.match(tail.text, index ? /SECOND-RUN/ : /FIRST-RUN/);
+    assert.deepEqual(tail.cache_control, { type: 'ephemeral' });
+    assert.equal('cache_control' in body.system[0], false);
+    assert.ok(JSON.stringify(body).split('"cache_control"').length - 1 <= 4);
+  }
+  assert.equal(JSON.stringify(bodies[1]).includes('FIRST-RUN'), false);
 });
 
 test('messages taken after a Pi turn each reach a new request and not after a question', async () => {
@@ -1923,6 +2056,202 @@ test('a turn posts its opening line and final reply, shows the lines between as 
   } finally {
     await runtime.dispose();
   }
+});
+
+test('task handoff does not repeat acknowledgements and keeps independent final answers and steered requests', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-task-handoff-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const acknowledgement =
+    "On it! I'll review your synthetic inbox, flag anything urgent, and save reply drafts. Nothing gets sent without your OK.";
+  const startMessage =
+    "I've started reviewing your synthetic inbox. I'll flag urgent email and save draft replies. Nothing gets sent without your OK.";
+  const cases = [
+    {
+      name: 'earlier update',
+      earlyUpdate: true,
+      steer: false,
+      final:
+        "I've started reviewing your synthetic inbox. I'll save draft replies and flag urgent email. Nothing gets sent without your OK.",
+      expected: [acknowledgement],
+    },
+    {
+      name: 'task start alone',
+      earlyUpdate: false,
+      steer: false,
+      final:
+        "I've started reviewing your synthetic inbox. I'll flag urgent email and save draft replies. Nothing gets sent without your OK.",
+      expected: [],
+    },
+    {
+      name: 'Spanish task start alone',
+      earlyUpdate: false,
+      steer: false,
+      start:
+        'Ya he empezado a revisar tu buzón y preparar borradores de respuesta. No enviaré nada sin tu aprobación.',
+      final:
+        'Ya he empezado a revisar tu buzón y preparando borradores de respuesta. No enviaré nada sin tu aprobación.',
+      expected: [],
+    },
+    {
+      name: 'independent answer',
+      earlyUpdate: true,
+      steer: false,
+      final: 'The synthetic invoice is due Friday for €450. I flagged it for review.',
+      expected: [
+        acknowledgement,
+        'The synthetic invoice is due Friday for €450. I flagged it for review.',
+      ],
+    },
+    {
+      name: 'new finding after the task starts',
+      earlyUpdate: true,
+      steer: false,
+      final:
+        "I've started reviewing your synthetic inbox. I'll flag urgent email and save draft replies. Nothing gets sent without your OK. I found 3 urgent messages.",
+      expected: [
+        acknowledgement,
+        "I've started reviewing your synthetic inbox. I'll flag urgent email and save draft replies. Nothing gets sent without your OK. I found 3 urgent messages.",
+      ],
+    },
+    {
+      name: 'negated finding after task start',
+      earlyUpdate: false,
+      steer: false,
+      start: "I've started checking the synthetic invoices. Every invoice is approved.",
+      final: "I've started checking the synthetic invoices. Every invoice is not approved.",
+      expected: ["I've started checking the synthetic invoices. Every invoice is not approved."],
+    },
+    {
+      name: 'removed negation after task start',
+      earlyUpdate: false,
+      steer: false,
+      start: "I've started checking the synthetic invoices. No invoice is approved.",
+      final: "I've started checking the synthetic invoices. Every invoice is approved.",
+      expected: ["I've started checking the synthetic invoices. Every invoice is approved."],
+    },
+    {
+      name: 'changed count after task start',
+      earlyUpdate: false,
+      steer: false,
+      start: "I've started checking all 12 synthetic invoices for overdue items.",
+      final: "I've started checking all 2 synthetic invoices for overdue items.",
+      expected: ["I've started checking all 2 synthetic invoices for overdue items."],
+    },
+    {
+      name: 'qualitative finding after task start',
+      earlyUpdate: false,
+      steer: false,
+      start: "I've started reviewing your synthetic inbox and will flag urgent messages.",
+      final: "I've started reviewing your synthetic inbox and will flag fraudulent messages.",
+      expected: ["I've started reviewing your synthetic inbox and will flag fraudulent messages."],
+    },
+    {
+      name: 'finding borrowed from the owner request',
+      earlyUpdate: false,
+      steer: false,
+      prompt: 'Check the synthetic invoices and tell me which are rejected.',
+      start: "I've started checking the synthetic invoices. Every invoice is approved.",
+      final: "I've started checking the synthetic invoices. Every invoice is rejected.",
+      expected: ["I've started checking the synthetic invoices. Every invoice is rejected."],
+    },
+    {
+      name: 'steered answer',
+      earlyUpdate: true,
+      steer: true,
+      final: 'I started reviewing your synthetic inbox in the account you selected.',
+      expected: [
+        acknowledgement,
+        'I started reviewing your synthetic inbox in the account you selected.',
+      ],
+    },
+    {
+      name: 'steered answer before a task starts',
+      earlyUpdate: true,
+      steer: true,
+      steerBefore: true,
+      final:
+        "I've started reviewing your synthetic Gmail inbox. I'll flag urgent email and save draft replies. Nothing gets sent without your OK.",
+      expected: [
+        acknowledgement,
+        "I've started reviewing your synthetic Gmail inbox. I'll flag urgent email and save draft replies. Nothing gets sent without your OK.",
+      ],
+    },
+  ] as const;
+  for (const scenario of cases)
+    await t.test(scenario.name, async () => {
+      const posted: string[] = [];
+      const incoming: string[] = [];
+      const runtime = createAgentRuntime({
+        agent: {
+          open: async (input) => ({
+            resumed: false,
+            abort() {},
+            dispose() {},
+            prompt: async () => {
+              if (scenario.earlyUpdate)
+                await input.tools
+                  .find((tool) => tool.name === 'send_message')!
+                  .execute({ text: acknowledgement, intent: 'update' });
+              if ('steerBefore' in scenario && scenario.steerBefore)
+                incoming.push(...((await input.nextMessages?.()) ?? []).map((item) => item.text));
+              await input.tools
+                .find((tool) => tool.name === 'task')!
+                .execute({
+                  action: 'start',
+                  title: 'Review synthetic inbox',
+                  doneWhen: 'Urgent messages identified and draft replies saved',
+                  now: 'Reviewing synthetic inbox',
+                  message: 'start' in scenario ? scenario.start : startMessage,
+                });
+              if (!('steerBefore' in scenario && scenario.steerBefore))
+                incoming.push(...((await input.nextMessages?.()) ?? []).map((item) => item.text));
+              input.onEvent({ type: 'message_start' });
+              input.onEvent({ type: 'text_delta', text: scenario.final });
+              input.onEvent({ type: 'final', text: scenario.final });
+              input.onEvent({ type: 'message_end', status: 'succeeded' });
+            },
+          }),
+          dispose() {},
+        },
+        computer: fakeComputer(),
+        workspace: fakeWorkspace(),
+      });
+      try {
+        let steered = false;
+        const result = await runtime.runTurn({
+          ...context(directory),
+          turnId: randomUUID(),
+          prompt:
+            'prompt' in scenario
+              ? scenario.prompt
+              : 'Review my synthetic inbox and report urgent messages.',
+          task: async () => ({ id: randomUUID() }),
+          reply: async (text) => {
+            posted.push(text);
+          },
+          ...(scenario.steer
+            ? {
+                takeMessages: async () =>
+                  steered
+                    ? []
+                    : ((steered = true),
+                      [
+                        {
+                          id: randomUUID(),
+                          text: 'Use the synthetic account I selected.',
+                          attachments: [],
+                        },
+                      ]),
+              }
+            : {}),
+        });
+        assert.equal(result.status, 'succeeded');
+        assert.deepEqual(posted, scenario.expected);
+        assert.equal(incoming.length, scenario.steer ? 1 : 0);
+      } finally {
+        await runtime.dispose();
+      }
+    });
 });
 
 test('a paused turn cannot start a subagent still preparing and failed children return errors', async (t) => {

@@ -1155,6 +1155,41 @@ test(
           );
         },
       );
+      await t.test('scheduled cache retention follows the actual recurring cadence', async () => {
+        const before = clock;
+        try {
+          clock = new Date('2035-10-26T12:00:00.000Z');
+          for (const [cron, delay, expected] of [
+            ['*/3 * * * *', 0, 'short'],
+            ['*/15 * * * *', 20 * 60_000, 'long'],
+            ['0 * * * *', 0, undefined],
+          ] as const) {
+            const schedule = await create({ cron });
+            const job = await jobFor(schedule.id);
+            clock = new Date(new Date(job.data.scheduledFor).getTime() + delay);
+            await deliver([job]);
+            const [run] = await runs(schedule.id);
+            assert.equal(await personal.scheduleCache(run!.turnId), expected);
+            assert.equal(
+              (await request('DELETE', `/api/schedules/${schedule.id}`)).statusCode,
+              200,
+            );
+          }
+          const once = await create({
+            kind: 'once',
+            runAt: new Date(clock.getTime() + 60_000).toISOString(),
+          });
+          const job = await jobFor(once.id);
+          clock = new Date(job.data.scheduledFor);
+          await deliver([job]);
+          const [run] = await runs(once.id);
+          assert.equal(await personal.scheduleCache(run!.turnId), undefined);
+          assert.equal(await personal.scheduleCache(randomUUID()), undefined);
+          assert.equal((await request('DELETE', `/api/schedules/${once.id}`)).statusCode, 200);
+        } finally {
+          clock = before;
+        }
+      });
     } finally {
       await channels?.close();
       await app.close();

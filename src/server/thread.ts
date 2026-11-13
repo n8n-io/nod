@@ -62,6 +62,7 @@ import { spendingLimitReached, spendingLimitText } from './ledger.ts';
 import type { ExecutionEvent } from '../shared/execution.ts';
 import { lockKey } from './locks.ts';
 import { redactSecretText } from './redaction.ts';
+import { resemblesTaskAcknowledgement } from '../shared/task-ack.ts';
 
 const queue = 'thread-drain';
 const rasterTypes = new Set([
@@ -171,6 +172,7 @@ export interface ThreadDependencies {
   ) => Promise<void>;
   spendingLimit?: () => Promise<{ monthlyUsd: number } | null>;
   checkIn?: (sessionId: string, turnId: string) => Promise<RuntimeContext['checkIn']>;
+  scheduleCache?: (turnId: string) => Promise<RuntimeContext['scheduleCache']>;
   skipTurn?: (sourceId: string) => Promise<boolean>;
   accountProfile?: () => Promise<RuntimeContext['account']>;
   connectedApps?: () => Promise<NonNullable<RuntimeContext['connectedApps']>>;
@@ -183,7 +185,13 @@ export interface ThreadDependencies {
     exclude: string | null,
   ) => Promise<NonNullable<RuntimeContext['relatedConversation']>>;
   learnedSkills?: () => Promise<RuntimeContext['learnedSkills']>;
-  task?: (turn: TurnRef, input: unknown, sourceMessageId: string | null) => Promise<unknown>;
+  task?: (
+    turn: TurnRef,
+    input: unknown,
+    sourceMessageId: string | null,
+    priorMessageId?: string,
+    priorHandoff?: boolean,
+  ) => Promise<unknown>;
   taskContext?: (turn: TurnRef) => Promise<RuntimeContext['taskContext']>;
   settleTask?: (turn: TurnRef, result: string) => Promise<void>;
   taskLedger?: (threadId: string) => Promise<NonNullable<RuntimeContext['tasks']>>;
@@ -1678,14 +1686,24 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   const replies: Array<{ id: string; text: string; source: string }> = [];
   let explicitAudio = false;
   const published = new Map<string, Artifact>();
+  let sourceMessageId: string | null = null;
+  const plainReplies: Array<{
+    id: string;
+    text: string;
+    sourceMessageId: string | null;
+    handoff: boolean;
+  }> = [];
   const post = async (
     text: string,
     attachments: Artifact[] = [],
     streamId?: string,
     replyToMessageId?: string,
     presentation?: Presentation,
+    handoff = false,
   ) => {
     const source = text;
+    const postedFor = sourceMessageId;
+    const plain = !attachments.length && !presentation && !replyFileReferences(source).length;
     const created = new Map<string, Artifact>();
     const cleanup: Array<() => Promise<void>> = [];
     let rolledBack = false;
@@ -1735,6 +1753,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       });
       const spoken = presentation && !text.trim() ? presentationText(presentation) : text;
       if (spoken.trim()) replies.push({ id, text: spoken, source });
+      if (plain && spoken.trim())
+        plainReplies.push({ id, text: spoken, sourceMessageId: postedFor, handoff });
     } catch (error) {
       if (rolledBack) await Promise.allSettled(cleanup.map((remove) => remove()));
       throw error;
@@ -1800,7 +1820,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     await ensureCurrent();
     const loaded = await loadTurnContext(turn, dependencies);
     const proactivity = await dependencies.proactivity?.(ref, signal);
-    let sourceMessageId = loaded.sourceMessageId;
+    sourceMessageId = loaded.sourceMessageId;
     let voice = loaded.voice;
     let ownerMessage = turn.source === 'user';
     const stagedFiles = new Map<string, string>();
@@ -1931,6 +1951,13 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       mode: (await dependencies.audioReplies?.()) ?? defaultPreferences.speechReply,
       available: Boolean(dependencies.speech.configured),
     };
+    let scheduleCache: RuntimeContext['scheduleCache'];
+    if (turn.source === 'schedule')
+      try {
+        scheduleCache = await dependencies.scheduleCache?.(turnId);
+      } catch (error) {
+        logFailure('schedule_cache_policy_failed', error, { threadId, turnId });
+      }
     const result = await dependencies.runTurn({
       threadId,
       turnId,
@@ -1938,6 +1965,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       resumed: turn.source === 'resume' || Boolean(turn.parent_turn_id),
       prompt: turn.prompt,
       background: turn.background,
+      ...(scheduleCache ? { scheduleCache } : {}),
       channel: String(turn.channel).split(':')[0],
       ...loaded.context,
       speech,
@@ -1978,9 +2006,9 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         return bytes;
       },
       emit,
-      reply: async (text, streamId, replyToMessageId, presentation) => {
+      reply: async (text, streamId, replyToMessageId, presentation, handoff) => {
         const pending = shared.slice();
-        await post(text, pending, streamId, replyToMessageId, presentation);
+        await post(text, pending, streamId, replyToMessageId, presentation, handoff);
         shared.splice(0, pending.length);
       },
       delta: (text, streamId, done) => {
@@ -2054,7 +2082,23 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       manage: fenced((action, args, admit) =>
         dependencies.manage(ref, action, args, { sourceMessageId, admit }),
       ),
-      task: dependencies.task && fenced((input) => dependencies.task!(ref, input, sourceMessageId)),
+      task:
+        dependencies.task &&
+        fenced((input) => {
+          const prior =
+            (input as { action?: unknown })?.action === 'start' && sourceMessageId
+              ? plainReplies.findLast(
+                  (reply) =>
+                    reply.sourceMessageId === sourceMessageId &&
+                    resemblesTaskAcknowledgement(
+                      reply.text,
+                      (input as { message?: string }).message ?? '',
+                      reply.handoff,
+                    ),
+                )
+              : undefined;
+          return dependencies.task!(ref, input, sourceMessageId, prior?.id, prior?.handoff);
+        }),
       takeMessages:
         turn.background && !taskContext
           ? undefined

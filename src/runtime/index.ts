@@ -14,6 +14,7 @@ import type {
   AgentTool,
   AgentToolOutcome,
   AgentToolResult,
+  Documentation,
   RuntimeContext,
   RuntimeObservation,
   RuntimeResult,
@@ -29,11 +30,13 @@ import {
   compactSystemPrompt,
   firstInstruction,
   observerInstruction,
+  scheduledInstruction,
   ownerContext,
   steeredInstruction,
   systemPrompt,
 } from './prompt.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
+import { repeatsTaskStart } from '../shared/task-ack.ts';
 import { currentUserTime, localResultTimes } from './time-context.ts';
 import { connectedTools, mcpNamespaces, nodTools } from './tools.ts';
 import type { ReplyDelivery, Turn } from './turn.ts';
@@ -83,13 +86,13 @@ const parentTools = new Set([
   'task',
 ]);
 const parallelTools = new Set([
+  'nod_docs',
   'delegate',
   'share_file',
   'create_audio',
   'skills',
   'apps',
   'manage_personal_context',
-  'task',
   'react_to_message',
 ]);
 const orderedTools = new Set([
@@ -111,6 +114,7 @@ const reportingTaskActions = new Set(['finish', 'list', 'stop', 'update']);
 const limitActions = new Set(['usage_get', 'limits_update']);
 const dollars = (value: number) => `$${Number.isInteger(value) ? value : value.toFixed(2)}`;
 const delimitedTools = new Set([
+  'nod_docs',
   'read_source',
   'proactive_issue',
   'apps',
@@ -163,6 +167,7 @@ export function createAgentRuntime(dependencies: {
   computer: Computer;
   workspace: Workspace;
   skills?: SkillLibrary;
+  documentation?: Documentation;
   redactError?(text: string): string;
   observe?(turnId: string, event: RuntimeObservation): void;
   keepWarm?(threadId: string): Promise<boolean>;
@@ -262,6 +267,7 @@ export function createAgentRuntime(dependencies: {
     let reported = false;
     let finalDelivered = false;
     let requestRevision = 0;
+    let taskStart: { revision: number; message: string; previousReply: string } | undefined;
     const activeToolCalls = new Set<Promise<unknown>>();
     const observe = (event: RuntimeObservation) => {
       if (signal.aborted && !(event.type === 'tool_end' && event.status === 'cancelled')) return;
@@ -292,6 +298,7 @@ export function createAgentRuntime(dependencies: {
       id?: string,
       replyToMessageId?: string,
       presentation?: Presentation,
+      handoff?: boolean,
     ): Promise<ReplyDelivery> => {
       signal.throwIfAborted();
       const trimmed = text.trim();
@@ -302,7 +309,8 @@ export function createAgentRuntime(dependencies: {
         (trimmed === lastReply && (!visual || visual === lastPresentation))
       )
         return { delivered: false, presentation: outcome };
-      await context.reply(trimmed, id, replyToMessageId, presentation);
+      if (handoff) await context.reply(trimmed, id, replyToMessageId, presentation, true);
+      else await context.reply(trimmed, id, replyToMessageId, presentation);
       lastPresentation = visual;
       if (id) persistedStreams.add(id);
       lastReply = trimmed;
@@ -335,7 +343,8 @@ export function createAgentRuntime(dependencies: {
 
     const flushText = () => {
       if (bufferedText && !stopped && speaks) {
-        if (speakNext || replyOwed) context.delta(bufferedText, (streamId ??= randomUUID()));
+        if ((speakNext || replyOwed) && (taskStart?.revision !== requestRevision || replyOwed))
+          context.delta(bufferedText, (streamId ??= randomUUID()));
         streamedText += bufferedText;
       }
       bufferedText = '';
@@ -505,6 +514,12 @@ export function createAgentRuntime(dependencies: {
             (name === 'task' && (params as { action?: unknown } | null)?.action === 'start')
           )
             reported = true;
+          if (name === 'task' && (params as { action?: unknown } | null)?.action === 'start')
+            taskStart = {
+              revision,
+              message: String((params as { message?: unknown }).message ?? ''),
+              previousReply: lastReply,
+            };
           if (!stopped) await context.emit('tool_complete', label, event());
           result = isToolResult(output) ? output : textResult(output);
           if (
@@ -648,7 +663,10 @@ export function createAgentRuntime(dependencies: {
         return { gate, settle: () => decide(gate.asked) };
       };
       const bind = (turn: Turn, take: () => Promise<unknown>): AgentTool[] =>
-        [...nodTools(turn, skills), ...(context.proactivity ? [] : connectedTools(turn))]
+        [
+          ...nodTools(turn, skills, dependencies.documentation),
+          ...(context.proactivity ? [] : connectedTools(turn)),
+        ]
           .filter(
             (tool) =>
               !context.proactivity ||
@@ -778,8 +796,9 @@ export function createAgentRuntime(dependencies: {
           id?: string,
           replyToMessageId?: string,
           presentation?: Presentation,
+          handoff?: boolean,
         ) => {
-          return reply(text, id, replyToMessageId, presentation);
+          return reply(text, id, replyToMessageId, presentation, handoff);
         },
         pause,
         confirm,
@@ -984,6 +1003,7 @@ export function createAgentRuntime(dependencies: {
         ...execution,
         automatic: !context.currentMessageId,
         ...(context.proactivity ? { restricted: true, restartable: !context.resumed } : {}),
+        ...(context.scheduleCache ? { scheduleCache: context.scheduleCache } : {}),
         ...(sessionId === threadId && !context.proactivity && dependencies.keepWarm
           ? { keepWarm: () => dependencies.keepWarm!(threadId) }
           : {}),
@@ -1121,7 +1141,15 @@ export function createAgentRuntime(dependencies: {
             pendingReplies = pendingReplies.then(() =>
               context.emit('final', '', { execution }).catch(() => {}),
             );
-            queueStreamReply(event.text, streamId ?? randomUUID());
+            if (
+              taskStart?.revision === requestRevision &&
+              !replyOwed &&
+              [taskStart.message, taskStart.previousReply].some((message) =>
+                repeatsTaskStart(event.text, message),
+              )
+            )
+              streamSubmitted = true;
+            else queueStreamReply(event.text, streamId ?? randomUUID());
           }
         },
       });
@@ -1146,8 +1174,19 @@ export function createAgentRuntime(dependencies: {
             sourceReads,
           )
         : undefined;
+      const scheduled =
+        !context.proactivity && context.scheduleCache
+          ? scheduledInstruction(
+              requestContext,
+              resumed && !compact,
+              omitted,
+              currentUserTime(context.timeZone),
+              analysis,
+            )
+          : undefined;
       const fallback =
         observer?.text ??
+        scheduled?.text ??
         instruct(firstInstruction(requestContext, resumed && !compact, omitted, analysis));
       const audio = nativeAudio(context.attachments, fallback);
       const nativeContext = audio
@@ -1162,7 +1201,7 @@ export function createAgentRuntime(dependencies: {
           : fallback,
         images,
         audio,
-        observer?.stable,
+        audio ? undefined : (observer?.stable ?? scheduled?.stable),
       );
       await pendingReplies;
       signal.throwIfAborted();

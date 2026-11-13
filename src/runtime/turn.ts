@@ -18,6 +18,7 @@ export interface Turn {
     id?: string,
     replyToMessageId?: string,
     presentation?: Presentation,
+    handoff?: boolean,
   ): Promise<ReplyDelivery>;
   pause(
     reason: 'question' | 'approval' | 'credentials' | 'browser',

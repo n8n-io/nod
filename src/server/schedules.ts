@@ -232,6 +232,27 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     })[0]!;
   }
 
+  async function scheduleCache(turnId: string): Promise<'short' | 'long' | undefined> {
+    const row = (
+      await pool.query<{ cron: string; timeZone: string; scheduledFor: Date }>(
+        `SELECT s.cron,s.time_zone AS "timeZone",r.scheduled_for AS "scheduledFor"
+         FROM schedule_runs r JOIN schedules s ON s.id=r.schedule_id AND s.owner_id=r.owner_id
+         WHERE r.turn_id=$1 AND r.owner_id=$2 AND r.schedule_revision=s.revision
+           AND s.enabled AND s.kind='recurring' AND s.cron IS NOT NULL`,
+        [turnId, ownerId],
+      )
+    ).rows[0];
+    if (!row) return;
+    const next = scheduler.previewSchedule(row.cron, {
+      tz: row.timeZone,
+      count: 1,
+      from: row.scheduledFor,
+    })[0];
+    const gap = next ? next.getTime() - row.scheduledFor.getTime() : Number.NaN;
+    if (!Number.isFinite(gap) || gap <= 0 || gap > 55 * 60_000) return;
+    return gap > 5 * 60_000 ? 'long' : 'short';
+  }
+
   function lateNote(schedule: ScheduleRow) {
     const due = schedule.kind === 'once' ? schedule.runAt! : schedule.nextRun!;
     const started = now();
@@ -1097,6 +1118,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
 
   return {
     initialize,
+    scheduleCache,
     list,
     get: async (id: string) => value(await read(id)),
     create,

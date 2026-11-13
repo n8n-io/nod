@@ -21,6 +21,7 @@ import type {
   RuntimeContext,
 } from '../src/ports/agent.ts';
 import { createSkillLibrary } from '../src/providers/pi/skills.ts';
+import { createDocumentation } from '../src/server/documentation.ts';
 import { coreSkills } from '../src/runtime/prompt.ts';
 import { localResultTimes } from '../src/runtime/time-context.ts';
 import { personalActions, toolDefinitions } from '../src/runtime/tools.ts';
@@ -1242,6 +1243,93 @@ test('skill reads cannot escape the trusted library or load workspace instructio
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('documentation search ranks sections, bounds reads and cannot read files outside its index', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-documentation-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const root = join(directory, 'docs');
+  await mkdir(join(root, 'trust'), { recursive: true });
+  await writeFile(join(directory, 'private.md'), 'OutsideSecretMarker');
+  await symlink(join(directory, 'private.md'), join(root, 'private.md'));
+  await symlink(directory, join(root, 'outside'));
+  await writeFile(join(root, 'index.md'), '---\ntitle: What is Nod\n---\nFixture documentation.');
+  await writeFile(join(root, 'noisy.md'), '---\ntitle: Nod apps\n---\nNod. New status.');
+  for (let index = 0; index < 9; index++)
+    await writeFile(
+      join(root, `fixture-${index}.md`),
+      `---\ntitle: Retention fixture ${index}\n---\nSynthetic retention details.`,
+    );
+  const long = `## Long section\n\n${'Synthetic documentation. '.repeat(800)}`.trim();
+  await writeFile(
+    join(root, 'trust', 'privacy.mdx'),
+    `---\ntitle: Privacy\n---\nimport { Aside } from 'fixture';\nimport 'fixture.css';\n\nIntroductory fixture.\n\n## Zero Data Retention\n\nCovered fixture payloads are not saved. [Reference](https://example.com/urlonlymarker).\n\n\`\`\`md\n# This is a code sample\n\`\`\`\n\n\`\`\`ts\nimport { sample } from 'fixture';\n\`\`\`\n\n${long}\n\n## Long section\n\nAnother section.\n\n## Long section-1\n\nA third section.`,
+  );
+  const docs = createDocumentation(root);
+  assert.equal((await docs.search('What is Nod?'))[0].id, 'index');
+  const results = await docs.search('zero data retention');
+  assert.equal(results[0].id, 'trust/privacy#zero-data-retention');
+  assert.equal(results[0].url, 'https://nod.n8n.io/docs/trust/privacy/#zero-data-retention');
+  assert.equal(results.length, 5);
+  assert.ok(results.every(({ excerpt }) => excerpt.length <= 400));
+  assert.deepEqual(await docs.search('news'), []);
+  assert.deepEqual(await docs.search('statu'), []);
+  assert.equal((await docs.search('status'))[0].id, 'noisy');
+  assert.deepEqual(await docs.search('urlonlymarker'), []);
+  assert.deepEqual(await docs.search('OutsideSecretMarker'), []);
+  const retained = await docs.read(results[0].id);
+  assert.match(retained.content, /# This is a code sample/);
+  assert.match(retained.content, /import \{ sample \} from 'fixture';/);
+  assert.doesNotMatch(retained.content, /Aside|Long section/);
+  assert.doesNotMatch((await docs.read('trust/privacy')).content, /import|Aside/);
+  for (const id of [
+    '../private.md',
+    'https://example.com',
+    'private',
+    'trust/privacy#this-is-a-code-sample',
+  ])
+    await assert.rejects(docs.read(id), /section was not found/);
+  for (const offset of [-1, 0.5, Number.MAX_SAFE_INTEGER])
+    await assert.rejects(docs.read(results[0].id, offset), /offset is outside/);
+  await rm(root, { recursive: true });
+  let content = '';
+  let offset = 0;
+  do {
+    const part = await docs.read('trust/privacy#long-section', offset);
+    assert.ok(part.content.length <= 8000);
+    content += part.content;
+    offset = part.nextOffset ?? 0;
+  } while (offset);
+  assert.equal(content, long);
+  assert.match(JSON.stringify(await docs.read('trust/privacy#long-section-1')), /Another section/);
+  assert.match(
+    JSON.stringify(await docs.read('trust/privacy#long-section-1-1')),
+    /A third section/,
+  );
+  let calls = 0;
+  await fixture(
+    async (tools) => {
+      const read = tools.get('nod_docs')!;
+      assert.ok(read.parallel);
+      const output = await read.execute({ action: 'read', id: results[0].id });
+      assert.match(JSON.stringify(output), /untrusted_tool_result/);
+      await assert.rejects(
+        read.execute({ action: 'read', id: '../private.md' }),
+        /section was not found/,
+      );
+      await assert.rejects(
+        read.execute({ action: 'read', id: results[0].id, offset: -1 }),
+        /Invalid nod_docs/,
+      );
+    },
+    {
+      integration: async () => {
+        calls++;
+      },
+    },
+    { documentation: docs },
+  );
+  assert.equal(calls, 0);
 });
 
 test('text chat uses an untrusted image description, keeps owner text and counts initial and steered image spend', async (t) => {

@@ -198,7 +198,7 @@ flowchart TD
 
 A daily CI run at 03:17 UTC uses every check, including both Mac architectures and full Windows update acceptance. A manual CI run also uses every check, except a run on `release/desktop`, which compares that branch with `main`. The scope job reads full Git history so a base branch update does not hide the diff base. If that base is unavailable, CI runs every check. New pull request commits cancel older runs for that pull request. Main runs stay bound to each commit because releases require CI to pass on their exact source. Daily runs have a separate group so a push cannot cancel them.
 
-The **Self-host bundle** workflow builds and checks both Linux architectures when package, container or deployment inputs change. It also runs each Sunday at 04:47 UTC and on request. Ordinary web and server changes do not create both bundles. To get a bundle for a specific revision, run that workflow on the revision. Draft release creation still needs its separate manual input.
+The **Self-host bundle** workflow builds and checks both Linux architectures when package, container, deployment, or bundled documentation inputs change. It also runs each Sunday at 04:47 UTC and on request. Ordinary web and server changes do not create both bundles. To get a bundle for a specific revision, run that workflow on the revision. Draft release creation still needs its separate manual input.
 
 The selection and required-result rules are in [`.github/scripts/ci-scope.mjs`](https://github.com/n8n-io/nod/blob/main/.github/scripts/ci-scope.mjs). CI tests these rules with disposable Git repositories, including renames, removed tests and version-only releases. Workflow changes also run a pinned, checksum-verified actionlint to check syntax and expressions.
 

@@ -208,8 +208,12 @@ type CachedRequest = {
   messages?: Array<{ role: string; content: string | CachedBlock[] }>;
 };
 
-function observerCache(cached: { owner?: string; stable?: string[] }) {
-  const long = { type: 'ephemeral', ttl: '1h' };
+function stableRequestCache(
+  cached: { owner?: string; stable?: string[] },
+  retention: 'short' | 'long',
+  moveOwnerFirst = false,
+) {
+  const durable = retention === 'long' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' };
   const short = { type: 'ephemeral' };
   return (pi: ExtensionAPI) => {
     pi.on('before_provider_request', ({ payload }) => {
@@ -217,15 +221,44 @@ function observerCache(cached: { owner?: string; stable?: string[] }) {
       if (!request || !Array.isArray(request.messages)) return;
       if (Array.isArray(request.system) && request.system.filter((b) => b.cache_control).length > 1)
         return;
-      const blocks = request.messages.flatMap((message, at) =>
+      const prefixes = [...new Set(cached.stable ?? [])].sort((a, b) => a.length - b.length);
+      const longest = prefixes.at(-1);
+      const ordered = [...request.messages];
+      if (moveOwnerFirst && cached.owner && longest) {
+        const ownerAt = ordered.findIndex(
+          (message) =>
+            Array.isArray(message.content) &&
+            message.content.length === 1 &&
+            message.content[0]?.type === 'text' &&
+            message.content[0].text === cached.owner,
+        );
+        const stableAt = ordered.findIndex(
+          (message) =>
+            Array.isArray(message.content) &&
+            message.content.some(
+              (block) =>
+                block.type === 'text' &&
+                typeof block.text === 'string' &&
+                block.text.startsWith(longest),
+            ),
+        );
+        if (
+          stableAt >= 0 &&
+          ownerAt === stableAt + 1 &&
+          ordered[stableAt]?.role === 'user' &&
+          ordered[ownerAt]?.role === 'user'
+        ) {
+          const [owner] = ordered.splice(ownerAt, 1);
+          ordered.splice(stableAt, 0, owner!);
+        }
+      }
+      const blocks = ordered.flatMap((message, at) =>
         Array.isArray(message.content)
           ? message.content.map((block, index) => ({ block, at, index }))
           : [],
       );
       const lastText = (match: (text: string) => boolean) =>
         blocks.findLast(({ block }) => block.type === 'text' && match(block.text ?? ''));
-      const prefixes = [...new Set(cached.stable ?? [])].sort((a, b) => a.length - b.length);
-      const longest = prefixes.at(-1);
       const stable = longest
         ? lastText((text) => text.length > longest.length && text.startsWith(longest))
         : undefined;
@@ -236,22 +269,26 @@ function observerCache(cached: { owner?: string; stable?: string[] }) {
         (found.at < stable.at || (found.at === stable.at && found.index < stable.index))
           ? found
           : undefined;
-      const messages = request.messages.map((message, at) =>
+      const messages = ordered.map((message, at) =>
         Array.isArray(message.content)
           ? {
               ...message,
               content: message.content.flatMap((block, index): CachedBlock[] => {
                 const rolling = block.cache_control ? { cache_control: short } : {};
                 if (owner?.at === at && owner.index === index)
-                  return [{ ...block, cache_control: long }];
+                  return [{ ...block, cache_control: durable }];
                 if (stable?.at === at && stable.index === index)
                   return [
                     ...prefixes.map((prefix, step) => ({
                       type: 'text',
                       text: prefix.slice(step ? prefixes[step - 1]!.length : 0),
-                      cache_control: long,
+                      cache_control: durable,
                     })),
-                    { ...block, text: block.text!.slice(longest!.length), ...rolling },
+                    {
+                      ...block,
+                      text: block.text!.slice(longest!.length),
+                      ...(moveOwnerFirst ? { cache_control: short } : rolling),
+                    },
                   ];
                 return [{ ...block, ...rolling }];
               }),
@@ -530,7 +567,8 @@ export function createPiAgent(options: {
         model.api === 'anthropic-messages' &&
         last !== undefined &&
         Date.now() - last.timestamp < longCache;
-      if (keepCache) {
+      const scheduleCache = model.api === 'anthropic-messages' ? input.scheduleCache : undefined;
+      if (keepCache || scheduleCache === 'long') {
         const stream = runtime.streamSimple.bind(runtime);
         runtime.streamSimple = (target, context, options) =>
           stream(target, context, { ...options, cacheRetention: 'long' });
@@ -695,7 +733,15 @@ export function createPiAgent(options: {
           recentImages,
           audioContext(manager, readsNativeAudio(model) && Boolean(input.readAudio)),
           threadPromptCache(input.threadId),
-          ...(keepCache ? [observerCache(cached)] : []),
+          ...(keepCache || scheduleCache
+            ? [
+                stableRequestCache(
+                  cached,
+                  keepCache ? 'long' : scheduleCache!,
+                  Boolean(scheduleCache),
+                ),
+              ]
+            : []),
           ownerContextCopies(input.ownerContext),
           (pi: ExtensionAPI) =>
             pi.on('session_before_compact', async ({ preparation, reason, signal }) => {
