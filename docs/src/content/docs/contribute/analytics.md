@@ -18,7 +18,7 @@ Change the event schema, collectors, privacy checks, and dashboards together.
 - **Count the observed result.** Save/change events follow committed writes or successful responses. Record clicks and requests separately when those are the actual measurement.
 - **Use `<noun>_<past verb>`.** Properties use `snake_case`; reuse names with their existing meaning. Survey events retain PostHog's required names and properties.
 
-Use `provider` for the model provider across onboarding, connection, selection, execution, and usage events. Keep the event's meaning: selected provider at setup/start, last observed agent provider at completion, and actual provider for each model request.
+Use `provider` for the model provider across onboarding, connection, selection, execution, and usage events. Keep the event's meaning: selected provider at setup/start, last observed main-agent provider at completion, and actual provider for each model request.
 
 Don't infer completed tasks or frustration from conversations. Execution success, useful output, and user satisfaction are separate questions.
 

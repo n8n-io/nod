@@ -1931,6 +1931,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           );
         return artifact;
       });
+      if (publish) replyCommitted = true;
       refresh();
       return artifact;
     };

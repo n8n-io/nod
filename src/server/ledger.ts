@@ -192,20 +192,20 @@ function modelUsed(
       request_kind:
         usage.category !== 'agent'
           ? usage.category
-          : usage.operation === 'compaction' ||
-              usage.operation === 'cache_warm' ||
-              usage.operation === 'auxiliary'
+          : usage.operation === 'compaction' || usage.operation === 'cache_warm'
             ? usage.operation
-            : execution?.parentRunId
-              ? 'helper'
-              : execution?.restricted
-                ? 'observer'
-                : execution
-                  ? execution.sessionId === execution.threadId
-                    ? 'chat'
-                    : 'task'
-                  : 'unclassified',
-      ...(Number.isSafeInteger(usage.attempt) && usage.attempt! > 0
+            : usage.operation !== 'request'
+              ? 'auxiliary'
+              : execution?.parentRunId
+                ? 'helper'
+                : execution?.restricted
+                  ? 'observer'
+                  : execution
+                    ? execution.sessionId === execution.threadId
+                      ? 'chat'
+                      : 'task'
+                    : 'unclassified',
+      ...(Number.isSafeInteger(usage.attempt) && usage.attempt! > 0 && usage.attempt! <= 4
         ? { attempt: usage.attempt }
         : {}),
       outcome: usage.status,

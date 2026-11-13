@@ -854,7 +854,14 @@ test('model analytics separate retries, helpers and maintenance from the main re
           options.onEvent({ type: 'retry', attempt: 1, attempts: 2, model: 'private-canary' });
           options.onEvent(usage('succeeded', Boolean(options.parentRunId)));
           options.onEvent(usage('succeeded', Boolean(options.parentRunId)));
-          for (const operation of ['compaction', 'cache_warm', 'auxiliary'])
+          for (const operation of [
+            'compaction',
+            'cache_warm',
+            'auxiliary',
+            'vision',
+            'attention',
+            'models',
+          ])
             options.onEvent({
               type: 'provider_usage',
               usage: {
@@ -913,11 +920,11 @@ test('model analytics separate retries, helpers and maintenance from the main re
     });
   });
   const calls = captured.filter((event) => event.event === 'model_used');
-  assert.equal(calls.length, 24);
+  assert.equal(calls.length, 36);
   for (const [index, kind] of ['chat', 'task', 'observer', 'helper'].entries()) {
     assert.deepEqual(
       calls
-        .slice(index * 6, index * 6 + 6)
+        .slice(index * 9, index * 9 + 9)
         .map(({ properties: p }) => [p.request_kind, p.attempt, p.outcome]),
       [
         [kind, 1, 'failed'],
@@ -925,6 +932,9 @@ test('model analytics separate retries, helpers and maintenance from the main re
         [kind, 1, 'succeeded'],
         ['compaction', undefined, 'failed'],
         ['cache_warm', undefined, 'failed'],
+        ['auxiliary', undefined, 'failed'],
+        ['auxiliary', undefined, 'failed'],
+        ['auxiliary', undefined, 'failed'],
         ['auxiliary', undefined, 'failed'],
       ],
     );
@@ -949,7 +959,7 @@ test('model analytics separate retries, helpers and maintenance from the main re
     });
     await session.prompt('private-canary', []);
   });
-  assert.equal(captured.length, 26);
+  assert.equal(captured.length, 38);
 });
 
 test('accepted owner messages do not inherit an unrelated run context', async () => {

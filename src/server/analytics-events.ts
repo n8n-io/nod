@@ -461,7 +461,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
               'unclassified',
             ])
             .optional(),
-          attempt: duration.min(1).optional(),
+          attempt: z.number().int().min(1).max(4).optional(),
           outcome: z.enum(['succeeded', 'failed', 'cancelled']),
           input_tokens: duration,
           output_tokens: duration,

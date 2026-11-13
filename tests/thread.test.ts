@@ -2695,8 +2695,8 @@ test(
             id: string,
             work_type: string,
             owner_requested: boolean,
+            result: string,
             outcome = 'succeeded',
-            result?: string,
           ) => {
             await waitFor(settled(id));
             await waitFor(() =>
@@ -2723,29 +2723,29 @@ test(
               assert.equal(JSON.stringify(event).includes(id), false);
             }
             assert.equal(ends[0]!.properties.outcome, outcome);
-            if (result) assert.equal(ends[0]!.properties.result, result);
+            assert.equal(ends[0]!.properties.result, result);
             assert.ok(Number(ends[0]!.properties.duration_ms) >= 0);
           };
           const requested = await thread.submitUserMessage('Synthetic analytics request');
-          await completed(requested.turnId, 'immediate', true, 'succeeded', 'reply');
+          await completed(requested.turnId, 'immediate', true, 'reply');
           const schedule = await thread.enqueueTurn('Synthetic analytics schedule', {
             source: 'schedule',
           });
-          await completed(schedule, 'scheduled', false);
+          await completed(schedule, 'scheduled', false, 'reply');
           const resumed = await thread.enqueueTurn('Synthetic analytics continuation', {
             source: 'resume',
             sessionId: schedule,
             parentTurnId: schedule,
             background: true,
           });
-          await completed(resumed, 'scheduled', false);
+          await completed(resumed, 'scheduled', false, 'reply');
           const task = await thread.enqueueTurn('Synthetic analytics delegated task', {
             source: 'task',
             parentTurnId: schedule,
           });
-          await completed(task, 'background', false);
+          await completed(task, 'background', false, 'reply');
           const question = await thread.enqueueTurn('ask-question', { source: 'schedule' });
-          await completed(question, 'scheduled', false, 'waiting_user', 'needs_owner');
+          await completed(question, 'scheduled', false, 'needs_owner', 'waiting_user');
           const message = (
             await db.pool.query(
               "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant' ORDER BY created_at DESC LIMIT 1",
@@ -2755,30 +2755,63 @@ test(
           const answer = await thread.submitUserMessage('Synthetic analytics answer', [], {
             replyToMessageId: message.id,
           });
-          await completed(answer.turnId, 'scheduled', true);
+          await completed(answer.turnId, 'scheduled', true, 'reply');
           const ownerResume = await thread.enqueueTurn('Synthetic analytics answer continuation', {
             source: 'resume',
             sessionId: question,
             parentTurnId: answer.turnId,
             background: true,
           });
-          await completed(ownerResume, 'scheduled', true);
+          await completed(ownerResume, 'scheduled', true, 'reply');
           const inspect = inspectObserver;
           try {
-            inspectObserver = async () => ({ status: 'succeeded' });
+            inspectObserver = async (context) => {
+              if (context.prompt === 'Synthetic analytics file reply')
+                await context.publishBrowserFile!({
+                  bytes: Buffer.from('Synthetic file content'),
+                  name: 'result.txt',
+                  mimeType: 'text/plain',
+                });
+              if (context.prompt === 'Synthetic analytics audio reply')
+                await context.createAudio!('Synthetic spoken result');
+              return { status: 'succeeded' };
+            };
             const quiet = await thread.enqueueTurn('Synthetic quiet analytics check', {
               source: 'event',
               background: true,
             });
-            await completed(quiet, 'background', false, 'succeeded', 'no_reply');
+            await completed(quiet, 'background', false, 'no_reply');
+            for (const kind of ['file', 'audio']) {
+              const delivered = await thread.submitUserMessage(`Synthetic analytics ${kind} reply`);
+              await completed(delivered.turnId, 'immediate', true, 'reply');
+            }
+            let started!: () => void;
+            const active = new Promise<void>((resolve) => {
+              started = resolve;
+            });
+            inspectObserver = async (context) => {
+              started();
+              await new Promise<void>((resolve) =>
+                context.signal.addEventListener('abort', () => resolve(), { once: true }),
+              );
+              return { status: 'succeeded' };
+            };
+            const stopped = await thread.submitUserMessage('Synthetic cancelled analytics request');
+            await active;
+            await thread.stopThread();
+            await completed(stopped.turnId, 'immediate', true, 'cancelled', 'cancelled');
           } finally {
             inspectObserver = inspect;
           }
           const failedPrompt = 'Synthetic failed analytics request';
-          modelErrors.set(failedPrompt, 'Synthetic provider rejected the request.');
+          modelErrors.set(failedPrompt, 'SYNTHETIC_RAW_MODEL_ERROR_NOD1023');
           try {
             const failed = await thread.submitUserMessage(failedPrompt);
             await completed(failed.turnId, 'immediate', true, 'failed', 'failed');
+            assert.doesNotMatch(
+              JSON.stringify(analyticsEvents),
+              /SYNTHETIC_RAW_MODEL_ERROR_NOD1023/,
+            );
           } finally {
             modelErrors.delete(failedPrompt);
           }
@@ -2832,7 +2865,7 @@ test(
             }
           };
           const start = await thread.submitUserMessage('Synthetic owner task creation');
-          await completed(start.turnId, 'immediate', true);
+          await completed(start.turnId, 'immediate', true, 'no_reply');
           const taskTurn = async (messageId: string) =>
             (
               await db.pool.query<{ id: string }>(
@@ -2841,23 +2874,23 @@ test(
               )
             ).rows[0]!.id;
           const created = await taskTurn(start.messageId);
-          await completed(created, 'background', true);
+          await completed(created, 'background', true, 'reply');
           const input = await thread.submitUserMessage('Synthetic owner task update');
-          await completed(input.turnId, 'immediate', true);
+          await completed(input.turnId, 'immediate', true, 'no_reply');
           const delivered = await taskTurn(input.messageId);
-          await completed(delivered, 'background', true);
+          await completed(delivered, 'background', true, 'reply');
           const continued = await thread.enqueueTurn('Synthetic task continuation', {
             source: 'resume',
             sessionId: taskId,
             parentTurnId: delivered,
             background: true,
           });
-          await completed(continued, 'background', true);
+          await completed(continued, 'background', true, 'reply');
           const waitingApproval = await thread.enqueueTurn('Synthetic analytics approval', {
             source: 'event',
             background: true,
           });
-          await completed(waitingApproval, 'background', false, 'waiting_user');
+          await completed(waitingApproval, 'background', false, 'needs_owner', 'waiting_user');
           const confirmation = (
             await db.pool.query<{ confirmation_message_id: string }>(
               'SELECT confirmation_message_id FROM approvals WHERE turn_id=$1',
@@ -2874,7 +2907,7 @@ test(
             [],
             confirmationInput,
           );
-          await completed(confirmed.turnId, 'background', true);
+          await completed(confirmed.turnId, 'background', true, 'reply');
           assert.equal(confirmedActions, 1);
           assert.deepEqual(
             (
