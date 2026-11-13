@@ -82,7 +82,26 @@ function reader(client: Client, accountId: string, input: Query, signal: AbortSi
       if (result.status === 404 || result.status === 410) return null;
       if (result.status === 400 && parameters.some(([name]) => name === 'pageToken'))
         throw new ObservationCursorExpired('The source page expired.');
-      if (result.status !== 200) throw new Error('The source could not be checked.');
+      if (result.status !== 200) {
+        const body = result.data as Record<string, unknown> | undefined;
+        const error = body?.error ?? body;
+        const detail =
+          typeof error === 'object' && error !== null
+            ? (error as Record<string, unknown>)
+            : undefined;
+        const reason =
+          typeof error === 'string'
+            ? error
+            : [detail?.message, detail?.status, detail?.code]
+                .filter((value) => typeof value === 'string' || typeof value === 'number')
+                .join('; ');
+        throw Object.assign(
+          new Error(
+            `The source could not be checked (HTTP ${result.status})${reason ? `: ${reason.slice(0, 2000)}` : '.'}`,
+          ),
+          { status: result.status },
+        );
+      }
       if (JSON.stringify(result.data).length > limit)
         throw new Error('The source record was too large.');
       return result.data;

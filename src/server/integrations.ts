@@ -1583,8 +1583,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           403,
         );
       throw new IntegrationError(
-        `${failure('The app request failed', error)} If the action name or arguments may be wrong, look them up with apps SEARCH_TOOLS.`,
-        502,
+        failure('The app request failed', error),
+        error instanceof IntegrationConnectionError ? error.statusCode : 502,
       );
     }
   }

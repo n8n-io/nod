@@ -888,7 +888,21 @@ export function createPiAgent(options: {
       const finishTurn = session.agent.finishTurn;
       session.agent.finishTurn = async (turn, signal) => {
         const result = await finishTurn?.(turn, signal);
-        if (input.shouldStop()) return { action: 'end' as const };
+        if (
+          input.shouldStop(
+            turn.toolResults.map((result) => ({
+              name: result.toolName,
+              ...(result.isError
+                ? {
+                    error: result.content
+                      .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+                      .join('\n'),
+                  }
+                : {}),
+            })),
+          )
+        )
+          return { action: 'end' as const };
         if (
           input.nextMessages &&
           result?.action !== 'end' &&

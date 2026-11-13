@@ -77,7 +77,7 @@ function literals<const T extends readonly string[]>(values: T) {
   return Type.Union(values.map((value) => Type.Literal(value)) as TLiteral<T[number]>[]);
 }
 
-type ObjectSchema = { properties: Record<string, TSchema>; required?: string[] };
+type ObjectSchema = TSchema & { properties: Record<string, TSchema>; required?: string[] };
 
 function unionOfObjects(schema: TSchema) {
   const members = (schema as { anyOf?: ObjectSchema[] }).anyOf;
@@ -667,8 +667,18 @@ function bind<P extends TSchema>(
     ...tool,
     execute: forms
       ? async (params: Static<P>) => {
-          if (!Value.Check(strict, params))
-            throw new Error(`Invalid ${tool.name} input. Valid forms: ${forms}.`);
+          const action = (params as Record<string, unknown>).action;
+          const members =
+            typeof action === 'string' &&
+            unionOfObjects(strict)?.filter((member) => member.properties.action?.const === action);
+          const selected = members && members.length === 1 ? members[0] : strict;
+          if (!Value.Check(selected, params)) {
+            const errors = [...Value.Errors(selected, params)]
+              .slice(0, 8)
+              .map((error) => `${error.path || '/'}: ${error.message}`)
+              .join('; ');
+            throw new Error(`Invalid ${tool.name} input: ${errors}. Valid forms: ${forms}.`);
+          }
           return execute(params);
         }
       : execute,

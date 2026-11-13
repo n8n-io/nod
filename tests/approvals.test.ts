@@ -76,7 +76,12 @@ test('confirmation repair keeps action facts fixed and requires a new independen
       },
     });
     const result = communication.present(null, data);
-    if (badSecond) await assert.rejects(result, /could not write an accurate confirmation/);
+    if (badSecond)
+      await assert.rejects(result, (error: Error) => {
+        assert.match(error.message, /could not write an accurate confirmation/);
+        assert.match(error.message, /recipient does not match args.recipient/);
+        return true;
+      });
     else assert.equal(await result, 'Send Synthetic report to recipient@example.test?');
     assert.equal(drafts, 2);
     assert.equal(
