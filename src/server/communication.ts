@@ -248,15 +248,16 @@ export function createCommunication(options: {
       delete args[key];
       delete details[key];
     }
-    if (
-      proposal.action === 'NOD_browser' &&
-      args.step === 'upload' &&
-      args.command &&
-      typeof args.command === 'object' &&
-      !Array.isArray(args.command)
-    ) {
-      const { path: _path, ...command } = args.command as Record<string, unknown>;
-      args.command = command;
+    if (proposal.action === 'NOD_browser') {
+      delete args.target;
+      if (args.command && typeof args.command === 'object' && !Array.isArray(args.command)) {
+        const command = { ...(args.command as Record<string, unknown>) };
+        delete command.selector;
+        delete command.targetSelector;
+        delete command.tabId;
+        if (args.step === 'upload') delete command.path;
+        args.command = command;
+      }
     }
     delete details.verifiedBinding;
     delete details.verifiedDraftMessageId;

@@ -163,6 +163,10 @@ interface ApprovalProps {
   children: ReactNode;
 }
 
+function declineLabel(title: string) {
+  return /^cancel\b/i.test(title) ? 'No' : 'Cancel';
+}
+
 export function ApprovalChoiceCard({
   approval,
   disabled = false,
@@ -171,7 +175,7 @@ export function ApprovalChoiceCard({
 }: ApprovalProps) {
   const id = useId();
   const { state, locked, error, answer } = useApproval(approval, disabled, onAnswer);
-  const rows = [approval.title, 'Cancel'];
+  const rows = [approval.title, declineLabel(approval.title)];
   const chosen = state === 'declined' ? 1 : 0;
   return (
     <section
@@ -223,6 +227,7 @@ export function ApprovalChoiceCard({
 export function ApprovalCard({ approval, disabled = false, onAnswer, children }: ApprovalProps) {
   const { state, locked, error, answer } = useApproval(approval, disabled, onAnswer);
   const verb = approval.title.split(' ')[0] || 'Approve';
+  const refusal = declineLabel(approval.title);
   return (
     <ActionCard
       label={approval.app ? `${approval.app}: ${approval.title}` : approval.title}
@@ -241,9 +246,9 @@ export function ApprovalCard({ approval, disabled = false, onAnswer, children }:
               type="button"
               variant="ghost"
               aria-disabled={locked}
-              onClick={() => void answer(false, 'Cancel')}
+              onClick={() => void answer(false, refusal)}
             >
-              Cancel
+              {refusal}
             </Button>
             <Button
               type="button"

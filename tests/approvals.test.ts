@@ -16,7 +16,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import Fastify from 'fastify';
+import { parseFragment, type DefaultTreeAdapterMap } from 'parse5';
 import pg from 'pg';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import remarkGfm from 'remark-gfm';
 import remarkParse from 'remark-parse';
 import { unified } from 'unified';
@@ -39,6 +42,7 @@ import {
   gmailMessageTarget,
 } from '../src/server/action-presentation.ts';
 import { createCommunication } from '../src/server/communication.ts';
+import { ApprovalCard, ApprovalChoiceCard } from '../src/web/components/action-card.tsx';
 import { createE2eCurators } from '../scripts/e2e-curators.ts';
 import { createPiMemoryCurator } from '../src/providers/pi/memory-curator.ts';
 
@@ -59,6 +63,42 @@ function visibleMarkdownText(markdown: string) {
     .map((node) => node.value)
     .join('');
 }
+
+test('cancellation approval shows distinct approval and refusal controls', () => {
+  type Node = DefaultTreeAdapterMap['node'];
+  const label = (node: Node): string => {
+    if ('attrs' in node && node.attrs.some((attribute) => attribute.name === 'aria-hidden'))
+      return '';
+    if ('value' in node) return node.value;
+    return 'childNodes' in node ? node.childNodes.map(label).join('') : '';
+  };
+  for (const title of ['Cancel', 'Cancel booking']) {
+    const approval = {
+      id: 'synthetic-approval',
+      state: 'pending' as const,
+      title,
+      app: '',
+      slug: '',
+    };
+    for (const Component of [ApprovalChoiceCard, ApprovalCard]) {
+      const html = renderToStaticMarkup(
+        createElement(Component, {
+          approval,
+          children: createElement('span', null, `${title}?`),
+        }),
+      );
+      const buttons: string[] = [];
+      const visit = (node: Node) => {
+        if ('tagName' in node && node.tagName === 'button') buttons.push(label(node).trim());
+        if ('childNodes' in node) node.childNodes.forEach(visit);
+      };
+      visit(parseFragment(html));
+      assert.equal(buttons.length, 2);
+      assert.equal(new Set(buttons).size, 2);
+      assert.ok(buttons.includes('No'));
+    }
+  }
+});
 
 test('confirmation repairs rejected wording against the unchanged saved action', async () => {
   const proposal: ApprovalDescription = {
@@ -187,6 +227,7 @@ test('browser upload wording omits the private workspace path', async () => {
     args: {
       website: 'https://files.example.test',
       page: 'https://files.example.test/upload',
+      target: 'synthetic-opaque-page-id',
       step: 'upload',
       file: 'report.pdf',
       command,
@@ -201,7 +242,9 @@ test('browser upload wording omits the private workspace path', async () => {
       calls++;
       const request = input as Record<string, any>;
       assert.equal(request.data.args.file, 'report.pdf');
+      assert.equal(request.data.args.target, undefined);
       assert.equal(request.data.args.command.path, undefined);
+      assert.equal(request.data.args.command.selector, undefined);
       assert.equal(request.data.args.command.action, 'upload');
       if (request.purpose === 'confirmation_review') return { valid: true };
       return { text: 'Can I upload report.pdf to files.example.test?', action: 'Upload report' };
@@ -211,6 +254,7 @@ test('browser upload wording omits the private workspace path', async () => {
   assert.equal(calls, 2);
   assert.match(visibleMarkdownText(result.question), /upload report\.pdf to files\.example\.test/);
   assert.doesNotMatch(result.question, /\/workspace\/private/);
+  assert.equal(proposal.args.target, 'synthetic-opaque-page-id');
   assert.deepEqual(proposal.args.command, command);
 });
 
