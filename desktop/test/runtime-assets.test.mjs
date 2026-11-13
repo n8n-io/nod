@@ -2178,6 +2178,7 @@ test('engine source includes its own documentation without site dependencies or 
     'LICENSE',
     'NOTICE',
     'desktop/main/engine.mjs',
+    'desktop/main/system-certificates.mjs',
     'desktop/main/onepassword.mjs',
     'desktop/runtime/index.mjs',
     'desktop/runtime/assets.mjs',
@@ -2192,6 +2193,10 @@ test('engine source includes its own documentation without site dependencies or 
   );
   await copyEngineSource({ root: source, target });
   assert.equal(await readFile(join(target, page), 'utf8'), 'Synthetic engine fixture');
+  assert.equal(
+    await readFile(join(target, 'desktop/main/system-certificates.mjs'), 'utf8'),
+    'Synthetic engine fixture',
+  );
   await assert.rejects(access(join(target, 'docs/package.json')));
   await assert.rejects(access(join(target, 'docs/src/assets/fixture.png')));
 });
@@ -2203,6 +2208,7 @@ test('engine source imports only production dependencies outside the development
   const allowed = new Set([...Object.keys(manifest.dependencies), ...builtinModules]);
   const files = [
     join(repository, 'desktop/main/engine.mjs'),
+    join(repository, 'desktop/main/system-certificates.mjs'),
     join(repository, 'desktop/main/onepassword.mjs'),
   ];
   const walk = async (directory) => {
