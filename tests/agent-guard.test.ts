@@ -1254,7 +1254,7 @@ test('documentation search ranks sections, bounds reads and cannot read files ou
   await symlink(join(directory, 'private.md'), join(root, 'private.md'));
   await symlink(directory, join(root, 'outside'));
   await writeFile(join(root, 'index.md'), '---\ntitle: What is Nod\n---\nFixture documentation.');
-  await writeFile(join(root, 'noisy.md'), '---\ntitle: Nod apps\n---\nNod.');
+  await writeFile(join(root, 'noisy.md'), '---\ntitle: Nod apps\n---\nNod. New status.');
   for (let index = 0; index < 9; index++)
     await writeFile(
       join(root, `fixture-${index}.md`),
@@ -1272,7 +1272,9 @@ test('documentation search ranks sections, bounds reads and cannot read files ou
   assert.equal(results[0].url, 'https://nod.n8n.io/docs/trust/privacy/#zero-data-retention');
   assert.equal(results.length, 5);
   assert.ok(results.every(({ excerpt }) => excerpt.length <= 400));
-  assert.equal((await docs.search('payload'))[0].id, results[0].id);
+  assert.deepEqual(await docs.search('news'), []);
+  assert.deepEqual(await docs.search('statu'), []);
+  assert.equal((await docs.search('status'))[0].id, 'noisy');
   assert.deepEqual(await docs.search('urlonlymarker'), []);
   assert.deepEqual(await docs.search('OutsideSecretMarker'), []);
   const retained = await docs.read(results[0].id);

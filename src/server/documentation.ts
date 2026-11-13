@@ -26,9 +26,7 @@ function tokens(text: string) {
 const phrase = (text: string) => tokens(text).join(' ');
 
 function words(text: string) {
-  return tokens(text)
-    .filter((word) => !stopWords.has(word))
-    .map((word) => (word.length > 3 ? word.replace(/ies$/, 'y').replace(/(?<!s)s$/, '') : word));
+  return tokens(text).filter((word) => !stopWords.has(word));
 }
 
 function text(node: unknown): string {
