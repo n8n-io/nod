@@ -13,7 +13,7 @@ Saved work starts observation when at least one saved task exists. An empty loca
 
 ## From a change to a nudge
 
-App events, source change tokens, and due matters feed one observer for your active conversation. Code checks the signals before any model request. An unchanged source with no due matter starts no monitoring model call. There is no periodic model search through every connected app.
+App events, source change tokens, and due matters feed one observer for your active conversation. Code checks the signals before any model request. An unchanged source with no due matter starts no monitoring model call. There is no periodic model search through every connected app. During quiet hours, routine source assessments and background email checks wait. Changes collect for one batch after quiet hours end. New changes are not assessed during that wait. A known high-impact matter with strong evidence and a deadline before morning can still get a check.
 
 For app events with enough detail, one small model checks the whole batch before Nod reads the app. A notice that lacks detail reaches the observer.
 
@@ -92,7 +92,7 @@ There's no message count. The worker offers only work worth an interruption, wei
 
 - **One saved identity.** Related reports reuse the same primary source record and matter key. The model must recognize that they describe the same matter. Different keys can still cause repeated nudges.
 - **Once per matter.** A matter nudges you again only when its evidence changes and the change matters, such as an earlier deadline or a new option.
-- **Quiet hours.** A nudge that comes up at night goes out when they end, unless it's high impact with strong evidence and its deadline comes first. The observer can assess a changed source, but an offer must pass these delivery rules. A saved matter that comes due at night waits for the end unless its deadline comes first. A task the observer starts at night begins when they end, so its questions and approvals wait.
+- **Quiet hours.** A nudge that comes up at night goes out when they end, unless it's high impact with strong evidence and its deadline comes first. Routine source assessments wait until quiet hours end. A check already in progress can finish, but its offer must pass these delivery rules. A saved matter that comes due at night waits for the end unless its deadline comes first. A task the observer starts at night begins when they end, so its questions and approvals wait.
 - **Snooze and pause.** A snoozed matter waits until its time. "Pause preparation" stops source checks, nudges, new tasks Nod would start, planned checks of tasks it started, and the email checks on new Gmail mail. Schedules and tasks you started keep running.
 
 "Fewer of these" or "that wasn't useful" becomes feedback the worker uses next time.

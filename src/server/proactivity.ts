@@ -1099,6 +1099,7 @@ export function createProactivity(options: {
       result: Omit<z.infer<typeof observation>, 'remainingReads'>;
     }> = [];
     if (!canContinue()) return false;
+    if (isQuietTime(await preferences.get())) return true;
     const catalog = await sourceCatalog(signal);
     const toolSources = sourceIds.filter((id) =>
       catalog.some((source) => source.id === id && source.readable && source.tools),
@@ -1377,7 +1378,8 @@ export function createProactivity(options: {
       if (quietEnd)
         await client.query(
           `UPDATE proactive_issues SET next_check=$2 WHERE owner_id=$1 AND state IN ('open','offered') AND next_check<=now()
-           AND (proposal->>'deadline' IS NULL OR (proposal->>'deadline')::timestamptz>=$2)`,
+           AND (proposal->>'impact' IS DISTINCT FROM 'high' OR proposal->>'evidence' IS DISTINCT FROM 'strong'
+             OR proposal->>'deadline' IS NULL OR (proposal->>'deadline')::timestamptz>=$2)`,
           [ownerId, quietEnd],
         );
       const catalog = (await sourceCatalog(undefined, client)).filter((source) =>
@@ -1391,6 +1393,7 @@ export function createProactivity(options: {
           [ownerId],
         )
       ).rows;
+      if (quietEnd && !issues.length) return;
       const stored = (
         await client.query('SELECT * FROM proactive_sources WHERE owner_id=$1', [ownerId])
       ).rows;
@@ -1456,10 +1459,9 @@ export function createProactivity(options: {
               (pollDue && (dirty || Boolean(previous?.cursor))))
           );
         });
-      const pending = (issues.length || dueWithin(0).length ? dueWithin(batchLead) : []).slice(
-        0,
-        10,
-      );
+      const pending = (
+        quietEnd ? [] : issues.length || dueWithin(0).length ? dueWithin(batchLead) : []
+      ).slice(0, 10);
       if (!issues.length && !pending.length) return;
       const prompt = `Assess the due sources and unresolved matters with fresh source reads. Resolve handled matters. Prepare useful private work, and let server policy decide delivery.\n${untrustedBlock(
         'due source IDs and issue index',

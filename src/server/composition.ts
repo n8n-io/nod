@@ -93,7 +93,7 @@ import {
   createOpenRouterTranscriptionProvider,
   createOpenRouterSpeechProvider,
 } from '../providers/openrouter/speech.ts';
-import { createPreferencesStore } from './preferences.ts';
+import { createPreferencesStore, isQuietTime } from './preferences.ts';
 import { registerSpeechSettings } from './speech-settings.ts';
 import { createImageAnalysis } from './images.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
@@ -1107,17 +1107,25 @@ async function initializeApplication(
   const integrations = await createIntegrations(pool, {
     localFiles,
     mailCheck: async (...args) => {
+      const prefs = await speechPreferences.get();
       if (
+        prefs.proactivePaused ||
+        isQuietTime(prefs) ||
         (adapters.models && !adapters.models.hasClassificationModel()) ||
         (await ledger.preparationLimit()).reached
       )
         return args[0].map(() => undefined);
       return ledger.withPreparation(randomUUID(), () => mailCheck(...args));
     },
-    paused: async () =>
-      (await speechPreferences.get()).proactivePaused ||
-      Boolean(adapters.models && !adapters.models.hasClassificationModel()) ||
-      (await ledger.preparationLimit()).reached,
+    paused: async () => {
+      const prefs = await speechPreferences.get();
+      return (
+        prefs.proactivePaused ||
+        isQuietTime(prefs) ||
+        Boolean(adapters.models && !adapters.models.hasClassificationModel()) ||
+        (await ledger.preparationLimit()).reached
+      );
+    },
     analytics: captureAnalytics,
     analyticsConsent,
     admission,

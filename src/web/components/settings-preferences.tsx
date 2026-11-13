@@ -429,7 +429,9 @@ export function QuietHours() {
             onCheckedChange={(quietHoursEnabled) => setDraft({ ...draft, quietHoursEnabled })}
           />
         </div>
-        <p className="field-hint">Pause routine notifications during these hours.</p>
+        <p className="field-hint">
+          Pause routine preparation and notifications during these hours.
+        </p>
         <div
           className="account-quiet-times"
           data-cycle={usesTwelveHourClock(format) ? 'h12' : 'h23'}

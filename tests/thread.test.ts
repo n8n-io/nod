@@ -8327,6 +8327,149 @@ test(
               },
             );
             await t.test(
+              'quiet hours hold source changes for one morning batch without reads',
+              async () => {
+                await reset();
+                const clock = (offset: number) =>
+                  new Date(Date.now() + offset).toISOString().slice(11, 16);
+                await preferences.update({
+                  quietHoursEnabled: true,
+                  quietStart: clock(-60000),
+                  quietEnd: clock(3600000),
+                });
+                let decisions = 0;
+                const held = createProactivity({
+                  ...options,
+                  curator: {
+                    id: 'fixture',
+                    configured: true,
+                    curate: async () => {
+                      decisions++;
+                      return { review: true };
+                    },
+                  },
+                });
+                await transaction(
+                  (client) => held.signal(sourceId, client, 'Synthetic queued change'),
+                  db.pool,
+                );
+                await db.pool.query(
+                  'UPDATE proactive_sources SET claimed_turn=$3,claimed_signal=signal_version WHERE owner_id=$1 AND source_id=$2',
+                  [ownerId, sourceId, turnId],
+                );
+                const context = (await held.context(ref))!;
+                assert.equal(await context.screen!({}, new AbortController().signal), true);
+                assert.equal(sourceReads, 0);
+                assert.equal(decisions, 0);
+                await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turnId]);
+                for (let tick = 0; tick < 16; tick++) {
+                  await transaction(
+                    (client) => held.signal(sourceId, client, `Synthetic night change ${tick}`),
+                    db.pool,
+                  );
+                  assert.equal(await held.due(), undefined);
+                }
+                const row = (
+                  await db.pool.query(
+                    'SELECT inspected_signal,claimed_signal,signal_version FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                    [ownerId, sourceId],
+                  )
+                ).rows[0];
+                assert.equal(Number(row.inspected_signal), 0);
+                assert.equal(Number(row.signal_version), 17);
+                assert.equal(sourceReads, 0);
+                assert.equal(decisions, 0);
+                await preferences.update({ quietHoursEnabled: false });
+                let batches = 0;
+                inspectObserver = async (next) => {
+                  if (!next.prompt.startsWith('Assess the due sources')) return;
+                  batches++;
+                  return { status: 'succeeded' };
+                };
+                try {
+                  const next = await held.due();
+                  assert.ok(next && next !== turnId);
+                  await waitFor(settled(next));
+                  assert.equal(batches, 1);
+                } finally {
+                  inspectObserver = undefined;
+                }
+              },
+            );
+            await t.test(
+              'quiet hours check only known urgent matters and hold source sweeps',
+              async () => {
+                await reset();
+                const deadline = new Date(Date.now() + 1800000).toISOString();
+                await save({
+                  matterKey: 'routine-night',
+                  impact: 'medium',
+                  delivery: 'private',
+                  deadline,
+                });
+                await db.pool.query(
+                  `INSERT INTO proactive_issues(id,owner_id,identity,proposal,sources,policy)
+                  SELECT gen_random_uuid(),owner_id,'fixture-urgent-night',
+                    proposal||'{"matterKey":"urgent-night","impact":"high"}'::jsonb,sources,policy
+                  FROM proactive_issues WHERE owner_id=$1 LIMIT 1`,
+                  [ownerId],
+                );
+                await db.pool.query(
+                  "UPDATE proactive_issues SET next_check=now()-interval '1 minute' WHERE owner_id=$1",
+                  [ownerId],
+                );
+                await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turnId]);
+                const clock = (offset: number) =>
+                  new Date(Date.now() + offset).toISOString().slice(11, 16);
+                await preferences.update({
+                  quietHoursEnabled: true,
+                  quietStart: clock(-60000),
+                  quietEnd: clock(3600000),
+                });
+                await transaction(
+                  (client) => engine.signal(sourceId, client, 'Synthetic routine night change'),
+                  db.pool,
+                );
+                inspectObserver = async (next) => {
+                  if (!next.prompt.startsWith('Assess the due sources')) return;
+                  const rows = (
+                    await db.pool.query(
+                      'SELECT proposal FROM proactive_issues WHERE owner_id=$1 AND claimed_turn=$2',
+                      [ownerId, next.turnId],
+                    )
+                  ).rows;
+                  assert.deepEqual(
+                    rows.map((row) => row.proposal.matterKey),
+                    ['urgent-night'],
+                  );
+                  assert.equal(
+                    (
+                      await db.pool.query(
+                        'SELECT 1 FROM proactive_sources WHERE owner_id=$1 AND claimed_turn=$2',
+                        [ownerId, next.turnId],
+                      )
+                    ).rowCount,
+                    0,
+                  );
+                  return { status: 'succeeded' };
+                };
+                try {
+                  const next = await engine.due();
+                  assert.ok(next && next !== turnId);
+                  await waitFor(settled(next));
+                  const held = (
+                    await db.pool.query(
+                      "SELECT next_check FROM proactive_issues WHERE owner_id=$1 AND identity<>'fixture-urgent-night'",
+                      [ownerId],
+                    )
+                  ).rows[0];
+                  assert.ok(held.next_check.getTime() > Date.now() + 50 * 60000);
+                } finally {
+                  inspectObserver = undefined;
+                }
+              },
+            );
+            await t.test(
               '100 idle app sources start no reads or observer turns across 31 days of half-hour checks',
               async () => {
                 await reset();
@@ -8589,7 +8732,7 @@ test(
                   const clock = (offset: number) =>
                     new Date(Date.now() + offset).toISOString().slice(11, 16);
                   await preferences.update({
-                    quietHoursEnabled: quietHours,
+                    quietHoursEnabled: false,
                     quietStart: clock(-60_000),
                     quietEnd: clock(3_600_000),
                   });
@@ -8642,6 +8785,11 @@ test(
                         );
                       return { status: 'succeeded' };
                     };
+                    if (quietHours) {
+                      await preferences.update({ quietHoursEnabled: true });
+                      assert.equal(await engine.due(), undefined);
+                      await preferences.update({ quietHoursEnabled: false });
+                    }
                     const next = await engine.due();
                     assert.ok(next && next !== turnId);
                     await waitFor(settled(next));
