@@ -43,10 +43,12 @@ export function ActionCard({
 }
 
 export function ApprovalFields({
+  account,
   fields,
   body,
   bodyCut = false,
 }: {
+  account?: string;
   fields: Array<{ label: string; value: string }>;
   body?: string;
   bodyCut?: boolean;
@@ -54,7 +56,7 @@ export function ApprovalFields({
   return (
     <>
       <dl className="action-card-fields">
-        {fields.map((field) => (
+        {(account ? [{ label: 'Account', value: account }, ...fields] : fields).map((field) => (
           <Fragment key={field.label}>
             <dt>{field.label}</dt>
             <dd>{field.value}</dd>
@@ -183,6 +185,7 @@ export function ApprovalChoiceCard({
         <div id={`${id}-question`} className="choice-card-title">
           {children}
         </div>
+        {approval.account && <p className="choice-card-account">{approval.account}</p>}
       </div>
       {state === 'pending' ? (
         <div className="choice-card-list" role="group" aria-labelledby={`${id}-question`}>

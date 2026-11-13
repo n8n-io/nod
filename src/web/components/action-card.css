@@ -129,11 +129,15 @@
   font-weight: 500;
   line-height: 22px;
 }
-.choice-card-count {
+.choice-card-count,
+.choice-card-account {
   margin: 0;
   color: var(--text-secondary);
   font-size: 13px;
   line-height: 18px;
+}
+.choice-card-account {
+  overflow-wrap: anywhere;
 }
 .choice-card-title .message-text {
   margin: 0;

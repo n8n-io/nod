@@ -150,7 +150,7 @@ import { createDocumentation } from './documentation.ts';
 import { initializeDatabase, pool } from './db.ts';
 import { events, refresh } from './events.ts';
 import { createIntegrations } from './integrations.ts';
-import { gmailDraftTarget, gmailMessageTarget } from './action-presentation.ts';
+import { accountLabel, gmailDraftTarget, gmailMessageTarget } from './action-presentation.ts';
 import {
   createErrorRedactor,
   createRedactor,
@@ -1290,6 +1290,42 @@ async function initializeApplication(
       throw error;
     }
   };
+  const appAccount = async (args: Record<string, unknown>) => {
+    const account =
+      typeof args.connectionId === 'string'
+        ? (await integrations.list(ownerId, { refresh: false })).find(
+            (item) => item.connectionId === args.connectionId,
+          )
+        : undefined;
+    const path = account?.accessPaths?.find((item) => item.id === args.pathId);
+    return account
+      ? {
+          name: account.name,
+          identity: account.accountEmail ?? account.accountName,
+          ...(account.accountId ? { accountId: account.accountId } : {}),
+          ...(path ? { method: path.kind, endpoint: path.endpoint } : {}),
+        }
+      : undefined;
+  };
+  const assertReviewedAccount = async (args: Record<string, unknown>, reviewed: unknown) => {
+    if (reviewed === undefined) return;
+    const current = await appAccount(args);
+    if (isDeepStrictEqual(JSON.parse(JSON.stringify(current ?? null)), reviewed)) return;
+    const approved = accountLabel(reviewed);
+    const now = current && accountLabel(current);
+    throw Object.assign(
+      new Error(
+        !current
+          ? `This action was approved for ${approved}, but that account is no longer connected. Nothing ran.`
+          : now !== approved
+            ? `This action was approved for ${approved}, but its connection now belongs to ${now}. Nothing ran. Ask again to use the current account.`
+            : current.accountId !== (reviewed as { accountId?: unknown }).accountId
+              ? `This action was approved for ${approved}, but that account was connected again since. Nothing ran. Ask again to use the new connection.`
+              : `This action was approved for ${approved}, but the connection's access path changed. Nothing ran. Ask again to use the current path.`,
+      ),
+      { notRun: true },
+    );
+  };
   const approvals = await createApprovals(
     async (action, args, provenance) => {
       if (
@@ -1343,6 +1379,7 @@ async function initializeApplication(
                 : action.startsWith('NOD_')
                   ? personal.manage(action.slice('NOD_'.length), args, provenance)
                   : (async () => {
+                      await assertReviewedAccount(args, provenance.details?.account);
                       const savedBinding = provenance.details?.verifiedBinding;
                       const verifiedBinding =
                         typeof savedBinding === 'string' ? savedBinding : undefined;
@@ -1511,7 +1548,15 @@ async function initializeApplication(
       } else await integrations.prepare(ownerId, action, args, undefined, undefined, false, client);
     },
     (reply) => trust.answer(reply),
-    communication.describe,
+    (proposal, signal) => {
+      if (!proposal.details?.account || typeof proposal.details.account !== 'object')
+        return communication.describe(proposal, signal);
+      const { accountId: _, ...account } = proposal.details.account as Record<string, unknown>;
+      return communication.describe(
+        { ...proposal, details: { ...proposal.details, account } },
+        signal,
+      );
+    },
     captureAnalytics,
   );
   retireScheduleConfirmations = approvals.retireScheduleConfirmations;
@@ -2367,13 +2412,7 @@ async function initializeApplication(
         const verdict = await trust.check(turn, action, resolved ?? args, options.signal);
         await options.admit?.(verdict.confirm);
         const prepared = resolved ?? (await prepare());
-        const account =
-          verdict.confirm && typeof prepared.connectionId === 'string'
-            ? (await integrations.list(ownerId, { refresh: false })).find(
-                (item) => item.connectionId === prepared.connectionId,
-              )
-            : undefined;
-        const path = account?.accessPaths?.find((item) => item.id === prepared.pathId);
+        const account = verdict.confirm ? await appAccount(prepared) : undefined;
         let target:
           | ReturnType<typeof gmailMessageTarget>
           | {
@@ -2474,15 +2513,7 @@ async function initializeApplication(
           },
           details: {
             ...(verdict.confirm ? { reason: verdict.reason } : {}),
-            ...(account
-              ? {
-                  account: {
-                    name: account.name,
-                    identity: account.accountEmail ?? account.accountName,
-                    ...(path ? { method: path.kind, endpoint: path.endpoint } : {}),
-                  },
-                }
-              : {}),
+            ...(account ? { account } : {}),
             ...(target ? { target } : {}),
             ...(deleteBinding ? { verifiedBinding: deleteBinding } : {}),
             ...(verifiedDraftMessageId ? { verifiedDraftMessageId } : {}),

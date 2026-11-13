@@ -47,6 +47,7 @@ export interface MessageApproval {
   title: string;
   app: string;
   slug: string;
+  account?: string;
   fields?: Array<{ label: string; value: string }>;
   body?: string;
   bodyCut?: true;

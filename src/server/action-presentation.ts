@@ -60,6 +60,22 @@ export function approvalTitle(action: string) {
   return { title, app, slug: action.split('_')[0]!.toLowerCase() };
 }
 
+export function accountLabel(account: unknown) {
+  if (!account || typeof account !== 'object') return '';
+  const { name, identity } = account as Record<string, unknown>;
+  return [name, identity]
+    .filter((part): part is string => typeof part === 'string' && part.trim() !== '')
+    .join(' · ');
+}
+
+export function approvalAccount(details: unknown): { account?: string } {
+  const label =
+    details && typeof details === 'object'
+      ? accountLabel((details as { account?: unknown }).account)
+      : '';
+  return label ? { account: label } : {};
+}
+
 export function gmailMessageTarget(result: unknown, expectedId: string) {
   const object = (value: unknown): Record<string, unknown> | undefined =>
     value && typeof value === 'object' && !Array.isArray(value)

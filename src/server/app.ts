@@ -5,7 +5,7 @@ import {
   writtenAnswer,
   type AnswerChoice,
 } from '../shared/answer-choices.ts';
-import { approvalContent, approvalTitle } from './action-presentation.ts';
+import { approvalAccount, approvalContent, approvalTitle } from './action-presentation.ts';
 import Fastify, { type FastifyReply } from 'fastify';
 import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
@@ -65,7 +65,7 @@ const messageFields = `m.id,m.role,m.text,CASE WHEN m.role='user' THEN m.display
  (m.role='user' AND (m.approval_answer IS NOT NULL OR (m.question_answer IS NOT NULL AND m.text<>'' AND jsonb_array_length(m.attachments)=0))) AS "cardAnswer",
  CASE WHEN m.role='assistant' AND m.answer_choices IS NOT NULL THEN (SELECT json_build_object('answer',a.question_answer,'text',a.text) FROM messages a
    WHERE a.reply_to_message_id=m.id AND a.owner_id=m.owner_id AND a.role='user' AND a.question_answer IS NOT NULL AND a.text<>'' AND jsonb_array_length(a.attachments)=0 ORDER BY a.created_at,a.id LIMIT 1) END AS "choiceAnswer",
- CASE WHEN m.role='assistant' THEN (SELECT json_build_object('id',a.id,'status',a.status,'action',a.action,'args',a.args,'active',u.status IN ('running','waiting'),'executionActive',e.status IN ('queued','running','waiting')) FROM approvals a
+ CASE WHEN m.role='assistant' THEN (SELECT json_build_object('id',a.id,'status',a.status,'action',a.action,'args',a.args,'details',a.details,'active',u.status IN ('running','waiting'),'executionActive',e.status IN ('queued','running','waiting')) FROM approvals a
    JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id LEFT JOIN turns e ON e.id=a.execution_turn_id AND e.owner_id=a.owner_id
    WHERE a.confirmation_message_id=m.id AND a.owner_id=m.owner_id LIMIT 1) END AS "approval",
  CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',COALESCE(m.reply_quote,''),'isQuote',m.reply_quote IS NOT NULL) END AS "replyTo"`;
@@ -83,6 +83,7 @@ type ApprovalRow = {
   status: string;
   action: string;
   args: unknown;
+  details: unknown;
   active: boolean;
   executionActive: boolean | null;
 };
@@ -153,6 +154,7 @@ function messageView(row: MessageRow): Message {
             id: approval.id,
             state: approvalState(approval),
             ...approvalTitle(approval.action),
+            ...approvalAccount(approval.details),
             ...approvalContent(approval.action, approval.args),
           },
         }

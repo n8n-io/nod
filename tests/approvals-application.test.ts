@@ -649,12 +649,19 @@ test(
             (await request('GET', `/api/messages/around/${id}`))
               .json()
               .find((message: { id: string }) => message.id === id);
+          const { account_email: accountEmail } = (
+            await pool.query(
+              "SELECT account_email FROM app_connections WHERE owner_id=$1 AND slug='gmail'",
+              [ownerId],
+            )
+          ).rows[0];
           assert.deepEqual((await listed(clickCard.confirmation_message_id)).approval, {
             id: clickCard.id,
             state: 'pending',
             title: 'Send email',
             app: 'Gmail',
             slug: 'gmail',
+            account: `Gmail · ${accountEmail}`,
             fields: [
               { label: 'To', value: 'click@example.test' },
               { label: 'Subject', value: 'Synthetic invoices' },
@@ -700,6 +707,173 @@ test(
           const again = await click(clickCard.id);
           assert.equal(again.statusCode, 409, again.body);
           assert.equal(sends(), 1);
+        },
+      );
+
+      await t.test(
+        'an approval runs only on the account it showed, never a changed, removed or substitute account',
+        async (t) => {
+          t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 61_000 });
+          try {
+            const window = await request('POST', '/api/messages', {});
+            assert.equal(window.statusCode, 400, window.body);
+          } finally {
+            t.mock.timers.reset();
+          }
+          const accounts = async () =>
+            (
+              await pool.query<{ id: string; account_id: string; account_email: string }>(
+                "SELECT id,account_id,account_email FROM app_connections WHERE owner_id=$1 AND slug='gmail' AND account_id IS NOT NULL ORDER BY created_at,id",
+                [ownerId],
+              )
+            ).rows;
+          const [first] = await accounts();
+          const connect = await request('POST', '/api/apps/gmail/connect', {});
+          assert.equal(connect.statusCode, 200, connect.body);
+          const consent = await application.app.inject({
+            method: 'POST',
+            url: `/e2e/connect/${new URL(connect.json().url).pathname.split('/').pop()}`,
+            headers,
+          });
+          const callback = new URL(String(consent.headers.location));
+          await application.app.inject({ url: `${callback.pathname}${callback.search}`, headers });
+          const second = (await accounts()).find((row) => row.id !== first!.id)!;
+          assert.ok(second);
+          assert.notEqual(second.account_email, first!.account_email);
+          const sent = () =>
+            integrationFixture.writes.filter((write) => write.action === 'GMAIL_SEND_EMAIL');
+          const before = sent().length;
+          const email = {
+            recipient_email: 'two-accounts@example.test',
+            subject: 'Synthetic',
+            body: 'Synthetic.',
+          };
+          const listed = async (id: string) =>
+            (await request('GET', `/api/messages/around/${id}`))
+              .json()
+              .find((message: { id: string }) => message.id === id).approval;
+          const answer = async (card: { confirmation_message_id: string }) => {
+            const response = await request('POST', '/api/messages', {
+              text: 'Yes',
+              replyToMessageId: card.confirmation_message_id,
+              clientMessageId: randomUUID(),
+            });
+            assert.equal(response.statusCode, 200, response.body);
+            await waitFor(response.json().turnId, 'succeeded');
+            return response.json().turnId as string;
+          };
+          const attempt = async (args: Record<string, unknown>) => {
+            const text = `Synthetic account choice ${randomUUID()}`;
+            const errors = batchErrors.length;
+            batches.set(text, {
+              subagents: false,
+              calls: [{ tool: 'apps', action: 'GMAIL_SEND_EMAIL', args: { args } }],
+            });
+            const response = await request('POST', '/api/messages', { text });
+            assert.equal(response.statusCode, 200, response.body);
+            await waitFor(response.json().turnId, 'succeeded');
+            assert.deepEqual(await approvalsFor(response.json().turnId), []);
+            return batchErrors.slice(errors).join('\n');
+          };
+
+          assert.match(await attempt(email), /Choose an account using connectionId/);
+          assert.equal(sent().length, before);
+
+          const chosen = await propose(
+            'GMAIL_SEND_EMAIL',
+            { ...email, connectionId: second.id },
+            'apps',
+          );
+          const [secondCard] = await approvalsFor(chosen);
+          assert.equal(secondCard.args.connectionId, second.id);
+          assert.equal(
+            (await listed(secondCard.confirmation_message_id)).account,
+            `Gmail · ${second.account_email}`,
+          );
+          await answer(secondCard);
+          assert.equal((await approvalsFor(chosen))[0].status, 'completed');
+          assert.deepEqual(
+            sent()
+              .slice(before)
+              .map((write) => write.accountId),
+            [second.account_id],
+          );
+
+          const other = await propose(
+            'GMAIL_SEND_EMAIL',
+            { ...email, connectionId: first!.id },
+            'apps',
+          );
+          const [firstCard] = await approvalsFor(other);
+          assert.equal(firstCard.status, 'pending');
+          assert.equal(
+            (await listed(firstCard.confirmation_message_id)).account,
+            `Gmail · ${first!.account_email}`,
+          );
+          await pool.query('UPDATE app_connections SET account_email=$2 WHERE id=$1', [
+            first!.id,
+            'replaced@example.test',
+          ]);
+          try {
+            const resumed = await answer(firstCard);
+            assert.match(
+              prompts.get(resumed) ?? '',
+              /did not run[\s\S]*now belongs to Gmail · replaced@example\.test/,
+            );
+          } finally {
+            await pool.query('UPDATE app_connections SET account_email=$2 WHERE id=$1', [
+              first!.id,
+              first!.account_email,
+            ]);
+          }
+          assert.equal((await approvalsFor(other))[0].status, 'expired');
+          assert.equal(sent().length, before + 1);
+
+          const reconnected = await propose(
+            'GMAIL_SEND_EMAIL',
+            { ...email, subject: 'Synthetic reconnected', connectionId: first!.id },
+            'apps',
+          );
+          const [reconnectedCard] = await approvalsFor(reconnected);
+          await pool.query('UPDATE app_connections SET account_id=$2 WHERE id=$1', [
+            first!.id,
+            `synthetic-${randomUUID()}`,
+          ]);
+          try {
+            const resumed = await answer(reconnectedCard);
+            assert.match(prompts.get(resumed) ?? '', /did not run[\s\S]*connected again/);
+          } finally {
+            await pool.query('UPDATE app_connections SET account_id=$2 WHERE id=$1', [
+              first!.id,
+              first!.account_id,
+            ]);
+          }
+          assert.equal((await approvalsFor(reconnected))[0].status, 'expired');
+          assert.equal(sent().length, before + 1);
+
+          const removed = await propose(
+            'GMAIL_SEND_EMAIL',
+            { ...email, subject: 'Synthetic removed', connectionId: second.id },
+            'apps',
+          );
+          const [removedCard] = await approvalsFor(removed);
+          const disconnect = await request(
+            'POST',
+            `/api/apps/gmail/accounts/${second.id}/disconnect`,
+          );
+          assert.equal(disconnect.statusCode, 200, disconnect.body);
+          assert.deepEqual(
+            (await accounts()).map((row) => row.id),
+            [first!.id],
+          );
+          const resumed = await answer(removedCard);
+          assert.match(prompts.get(resumed) ?? '', /did not run[\s\S]*unavailable/);
+          assert.equal((await approvalsFor(removed))[0].status, 'expired');
+          assert.match(
+            await attempt({ ...email, subject: 'Synthetic removed', connectionId: second.id }),
+            /This connected account is unavailable/,
+          );
+          assert.equal(sent().length, before + 1);
         },
       );
 

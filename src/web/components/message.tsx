@@ -896,6 +896,7 @@ export function MessageBubble({
         {message.role === 'assistant' && !streaming && message.approval?.fields && (
           <ApprovalCard approval={message.approval} disabled={answersDisabled} onAnswer={onApprove}>
             <ApprovalFields
+              account={message.approval.account}
               fields={message.approval.fields}
               body={message.approval.body}
               bodyCut={message.approval.bodyCut}
