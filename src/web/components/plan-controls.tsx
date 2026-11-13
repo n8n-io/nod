@@ -942,15 +942,18 @@ export function PlanDetails({
   summary,
   children,
   actions,
+  open: expanded,
   onOpenChange,
 }: {
   label: string;
   summary?: ReactNode;
   children: ReactNode;
   actions?: ReactNode;
+  open?: boolean;
   onOpenChange?(open: boolean): void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [opened, setOpen] = useState(false);
+  const open = expanded ?? opened;
   const id = useId();
   return (
     <>
