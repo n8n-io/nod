@@ -1243,6 +1243,15 @@ test('fresh scheduled sessions put their stable first request on a one-hour Anth
       resumed: false,
       prompt: 'Scheduled task: synthetic status check ' + label,
       memory: 'about/name: The owner is Alex.',
+      credentialRequests: [
+        {
+          turnId: 'fixture-sign-in-turn',
+          origin: 'https://sign-in.fixture.test',
+          label: 'Synthetic sign-in',
+          kind: 'password',
+          status: label === 'FIRST-RUN' ? 'pending' : 'expired',
+        },
+      ],
       history: [
         { role: 'user', text: 'Earlier owner message', createdAt: new Date().toISOString() },
       ],
@@ -1275,9 +1284,16 @@ test('fresh scheduled sessions put their stable first request on a one-hour Anth
     stable[0].map((block: any) => block.text),
     stable[1].map((block: any) => block.text),
   );
+  assert.ok(
+    stable.every((blocks) =>
+      blocks.every((block: any) => !block.text.includes('sign-in.fixture.test')),
+    ),
+  );
   for (const [index, body] of bodies.entries()) {
     const tail = blocks(body).at(-1);
     assert.match(tail.text, index ? /SECOND-RUN/ : /FIRST-RUN/);
+    const status = JSON.stringify(`"status":"${index ? 'expired' : 'pending'}"`).slice(1, -1);
+    assert.ok(tail.text.includes(status));
     assert.deepEqual(tail.cache_control, { type: 'ephemeral' });
     assert.equal('cache_control' in body.system[0], false);
     assert.ok(JSON.stringify(body).split('"cache_control"').length - 1 <= 4);
