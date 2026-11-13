@@ -6,7 +6,12 @@ import { join, resolve } from 'node:path';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { getSupportedThinkingLevels, InMemoryCredentialStore } from '@earendil-works/pi-ai';
+import {
+  getSupportedThinkingLevels,
+  InMemoryCredentialStore,
+  isContextOverflow,
+  type AssistantMessage,
+} from '@earendil-works/pi-ai';
 import { Agent as Connections, Dispatcher1Wrapper, buildConnector } from 'undici';
 import { Compile } from 'typebox/compile';
 import {
@@ -383,6 +388,44 @@ function completeAssistantMessages(pi: ExtensionAPI) {
   });
 }
 
+const oversizedHistoryCheckpoint =
+  'Older session context does not fit this model. It remains in the saved transcript. Use history_search for earlier messages and read workspace files for work results. Do not infer missing facts or repeat uncertain actions. Follow the current owner instruction and rules.';
+
+function checkpointOversizedHistory(
+  manager: SessionManager,
+  budget: ReturnType<typeof modelContextBudget>,
+  historyTokens: number,
+  keepRecentTokens = budget.recent,
+) {
+  const entries = manager.buildContextEntries();
+  const lastAnswer = entries.findLastIndex(
+    (entry) =>
+      entry.type === 'message' &&
+      entry.message.role === 'assistant' &&
+      entry.message.stopReason === 'stop',
+  );
+  const firstPending = entries
+    .slice(lastAnswer + 1)
+    .find(
+      (entry) =>
+        (entry.type === 'message' && entry.message.role === 'user') ||
+        (entry.type === 'custom_message' && entry.customType === 'nod-audio-input'),
+    );
+  let recentTokens = 0;
+  let firstKept: string | null = null;
+  for (const entry of entries.toReversed()) {
+    if (entry.type !== 'message') continue;
+    recentTokens += estimateModelTokens(entry.message);
+    if (recentTokens > keepRecentTokens) break;
+    if (entry.message.role === 'user') firstKept = entry.id;
+  }
+  manager.appendCompaction(
+    oversizedHistoryCheckpoint,
+    entries.find((entry) => entry.id === firstKept || entry.id === firstPending?.id)?.id ?? null,
+    historyTokens,
+  );
+}
+
 export function createPiAgent(options: {
   provider: string;
   resolve?: () => Promise<ModelAccess>;
@@ -579,36 +622,9 @@ export function createPiAgent(options: {
           null,
           priorTokens,
         );
-      const historyTokens = budget.compact
-        ? estimateModelTokens(manager.buildSessionContext().messages)
-        : 0;
-      if (budget.compact && historyTokens > budget.window / 2) {
-        const entries = manager.buildContextEntries();
-        const lastAnswer = entries.findLastIndex(
-          (entry) => entry.type === 'message' && entry.message.role === 'assistant',
-        );
-        const firstPending = entries
-          .slice(lastAnswer + 1)
-          .find(
-            (entry) =>
-              (entry.type === 'message' && entry.message.role === 'user') ||
-              (entry.type === 'custom_message' && entry.customType === 'nod-audio-input'),
-          );
-        let recentTokens = 0;
-        let firstKept: string | null = null;
-        for (const entry of entries.toReversed()) {
-          if (entry.type !== 'message') continue;
-          recentTokens += estimateModelTokens(entry.message);
-          if (recentTokens > budget.recent) break;
-          if (entry.message.role === 'user') firstKept = entry.id;
-        }
-        manager.appendCompaction(
-          'Older session context does not fit this model. It remains in the saved transcript. Use history_search for earlier messages and read workspace files for work results. Do not infer missing facts or repeat uncertain actions. Follow the current owner instruction and rules.',
-          entries.find((entry) => entry.id === firstKept || entry.id === firstPending?.id)?.id ??
-            null,
-          historyTokens,
-        );
-      }
+      const historyTokens = estimateModelTokens(manager.buildSessionContext().messages);
+      if (budget.compact && historyTokens > budget.window / 2)
+        checkpointOversizedHistory(manager, budget, historyTokens);
       const sandboxTools = input.restricted ? [] : createSandbox(input.workspace, input.timeZone);
       const tools: ToolDefinition[] = [
         ...sandboxTools.map((definition): ToolDefinition => ({
@@ -901,6 +917,19 @@ export function createPiAgent(options: {
       const systemPrompt = guidelines.length
         ? `${input.systemPrompt}\n\nTool guidelines:\n${guidelines.map((rule) => `- ${rule}`).join('\n')}`
         : input.systemPrompt;
+      const fixedRequestTokens = estimateModelTokens({
+        systemPrompt,
+        ownerContext: input.ownerContext,
+        tools: [
+          ...tools,
+          ...extensions.extensions.flatMap((extension) =>
+            [...extension.tools.values()].map((tool) => tool.definition),
+          ),
+        ]
+          .filter((tool) => budget.compact || tool.exposure !== 'deferred')
+          .map(({ name, description, parameters }) => ({ name, description, parameters })),
+      });
+      const requestOverheadTokens = fixedRequestTokens + budget.margin + 128;
       const resumed = !restart && manager.buildSessionContext().messages.length > 0;
       const { session } = await (options.createSession ?? createAgentSession)({
         cwd: input.workspace.path,
@@ -1133,6 +1162,73 @@ export function createPiAgent(options: {
             throw new Error(
               `This request does not fit the model's ${budget.window}-token context. Use a model with a larger context or a shorter request.`,
             );
+          const incomingTokens = estimateModelTokens({ text, images, audio });
+          const currentHistory = manager.buildSessionContext().messages;
+          const lastCompleted = currentHistory.findLastIndex(
+            (message) => message.role === 'assistant' && message.stopReason === 'stop',
+          );
+          const unfinished = currentHistory.slice(lastCompleted + 1);
+          if (
+            unfinished.some(
+              (message) =>
+                message.role === 'user' ||
+                (message.role === 'custom' && message.customType === 'nod-audio-input'),
+            ) &&
+            estimateModelTokens(unfinished) + incomingTokens + requestOverheadTokens >=
+              budget.window
+          )
+            throw new Error(
+              `The unfinished request does not fit this model's ${budget.window}-token context. Use a model with a larger context or reset the conversation.`,
+            );
+          if (
+            !budget.compact &&
+            currentHistory.length > 0 &&
+            estimateModelTokens(currentHistory) + incomingTokens + requestOverheadTokens >=
+              budget.window
+          ) {
+            try {
+              await session.compact();
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              if (
+                message !== 'Nothing to compact (session too small)' &&
+                message !== 'Already compacted' &&
+                !isContextOverflow({
+                  stopReason: 'error',
+                  errorMessage: message,
+                } as AssistantMessage)
+              )
+                throw error;
+            }
+            const remaining = estimateModelTokens(manager.buildSessionContext().messages);
+            if (remaining + incomingTokens + requestOverheadTokens >= budget.window) {
+              checkpointOversizedHistory(
+                manager,
+                budget,
+                remaining,
+                Math.min(
+                  budget.recent,
+                  Math.max(
+                    0,
+                    budget.window -
+                      incomingTokens -
+                      requestOverheadTokens -
+                      estimateModelTokens(oversizedHistoryCheckpoint),
+                  ),
+                ),
+              );
+              session.refreshContext();
+              if (
+                estimateModelTokens(manager.buildSessionContext().messages) +
+                  incomingTokens +
+                  requestOverheadTokens >=
+                budget.window
+              )
+                throw new Error(
+                  `This request does not fit this model's ${budget.window}-token context after reducing saved history. Use a model with a larger context or a shorter request.`,
+                );
+            }
+          }
           const owner = input.ownerContext;
           const copy = manager.buildSessionContext().messages.findLast(isOwnerContext);
           if (owner && (copy as { content?: unknown } | undefined)?.content !== owner)
