@@ -1699,6 +1699,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       return call(...args);
     };
   const replies: Array<{ id: string; text: string; source: string }> = [];
+  let replyCommitted = false;
   let explicitAudio = false;
   const published = new Map<string, Artifact>();
   let sourceMessageId: string | null = null;
@@ -1767,6 +1768,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         );
       });
       const spoken = presentation && !text.trim() ? presentationText(presentation) : text;
+      replyCommitted ||= Boolean(text.trim() || attachments.length || created.size || presentation);
       if (spoken.trim()) replies.push({ id, text: spoken, source });
       if (plain && spoken.trim())
         plainReplies.push({ id, text: spoken, sourceMessageId: postedFor, handoff });
@@ -2354,6 +2356,14 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           ...analyticsProperties,
           ...work,
           outcome,
+          result:
+            outcome === 'succeeded'
+              ? replyCommitted
+                ? 'reply'
+                : 'no_reply'
+              : outcome === 'waiting_user' || outcome === 'waiting_credentials'
+                ? 'needs_owner'
+                : outcome,
           duration_ms: Math.max(0, Date.now() - startedAt),
           queue_duration_ms: Math.max(0, startedAt - new Date(turn.created_at).getTime()),
           ...(waitingReason ? { waiting_reason: waitingReason } : {}),

@@ -212,7 +212,12 @@ export async function createAnalytics(options: {
         if (data.properties.provider)
           run.model ??= analyticsModel(data.properties.provider, data.properties.model);
       }
-      if (data.event === 'model_used' && data.properties.purpose === 'agent')
+      if (
+        data.event === 'model_used' &&
+        data.properties.purpose === 'agent' &&
+        (!data.properties.request_kind ||
+          ['chat', 'task', 'observer'].includes(data.properties.request_kind))
+      )
         run.model = analyticsModel(data.properties.provider, data.properties.model);
       if (data.event === 'turn_completed' && run.model) {
         const { provider: _, model: __, ...properties } = data.properties;

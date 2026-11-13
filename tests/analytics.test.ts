@@ -19,6 +19,9 @@ import {
 } from '../src/server/analytics.ts';
 import { analyticsEvent } from '../src/server/analytics-events.ts';
 import { captureConnectionInventory } from '../src/server/analytics-connections.ts';
+import { createLedger } from '../src/server/ledger.ts';
+import type { AgentEvent } from '../src/ports/agent.ts';
+import { fakeExecution, fakeWorkspace } from './runtime-fixtures.ts';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import {
   profileJobs,
@@ -809,6 +812,144 @@ test('turn analytics keep the actual agent provider and remove stale model detai
       assert.doesNotMatch(JSON.stringify(captured), /private-(?:provider|model)-canary/);
     });
   }
+});
+
+test('model analytics separate retries, helpers and maintenance from the main request', async (t) => {
+  const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+  const analytics = await createAnalytics({
+    provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+    environment: 'development',
+    dataRoot: '.',
+    installationId: randomUUID(),
+  });
+  t.after(() => analytics.shutdown());
+  const owner = 'synthetic-owner';
+  analytics.setUsageData(owner, true);
+  const ledger = createLedger({
+    ownerId: owner,
+    pool: { query: async () => ({ rows: [] }) } as never,
+    analytics: analytics.forOwner(owner),
+  });
+  const usage = (status: 'succeeded' | 'failed'): AgentEvent => ({
+    type: 'model_usage',
+    id: randomUUID(),
+    provider: 'openai',
+    model: 'gpt-6-luna',
+    status,
+    inputTokens: 3,
+    outputTokens: 1,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 4,
+    costUsd: 0.01,
+    costSource: 'sdk_estimate',
+    createdAt: new Date().toISOString(),
+  });
+  const agent = ledger.agent({
+    async open(options) {
+      return {
+        resumed: false,
+        async prompt() {
+          options.onEvent(usage('failed'));
+          options.onEvent({ type: 'retry', attempt: 1, attempts: 2, model: 'private-canary' });
+          options.onEvent(usage('succeeded'));
+          options.onEvent(usage('succeeded'));
+          for (const operation of ['compaction', 'cache_warm', 'auxiliary'])
+            options.onEvent({
+              type: 'provider_usage',
+              usage: {
+                id: randomUUID(),
+                provider: 'google',
+                model: 'gemini-2.5-flash',
+                category: 'agent',
+                operation,
+                status: 'failed',
+                durationMs: 1,
+              },
+            });
+        },
+        abort() {},
+        dispose() {},
+      };
+    },
+    dispose() {},
+  });
+  const scope = fakeExecution(randomUUID());
+  const workspace = fakeWorkspace().open({
+    threadId: scope.threadId,
+    workspacePath: '/fixture/workspace',
+    signal: new AbortController().signal,
+  });
+  const initial = {
+    source: 'user' as const,
+    channel: 'web' as const,
+    background: false,
+    work_type: 'immediate' as const,
+    owner_requested: true,
+  };
+  await analytics.withRun(owner, async () => {
+    analytics.capture(owner, { event: 'turn_started', properties: initial });
+    for (const extra of [
+      {},
+      { sessionId: randomUUID() },
+      { restricted: true },
+      { parentRunId: scope.runId },
+    ]) {
+      const session = await agent.open({
+        ...scope,
+        ...extra,
+        systemPrompt: 'private-canary',
+        tools: [],
+        workspace,
+        runTool: (_name, _params, run) => run(),
+        shouldStop: () => false,
+        onEvent() {},
+      });
+      await session.prompt('private-canary', []);
+    }
+    analytics.capture(owner, {
+      event: 'turn_completed',
+      properties: { ...initial, outcome: 'succeeded', result: 'reply', duration_ms: 10 },
+    });
+  });
+  const calls = captured.filter((event) => event.event === 'model_used');
+  assert.equal(calls.length, 24);
+  for (const [index, kind] of ['chat', 'task', 'observer', 'helper'].entries()) {
+    assert.deepEqual(
+      calls
+        .slice(index * 6, index * 6 + 6)
+        .map(({ properties: p }) => [p.request_kind, p.attempt, p.outcome]),
+      [
+        [kind, 1, 'failed'],
+        [kind, 2, 'succeeded'],
+        [kind, 1, 'succeeded'],
+        ['compaction', undefined, 'failed'],
+        ['cache_warm', undefined, 'failed'],
+        ['auxiliary', undefined, 'failed'],
+      ],
+    );
+  }
+  const completed = captured.at(-1)!;
+  assert.equal(completed.properties.result, 'reply');
+  assert.equal(completed.properties.provider, 'openai');
+  assert.equal(completed.properties.model, 'gpt-6-luna');
+  assert.ok(captured.every((event) => event.properties.run_id === completed.properties.run_id));
+  for (const privateValue of ['private-canary', scope.turnId, scope.sessionId, scope.runId])
+    assert.equal(JSON.stringify(captured).includes(privateValue), false);
+  analytics.setUsageData(owner, false);
+  await analytics.withRun(owner, async () => {
+    const session = await agent.open({
+      ...scope,
+      systemPrompt: 'private-canary',
+      tools: [],
+      workspace,
+      runTool: (_name, _params, run) => run(),
+      shouldStop: () => false,
+      onEvent() {},
+    });
+    await session.prompt('private-canary', []);
+  });
+  assert.equal(captured.length, 26);
 });
 
 test('accepted owner messages do not inherit an unrelated run context', async () => {

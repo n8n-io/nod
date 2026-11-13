@@ -2696,6 +2696,7 @@ test(
             work_type: string,
             owner_requested: boolean,
             outcome = 'succeeded',
+            result?: string,
           ) => {
             await waitFor(settled(id));
             await waitFor(() =>
@@ -2722,10 +2723,11 @@ test(
               assert.equal(JSON.stringify(event).includes(id), false);
             }
             assert.equal(ends[0]!.properties.outcome, outcome);
+            if (result) assert.equal(ends[0]!.properties.result, result);
             assert.ok(Number(ends[0]!.properties.duration_ms) >= 0);
           };
           const requested = await thread.submitUserMessage('Synthetic analytics request');
-          await completed(requested.turnId, 'immediate', true);
+          await completed(requested.turnId, 'immediate', true, 'succeeded', 'reply');
           const schedule = await thread.enqueueTurn('Synthetic analytics schedule', {
             source: 'schedule',
           });
@@ -2743,7 +2745,7 @@ test(
           });
           await completed(task, 'background', false);
           const question = await thread.enqueueTurn('ask-question', { source: 'schedule' });
-          await completed(question, 'scheduled', false, 'waiting_user');
+          await completed(question, 'scheduled', false, 'waiting_user', 'needs_owner');
           const message = (
             await db.pool.query(
               "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant' ORDER BY created_at DESC LIMIT 1",
@@ -2761,6 +2763,25 @@ test(
             background: true,
           });
           await completed(ownerResume, 'scheduled', true);
+          const inspect = inspectObserver;
+          try {
+            inspectObserver = async () => ({ status: 'succeeded' });
+            const quiet = await thread.enqueueTurn('Synthetic quiet analytics check', {
+              source: 'event',
+              background: true,
+            });
+            await completed(quiet, 'background', false, 'succeeded', 'no_reply');
+          } finally {
+            inspectObserver = inspect;
+          }
+          const failedPrompt = 'Synthetic failed analytics request';
+          modelErrors.set(failedPrompt, 'Synthetic provider rejected the request.');
+          try {
+            const failed = await thread.submitUserMessage(failedPrompt);
+            await completed(failed.turnId, 'immediate', true, 'failed', 'failed');
+          } finally {
+            modelErrors.delete(failedPrompt);
+          }
           const previousObserver = inspectObserver;
           const previousConfirmation = dependencies.executeConfirmation;
           let confirmedActions = 0;

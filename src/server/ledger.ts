@@ -170,7 +170,10 @@ function presentStep(row: Record<string, any>): TrustStep {
   };
 }
 
-function modelUsed(usage: ProviderUsageEvent): Parameters<CaptureAnalytics>[0] {
+function modelUsed(
+  usage: ProviderUsageEvent,
+  execution?: (ExecutionScope & Pick<AgentSessionOptions, 'restricted'>) | null,
+): Parameters<CaptureAnalytics>[0] {
   const tokens = (value: number | undefined) =>
     typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
   const charged = cost(usage.costUsd);
@@ -186,6 +189,25 @@ function modelUsed(usage: ProviderUsageEvent): Parameters<CaptureAnalytics>[0] {
     properties: {
       ...analyticsModel(usage.provider, usage.model),
       purpose: usage.category,
+      request_kind:
+        usage.category !== 'agent'
+          ? usage.category
+          : usage.operation === 'compaction' ||
+              usage.operation === 'cache_warm' ||
+              usage.operation === 'auxiliary'
+            ? usage.operation
+            : execution?.parentRunId
+              ? 'helper'
+              : execution?.restricted
+                ? 'observer'
+                : execution
+                  ? execution.sessionId === execution.threadId
+                    ? 'chat'
+                    : 'task'
+                  : 'unclassified',
+      ...(Number.isSafeInteger(usage.attempt) && usage.attempt! > 0
+        ? { attempt: usage.attempt }
+        : {}),
       outcome: usage.status,
       input_tokens:
         tokens(usage.inputTokens) + tokens(usage.cacheReadTokens) + tokens(usage.cacheWriteTokens),
@@ -297,7 +319,7 @@ export function createLedger({
       (error) => logFailure('ledger_usage_failed', error, { turnId: attributedTurn }),
     );
     pendingUsage.set(id, { values, pending });
-    analytics?.(modelUsed(usage));
+    analytics?.(modelUsed(usage, execution));
     telemetry?.record({ ...usage, turnId: attributedTurn ?? undefined });
   }
 
@@ -306,9 +328,11 @@ export function createLedger({
       ...base,
       open: async (session) => {
         if (await limitReached()) throw new Error(spendingLimitReached);
+        let attempt = 1;
         const opened = await base.open({
           ...session,
           onEvent(event) {
+            if (event.type === 'retry') attempt = event.attempt + 1;
             if (event.type === 'model_usage') {
               const { type: _, costSource, totalTokens: __, createdAt: ___, ...value } = event;
               record(
@@ -317,12 +341,14 @@ export function createLedger({
                   turnId: session.turnId,
                   category: 'agent',
                   operation: 'request',
+                  attempt,
                   status: value.status ?? 'succeeded',
                   durationMs: Math.max(0, Date.now() - Date.parse(event.createdAt)) || 0,
                   pricing: costSource,
                 },
                 session,
               );
+              if (value.status !== 'failed') attempt = 1;
             }
             if (event.type === 'provider_usage')
               record({ ...event.usage, turnId: session.turnId }, session);
@@ -332,6 +358,7 @@ export function createLedger({
         return {
           ...opened,
           async prompt(...args) {
+            attempt = 1;
             try {
               await activeExecution.run(session, () => opened.prompt(...args));
             } finally {

@@ -142,7 +142,9 @@ export function createPiMemoryCurator(options: {
       const sessionId = ['opencode', 'opencode-go'].includes(model.provider)
         ? crypto.randomUUID()
         : undefined;
+      let attempt = 0;
       const complete = async () => {
+        attempt++;
         const context: Context = {
           systemPrompt: instructions,
           messages: [
@@ -182,6 +184,7 @@ export function createPiMemoryCurator(options: {
           const metrics = piUsageMetrics(reply?.usage);
           report?.({
             id: crypto.randomUUID(),
+            attempt,
             provider: reply?.provider ?? model.provider,
             model: reply?.model ?? model.id,
             durationMs: performance.now() - started,
