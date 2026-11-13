@@ -133,8 +133,13 @@ function reader(client: Client, accountId: string, input: Query, signal: AbortSi
               values[current],
               AbortSignal.any([signal, deadline.signal]),
             );
-          } catch {
+          } catch (error) {
             signal.throwIfAborted();
+            const status = (error as { status?: number } | undefined)?.status;
+            if (status === 429 || (status !== undefined && status >= 500 && status <= 599)) {
+              index = values.length;
+              throw error;
+            }
             records[current] = {
               id: values[current],
               version: 'unknown',

@@ -667,11 +667,17 @@ function bind<P extends TSchema>(
     ...tool,
     execute: forms
       ? async (params: Static<P>) => {
-          const action = (params as Record<string, unknown>).action;
-          const members =
-            typeof action === 'string' &&
-            unionOfObjects(strict)?.filter((member) => member.properties.action?.const === action);
-          const selected = members && members.length === 1 ? members[0] : strict;
+          const members = unionOfObjects(strict);
+          const selected =
+            ['action', 'kind']
+              .map((key) =>
+                members?.filter(
+                  (member) =>
+                    member.properties[key] &&
+                    Value.Check(member.properties[key], (params as Record<string, unknown>)[key]),
+                ),
+              )
+              .find((matches) => matches?.length === 1)?.[0] ?? strict;
           if (!Value.Check(selected, params)) {
             const errors = [...Value.Errors(selected, params)]
               .slice(0, 8)

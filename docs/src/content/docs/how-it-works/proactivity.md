@@ -44,7 +44,7 @@ The saved-work change check covers a task's title, completion condition, state, 
 
 For an app without its own reader, the worker searches that account's tools, picks one and fills its arguments. The server checks the arguments against the tool's schema, then Trust's read-only check must classify the call as a read. Anything that would create, change, send or delete, a draft included, never runs.
 
-A rate limit or service failure leaves the source state unknown. The observer does not call that source again during the same check. A later check can try again. Invalid arguments and expired page cursors can still be repaired within the current check. Read errors keep the HTTP status and available service reason after secret removal.
+An HTTP 429 rate limit or 5xx service failure leaves the source state unknown, including a failure while reading one record. The observer does not call that source again during the same check. A later check can try again. Invalid arguments and expired page cursors can still be repaired within the current check. Read errors keep the HTTP status and available service reason after secret removal.
 
 All sources use the same observer. An instruction such as "forward Ana's invoices to accounting" starts a separate task for that action. The task uses the normal tools and Trust check. Its question or approval wait leaves the observer free to process later activity.
 

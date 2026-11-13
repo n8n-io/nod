@@ -3149,6 +3149,13 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     );
     assert.equal(calls, 8);
     assert.equal(await service.automaticRequestsAllowed(), true);
+    const concurrent = await service.resolve();
+    const ownerCompleted = await concurrent.prepareRequest!(primary.choice.id, false);
+    const automaticCompleted = await concurrent.prepareRequest!(definition.choice.id, true);
+    await automaticCompleted('Your prepayment credits are depleted.');
+    assert.equal(await service.automaticRequestsAllowed(), false);
+    await ownerCompleted();
+    assert.equal(await service.automaticRequestsAllowed(), true);
   });
 
   test('model setup chooses capable defaults, preserves explicit choices and requires valid cloud accounts', async (t) => {

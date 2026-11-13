@@ -395,7 +395,6 @@ export function createModelService(options: {
           if (!credentialTag || closed || (!error && automatic)) return;
           const failure = error ? modelQuotaFailure(error) : undefined;
           if (error && !failure) return;
-          if (!failure && !pause) return;
           try {
             await store.change((state) => {
               const saved = state.connections.find((item) => item.id === row.id);

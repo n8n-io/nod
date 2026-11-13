@@ -386,6 +386,15 @@ export function createProactivity(options: {
     if (expectedPolicy && fingerprint([prefs.notificationRule, prefs.rules]) !== expectedPolicy)
       throw new Error('The monitoring rules changed. Start a new assessment.');
     if (prefs.proactivePaused) throw new Error('Private preparation is paused.');
+    const descriptor = (await sourceCatalog(signal)).find(
+      (item) => item.id === input.sourceId && item.readable && item.mode !== 'classic',
+    );
+    const sourceKey = JSON.stringify([input.sourceId, descriptor?.revision]);
+    const previousFailure = failedSources.get(turn.turnId)?.get(sourceKey);
+    if (previousFailure)
+      throw new Error(
+        `This source failed during this check: ${previousFailure} Its state is unknown. Wait for its next scheduled check instead of reading it again now.`,
+      );
     if (!saving) {
       const count = (issuedReads.get(turn.turnId) ?? 0) + 1;
       if (count > readLimit)
@@ -394,21 +403,12 @@ export function createProactivity(options: {
         );
       issuedReads.set(turn.turnId, count);
     }
-    const descriptor = (await sourceCatalog(signal)).find(
-      (item) => item.id === input.sourceId && item.readable && item.mode !== 'classic',
-    );
     if (!descriptor) throw new Error('This source has no registered read-only reader.');
     if (Boolean(descriptor.tools) !== Boolean(input.query || input.tool))
       throw new Error(
         descriptor.tools
           ? 'Read this source through its own tools: search them with query, then read one with tool and args.'
           : 'Read this source by record ids, or without them for recent records.',
-      );
-    const sourceKey = JSON.stringify([descriptor.id, descriptor.revision]);
-    const previousFailure = failedSources.get(turn.turnId)?.get(sourceKey);
-    if (previousFailure)
-      throw new Error(
-        `This source failed during this check: ${previousFailure} Its state is unknown. Wait for its next scheduled check instead of reading it again now.`,
       );
     const writeSource = <T>(write: (client: PoolClient) => Promise<T>) =>
       withTurnLock({ turnId: turn.turnId, signal }, async (client) => {

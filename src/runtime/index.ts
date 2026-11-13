@@ -43,27 +43,29 @@ import { delimit } from './untrusted.ts';
 
 const imageBytes = (5 * 1024 * 1024 * 3) / 4;
 function toolProgress() {
-  const failures = new Map<string, number>();
-  let error: string | undefined;
+  const failures = new Map<string, { count: number; error: string }>();
   return {
     get error() {
-      return error;
+      const failed = [...failures].find(([, failure]) => failure.count >= 5);
+      return failed
+        ? `The ${failed[0]} tool failed five times without a successful call. Last failure: ${failed[1].error}`
+        : undefined;
     },
     stopped(results: AgentToolOutcome[] = []) {
       for (const result of results) {
         if (result.error === undefined) failures.delete(result.name);
         else if (
-          /^(?:Validation failed for tool |Invalid (?:arguments for tool |[\w ]+ (?:input[.:]|arguments(?: at|[.:])))|Tool \S+ not found|This source (?:failed during this check|check has reached its read limit)|Nod could not confirm it was still on the page and control it checked|The trust check couldn|The action review model is unavailable|Nod could not write an accurate confirmation)/.test(
+          /^(?:Validation failed for tool |Invalid (?:arguments for tool |[\w ]+ (?:input[.:]|arguments(?: at|[.:])))|Tool \S+ not found|This source (?:failed during this check|check has reached its read limit)|Nod could not confirm it was still on the page and control it checked|(?:This connected|The selected) account changed\.|The trust check couldn|The action review model is unavailable|Nod could not write an accurate confirmation)/.test(
             result.error,
           )
         ) {
-          const count = (failures.get(result.name) ?? 0) + 1;
-          failures.set(result.name, count);
-          if (count >= 5)
-            error = `The ${result.name} tool failed five times without a successful call. Last failure: ${result.error}`;
+          failures.set(result.name, {
+            count: (failures.get(result.name)?.count ?? 0) + 1,
+            error: result.error,
+          });
         }
       }
-      return error !== undefined;
+      return [...failures.values()].some((failure) => failure.count >= 5);
     },
   };
 }

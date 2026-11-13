@@ -10761,6 +10761,7 @@ test('proactive readers use fixed GET paths, preserve pages, and check exact sou
     });
   }
   const isolatedCalls: Array<Parameters<Composio['tools']['proxyExecute']>[0]> = [];
+  let recordFailureStatus = 400;
   const isolated = {
     proxyExecute: async (input: Parameters<Composio['tools']['proxyExecute']>[0]) => {
       isolatedCalls.push(input);
@@ -10773,7 +10774,7 @@ test('proactive readers use fixed GET paths, preserve pages, and check exact sou
             nextPageToken: 'next-page',
           },
         };
-      if (item === 'bad') return { status: 503, data: {} };
+      if (item === 'bad') return { status: recordFailureStatus, data: {} };
       if (input.endpoint.includes('/messages/')) {
         const full = input.parameters?.some(
           (parameter) => parameter.name === 'format' && parameter.value === 'full',
@@ -10814,6 +10815,23 @@ test('proactive readers use fixed GET paths, preserve pages, and check exact sou
   assert.equal(partial.records.find((record) => record.id === 'bad')?.error, 'unavailable');
   assert.equal(partial.records.find((record) => record.id === 'large')?.available, true);
   assert.equal(partial.records.find((record) => record.id === 'good')?.available, true);
+  for (const status of [429, 503]) {
+    recordFailureStatus = status;
+    await assert.rejects(
+      readActivity(
+        isolated,
+        'gmail',
+        'fixture-account',
+        { ids: ['bad'] },
+        new AbortController().signal,
+      ),
+      (error: Error & { status?: number }) => {
+        assert.equal(error.status, status);
+        assert.ok(error.message.includes(String(status)));
+        return true;
+      },
+    );
+  }
   assert.ok(
     isolatedCalls
       .filter((call) => call.endpoint.includes('/threads/'))

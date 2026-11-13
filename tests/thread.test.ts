@@ -6869,15 +6869,16 @@ test(
                 );
                 const count = sourceReads;
                 sourceFailure = undefined;
-                await assert.rejects(
-                  engine.read(ref, { sourceId }, new AbortController().signal),
-                  (error: Error) => {
-                    assert.match(error.message, /next scheduled check/);
-                    assert.match(error.message, /503/);
-                    assert.match(error.message, /Synthetic service unavailable/);
-                    return true;
-                  },
-                );
+                for (let i = 0; i < 20; i++)
+                  await assert.rejects(
+                    engine.read(ref, { sourceId }, new AbortController().signal),
+                    (error: Error) => {
+                      assert.match(error.message, /next scheduled check/);
+                      assert.match(error.message, /503/);
+                      assert.match(error.message, /Synthetic service unavailable/);
+                      return true;
+                    },
+                  );
                 assert.equal(sourceReads, count);
                 assert.equal((await engine.view()).coverage[0].status, 'unavailable');
                 const next = { turnId: randomUUID(), threadId: currentThread };

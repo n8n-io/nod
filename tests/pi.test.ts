@@ -7559,8 +7559,12 @@ test('Ollama models with on or off thinking complete tasks without a named effor
 });
 
 test('invalid tool calls stop before another model request and a valid repair resets the limit', async (t) => {
-  for (const repair of [false, true])
-    await t.test(repair ? 'repair' : 'stop', async () => {
+  for (const [repair, toolName] of [
+    [false, 'task'],
+    [true, 'task'],
+    [false, 'sign_in'],
+  ] as const)
+    await t.test(`${toolName} ${repair ? 'repair' : 'stop'}`, async () => {
       const directory = await mkdtemp(join(tmpdir(), 'nod-tool-recovery-'));
       t.after(() => rm(directory, { recursive: true, force: true }));
       let requests = 0;
@@ -7572,7 +7576,7 @@ test('invalid tool calls stop before another model request and a valid repair re
           sessionRoot: join(directory, 'sessions'),
           createSession: async (options) => {
             const result = await createAgentSession(options);
-            result.session.setActiveToolsByName(['task']);
+            result.session.setActiveToolsByName([toolName]);
             result.session.agent.streamFunction = () => {
               requests++;
               assert.ok(requests <= 11, 'The invalid call loop must stop.');
@@ -7585,16 +7589,25 @@ test('invalid tool calls stop before another model request and a valid repair re
                       {
                         type: 'toolCall',
                         id: `fixture-task-${requests}`,
-                        name: 'task',
-                        arguments: valid
-                          ? {
-                              action: 'start',
-                              title: 'Synthetic task',
-                              doneWhen: 'The synthetic result exists.',
-                              now: 'Read the synthetic source.',
-                              message: 'Starting the synthetic task.',
-                            }
-                          : { action: 'start' },
+                        name: toolName,
+                        arguments:
+                          toolName === 'sign_in'
+                            ? {
+                                origin: 'https://signin.example.test',
+                                label: 'Synthetic login',
+                                message: 'Sign in to the synthetic account.',
+                                action: 'Sign in',
+                                kind: 'method',
+                              }
+                            : valid
+                              ? {
+                                  action: 'start',
+                                  title: 'Synthetic task',
+                                  doneWhen: 'The synthetic result exists.',
+                                  now: 'Read the synthetic source.',
+                                  message: 'Starting the synthetic task.',
+                                }
+                              : { action: 'start' },
                       },
                     ],
                 { stopReason: done ? 'stop' : 'toolUse' },
@@ -7629,7 +7642,7 @@ test('invalid tool calls stop before another model request and a valid repair re
           requests = 0;
           await assert.rejects(run(), (error: Error) => {
             assert.match(error.message, /failed five times/);
-            assert.match(error.message, /doneWhen/);
+            assert.match(error.message, toolName === 'sign_in' ? /\/methods:/ : /\/doneWhen:/);
             return true;
           });
           assert.equal(requests, 5);
