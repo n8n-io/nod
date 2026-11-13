@@ -22,8 +22,9 @@ export function releaseVideoDigest(release) {
 
 export function releaseVideo(release) {
   const video = release.video;
-  if (!video || typeof video !== 'object' || Array.isArray(video))
-    throw new Error('The release video is missing. Create and attach the release video.');
+  if (video === undefined || video === null) return '';
+  if (typeof video !== 'object' || Array.isArray(video))
+    throw new Error('The release video metadata must be an object or null.');
   if (
     Object.keys(video).sort().join(',') !== 'releaseSha256,url' ||
     typeof video.url !== 'string' ||
@@ -64,7 +65,7 @@ export function publicReleaseNotes(release, details, downloads = '') {
   if (!Object.hasOwn(release, 'highlights')) return details;
   return (
     [
-      ...(release.video ? [releaseVideo(release)] : []),
+      releaseVideo(release),
       releaseHighlights(release.highlights),
       downloads,
       `<details>\n<summary>All changes, installation requirements, and build details</summary>\n\n${details.trimEnd()}\n\n</details>`,
@@ -531,10 +532,7 @@ async function main() {
       const notes = publicReleaseNotes(release, release.notes);
       if (args[1]) await writeFile(resolve(root, args[1]), notes);
       else process.stdout.write(notes);
-    } else {
-      releaseVideo(release);
-      process.stdout.write(`Validated nod-v${version}.\n`);
-    }
+    } else process.stdout.write(`Validated nod-v${version}.\n`);
   }
   if (process.env.GITHUB_OUTPUT)
     await appendFile(process.env.GITHUB_OUTPUT, `version=${version}\n`);

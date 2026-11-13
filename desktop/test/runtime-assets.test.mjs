@@ -470,12 +470,13 @@ test('release gate rejects malformed metadata, uncommitted notes and source drif
   await assert.rejects(checkRelease(f.root, '0.1.0'));
 });
 
-test('release videos block incomplete releases and stay bound to the reviewed release', async (t) => {
+test('release videos are optional and attached videos stay bound to the reviewed release', async (t) => {
   const f = await releaseRepository(t);
   const highlights = '## Fewer interruptions\n\nUpdates now finish correctly.';
   await prepareRelease(f.root, '0.1.0', highlights);
   f.commit();
-  await assert.rejects(checkRelease(f.root, '0.1.0'), /release video is missing/);
+  const withoutVideo = await checkRelease(f.root, '0.1.0');
+  assert(publicReleaseNotes(withoutVideo, withoutVideo.notes).startsWith(highlights + '\n\n'));
   const manifestPath = join(f.root, 'desktop/release.json');
   const pending = await readFile(manifestPath, 'utf8');
   for (const url of [
@@ -512,10 +513,7 @@ test('release videos block incomplete releases and stay bound to the reviewed re
     JSON.stringify(legacy, (key, value) => (key === 'notes' ? undefined : value)),
   );
   f.commit();
-  await assert.rejects(
-    promisify(execFile)(process.execPath, [script, '--check'], { cwd: f.root }),
-    /release video is missing/,
-  );
+  await promisify(execFile)(process.execPath, [script, '--check'], { cwd: f.root });
   f.git('tag', 'nod-v0.1.0');
   await writeFile(join(f.root, 'desktop/main.mjs'), 'export const improved = true;\n');
   f.commit();
@@ -952,6 +950,7 @@ async function releaseFixture(
     automatic = false,
     highlights = '## Synthetic update\n\nTry the updated installer.',
     legacy = false,
+    video = true,
   } = {},
 ) {
   const f = await releaseRepository(t);
@@ -1002,7 +1001,7 @@ async function releaseFixture(
     delete manifest.video;
     delete manifest.highlights;
     await writeFile(manifestPath, JSON.stringify(manifest));
-  } else await attachReleaseVideo(root, syntheticVideoUrl);
+  } else if (video) await attachReleaseVideo(root, syntheticVideoUrl);
   let source = f.commit();
   const baseline = source;
   if (automatic) {
@@ -1409,15 +1408,29 @@ test('private releases require provenance when attestations are enabled', async 
   assert.equal((await f.readState()).created, 1);
 });
 
+test('releases publish text notes when the release video is unavailable', async (t) => {
+  for (const automatic of [false, true]) {
+    const f = await releaseFixture(t, { automatic, plan: true, publish: true, video: false });
+    const plan = JSON.parse((await f.invoke('plan', true, { NOD_RELEASE_VIDEO: '' })).stdout);
+    const environment = plan.metadata_sha256
+      ? {
+          NOD_RELEASE_PLAN: join(f.root, '.local/desktop-release-plan.json'),
+          NOD_RELEASE_PLAN_SHA256: plan.metadata_sha256,
+        }
+      : {};
+    await f.invoke('draft', true, environment);
+    const published = (await f.readState()).releases[f.appTag];
+    assert.equal(published.draft, false);
+    assert(published.body.startsWith('## Synthetic update\n\nTry the updated installer.\n\n'));
+    assert(!published.body.includes(syntheticVideoUrl));
+  }
+});
+
 test('automatic delivery requires current exact-main CI and publishes only its checked metadata', async (t) => {
   const f = await releaseFixture(t, { automatic: true, plan: true, publish: true });
   await assert.rejects(
     f.invoke('plan', true, { NOD_RELEASE_HIGHLIGHTS: '' }),
     /release highlights/,
-  );
-  await assert.rejects(
-    f.invoke('plan', true, { NOD_RELEASE_VIDEO: '' }),
-    /release video is missing/,
   );
   await assert.rejects(
     f.invoke('plan', true, { NOD_RELEASE_HIGHLIGHTS: 'Changed highlights' }),

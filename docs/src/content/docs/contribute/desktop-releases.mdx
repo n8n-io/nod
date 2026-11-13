@@ -148,25 +148,27 @@ Desktop binaries built from this code use public GitHub assets for installs and 
      --raw-field version=0.8.0 --field highlights=@/tmp/nod-release-highlights.md
    ```
 
-2. The workflow opens or resets the `release/desktop` pull request as a draft. It changes only the desktop version, the release manifest and the changelog. The manifest saves the public highlights and starts with `video: null`. The changelog lists the source changes by Conventional Commit type. Release checks fail until the agent records a matching video.
+2. The workflow opens or resets the `release/desktop` pull request as a draft. It changes only the desktop version, the release manifest and the changelog. The manifest saves the public highlights and starts with `video: null`. The changelog lists the source changes by Conventional Commit type. A missing video does not block release checks.
 
-3. Have the coding agent [make the release video](#make-the-release-video), attach it to the draft PR, and commit its metadata. Review the copy, facts, video, and upgrade instructions together. Then mark the PR ready for review.
+3. Have the coding agent [try to make the release video](#make-the-release-video). Attach it and commit its metadata only if it meets the skill's quality standard. Otherwise, leave `video: null`, explain why in the PR, and continue with text notes. Review the copy, facts, available video, and upgrade instructions. Then mark the PR ready for review.
 
-4. Merge after review and CI. If `main` changes before you merge, run **Release desktop** again with the highlights. Update them if the new source changes what users can do. The workflow clears the old video metadata, so create a new video for the new source. A version or highlights edit also requires a new video.
+4. Merge after review and CI. If `main` changes before you merge, run **Release desktop** again with the highlights. Update them if the new source changes what users can do. The workflow clears the old video metadata. Changes to the version, source, or highlights require a new video or `video: null`.
 
 5. Wait for CI on the merge commit, then **Build desktop release**. The release workflow builds all four platform bundles and signs the Mac and Windows apps. It checks Mac updates, signature rejection and profile preservation on both Mac architectures. It also checks signing, runtime hashes, Windows workspace paths, installation, startup, updates and downloaded installer bytes. On Windows, every `.exe`, `.dll` and `.node` file in the installed app, `Uninstall.exe` and the installer itself must carry a valid, timestamped n8n GmbH signature. Files identical to ones Windows ships, such as `d3dcompiler_47.dll`, are signed too, but Windows reports its own catalog signature for them, so the check accepts that instead when Microsoft signed it. The workflow verifies uploaded hashes, publishes the release, then uses the app's own update code to check the Mac and Windows update platforms. Private builds also check delivery through the n8n service; public builds check direct GitHub downloads for every release asset. GitHub can take a few minutes to offer the new version on every platform, so the check waits up to five minutes. If delivery still fails, the release goes back to draft. When GitHub was only slow, re-run the failed job.
 
 </Steps>
 
-The publisher puts the reviewed video first, followed by the highlights and download links for the release version. It puts the full changelog, installation requirements, and build details in a collapsed section. The copy and video URL are part of the release source, so they survive retries and recovery. CI does not call a model to create or change them. Recovery keeps the original format of older saved releases without video metadata or highlights.
+The publisher puts the reviewed video first when one is available, followed by the highlights and download links for the release version. Without a video, it starts with the highlights. It puts the full changelog, installation requirements, and build details in a collapsed section. The copy and video metadata are part of the release source, so they survive retries and recovery. CI does not call a model to create or change them. Recovery keeps the original format of older saved releases without video metadata or highlights.
 
 ### Make the release video
 
-The coding agent that prepares a release must use the `feature-video` skill in `.claude/skills/feature-video/SKILL.md`. Asking it to prepare a release includes creating the video. An authorized release PR includes attaching that video. It does not authorize a merge or publication.
+The coding agent that prepares a release must try to create a video with `.claude/skills/feature-video/SKILL.md`. This also applies to releases that contain only fixes. An authorized release PR includes attaching a video that meets the skill's quality standard. It does not authorize a merge or publication.
+
+If the video fails quality checks, cannot be made, fails validation, or cannot be uploaded, continue with text notes. Leave `video: null` in the manifest. Explain the specific reason in the PR without secrets or private content. Remove a rejected video from the PR description. Do not lower the quality standard or delay the release for a video. Normal release review and checks still apply.
 
 1. Check out the draft `release/desktop` branch in a clean checkout. Read its `desktop/release.json`. Use the saved `version` and `highlights` as the video copy source.
 2. Capture the real frontend at the saved `source` commit in a separate detached worktree. Use synthetic fixtures. Keep captures and rendered files outside the repository. A published tag is not needed.
-3. Render and inspect the MP4, poster, and contact sheet as the skill directs. Every release needs a video, including a release that contains only fixes. For fixes, make the opening frame show that this is an improved Nod. Show specific corrections and invite users to update. Use an animated text summary when there is no useful screen. Do not invent features, demonstrations, or measured improvements.
+3. Render and inspect the MP4, poster, and contact sheet as the skill directs. If it fails quality checks, use the text notes fallback above. For fixes, make the opening frame show that this is an improved Nod. Show specific corrections and invite users to update. Use an animated text summary when there is no useful screen. Do not invent features, demonstrations, or measured improvements.
 4. Attach the MP4 to the draft release PR. Use a GitHub CLI version whose `gh pr edit --help` lists `--attach`, or attach it through GitHub in the browser. [GitHub documents the CLI upload](https://docs.github.com/en/github-cli/github-cli/attaching-files-with-github-cli). Keep the PR description in a temporary file and preserve its existing text when using `--body-file`. Check the resulting player and copy its `https://github.com/user-attachments/assets/…` URL. Do not add the video as a release asset: older app updaters accept at most 30 assets.
 5. Record the URL on the draft release branch. Replace `VIDEO_URL` with the attachment URL:
 
@@ -178,9 +180,9 @@ The coding agent that prepares a release must use the `feature-video` skill in `
    node .github/scripts/prepare-desktop-release.mjs --notes /tmp/nod-release-notes.md
    ```
 
-6. Push the manifest update to the authorized release PR. Check the video without signing in, read the generated notes, and mark the PR ready after review. If the version, source, or highlights change, regenerate the video before recording a new URL.
+6. Push the manifest update to the authorized release PR. Check the video without signing in, read the generated notes, and mark the PR ready after review. If the version, source, or highlights change, regenerate the video before recording a new URL. If a new video cannot meet the standard, clear the saved video and continue with text notes.
 
-The `video` object saves its attachment `url` and a `releaseSha256` digest of the version, source commit, and highlights. Checks reject missing metadata and mismatched digests. The digest binds the recorded metadata; a reviewer must still check the video's claims and public access.
+The optional `video` object saves its attachment `url` and a `releaseSha256` digest of the version, source commit, and highlights. Missing video metadata and `video: null` are accepted. Checks reject malformed video metadata and mismatched digests. Clear rejected video metadata to continue without it. The digest binds the recorded metadata; a reviewer must still check the video's claims, quality, and public access.
 
 ### Write release highlights
 
@@ -191,7 +193,7 @@ Use the [v0.7.0 release notes](https://github.com/n8n-io/nod/releases/tag/nod-v0
 - Keep the tone friendly and playful. One or two relevant emoji in headings are enough. Use concrete examples, such as renaming invoices in Downloads.
 - Use short sentences and direct verbs. Avoid slogans, repeated sentence patterns, abstract promises, and claims such as “game-changing.”
 - Check each claim against changes included since the previous release. State previews and limits. Keep any required upgrade action visible.
-- Each release has a separate required video. Add a compact screenshot, short GIF, or demo link to the highlights when it helps. Show product UI with synthetic data and label example data. Check that the media loads.
+- Try to create a separate video for each release. If it cannot meet the quality standard, use text notes. Add a compact screenshot, short GIF, or demo link when it helps. Show product UI with synthetic data and label example data. Check that the media loads.
 - Use public media URLs, pinned repository images, or GitHub attachments. Do not add media as a release asset: older app updaters accept at most 30 assets.
 - Leave download links and the commit list to the publisher. Highlights are required Markdown, up to 8 KiB. They can contain media links.
 
@@ -216,7 +218,7 @@ The **Build desktop release** workflow runs on `main` by hand for a draft or a r
 | **automatic** | Use the version and notes from the merged release pull request | Pick the next patch without a version pull request. Use for recovery only. |
 | **publish**   | Leave a draft to inspect                                       | Publish after every check passes                                           |
 
-When **automatic** is on, also supply **highlights** and **video**. The video input is the JSON `video` object for the selected version, exact `main` commit, and those highlights. A candidate automatic plan can be saved outside the repository and completed with `node .github/scripts/prepare-desktop-release.mjs --video VIDEO_URL /tmp/nod-release-plan.json`. Pass only its `video` object as the workflow input. Missing or mismatched video metadata stops the run before packaging. The source-bound release plan saves the copy and video metadata. Normal builds use both from the merged version PR.
+When **automatic** is on, also supply **highlights**. The **video** input is optional. When available, supply the JSON `video` object for the selected version, exact `main` commit, and those highlights. A candidate automatic plan can be saved outside the repository and completed with `node .github/scripts/prepare-desktop-release.mjs --video VIDEO_URL /tmp/nod-release-plan.json`. Pass only its `video` object as the workflow input. Omit the input when a video cannot be made or does not meet the quality standard. The source-bound release plan saves the copy and optional video metadata. Normal builds use the merged version PR's metadata.
 
 Release builds run one at a time, and up to 100 runs can wait in the queue. A failed build can reuse its matching draft. Published assets are never replaced.
 

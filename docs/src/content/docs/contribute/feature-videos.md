@@ -56,7 +56,9 @@ The agent works in a temporary folder. Captures, pages and videos never go into 
 
 ## Release videos
 
-Every desktop release includes a video. The coding agent that prepares the release creates it from the draft highlights and captures the exact source commit in `desktop/release.json`. A published release or tag is not needed. CI checks the saved video metadata and publishes the reviewed URL with the notes. CI does not run a model or create the video.
+The coding agent tries to make a video for every desktop release. It uses the draft highlights and captures the exact source commit in `desktop/release.json`. A published release or tag is not needed. CI checks any saved video metadata and publishes the reviewed URL with the notes. CI does not run a model or create the video.
+
+If the video does not meet the skill's quality standard, or cannot be made or uploaded, the release continues with text notes. The agent leaves `video: null` and explains the specific reason in the PR without private content. It removes a rejected video from the PR description. The quality standard stays the same, and a video failure does not delay the release.
 
 A release that contains only fixes gets the same visual care. Its opening frame makes the improvements clear. It shows two or three concrete fixes and invites users to update. Real captures show visible corrections. Fixes without a useful screen use an animated text summary. The video must not claim new features or unsupported speed or safety improvements.
 

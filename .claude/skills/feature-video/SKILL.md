@@ -1,13 +1,13 @@
 ---
 name: feature-video
-description: Make a short square video of a Nod feature or release with real frontend captures, made-up data, and synthesized music. Use for a requested feature demo or when preparing a desktop release. Every release needs a video, including releases that contain only fixes. Skip individual fix, refactor, and docs PRs.
+description: Make a short square video of a Nod feature or release with real frontend captures, made-up data, and synthesized music. Use for a requested feature demo or when preparing a desktop release, including one that contains only fixes. Try for every release, but continue with text notes if the video fails quality checks or cannot be made. Skip individual fix, refactor, and docs PRs.
 ---
 
 # Feature video
 
 Produces a 1080×1080, 60 fps, 20–30 s MP4 (H.264 High + AAC, −14 LUFS). Each video is an HTML page whose `render(t)` draws any moment deterministically. Headless Chrome captures every frame, a Node synth writes the music, and ffmpeg muxes them. The app scenes are captures of the real Nod frontend running on made-up data. The cursor, camera and cuts are composed over them, so every frame is exact and repeatable.
 
-Make one for a requested user-facing feature or each desktop release. An individual fix PR needs no video. A release that contains only fixes still needs one: show how those fixes improve Nod.
+Make one for a requested user-facing feature. Try to make one for each desktop release, including one that contains only fixes: show how those fixes improve Nod. An individual fix PR needs no video. A video failure must not block a release.
 
 Paths below are relative to this skill's directory (`<skill>`). Work in a temporary folder outside the repository, and never commit captures, pages or videos.
 
@@ -95,7 +95,7 @@ node <skill>/scripts/render.mjs video <name>.html silent.mp4
 
 - Give the full path and a short scene-by-scene summary with timestamps.
 - For an ordinary feature PR, tell the author to drag the MP4 into its **Summary**. Leave that upload to the author.
-- For an authorized release PR, follow [Make the release video](../../../docs/src/content/docs/contribute/desktop-releases.mdx#make-the-release-video). Attach the MP4 to that draft PR, record its URL with `node .github/scripts/prepare-desktop-release.mjs --video URL`, and commit the manifest. Check that the public video loads and matches the notes. Regenerate after changes to the version, source, or highlights. Do not merge or publish without authorization.
+- For an authorized release PR, follow [Make the release video](../../../docs/src/content/docs/contribute/desktop-releases.mdx#make-the-release-video). Attach the MP4 only if it meets this skill's quality standard. Record its URL with `node .github/scripts/prepare-desktop-release.mjs --video URL` and commit the manifest. Check that the public video loads and matches the notes. Regenerate after changes to the version, source, or highlights. If the video fails quality checks, creation, validation, or upload, leave `video: null` and report the specific reason in the PR without secrets or private content. Remove any rejected video from the PR description. Continue with text notes. Do not lower the quality standard or block the release for a video. Do not merge or publish without authorization.
 - State the caveats: the music is synthesized and you have not listened to it; `app` scenes are the real frontend with made-up data and composed motion; any other app scene is a recreation; which jobs are shown finishing and why.
 
 ## Gotchas

@@ -19,7 +19,7 @@ on:
         type: string
         required: false
       video:
-        description: JSON video metadata for automatic releases only; required when automatic is on
+        description: Optional JSON video metadata for automatic releases only
         type: string
         required: false
 

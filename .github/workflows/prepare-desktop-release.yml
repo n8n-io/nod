@@ -48,7 +48,7 @@ jobs:
       - name: Prepare the release PR description
         run: |
           cat > "$RUNNER_TEMP/release-pr.md" <<'TEXT'
-          This draft needs a release video. The coding agent that prepares the release must use the feature-video skill, attach the MP4 here, and record its URL with node .github/scripts/prepare-desktop-release.mjs --video URL. Commit the manifest, check the notes and video, then mark this PR ready. Releases that contain only fixes need a video too. Follow https://nod.n8n.io/docs/contribute/desktop-releases/#make-the-release-video.
+          The coding agent that prepares the release should try to create a video with the feature-video skill, including for releases that contain only fixes. If it meets the skill's quality standard, attach the MP4 here and record its URL with node .github/scripts/prepare-desktop-release.mjs --video URL. If the video fails quality checks or cannot be made or uploaded, leave video as null, explain the reason here without private content, and continue with text notes. A video failure does not block the release. Review the result, then mark this PR ready. Follow https://nod.n8n.io/docs/contribute/desktop-releases/#make-the-release-video.
 
           Merge this PR after review and CI. CI on the merge commit builds Mac Intel, Mac ARM, Windows x64 and Linux x64 packages. It checks all four bundles and publishes one regular Nod GitHub release. Linux is a Flatpak preview. Its bundle includes the runtime and arrives in numbered parts with checksums.
 
