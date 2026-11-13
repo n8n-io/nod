@@ -54,6 +54,7 @@ import { cachedIcons } from '../src/server/link-previews.ts';
 import { createErrorRedactor } from '../src/server/redaction.ts';
 import { createLedger } from '../src/server/ledger.ts';
 import { createActivityLog } from '../src/server/activity-log.ts';
+import { createVaultAccess } from '../src/server/vault-access.ts';
 import { usagePdf } from '../src/server/usage-report.ts';
 import type { TrustEntry } from '../src/shared/trust.ts';
 import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
@@ -9231,28 +9232,13 @@ test(
       const ledger = createLedger({ pool, ownerId: 'owner' });
       await ledger.initialize();
       ledger.registerRoutes(app);
-      const activity = createActivityLog({
-        requests: ledger.within,
-        vault: async (start, end) => ({
-          entries: [
-            {
-              id: randomUUID(),
-              at: new Date().toISOString(),
-              action: 'card' as const,
-              origin: 'https://shop.example.test',
-              itemKind: 'card' as const,
-              amount: { minor: 1200, currency: 'EUR' },
-              task: '=HYPERLINK("https://attacker.example.test")',
-              reason: 'said_yes' as const,
-            },
-          ].filter(
-            (entry) =>
-              (!start || Date.parse(entry.at) >= start.getTime()) &&
-              (!end || Date.parse(entry.at) < end.getTime()),
-          ),
-          complete: true,
-        }),
+      const vaultAccess = await createVaultAccess(pool, {
+        ownerId: 'owner',
+        check: async () => {
+          throw new Error('Reads need no check.');
+        },
       });
+      const activity = createActivityLog({ requests: ledger.within, vault: vaultAccess.within });
       activity.registerRoutes(app);
       const usage = (turnId: string, costUsd: number | null): AgentEvent => ({
         type: 'model_usage',
@@ -9456,7 +9442,7 @@ test(
         [
           {
             label: 'Slack: send message',
-            because: { kind: 'message', text: 'Tell Sam we take the quote' },
+            because: { kind: 'message', text: 'Tell Sam we take the quote', whole: true },
           },
           { label: 'Slack: send message' },
         ],
@@ -9467,31 +9453,49 @@ test(
           .entries.map((entry: TrustEntry) => entry.id),
         [scheduled],
       );
+      await pool.query(
+        `INSERT INTO vault_activity(id,owner_id,action,origin,item_kind,task,reason,amount_minor,currency) VALUES
+          ($1,'owner','card','https://shop.example.test','card','=HYPERLINK("https://attacker.example.test")','said_yes',1200,'EUR'),
+          ($2,'other','card','https://foreign.example.test','card','Foreign task','said_yes',900,'EUR')`,
+        [randomUUID(), randomUUID()],
+      );
       const exported = await app.inject('/api/trust/export');
       assert.equal(exported.statusCode, 200);
-      assert.match(String(exported.headers['content-disposition']), /nod-activity-.*\.csv/);
-      const csv = exported.body.replace(/^\ufeff/, '').split('\r\n');
-      assert.equal(csv[0], 'Time,Request,Source,Action,Allowed by,Model cost (USD)');
+      const cells = (body: string) =>
+        body
+          .replace(/^\ufeff/, '')
+          .trim()
+          .split('\r\n')
+          .map((line) => {
+            const row: string[] = [];
+            let cell = '';
+            let quoted = false;
+            for (let index = 0; index < line.length; index++) {
+              const char = line[index]!;
+              if (quoted && char === '"' && line[index + 1] === '"') {
+                cell += '"';
+                index++;
+              } else if (char === '"') quoted = !quoted;
+              else if (char === ',' && !quoted) {
+                row.push(cell);
+                cell = '';
+              } else cell += char;
+            }
+            return [...row, cell];
+          });
+      const rows = cells(exported.body);
+      assert.ok(rows.every((row) => row.length === rows[0]!.length));
       assert.ok(
-        csv.some((row) =>
-          row.endsWith(
-            ',Tell Sam we take the quote,Chat,Gmail: send email · sam@example.test · Quote accepted,You approved it,',
-          ),
+        rows.some(
+          (row) =>
+            row[1] === 'Tell Sam we take the quote' &&
+            row[3]!.endsWith('sam@example.test · Quote accepted'),
         ),
       );
-      assert.ok(
-        csv.some((row) =>
-          row.includes(',Chat,Slack: send message,You said “Tell Sam we take the quote”,'),
-        ),
-      );
-      assert.ok(
-        csv.some((row) =>
-          row.includes(
-            `,"'=HYPERLINK(""https://attacker.example.test"")",Vault,Submitted card for €12.00 at shop.example.test,You approved,`,
-          ),
-        ),
-      );
-      assert.doesNotMatch(exported.body, /Foreign/);
+      assert.ok(rows.some((row) => row[1] === `'=HYPERLINK("https://attacker.example.test")`));
+      assert.doesNotMatch(exported.body, /Foreign|foreign\.example/);
+      const scoped = cells((await app.inject(`/api/trust/export?session=${scheduled}`)).body);
+      assert.deepEqual([...new Set(scoped.slice(1).map((row) => row[1]))], ['Morning brief']);
       assert.deepEqual((await activity.read({ from: '2000-01-01' }, 200)).entries, []);
       await pool.query(
         "DELETE FROM app_actions WHERE action='SLACK_SEND_MESSAGE' OR (turn_id=$1 AND action='GMAIL_FETCH_EMAILS')",

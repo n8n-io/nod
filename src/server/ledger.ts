@@ -32,7 +32,11 @@ const usd = z
   )
   .nullable();
 export const activityRange = z
-  .object({ from: z.iso.date().optional(), to: z.iso.date().optional() })
+  .object({
+    from: z.iso.date().optional(),
+    to: z.iso.date().optional(),
+    session: z.uuid().optional(),
+  })
   .strict();
 export type ActivityRange = z.infer<typeof activityRange>;
 export const limitsInput = z
@@ -512,7 +516,8 @@ export function createLedger({
          (SELECT json_build_object('title',t.title,'started',t.activity_key IS NOT NULL) FROM tasks t
            WHERE t.owner_id=$1 AND t.session_id=u.session_id LIMIT 1) AS task,
          EXISTS(SELECT 1 FROM turn_events e WHERE e.turn_id=u.id AND e.type='source_screened') AS screened,
-         (SELECT json_agg(json_build_object('action',a.action,'target',a.target,'basis',a.basis,'said',m.id IS NOT NULL) ORDER BY a.created_at)
+         (SELECT json_agg(json_build_object('action',a.action,'target',a.target,'basis',a.basis,'said',m.id IS NOT NULL,
+             'whole',regexp_replace(lower(m.text),'[^[:alnum:]]+','','g')=regexp_replace(lower(a.basis->>'quote'),'[^[:alnum:]]+','','g')) ORDER BY a.created_at)
            FROM app_actions a LEFT JOIN messages m ON a.basis->>'kind'='message'
              AND m.owner_id=$1 AND m.id=(a.basis->>'messageId')::uuid
            WHERE a.turn_id=u.id AND a.owner_id=$1) AS actions
@@ -566,8 +571,11 @@ export function createLedger({
           target: string | null;
           basis: TrustBasis | null;
           said: boolean;
+          whole: boolean | null;
         }): TrustAction => {
-          const because = becauseOf(item.basis, item.said);
+          const reason = becauseOf(item.basis, item.said);
+          const because =
+            reason?.kind === 'message' && item.whole ? { ...reason, whole: true as const } : reason;
           return {
             label: recordedTitle(item.action),
             ...(item.target ? { target: item.target } : {}),
@@ -603,6 +611,7 @@ export function createLedger({
       )
     ).rows[0]!;
     const rows = await select({
+      session: range.session,
       start: bounds.start_at,
       end: bounds.end_at,
       limit: limit === null ? null : limit + 1,

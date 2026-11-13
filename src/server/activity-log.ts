@@ -84,7 +84,9 @@ export function createActivityLog(log: Sources) {
   async function read(input: unknown, limit: number | null) {
     const range = activityRange.parse(input ?? {});
     const requests = await log.requests(range, limit);
-    const vault = await log.vault(requests.start, requests.end, limit);
+    const vault = range.session
+      ? { entries: [], complete: true }
+      : await log.vault(requests.start, requests.end, limit);
     const merged = [
       ...requests.entries.map(fromRequest),
       ...vault.entries.map((entry) => fromVault(entry, requests.locale)),
@@ -98,8 +100,10 @@ export function createActivityLog(log: Sources) {
   }
 
   async function csv(input: unknown) {
-    const { entries } = await read(input, null);
-    const rows = [['Time', 'Request', 'Source', 'Action', 'Allowed by', 'Model cost (USD)']];
+    const { entries, timeZone } = await read(input, null);
+    const rows = [
+      [`Time (${timeZone})`, 'Request', 'Source', 'Action', 'Allowed by', 'Model cost (USD)'],
+    ];
     for (const entry of [...entries].reverse()) {
       const did = entry.did.length ? entry.did : [{ action: '' }];
       did.forEach((item, index) =>

@@ -379,9 +379,6 @@ function billingSource(model: TrustModel) {
   return provider ? `${provider} API` : 'API usage';
 }
 
-const plain = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
-const sameWords = (quote: string, title: string) => plain(quote) === plain(title);
-
 function TrustRow({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean }) {
   const format = useDateFormat();
   const models = entry.models ?? [];
@@ -389,11 +386,7 @@ function TrustRow({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean 
   const actions = new Map<string, { text: string; why?: string; count: number }>();
   for (const action of entry.actions) {
     const text = actionText(action);
-    const why =
-      action.because &&
-      (action.because.kind === 'message' && sameWords(action.because.text, entry.title)
-        ? 'You asked for it'
-        : becauseText(action.because));
+    const why = action.because && becauseText(action.because);
     const key = `${text}\n${why ?? ''}`;
     const seen = actions.get(key);
     if (seen) seen.count++;
@@ -733,7 +726,11 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
             onClick={() => {
               setExporting(true);
               setExportError('');
-              downloadExport('/api/trust/export', 'nod-activity.csv', 'Your activity')
+              downloadExport(
+                `/api/trust/export${session ? `?session=${session}` : ''}`,
+                'nod-activity.csv',
+                'Your activity',
+              )
                 .catch((cause) => setExportError(errorMessage(cause)))
                 .finally(() => setExporting(false));
             }}

@@ -39,7 +39,7 @@ export function VaultUse({ entry, open }: { entry: VaultActivityEntry; open?(): 
         <Icon size={14} />
       </span>
       <span className="vault-use-text">
-        <b>{vaultActivityTitle(entry)}</b>
+        <b>{vaultActivityTitle(entry, format.locale)}</b>
         <span>{[formatTime(entry.at, format), entry.task].filter(Boolean).join(' · ')}</span>
         {entry.because && entry.because.kind !== 'approved' && (
           <Tooltip content={becauseText(entry.because)}>
