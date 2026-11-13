@@ -17,7 +17,7 @@ To run Nod on a VPS, cloud VM, or Mac mini and reach it from other devices, use 
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Node.js          | 24.21.0 or newer                                                                                                                                                     |
 | pnpm             | 10.34.5, enabled through Corepack                                                                                                                                    |
-| Docker           | With Compose v2, running, for example Docker Desktop on a Mac or Windows                                                                                             |
+| Docker           | With Compose v2 and the Buildx plugin, running. For a Docker VM such as Colima, start with two CPUs and 8 GB of memory.                                              |
 | Git              | Any recent version                                                                                                                                                   |
 | Model connection | A [supported model service](/connect/models/) with its required credentials, a ChatGPT plan that supports sign-in, or a [local model](/connect/local-models/) server |
 
@@ -36,6 +36,14 @@ flowchart LR
 ```
 
 The workspace is where Nod runs commands and keeps files. The browser is where it visits websites. Neither of them receives your provider keys. The workspace reaches the network only through its [firewall](/deploy/self-host/#what-runs-on-the-server), which blocks private addresses.
+
+`pnpm start` sets the browser and workspace CPU limits to fit the CPUs available to Docker. To check a Docker VM's allocation, run `docker info --format '{{.NCPU}}'`. If Nod runs slowly, stop Nod, raise the VM's CPU or memory allocation, then run `pnpm start` again to recalculate the limits. For example, to give an existing Colima VM four CPUs and 8 GB of memory:
+
+```sh title="Terminal"
+colima stop
+colima start --cpu 4 --memory 8
+pnpm start
+```
 
 ## Get the code
 
@@ -113,12 +121,13 @@ Settings live in `.env`, and you need to restart after you change them. See [Con
 
 ## Troubleshooting
 
-| You see                           | Do this                                                                                                                                                       |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Use Node.js 24.21.0 or newer.`   | Install a newer Node.js and run `pnpm start` again.                                                                                                           |
-| Docker errors on start            | Make sure Docker is running and `docker compose version` reports v2.                                                                                          |
-| A missing or unreadable Vault key | Restore the original key and check its permissions. Don't generate a replacement for encrypted data. See [Vault configuration](/deploy/configuration/#vault). |
-| The port is in use                | Set another `PORT` in `.env`. The default is `4310`.                                                                                                          |
+| You see                                | Do this                                                                                                                                                                                                                                   |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Use Node.js 24.21.0 or newer.`        | Install a newer Node.js and run `pnpm start` again.                                                                                                                                                                                       |
+| Docker errors on start                 | Make sure Docker is running and `docker compose version` reports v2.                                                                                                                                                                      |
+| `the --chmod option requires BuildKit` | Install the [Docker Buildx plugin](https://github.com/docker/buildx#installing) and check that `docker buildx version` works. If `DOCKER_BUILDKIT=0` is set in your environment, remove it or set it to `1`. Then run `pnpm start` again. |
+| A missing or unreadable Vault key      | Restore the original key and check its permissions. Don't generate a replacement for encrypted data. See [Vault configuration](/deploy/configuration/#vault).                                                                             |
+| The port is in use                     | Set another `PORT` in `.env`. The default is `4310`.                                                                                                                                                                                      |
 
 ## Related resources
 

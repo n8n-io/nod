@@ -192,6 +192,10 @@ function clock(format: DateFormat) {
   return clockOptions(format.locale, format.hourCycle);
 }
 
+export function usesTwelveHourClock(format = current) {
+  return formatter(format, clock(format)).resolvedOptions().hour12 === true;
+}
+
 export function formatTime(
   value: string | number | Date,
   format = current,
@@ -208,6 +212,16 @@ export function formatClockTime(value: string, format = current) {
   if (!match) return value;
   return formatter(format, clock(format), 'UTC').format(
     Date.UTC(2000, 0, 1, Number(match[1]), Number(match[2])),
+  );
+}
+
+export function formatClockPeriod(value: string, format = current) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value);
+  if (!match) return '';
+  return (
+    formatter(format, clock(format), 'UTC')
+      .formatToParts(Date.UTC(2000, 0, 1, Number(match[1]), Number(match[2])))
+      .find((part) => part.type === 'dayPeriod')?.value ?? ''
   );
 }
 

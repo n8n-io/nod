@@ -27,7 +27,7 @@ services:
     read_only: true
     pids_limit: 4096
     mem_limit: 8g
-    cpus: 6
+    cpus: ${NOD_BROWSER_CPUS:-6}
     shm_size: 1g
     volumes:
       - browser-data:/data
@@ -56,7 +56,7 @@ services:
     security_opt: [no-new-privileges:true]
     pids_limit: 4096
     mem_limit: 8g
-    cpus: 4
+    cpus: ${NOD_WORKSPACE_CPUS:-4}
     volumes:
       - ${NOD_DATA_ROOT:-./.local}/workspaces:/workspace
       - workspace-tools:/home/node

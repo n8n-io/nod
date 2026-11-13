@@ -858,20 +858,17 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       : canRecord && !hasRecording
         ? 'Press and hold to record\nRight-click for microphone settings'
         : `${microphoneLabel}\nRight-click for microphone settings`);
-  const sendLabel = showStop
-    ? 'Stop all work'
-    : sendingAudio
-      ? 'Sending audio'
-      : hasRecording
-        ? 'Send audio message'
-        : 'Send message';
-  const sendDisabled = showStop
-    ? stopping
-    : !ready ||
-      pendingUploads > 0 ||
-      recordingPending ||
-      sendingAudio ||
-      (!text.trim() && !attachments.length && !hasRecording);
+  const sendLabel = sendingAudio
+    ? 'Sending audio'
+    : hasRecording
+      ? 'Send audio message'
+      : 'Send message';
+  const sendDisabled =
+    !ready ||
+    pendingUploads > 0 ||
+    recordingPending ||
+    sendingAudio ||
+    (!text.trim() && !attachments.length && !hasRecording);
   function retryAudio() {
     recorder.clearError();
     setShowAudioSetup(false);
@@ -1191,23 +1188,32 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   : microphoneLabel}
               </span>
             </MicrophonePicker>
+            <span className="stop-slot">
+              {showStop && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="stop-button"
+                  aria-label="Stop all work"
+                  title="Stop all work"
+                  disabled={stopping}
+                  onClick={onStop}
+                >
+                  <Square size={16} solid />
+                </Button>
+              )}
+            </span>
             <Button
               ref={sendButton}
-              type={showStop ? 'button' : 'submit'}
+              type="submit"
               size="icon"
               className={`send-button${hasRecording ? ' send-audio-button' : ''}`}
-              onClick={showStop ? onStop : undefined}
               title={sendDisabled ? undefined : sendLabel}
               aria-label={sendLabel}
               disabled={sendDisabled}
             >
-              {showStop ? (
-                <Square size={14} solid />
-              ) : sendingAudio ? (
-                <LoaderCircle size={18} className="spin" />
-              ) : (
-                <ArrowUp size={18} />
-              )}
+              {sendingAudio ? <LoaderCircle size={18} className="spin" /> : <ArrowUp size={18} />}
             </Button>
           </div>
         </div>

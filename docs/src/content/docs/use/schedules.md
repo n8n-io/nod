@@ -91,7 +91,7 @@ During quiet hours, Nod keeps checking new mail and app activity, but prepares o
 A local desktop assistant runs schedules and background work only while Nod is open and your computer is awake. A [self-hosted server](/deploy/self-host/) keeps running after you close its web or desktop client, provided the server stays awake and connected.
 :::
 
-For a local assistant, closing the window keeps Nod running in the menu bar or tray. **Quit Nod** stops it. **Open at login** is on after setup; keep it on in **Settings → General** if you rely on schedules.
+For a local assistant, closing the window keeps Nod running in the menu bar or tray. **Quit Nod** stops it. **Open at login** is on after setup; keep it on in **Settings → General** if you rely on schedules. It starts Nod when you sign in to your computer, not when the computer turns on, so after a restart or power cut nothing runs until you sign in. On a Mac with FileVault turned on, automatic login is off, so someone has to enter your password after every restart.
 
 If a run comes due while the assistant is stopped, it runs once when Nod is running again. If a run starts more than 10 minutes late, its instructions include the due time and start time. If later runs of a recurring schedule were skipped, the instructions also include that count. Counts of 100 or more are shown as "100 or more".
 

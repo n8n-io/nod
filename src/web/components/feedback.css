@@ -193,6 +193,9 @@
   font-size: var(--text-control);
   line-height: 1.55;
 }
+.feedback-body + .feedback-send-notice {
+  margin-top: 12px;
+}
 .feedback-send-notice .feedback-text-action {
   justify-self: start;
   color: inherit;

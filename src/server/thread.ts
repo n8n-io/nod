@@ -14,6 +14,7 @@ import {
   type QuestionAnswer,
 } from '../shared/answer-choices.ts';
 import { logFailure } from './failure-log.ts';
+import { modelQuotaFailure } from '../shared/model-quota.ts';
 import { pendingAnswerChoicesSql } from './answer-choices.ts';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -1125,21 +1126,17 @@ async function finishTurn(
 const interrupted = 'Interrupted.';
 
 function modelRecoveryAdvice(text: string) {
-  if (/\bHTTP 429\b/.test(text) && /\b(?:quotaValue|limit):\s*0(?!\d|\.\d)/i.test(text))
+  const quota = modelQuotaFailure(text);
+  if (quota?.kind === 'zero_quota')
     return 'This account has no quota for this model. Check its access or choose another model.';
   const oversized = text.match(
     /\brequest too large\b.{0,250}?\btokens per minute\s*\(TPM\):\s*Limit\s+(\d{1,9}),\s*Requested\s+(\d{1,9})/is,
   );
   if (oversized && Number(oversized[1]) > 0 && Number(oversized[2]) > Number(oversized[1]))
     return 'Shorten the conversation or choose a model with a higher tokens-per-minute limit.';
-  if (
-    !/\bHTTP 429\b/.test(text) ||
-    !/\b(?:GenerateRequestsPerDay\w*|requests?\s*(?:\/|per\s+)day)\b/i.test(text)
-  )
-    return '';
-  const retry = text.match(/\bretryDelay:\s*(\d{1,6}(?:\.\d+)?)s\b/i);
-  const seconds = retry ? Number(retry[1]) : 0;
-  if (!seconds) return '';
+  if (quota?.kind !== 'daily_quota') return '';
+  const seconds = (quota.retryAfterMs ?? 0) / 1000;
+  if (!seconds) return 'Check this connection’s daily limit or choose another model.';
   const amount =
     seconds < 60
       ? seconds

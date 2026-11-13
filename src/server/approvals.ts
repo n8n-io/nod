@@ -64,7 +64,7 @@ export type ChatConfirmationResult =
   | undefined;
 
 function chatConfirmationSql(match: string) {
-  return `SELECT a.*,u.source AS turn_source,u.status AS turn_status,u.background AS turn_background,u.session_id AS turn_session_id,u.prompt AS turn_prompt
+  return `SELECT a.*,u.source AS turn_source,u.status AS turn_status,u.background AS turn_background,u.session_id AS turn_session_id,u.prompt AS turn_prompt,to_jsonb(u)->>'task_id' AS turn_task_id
   FROM approvals a JOIN turns u ON u.id=a.turn_id
   WHERE ${match}
     AND a.owner_id=$2 AND u.owner_id=$2 AND a.thread_id=$3 AND u.thread_id=$3
@@ -599,10 +599,36 @@ export async function createApprovals(
             background: true,
           },
         };
-      await client.query(
-        "UPDATE turns SET status='cancelled',finished_at=now() WHERE id=$1 AND owner_id=$2 AND status='waiting'",
+      const cancelled = await client.query(
+        "UPDATE turns SET status='cancelled',finished_at=now() WHERE id=$1 AND owner_id=$2 AND status='waiting' RETURNING id",
         [approval.turn_id, ownerId],
       );
+      if (cancelled.rowCount && approval.turn_background && approval.turn_task_id) {
+        const task = (
+          await client.query<{ id: string }>(
+            "SELECT id FROM tasks WHERE id=$1 AND owner_id=$2 AND turn_id=$3 AND state='open' FOR UPDATE",
+            [approval.turn_task_id, ownerId, approval.turn_id],
+          )
+        ).rows[0];
+        if (task) {
+          const messageId = randomUUID();
+          await client.query(
+            `INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text,created_at)
+             VALUES($1,$2,$3,$4,'assistant',$5,clock_timestamp())`,
+            [
+              messageId,
+              ownerId,
+              input.threadId,
+              approval.turn_id,
+              'The proposed action did not run. This task is still open, but its current work stopped. Reply here to continue the remaining work.',
+            ],
+          );
+          await client.query(
+            'UPDATE tasks SET continuation_message_id=$3,updated_at=now() WHERE id=$1 AND owner_id=$2',
+            [task.id, ownerId, messageId],
+          );
+        }
+      }
       return undefined;
     }
     if (!active) return undefined;

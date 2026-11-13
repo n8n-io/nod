@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
-  profileBusinessRoles,
+  profileAsksWhoFor,
   profileCompanySizes,
   profileJobs,
   profileRoles,
@@ -40,7 +40,7 @@ const profileInput = z
       profile.roles.some((role) => role === 'student' || role === 'not_working')
     )
       context.addIssue({ code: 'custom', path: ['roles'], message: 'Role is not available.' });
-    if (profile.whoFor && !profile.roles.some((role) => profileBusinessRoles.includes(role)))
+    if (profile.whoFor && !profileAsksWhoFor(profile.scope, profile.roles))
       context.addIssue({ code: 'custom', path: ['whoFor'], message: 'Answer is not applicable.' });
     if (profile.scope === 'personal' && profile.companySize)
       context.addIssue({
@@ -79,8 +79,8 @@ const fixedProfileInput = z
   })
   .strict()
   .superRefine((profile, context) => {
-    const business = profileBusinessRoles.some((role) => profile.onboarding_roles.includes(role));
-    if ((profile.onboarding_who_for === 'not_asked') === business)
+    const asksWhoFor = profileAsksWhoFor(profile.onboarding_scope, profile.onboarding_roles);
+    if ((profile.onboarding_who_for === 'not_asked') === asksWhoFor)
       context.addIssue({
         code: 'custom',
         path: ['onboarding_who_for'],
@@ -130,7 +130,9 @@ export function profileNote(profile: OnboardingProfile) {
   return [
     profile.scope && `Where they want Nod’s help: ${label(profileScopes, profile.scope)}.`,
     roles.length && `What they do: ${roles.join('; ')}.`,
-    profile.whoFor && `Who it’s for: ${label(profileWhoFor, profile.whoFor)}.`,
+    profileAsksWhoFor(profile.scope, profile.roles) &&
+      profile.whoFor &&
+      `Who it’s for: ${label(profileWhoFor, profile.whoFor)}.`,
     profile.companySize && `Company size: ${label(profileCompanySizes, profile.companySize)}.`,
     jobs.length && `What they want off their plate first: ${jobs.join('; ')}.`,
   ]

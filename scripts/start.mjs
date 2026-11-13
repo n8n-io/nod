@@ -1,8 +1,8 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseEnv } from 'node:util';
+import { parseEnv, promisify } from 'node:util';
 import {
   localDatabaseEnvironment,
   prepareLocalDirectories,
@@ -35,8 +35,18 @@ try {
   ]);
   if (wanted !== installed) await run('pnpm', ['install', '--frozen-lockfile', '--prod=false']);
   if (production) await run('pnpm', ['run', 'build']);
+  const { stdout } = await promisify(execFile)('docker', ['info', '--format', '{{.NCPU}}']);
+  const dockerCpus = Number(stdout.trim());
+  if (!Number.isInteger(dockerCpus) || dockerCpus < 1)
+    throw new Error('Docker did not report a usable CPU count.');
   const environment = await withLocalDatabase(process.cwd(), async (database) => {
     const settings = parseEnv(await readFile('.env', 'utf8'));
+    const cpuLimit = (name, fallback) => {
+      const requested = Number(process.env[name] ?? settings[name] ?? fallback);
+      if (!Number.isFinite(requested) || requested < 0.01)
+        throw new Error(`${name} must be at least 0.01 CPUs.`);
+      return String(Math.min(requested, dockerCpus));
+    };
     const appVersion = await sourceAnalyticsVersion(
       process.cwd(),
       production,
@@ -45,6 +55,8 @@ try {
     );
     const environment = {
       ...localDatabaseEnvironment(database),
+      NOD_BROWSER_CPUS: cpuLimit('NOD_BROWSER_CPUS', 6),
+      NOD_WORKSPACE_CPUS: cpuLimit('NOD_WORKSPACE_CPUS', 4),
       NOD_DATA_ROOT: resolve(process.env.NOD_DATA_ROOT || settings.NOD_DATA_ROOT || '.local'),
       ...(appVersion !== undefined ? { NOD_APP_VERSION: appVersion } : {}),
     };

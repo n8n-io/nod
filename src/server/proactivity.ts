@@ -185,6 +185,7 @@ export function createProactivity(options: {
   redact?(text: string): string;
   read(turn: TurnRef, input: SourceQuery, signal: AbortSignal): Promise<unknown>;
   curator?: MemoryCurator;
+  modelAvailable?(): Promise<boolean>;
 }) {
   const { pool, ownerId } = options;
   const preferences = createPreferencesStore(pool, ownerId);
@@ -989,7 +990,7 @@ export function createProactivity(options: {
   }
   async function canRun() {
     const prefs = await preferences.get();
-    return !prefs.proactivePaused;
+    return !prefs.proactivePaused && ((await options.modelAvailable?.()) ?? true);
   }
   async function context(
     turn: TurnRef,
@@ -1274,7 +1275,7 @@ export function createProactivity(options: {
   async function due() {
     const snapshot = await sourceCatalog();
     const prefs = await preferences.get();
-    const runnable = !prefs.proactivePaused;
+    const runnable = !prefs.proactivePaused && ((await options.modelAvailable?.()) ?? true);
     const quietEnd = isQuietTime(prefs) ? deliveryTime(prefs, Date.now()) : null;
     return transaction(async (client) => {
       const thread = await lockThread(client, ownerId);

@@ -9009,6 +9009,13 @@ test(
                 /retry delay is about 24 hours\. Check its daily limit or choose another model\./,
             },
             {
+              prompt: 'model-daily-quota-message-fixture',
+              error: prefix + 'HTTP 429: Daily quota exceeded; retryDelay: 30s',
+              reason: /Daily quota exceeded/,
+              advice:
+                /retry delay is about 30 seconds\. Check its daily limit or choose another model\./,
+            },
+            {
               prompt: 'model-rate-limit-code-fixture',
               error: prefix + 'rate_limit_error',
               reason: /rate_limit_error/,
@@ -9187,7 +9194,7 @@ test(
                   text,
                   /synthetic-private-provider-detail|synthetic-fixture-secret|usage limits and billing/,
                 );
-              if (!item.error.includes('{')) assert.equal(turn.error, item.error);
+              if (!item.error.includes('{') && !item.advice) assert.equal(turn.error, item.error);
             }
           } finally {
             for (const item of cases) modelErrors.delete(item.prompt);
@@ -11104,7 +11111,7 @@ test(
         CREATE TABLE messages(id uuid PRIMARY KEY, owner_id text, turn_id uuid, role text, created_at timestamptz DEFAULT now())`);
       const { createActivity } = await import('../src/server/activity.ts');
       const owner = 'activity-fixture-owner';
-      const activity = createActivity({ pool, ownerId: owner });
+      const activity = createActivity({ pool, ownerId: owner, model: () => 'Synthetic Model' });
       const threadId = randomUUID();
       const chat = randomUUID();
       const followUp = randomUUID();
@@ -11167,6 +11174,18 @@ test(
       item = await live();
       assert.equal(item.doing, 'tool');
       assert.equal(item.site, null);
+      assert.equal(item.tool, undefined);
+      assert.equal(item.model, 'Synthetic Model');
+      const codeCall = randomUUID();
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,call_id) VALUES($1,'tool_start','codemode',$2)",
+        [chat, codeCall],
+      );
+      assert.ok((await live()).tool);
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,call_id) VALUES($1,'tool_complete','codemode',$2)",
+        [chat, codeCall],
+      );
       await pool.query(
         "INSERT INTO turn_events(turn_id,type,summary,call_id) VALUES($1,'tool_complete','Wait for result',$2)",
         [chat, unlabeledCall],
@@ -11179,6 +11198,18 @@ test(
       item = await live();
       assert.equal(item.step, null);
       assert.equal(item.received, undefined);
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary) VALUES($1,'retry','Synthetic retry note')",
+        [chat],
+      );
+      assert.equal((await live()).step, 'Synthetic retry note');
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type,summary,call_id) VALUES($1,'tool_start','codemode',$2)",
+        [chat, randomUUID()],
+      );
+      item = await live();
+      assert.equal(item.step, null);
+      assert.ok(item.tool);
       const taskSession = randomUUID();
       const taskTurn = randomUUID();
       const observerTurn = randomUUID();

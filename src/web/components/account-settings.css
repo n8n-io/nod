@@ -286,6 +286,9 @@
   gap: 28px;
   margin-top: 18px;
 }
+.account-quiet-times[data-cycle='h12'] {
+  grid-template-columns: repeat(2, minmax(0, 176px));
+}
 .account-theme-previews {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -621,6 +624,9 @@
   .account-quiet-times {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 16px;
+  }
+  .account-quiet-times[data-cycle='h12'] {
+    grid-template-columns: minmax(0, 176px);
   }
 }
 @media (prefers-reduced-motion: reduce) {

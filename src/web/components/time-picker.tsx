@@ -2,11 +2,18 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { ActionMenu, ActionMenuItem } from './action-menu';
 import { Button } from './ui';
 import { Check, ChevronDown } from './icons';
+import {
+  formatClockPeriod,
+  formatClockTime,
+  usesTwelveHourClock,
+  type DateFormat,
+} from '../lib/date-format';
 
 type Segment = 'hours' | 'minutes';
 type TimePickerProps = {
   id: string;
   label: string;
+  format: DateFormat;
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
@@ -21,19 +28,34 @@ function parseTime(value: string) {
   if (!match || Number(match[1]) > 23) return null;
   return `${match[1].padStart(2, '0')}:${match[2]}`;
 }
-function parseSegment(value: string, segment: Segment) {
+function parseSegment(value: string, segment: Segment, twelveHour: boolean) {
   if (!/^\d{1,2}$/.test(value)) return null;
   const number = Number(value);
-  return number <= (segment === 'hours' ? 23 : 59) ? number : null;
+  const minimum = segment === 'hours' && twelveHour ? 1 : 0;
+  const maximum = segment === 'hours' ? (twelveHour ? 12 : 23) : 59;
+  return number >= minimum && number <= maximum ? number : null;
 }
-function parts(value: string) {
+function parts(value: string, twelveHour: boolean) {
   const [hours, minutes] = value.split(':');
-  return { hours, minutes };
+  return { hours: twelveHour ? String(Number(hours) % 12 || 12) : hours, minutes };
+}
+function periodOf(value: string) {
+  return Number(value.slice(0, 2)) >= 12 ? 'PM' : 'AM';
+}
+function pastedTime(value: string, twelveHour: boolean) {
+  const match = twelveHour && /^(\d{1,2}):([0-5]\d)\s*([ap])\.?m\.?$/i.exec(value.trim());
+  if (match) {
+    const hour = Number(match[1]);
+    if (hour < 1 || hour > 12) return null;
+    return `${String((hour % 12) + (match[3].toUpperCase() === 'P' ? 12 : 0)).padStart(2, '0')}:${match[2]}`;
+  }
+  return parseTime(value);
 }
 
 export function TimePicker({
   id,
   label,
+  format,
   value,
   onChange,
   disabled = false,
@@ -41,12 +63,14 @@ export function TimePicker({
   changed = false,
   savedValue,
 }: TimePickerProps) {
+  const twelveHour = usesTwelveHourClock(format);
   const hintId = useId();
   const editedId = useId();
   const initial = parseTime(value) ?? parseTime(savedValue ?? '') ?? '00:00';
   const committed = useRef(initial);
-  const [draft, setDraft] = useState(() => parts(initial));
+  const [draft, setDraft] = useState(() => parts(initial, twelveHour));
   const draftRef = useRef(draft);
+  const lastCycle = useRef(twelveHour);
   const [announcement, setAnnouncement] = useState('');
   const [open, setOpen] = useState(false);
   const hoursRef = useRef<HTMLInputElement>(null);
@@ -54,6 +78,10 @@ export function TimePicker({
   const selectFrame = useRef(0);
   const selected = parseTime(value) ?? committed.current;
   const saved = parseTime(savedValue ?? '');
+  const period = periodOf(selected);
+  const nextPeriodTime = `${String((Number(selected.slice(0, 2)) + 12) % 24).padStart(2, '0')}:${selected.slice(3)}`;
+  const shownPeriod = formatClockPeriod(selected, format) || period;
+  const shownNextPeriod = formatClockPeriod(nextPeriodTime, format) || periodOf(nextPeriodTime);
   const description = hintId + (changed ? ` ${editedId}` : '');
   const choices = [
     ...new Set([
@@ -71,19 +99,20 @@ export function TimePicker({
     setDraft(next);
   }
   useEffect(() => {
-    const next = parseTime(value);
-    if (next && next !== committed.current) {
+    const next = parseTime(value) ?? committed.current;
+    if (next !== committed.current || lastCycle.current !== twelveHour) {
       committed.current = next;
-      updateDraft(parts(next));
+      updateDraft(parts(next, twelveHour));
       setAnnouncement('');
     }
-  }, [value]);
+    lastCycle.current = twelveHour;
+  }, [value, twelveHour]);
   useEffect(() => {
     if (!disabled) return;
-    updateDraft(parts(committed.current));
+    updateDraft(parts(committed.current, twelveHour));
     setOpen(false);
     setAnnouncement('');
-  }, [disabled]);
+  }, [disabled, twelveHour]);
   useEffect(() => () => cancelAnimationFrame(selectFrame.current), []);
 
   function focusSegment(segment: Segment) {
@@ -104,28 +133,35 @@ export function TimePicker({
     if (!next) return;
     const previous = committed.current;
     committed.current = next;
-    updateDraft(parts(next));
+    updateDraft(parts(next, twelveHour));
     setAnnouncement('');
     if (next !== previous) onChange(next);
   }
   function commitSegment(segment: Segment) {
-    const number = parseSegment(draftRef.current[segment], segment);
+    const number = parseSegment(draftRef.current[segment], segment, twelveHour);
     if (number === null) {
-      updateDraft(parts(committed.current));
+      updateDraft(parts(committed.current, twelveHour));
       return;
     }
     const next = {
-      ...parts(committed.current),
-      [segment]: String(number).padStart(2, '0'),
+      ...parts(committed.current, twelveHour),
+      [segment]:
+        segment === 'minutes' || !twelveHour ? String(number).padStart(2, '0') : String(number),
     };
-    accept(`${next.hours}:${next.minutes}`);
+    const hour = Number(next.hours);
+    const storedHour = twelveHour
+      ? (hour % 12) + (periodOf(committed.current) === 'PM' ? 12 : 0)
+      : hour;
+    accept(`${String(storedHour).padStart(2, '0')}:${next.minutes}`);
   }
   function reject(segment: Segment, fullTime = false) {
-    updateDraft(parts(committed.current));
+    updateDraft(parts(committed.current, twelveHour));
     setAnnouncement(
       fullTime
-        ? 'Enter a valid 24-hour time, such as 09:30.'
-        : `${segment === 'hours' ? 'Hours must be from 00 to 23' : 'Minutes must be from 00 to 59'}. Your time is unchanged.`,
+        ? twelveHour
+          ? 'Enter a valid 12-hour time, such as 9:30 AM.'
+          : 'Enter a valid 24-hour time, such as 09:30.'
+        : `${segment === 'hours' ? (twelveHour ? 'Hours must be from 1 to 12' : 'Hours must be from 00 to 23') : 'Minutes must be from 00 to 59'}. Your time is unchanged.`,
     );
     selectAfterRender(segment);
   }
@@ -137,7 +173,12 @@ export function TimePicker({
       setAnnouncement('');
       return;
     }
-    if (parseSegment(text, segment) === null) {
+    if (segment === 'hours' && twelveHour && text === '0') {
+      updateDraft({ ...draftRef.current, hours: text });
+      setAnnouncement('');
+      return;
+    }
+    if (parseSegment(text, segment, twelveHour) === null) {
       reject(segment);
       return;
     }
@@ -159,17 +200,27 @@ export function TimePicker({
       event.shiftKey
     )
       return;
-    const maximum = segment === 'hours' ? 23 : 59;
+    const minimum = segment === 'hours' && twelveHour ? 1 : 0;
+    const maximum = segment === 'hours' ? (twelveHour ? 12 : 23) : 59;
     const current =
-      parseSegment(draftRef.current[segment], segment) ?? Number(parts(committed.current)[segment]);
+      parseSegment(draftRef.current[segment], segment, twelveHour) ??
+      Number(parts(committed.current, twelveHour)[segment]);
+    if (segment === 'hours' && twelveHour && ['ArrowUp', 'ArrowDown'].includes(event.key)) {
+      event.preventDefault();
+      const hour = (current % 12) + (periodOf(committed.current) === 'PM' ? 12 : 0);
+      const next = (hour + (event.key === 'ArrowUp' ? 1 : 23)) % 24;
+      accept(`${String(next).padStart(2, '0')}:${committed.current.slice(3)}`);
+      selectAfterRender(segment);
+      return;
+    }
     if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
       event.preventDefault();
       const next =
         event.key === 'Home'
-          ? 0
+          ? minimum
           : event.key === 'End'
             ? maximum
-            : Math.max(0, Math.min(maximum, current + (event.key === 'ArrowUp' ? 1 : -1)));
+            : Math.max(minimum, Math.min(maximum, current + (event.key === 'ArrowUp' ? 1 : -1)));
       updateDraft({ ...draftRef.current, [segment]: String(next) });
       commitSegment(segment);
       selectAfterRender(segment);
@@ -183,11 +234,11 @@ export function TimePicker({
       selectAfterRender(segment);
     } else if (
       event.key === 'Escape' &&
-      draftRef.current[segment] !== parts(committed.current)[segment]
+      draftRef.current[segment] !== parts(committed.current, twelveHour)[segment]
     ) {
       event.preventDefault();
       event.stopPropagation();
-      updateDraft(parts(committed.current));
+      updateDraft(parts(committed.current, twelveHour));
       setAnnouncement('');
       selectAfterRender(segment);
     }
@@ -206,10 +257,11 @@ export function TimePicker({
         disabled={disabled}
         value={draft[segment]}
         aria-label={`${label} ${segment}`}
-        aria-valuemin={0}
-        aria-valuemax={segment === 'hours' ? 23 : 59}
+        aria-valuemin={segment === 'hours' && twelveHour ? 1 : 0}
+        aria-valuemax={segment === 'hours' ? (twelveHour ? 12 : 23) : 59}
         aria-valuenow={
-          parseSegment(draft[segment], segment) ?? Number(parts(committed.current)[segment])
+          parseSegment(draft[segment], segment, twelveHour) ??
+          Number(parts(committed.current, twelveHour)[segment])
         }
         aria-invalid={invalid || undefined}
         aria-describedby={description}
@@ -232,12 +284,12 @@ export function TimePicker({
           event.preventDefault();
           if (disabled) return;
           const text = event.clipboardData.getData('text').trim();
-          const time = parseTime(text);
+          const time = pastedTime(text, twelveHour);
           if (time) {
             accept(time);
             focusSegment('minutes');
             selectAfterRender('minutes');
-          } else if (parseSegment(text, segment) !== null) {
+          } else if (parseSegment(text, segment, twelveHour) !== null) {
             updateDraft({ ...draftRef.current, [segment]: text });
             commitSegment(segment);
             selectAfterRender(segment);
@@ -254,7 +306,7 @@ export function TimePicker({
           {label}
         </label>
         <span className="settings-time-edited" id={editedId}>
-          {changed ? (saved ? `Was ${saved}` : 'Edited') : ''}
+          {changed ? (saved ? `Was ${formatClockTime(saved, format)}` : 'Edited') : ''}
         </span>
       </div>
       <div
@@ -270,6 +322,19 @@ export function TimePicker({
           :
         </span>
         {input('minutes')}
+        {twelveHour && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="settings-time-period"
+            disabled={disabled}
+            aria-label={`${label} period: ${shownPeriod}. Switch to ${shownNextPeriod}`}
+            title={`Switch to ${shownNextPeriod}`}
+            onClick={() => accept(nextPeriodTime)}
+          >
+            {shownPeriod}
+          </Button>
+        )}
         <ActionMenu
           label={`Choose ${label.toLowerCase()} time`}
           contentClassName="settings-time-menu"
@@ -293,13 +358,13 @@ export function TimePicker({
               <ActionMenuItem
                 key={time}
                 checked={time === selected}
-                textValue={time}
+                textValue={formatClockTime(time, format)}
                 onClick={() => {
                   accept(time);
                   close();
                 }}
               >
-                <span>{time}</span>
+                <span>{formatClockTime(time, format)}</span>
                 {time === selected && <Check size={15} aria-hidden="true" />}
               </ActionMenuItem>
             ))
@@ -307,8 +372,10 @@ export function TimePicker({
         </ActionMenu>
       </div>
       <span className="sr-only" id={hintId}>
-        24-hour time. Type hours and minutes. Up and down change the value; left and right move
-        between hours and minutes.
+        {twelveHour
+          ? '12-hour time. Type hours and minutes, then choose AM or PM. '
+          : '24-hour time. Type hours and minutes. '}
+        Up and down change the value; left and right move between hours and minutes.
       </span>
       <span className="sr-only" role="status" aria-live="polite">
         {announcement}

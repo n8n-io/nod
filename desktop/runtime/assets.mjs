@@ -25,6 +25,7 @@ import { Parser } from 'tar';
 const pending = new Map();
 const hashPattern = /^[a-f0-9]{64}$/;
 const maximumBytes = 8 * 1024 ** 3;
+const setupMessage = 'Setting up Nod on this computer…';
 const criticalFiles = [
   'manifest.json',
   'lima/bin/limactl',
@@ -316,7 +317,7 @@ async function installFiles(
       files: release.files.filter((file) => !published.has(file.path)),
     };
     await populate(temporary, published);
-    onStatus({ phase: 'verifying', message: 'Checking your local computer…' });
+    onStatus({ phase: 'verifying', message: setupMessage });
     await verifyFiles(temporary, missing, signal);
     for (const file of missing.files) {
       signal?.throwIfAborted();
@@ -542,7 +543,7 @@ export async function installRuntimeArchive({
   const metadata = await lstat(archivePath);
   if (!metadata.isFile() || metadata.size !== release.archive.bytes) throw new Error(failure);
   return unpackRuntime(release, () => createReadStream(archivePath), {
-    message: 'Installing your local computer…',
+    message: setupMessage,
     failure,
     onStatus,
     signal,
@@ -690,7 +691,7 @@ function downloadRuntime(release, options) {
       return download.stream;
     },
     {
-      message: 'Downloading your local computer…',
+      message: setupMessage,
       failure: 'The Nod runtime download did not complete. Try again.',
       onStatus: (value) => {
         if (!download || !Number.isFinite(value.progress)) return onStatus(value);
@@ -733,7 +734,7 @@ export async function openRuntimeAssets(options) {
     if (pending.has(root)) return pending.get(root);
     if (metadata?.isFile() && metadata.size >= release.archive.bytes) {
       return unpackRuntime(release, () => createReadStream(archivePath), {
-        message: 'Installing your local computer…',
+        message: setupMessage,
         failure: 'The Nod runtime download did not complete. Try again.',
         onStatus: options.onStatus || (() => {}),
         signal: options.signal,
@@ -741,7 +742,7 @@ export async function openRuntimeAssets(options) {
         inspectDisk: options.inspectDisk,
         verifySource: async () => {
           options.signal?.throwIfAborted();
-          options.onStatus?.({ phase: 'verifying', message: 'Checking your local computer…' });
+          options.onStatus?.({ phase: 'verifying', message: setupMessage });
           if (
             metadata.size !== release.archive.bytes ||
             (await assetHash(archivePath, options.signal)) !== release.archive.sha256
@@ -761,7 +762,7 @@ export async function openRuntimeAssets(options) {
   let downloadUrl = options.downloadUrl || release?.url;
   if (release && !downloadUrl && options.resolveDownloadUrl) {
     options.signal?.throwIfAborted();
-    options.onStatus?.({ phase: 'downloading', message: 'Finding your local computer…' });
+    options.onStatus?.({ phase: 'downloading', message: setupMessage });
     downloadUrl = await options.resolveDownloadUrl(release, options.signal);
     options.signal?.throwIfAborted();
   }

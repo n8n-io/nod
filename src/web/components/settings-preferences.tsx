@@ -17,11 +17,13 @@ import { communityLinks, legalLinks } from '../../shared/onboarding';
 import {
   dateFormatFrom,
   formatCalendarDate,
+  formatClockTime,
   dayKey,
   formatTime,
   regionLocale,
   regions,
   useBrowserRegion,
+  usesTwelveHourClock,
 } from '../lib/date-format';
 
 const quietKeys = ['quietHoursEnabled', 'quietStart', 'quietEnd'] as const;
@@ -318,8 +320,9 @@ export function QuietHours() {
     previous.current = data;
   }, [data]);
   useEffect(() => () => request.current?.abort(), []);
+  const format = data ? dateFormatFrom(data) : null;
   const changes =
-    !data || !draft
+    !data || !draft || !format
       ? []
       : [
           {
@@ -327,8 +330,16 @@ export function QuietHours() {
             before: data.quietHoursEnabled ? 'On' : 'Off',
             after: draft.quietHoursEnabled ? 'On' : 'Off',
           },
-          { label: 'From', before: data.quietStart, after: draft.quietStart },
-          { label: 'Until', before: data.quietEnd, after: draft.quietEnd },
+          {
+            label: 'From',
+            before: formatClockTime(data.quietStart, format),
+            after: formatClockTime(draft.quietStart, format),
+          },
+          {
+            label: 'Until',
+            before: formatClockTime(data.quietEnd, format),
+            after: formatClockTime(draft.quietEnd, format),
+          },
         ].filter((change) => change.before !== change.after);
   async function save() {
     if (!data || !draft || request.current) return false;
@@ -375,7 +386,7 @@ export function QuietHours() {
     }
   };
   useSettingsDraft('notifications', { changes, busy, save, discard });
-  if (!data || !draft)
+  if (!data || !draft || !format)
     return loading ? (
       <Loading />
     ) : (
@@ -398,10 +409,11 @@ export function QuietHours() {
         />
       </div>
       <p className="field-hint">Pause routine notifications during these hours.</p>
-      <div className="account-quiet-times">
+      <div className="account-quiet-times" data-cycle={usesTwelveHourClock(format) ? 'h12' : 'h23'}>
         <TimePicker
           id={`${id}-start`}
           label="From"
+          format={format}
           value={draft.quietStart}
           savedValue={data.quietStart}
           changed={draft.quietStart !== data.quietStart}
@@ -411,6 +423,7 @@ export function QuietHours() {
         <TimePicker
           id={`${id}-end`}
           label="Until"
+          format={format}
           value={draft.quietEnd}
           savedValue={data.quietEnd}
           changed={draft.quietEnd !== data.quietEnd}

@@ -1,5 +1,5 @@
 import {
-  profileBusinessRoles,
+  profileAsksWhoFor,
   profileJobs,
   profileRoles,
   type OnboardingProfile,
@@ -26,7 +26,7 @@ function selectedChoices<T extends string>(
 export function onboardingProfileAnswers(profile: OnboardingProfile) {
   const hasRole = (role: OnboardingProfile['roles'][number]) => profile.roles.includes(role);
   const hasJob = (job: OnboardingProfile['jobs'][number]) => profile.jobs.includes(job);
-  const asksWhoFor = profile.roles.some((role) => profileBusinessRoles.includes(role));
+  const asksWhoFor = profileAsksWhoFor(profile.scope, profile.roles);
 
   return {
     scope: profile.scope ?? 'skipped',

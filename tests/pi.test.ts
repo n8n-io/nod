@@ -3070,7 +3070,7 @@ test('each model call yields one chat-format trace without image data', async ()
       effort: 'low',
       read: async () => ({ type: 'api_key', key: 'fixture-router-key' }),
     },
-    (call) => calls.push(call),
+    { trace: (call) => calls.push(call) },
   );
   const image = Buffer.from('synthetic-image-bytes').toString('base64');
   const chunk = (value: object) => `data: ${JSON.stringify(value)}\n\n`;
@@ -3467,9 +3467,9 @@ test('a long tool call does not send model requests without usage records', asyn
       );
       if (outcome === 'succeeded' && !changeContext) {
         const cancelled: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
-        const { runtime, model } = await createPiModelRuntime(access, undefined, undefined, (row) =>
-          cancelled.push(row),
-        );
+        const { runtime, model } = await createPiModelRuntime(access, {
+          reportCacheUsage: (row) => cancelled.push(row),
+        });
         holdRefresh = true;
         const received = new Promise<void>((resolve) => {
           refreshStarted = resolve;
@@ -4266,6 +4266,121 @@ test('full 32k Pi sessions distinguish context exhaustion from output truncation
   }
 });
 
+test('the live line shows a model retry and the text before a tool call while the call streams', async (t) => {
+  const { createServer } = await import('node:http');
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-live-line-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const preamble = 'Checking the synthetic notes.';
+  let stepShown!: () => void;
+  const shown = new Promise<'step'>((resolve) => (stepShown = () => resolve('step')));
+  let released: 'step' | 'timeout' | undefined;
+  let requests = 0;
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on('end', async () => {
+      const send = (delta: object, finish?: string) =>
+        response.write(
+          `data: ${JSON.stringify({
+            id: `fixture-live-${requests}`,
+            choices: [{ index: 0, delta, ...(finish ? { finish_reason: finish } : {}) }],
+            ...(finish
+              ? { usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }
+              : {}),
+          })}\n\n`,
+        );
+      if (request.url === '/v1/models')
+        return response.end(
+          JSON.stringify({ data: [{ id: 'fixture-qwen', context_length: 32_768 }] }),
+        );
+      if (request.url !== '/v1/chat/completions') {
+        response.writeHead(404);
+        return response.end('{}');
+      }
+      if (++requests === 1) {
+        response.writeHead(503, { 'content-type': 'application/json' });
+        return response.end(
+          JSON.stringify({ error: { message: 'The synthetic model is overloaded.' } }),
+        );
+      }
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      if (requests === 3) {
+        send({ role: 'assistant', content: 'Partial synthetic update.' });
+        return response.end();
+      }
+      if (requests > 3) {
+        send({ role: 'assistant', content: 'The synthetic notes are read.' });
+        send({}, 'stop');
+        return response.end('data: [DONE]\n\n');
+      }
+      send({ role: 'assistant', content: preamble });
+      send({
+        tool_calls: [
+          {
+            index: 0,
+            id: 'fixture-notes',
+            type: 'function',
+            function: { name: 'bash', arguments: '' },
+          },
+        ],
+      });
+      let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+      released = await Promise.race([
+        shown,
+        new Promise<'timeout'>(
+          (resolve) => (timer = globalThis.setTimeout(() => resolve('timeout'), 5000)),
+        ),
+      ]);
+      clearTimeout(timer);
+      send({
+        tool_calls: [
+          { index: 0, function: { arguments: JSON.stringify({ command: 'fixture-read-notes' }) } },
+        ],
+      });
+      send({}, 'tool_calls');
+      response.end('data: [DONE]\n\n');
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const { port } = server.address() as import('node:net').AddressInfo;
+  const credential = { type: 'endpoint' as const, url: `http://127.0.0.1:${port}/v1` };
+  const [definition] = await createPiModelBackend().catalog('compatible', 'api_key', credential);
+  const agent = createPiAgent({
+    provider: 'compatible',
+    sessionRoot: join(directory, 'sessions'),
+    resolve: async () => ({
+      provider: 'compatible',
+      method: 'api_key',
+      definition,
+      effort: 'off',
+      read: async () => credential,
+    }),
+  });
+  const { workspace, scripts } = recordingWorkspace();
+  const runtime = createAgentRuntime({
+    agent,
+    computer: fakeComputer(),
+    workspace: fakeWorkspace({ open: () => workspace }),
+  });
+  t.after(() => runtime.dispose());
+  const emitted: Array<[string, string]> = [];
+  await runtime.runTurn({
+    ...context(directory),
+    sessionId: 'fixture-live-line',
+    turnId: randomUUID(),
+    prompt: 'Read the synthetic notes.',
+    emit: async (type, summary) => {
+      emitted.push([type, summary]);
+      if (type === 'step' && summary === preamble) stepShown();
+    },
+  });
+  assert.equal(released, 'step');
+  assert.equal(scripts.filter((script) => script.includes('fixture-read-notes')).length, 1);
+  assert.equal(requests, 4);
+  assert.ok(emitted.find(([type]) => type === 'retry')?.[1].includes(definition.choice.name));
+});
+
 test('OpenAI cache boundaries cover shared instructions and keep task paths outside them', async () => {
   const { createPiModelBackend, createPiModelRuntime } =
     await import('../src/providers/pi/models.ts');
@@ -4904,6 +5019,7 @@ test('native account catalogs never send a provider key to a different service o
     ['moonshotai', 'https://api.moonshot.ai/v1/models'],
     ['moonshotai-cn', 'https://api.moonshot.cn/v1/models'],
     ['together', 'https://api.together.xyz/v1/models'],
+    ['nvidia', 'https://integrate.api.nvidia.com/v1/models'],
   ] as const;
   for (const [provider, destination] of cases) {
     let status = 200;
@@ -4913,7 +5029,17 @@ test('native account catalogs never send a provider key to a different service o
         assert.equal(String(input), destination);
         assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
         assert.equal(init?.redirect, 'error');
-        if (status !== 200) return Response.json({ message: `Synthetic ${key}` }, { status });
+        if (status !== 200)
+          return Response.json(
+            { message: `Synthetic ${key}` },
+            {
+              status,
+              headers: {
+                'content-type':
+                  status === 503 ? 'application/problem+json' : 'Application/JSON; charset=utf-8',
+              },
+            },
+          );
         const [allowed, unavailable] = await backend.catalog(provider, 'api_key');
         const data = [
           { id: allowed.choice.id },
@@ -4929,7 +5055,12 @@ test('native account catalogs never send a provider key to a different service o
     for (status of [401, 403, 429, 503, 307]) {
       await assert.rejects(
         backend.catalog(provider, 'api_key', { type: 'api_key', key }),
-        (error: Error) => !error.message.includes(key),
+        (error: Error) => {
+          assert.ok(!error.message.includes(key));
+          assert.ok(error.message.includes(`HTTP ${status}`));
+          assert.match(error.message, /Synthetic \[redacted\]/);
+          return true;
+        },
       );
     }
   }
@@ -5813,7 +5944,7 @@ test('action review failures identify the task, model, provider, and bounded pro
       return true;
     },
   );
-  assert.equal(calls, 3);
+  assert.equal(calls, 1);
   assert.ok(sessions[0]);
   assert.equal(new Set(sessions).size, 1);
 });
@@ -5878,7 +6009,11 @@ test('image analysis passes image blocks to Pi and does not retry a failed charg
 });
 
 test('failed model requests keep unknown costs and remain separate from their retries', async () => {
-  const failed = { ...fauxAssistantMessage(''), stopReason: 'error' as const };
+  const failed = {
+    ...fauxAssistantMessage(''),
+    stopReason: 'error' as const,
+    errorMessage: 'Synthetic service is unavailable (HTTP 503).',
+  };
   const succeeded = {
     ...fauxAssistantMessage('{"saved":true}'),
     usage: {
@@ -7175,6 +7310,44 @@ function reply(content: Record<string, unknown>, finish = 'stop') {
     { headers: { 'content-type': 'text/event-stream' } },
   );
 }
+
+test('model requests refuse oversized payloads before dispatch and retain transport causes', async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    throw new TypeError('fetch failed', {
+      cause: Object.assign(new Error('Synthetic socket closed.'), { code: 'ECONNRESET' }),
+    });
+  };
+  for (const window of [8192, 131072]) {
+    const { runtime, model, requestFacts } = await createPiModelRuntime(
+      smallContextAccess('compatible', 'fixture-payload-limit', window),
+    );
+    const oversized = await runtime.completeSimple(model, {
+      messages: [{ role: 'user', content: 'Synthetic text '.repeat(window), timestamp: 1 }],
+    });
+    assert.equal(oversized.stopReason, 'error');
+    assert.match(oversized.errorMessage ?? '', new RegExp(`${window}-token context`));
+    assert.equal(calls, 0);
+    assert.equal(requestFacts(oversized)!.requestPhase, 'prepare');
+  }
+  for (const [index, provider] of (['compatible', 'openrouter'] as const).entries()) {
+    const { runtime, model } = await createPiModelRuntime(
+      smallContextAccess(provider, 'fixture-disconnect', 131072),
+    );
+    const failed = await runtime.completeSimple(model, {
+      messages: [{ role: 'user', content: 'Read synthetic data.', timestamp: 1 }],
+    });
+    assert.equal(failed.stopReason, 'error');
+    assert.equal(calls, index + 1);
+    assert.match(failed.errorMessage ?? '', /transport cause: ECONNRESET/);
+    assert.match(failed.errorMessage ?? '', /request phase: request/);
+  }
+});
 
 test('Groq Qwen finishes a task through a tool call with supported message roles', async (t) => {
   const original = globalThis.fetch;

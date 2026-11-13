@@ -438,6 +438,7 @@ export const analyticsRoutes = new Map<
   ['POST /api/channel-settings/telegram/confirm', channel('update')],
   ['POST /api/channel-settings/telegram/user', channel('update')],
   ['POST /api/channel-settings/whatsapp/pairing', channel('connect_started')],
+  ['POST /api/channel-settings/:provider/reconnect', channel('connect_started')],
   ['DELETE /api/channel-settings/whatsapp/pairing', channel('disconnect')],
   ['DELETE /api/channel-settings/:provider', channel('disconnect')],
   ['POST /api/models/keys', settings('models', 'update')],

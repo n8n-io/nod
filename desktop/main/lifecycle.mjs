@@ -77,7 +77,7 @@ export function createDesktopLifecycle({
     warming = Promise.resolve()
       .then(async () => {
         checkOpen(controller.signal);
-        report({ message: 'Preparing your local computer.' });
+        report({ message: 'Setting up Nod on this computer…' });
         const prepared = await prepareRuntime({
           signal: controller.signal,
           onStorageReady: async (preparedStorage) => {
@@ -158,7 +158,7 @@ export function createDesktopLifecycle({
     installing = Promise.resolve()
       .then(async () => {
         checkOpen(controller.signal);
-        report({ message: 'Installing your local computer.' });
+        report({ message: 'Setting up Nod on this computer…' });
         await installer({ signal: controller.signal, onStatus: report });
         checkOpen(controller.signal);
         failure = undefined;

@@ -2723,6 +2723,106 @@ test(
       );
 
       await t.test(
+        'an unquoted clarification leaves a saved task with a visible way to continue',
+        async (t) => {
+          const parent = await begin(
+            'Summarise the synthetic inbox and ask before sending anything.',
+          );
+          const task = (await tasks.execute(
+            parent,
+            {
+              action: 'start',
+              title: 'Synthetic inbox review',
+              message: 'Reviewing the synthetic inbox.',
+              doneWhen: 'The summary is ready',
+              now: 'Reading the synthetic inbox',
+            },
+            (await row(parent.turnId)).message_id,
+          )) as { id: string };
+          t.after(async () => {
+            await db.pool.query(
+              "UPDATE turns SET task_id=NULL,status='cancelled',finished_at=now() WHERE task_id=$1",
+              [task.id],
+            );
+            await db.pool.query('DELETE FROM tasks WHERE id=$1', [task.id]);
+          });
+          await finish(parent.turnId, 'succeeded');
+          const workerId = (
+            await db.pool.query("SELECT id FROM turns WHERE task_id=$1 AND source='task'", [
+              task.id,
+            ])
+          ).rows[0].id as string;
+          const worker = await running(workerId);
+          const before = calls.length;
+          const approvalId = await propose(
+            worker,
+            'GMAIL_SEND_EMAIL',
+            email('synthetic-recipient@example.test'),
+          );
+          const confirmationId = (await stored(approvalId)).confirmation_message_id;
+          await finish(workerId);
+
+          const clarification = await messages.submit('wait what does that mean');
+          assert.equal((await row(clarification.turnId)).source, 'user');
+          assert.equal((await stored(approvalId)).status, 'expired');
+          assert.equal(await turnStatus(workerId), 'cancelled');
+          assert.equal(calls.length, before);
+
+          const response = await request('GET', '/api/tasks');
+          assert.equal(response.statusCode, 200, response.body);
+          const detail = response
+            .json<
+              Array<{
+                id: string;
+                status: string;
+                now: string;
+                question: string | null;
+                questionMessageId: string | null;
+              }>
+            >()
+            .find((item) => item.id === task.id);
+          assert.ok(detail);
+          assert.equal(detail.status, 'needs_you');
+          assert.equal(detail.now, 'Reading the synthetic inbox');
+          assert.match(detail.question ?? '', /did not run.*Reply here to continue/i);
+          assert.ok(detail.questionMessageId);
+          assert.notEqual(detail.questionMessageId, confirmationId);
+          const continuation = (
+            await db.pool.query('SELECT turn_id,text FROM messages WHERE id=$1 AND owner_id=$2', [
+              detail.questionMessageId,
+              ownerId,
+            ])
+          ).rows[0];
+          assert.equal(continuation.turn_id, workerId);
+          assert.equal(continuation.text, detail.question);
+          assert.equal(
+            (
+              await db.pool.query('SELECT created_at FROM messages WHERE id=$1 AND owner_id=$2', [
+                detail.questionMessageId,
+                ownerId,
+              ])
+            ).rows[0].created_at >
+              (
+                await db.pool.query('SELECT created_at FROM messages WHERE id=$1 AND owner_id=$2', [
+                  clarification.messageId,
+                  ownerId,
+                ])
+              ).rows[0].created_at,
+            true,
+          );
+
+          const resumed = await messages.submit('Continue the remaining synthetic summary.', [], {
+            replyToMessageId: detail.questionMessageId,
+          });
+          const resumedTurn = await row(resumed.turnId);
+          assert.equal(resumedTurn.session_id, task.id);
+          assert.equal(resumedTurn.parent_turn_id, workerId);
+          assert.equal((await stored(approvalId)).status, 'expired');
+          assert.equal(calls.length, before);
+        },
+      );
+
+      await t.test(
         'background turns share one pending confirmation for the same action',
         async () => {
           const args = { id: randomUUID() };

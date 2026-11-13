@@ -243,7 +243,7 @@ export const modelProviderInfo: Record<
     env: 'MOONSHOT_CN_API_KEY',
     catalog: 'account',
   },
-  nvidia: { keyUrl: 'build.nvidia.com', env: 'NVIDIA_API_KEY', catalog: 'bundled' },
+  nvidia: { keyUrl: 'build.nvidia.com', env: 'NVIDIA_API_KEY', catalog: 'account' },
   opencode: { keyUrl: 'opencode.ai/auth', env: 'OPENCODE_API_KEY', catalog: 'bundled' },
   'opencode-go': { keyUrl: 'opencode.ai/auth', env: 'OPENCODE_GO_API_KEY', catalog: 'bundled' },
   'qwen-token-plan': {

@@ -783,6 +783,7 @@ export function createAgentRuntime(dependencies: {
         try {
           child = await agent.open({
             ...source,
+            automatic: !context.currentMessageId,
             ephemeral: true,
             systemPrompt: system,
             ownerContext: ownerContext(context),
@@ -949,6 +950,7 @@ export function createAgentRuntime(dependencies: {
       await context.emit('agent_start', 'Main agent', { execution });
       const opening = agent.open({
         ...execution,
+        automatic: !context.currentMessageId,
         ...(context.proactivity ? { restricted: true, restartable: !context.resumed } : {}),
         ...(sessionId === threadId && !context.proactivity && dependencies.keepWarm
           ? { keepWarm: () => dependencies.keepWarm!(threadId) }
@@ -1024,9 +1026,17 @@ export function createAgentRuntime(dependencies: {
             );
             void pendingReplies.catch(() => {});
           }
+          if (event.type === 'retry' && !stopped) {
+            const retry = `${event.model} failed, trying again (${event.attempt} of ${event.attempts})`;
+            pendingReplies = pendingReplies.then(() =>
+              context.emit('retry', retry, { execution }).catch(() => {}),
+            );
+            void pendingReplies.catch(() => {});
+          }
           if (event.type === 'message_start') {
             completeStream();
             streamId = randomUUID();
+            modelError = undefined;
           }
           if (event.type === 'message_end') {
             if (event.status === 'succeeded') {

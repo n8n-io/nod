@@ -52,7 +52,11 @@ Select **Manage** beside a provider to see its accounts, add another connection 
 
 Select **Reload models** beside a connected account to load its current model list and controls. If the saved effort is no longer supported, Nod uses a supported effort for the same model. This also applies when you save the connection again. Reload an existing Ollama connection after an update to use its current thinking controls.
 
+NVIDIA reloads its hosted model list. A listed model can still require account access or an available route. A failed reload keeps the saved list and selection. If a successful reload removes your selected model, choose another model yourself.
+
 If a model request stops your task, the failure message links to **Settings > Models**. Use that link to check the connection or choose another model. The message keeps the provider's reason, including key, credit, quota, model access, and service errors. A daily quota error asks you to check the limit or choose another model and shows the provider's retry delay when supplied. A zero quota error asks you to check access or choose another model.
+
+After Google reports a daily or zero quota, Nod pauses automatic requests for that model on that connection. This includes background checks, background helpers, and cache warming. The pause survives a restart. Other connections stay available. You can still ask again, replace the key, or select another model. Helpers required by your new request can also run. A successful request you start clears the pause. A provider retry delay permits another automatic attempt after that delay; it does not promise a quota reset. Without a delay, automatic work stays paused until recovery. Reloading the model list does not prove that quota is available.
 
 To change to an available model, you can also tell Nod which model and service to use. This works in Nod, Telegram, and WhatsApp. Nod changes the saved selection for the next turn. Connecting a new service or signing in again still needs the private flow in the app.
 

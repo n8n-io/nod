@@ -88,6 +88,17 @@
   line-height: 1.5;
 }
 
+.channels-page .secondary-heading {
+  display: block;
+}
+
+.channel-runtime-note {
+  margin: 8px 0 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  line-height: 1.5;
+}
+
 .channel-options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -107,6 +118,16 @@
 .channel-chip[data-status='needs-setup'] {
   background: var(--warning-soft);
   color: var(--warning);
+}
+
+.channel-chip[data-status='connection-failed'] {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.channel-option .integration-card-detail {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .channel-account-actions {
