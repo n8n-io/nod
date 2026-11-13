@@ -430,7 +430,7 @@ export async function createApprovals(
         if (existing.cached) return existing.result;
         return { [appConfirmation]: existing.question as string };
       }
-      if (!describe) throw new Error('The confirmation model is unavailable.');
+      if (!describe) throw new Error('The confirmation formatter is unavailable.');
       question = await describe(
         {
           turn: { ...turn },
@@ -443,7 +443,7 @@ export async function createApprovals(
       );
       options.signal?.throwIfAborted();
       if (typeof question !== 'string' || !question.trim())
-        throw new Error('The confirmation model did not produce a valid question.');
+        throw new Error('The confirmation formatter did not produce a valid question.');
     }
     const saveProposal = async (client: PoolClient) => {
       if (options.expectedChatRevision !== undefined) {

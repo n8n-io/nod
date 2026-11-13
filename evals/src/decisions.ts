@@ -2419,7 +2419,7 @@ export function supportedDecisionCases(
   arm: string,
   policies: {
     main: Partial<Record<Case['kind'], { question?: unknown }>>;
-    branch: Record<Case['kind'], { question?: unknown }>;
+    branch: Partial<Record<Case['kind'], { question?: unknown }>>;
   },
 ) {
   return cases.filter((item) => {
@@ -2504,7 +2504,7 @@ export async function runDecisionEval(options: {
         : {}),
       rules: optionalPolicy(mainTrust, 'rulesInstructions'),
       answer: policy(mainTrust, 'answerInstructions', 'answer'),
-      ...(mainCommunication
+      ...(mainCommunication?.includes('const confirmationInstructions =')
         ? { valid: policy(mainCommunication, 'confirmationInstructions', 'valid') }
         : {}),
     },
@@ -2513,7 +2513,9 @@ export async function runDecisionEval(options: {
       readOnly: policy(trust, 'readInstructions', 'readOnly'),
       rules: optionalPolicy(trust, 'rulesInstructions'),
       answer: policy(trust, 'answerInstructions', 'answer'),
-      valid: policy(communication, 'confirmationInstructions', 'valid'),
+      ...(communication.includes('const confirmationInstructions =')
+        ? { valid: policy(communication, 'confirmationInstructions', 'valid') }
+        : {}),
     },
   };
   const environment = await loadEnvironment();

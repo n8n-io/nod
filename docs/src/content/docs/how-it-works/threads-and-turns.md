@@ -159,7 +159,7 @@ Your messages from a withdrawn turn stay in the chat, and Nod can still find the
 
 - A session that starts fresh doesn't get them as recent chat, and related-message and memory recall leave them out. Nod's own replies from that turn stay, so later work knows what happened.
 - The trust check doesn't count them as your words, and a later short reply never accepts something Nod proposed in that turn.
-- The confirmation writer doesn't read them, and memory learning skips them unless Nod names one when you ask it to remember something.
+- Approval questions do not use them, and memory learning skips them unless Nod names one when you ask it to remember something.
 
 The session's next turn is told how its previous request ended, so Nod doesn't pick it up again on its own. What that turn already did stays in the session's context. To continue, ask again. Nod finds the request with `history_search`, and the trust check asks before any action your new words don't cover.
 

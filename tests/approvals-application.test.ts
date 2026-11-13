@@ -75,9 +75,6 @@ test(
     const asked = new Set<string>();
     const cleared = new Set<string>();
     const ownerWords: string[] = [];
-    const confirmationText = 'Proceed with the saved synthetic action?';
-    let confirmationValid = true;
-    let beforeConfirmation = async () => {};
     let decisionsEnabled = true;
     let replyCost: number | undefined;
     let checkCost: number | undefined;
@@ -131,14 +128,12 @@ test(
       curate: async ({ task, input }, _signal, report) => {
         if ('purpose' in input && input.purpose === 'connection' && connectionLabels.length)
           return connectionLabels.shift();
-        if ('purpose' in input && input.purpose === 'confirmation') {
-          await beforeConfirmation();
-          return { text: confirmationText };
-        }
-        if ('purpose' in input && input.purpose === 'confirmation_review') {
-          fallbackChecks.push(input);
-          return { valid: confirmationValid };
-        }
+        if (
+          'purpose' in input &&
+          typeof input.purpose === 'string' &&
+          ['confirmation', 'confirmation_review'].includes(input.purpose)
+        )
+          throw new Error('The model cannot write or review a bound confirmation.');
         if (task === 'review' && !('purpose' in input) && !('reply' in input))
           fallbackChecks.push(input);
         if (task === 'review' && 'reply' in input) {
@@ -162,22 +157,28 @@ test(
             ? (() => {
                 const words = input as {
                   userMessages?: Array<{ text: string }>;
+                  userRules?: string;
                   action?: { name?: string; arguments?: { recipient_email?: unknown } };
                 };
                 ownerWords.push(...(words.userMessages ?? []).map((message) => message.text));
+                const metadataRead = words.action?.name === 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID';
+                const readRequiresConsent =
+                  metadataRead && words.userRules === 'Ask before reading Gmail.';
                 const run =
-                  (allowMethodBrowser && words.action?.name === 'NOD_browser') ||
-                  asked.has(words.userMessages?.at(-1)?.text ?? '') ||
-                  cleared.has(String(words.action?.arguments?.recipient_email));
+                  !readRequiresConsent &&
+                  ((allowMethodBrowser && words.action?.name === 'NOD_browser') ||
+                    asked.has(words.userMessages?.at(-1)?.text ?? '') ||
+                    cleared.has(String(words.action?.arguments?.recipient_email)) ||
+                    metadataRead);
                 return run
                   ? {
                       run,
                       because:
-                        words.action?.name === 'GMAIL_FETCH_EMAILS'
+                        words.action?.name === 'GMAIL_FETCH_EMAILS' || metadataRead
                           ? 'read'
                           : (words.userMessages?.at(-1)?.text ?? 'read'),
                     }
-                  : { run };
+                  : { run, ...(readRequiresConsent ? { rule: true } : {}) };
               })()
             : undefined;
       },
@@ -482,6 +483,16 @@ test(
     }
     const approvalsFor = async (id: string) =>
       (await pool.query('SELECT * FROM approvals WHERE turn_id=$1', [id])).rows;
+    const confirmationFor = async (approval: { confirmation_message_id: string }) => {
+      const text = (
+        await pool.query<{ text: string }>(
+          'SELECT text FROM messages WHERE id=$1 AND owner_id=$2',
+          [approval.confirmation_message_id, ownerId],
+        )
+      ).rows[0]?.text;
+      assert.ok(text);
+      return text;
+    };
     async function reminder(input: Record<string, unknown> = {}) {
       const response = await request('POST', '/api/schedules', {
         title: 'Synthetic cancellation reminder',
@@ -1063,42 +1074,220 @@ test(
         assert.equal((await approvalsFor(held))[0].status, 'expired');
       });
       await t.test(
-        'a rejected generated confirmation cannot create an approval or send an email',
+        'a server-owned confirmation stays bound to an email draft before consent',
         async () => {
           const writes = integrationFixture.writes.length;
-          const text = `Synthetic rejected confirmation ${randomUUID()}`;
-          plans.set(text, {
-            tool: 'apps',
-            action: 'GMAIL_SEND_EMAIL',
-            args: {
+          const turn = await propose(
+            'GMAIL_CREATE_EMAIL_DRAFT',
+            {
               recipient_email: 'blocked@example.test',
               subject: 'Synthetic reviewed email',
               body: 'Synthetic body awaiting confirmation.',
             },
+            'apps',
+          );
+          const [approval] = await approvalsFor(turn);
+          assert.equal(approval.status, 'pending');
+          assert.equal(approval.action, 'GMAIL_CREATE_EMAIL_DRAFT');
+          const question = await confirmationFor(approval);
+          assert.match(question, /GMAIL_CREATE_EMAIL_DRAFT/);
+          assert.match(question, /blocked@example.test/);
+          assert.doesNotMatch(question, /send.*email/i);
+          assert.equal(integrationFixture.writes.length, writes);
+          const declined = await request('POST', '/api/messages', {
+            text: 'No',
+            replyToMessageId: approval.confirmation_message_id,
+            clientMessageId: randomUUID(),
           });
-          confirmationValid = false;
-          try {
-            const response = await request('POST', '/api/messages', { text });
-            assert.equal(response.statusCode, 200, response.body);
-            const turn = response.json().turnId as string;
-            ids.push(response.json().threadId as string);
-            await waitFor(turn, 'failed|succeeded|waiting');
-            assert.deepEqual(await approvalsFor(turn), []);
-            assert.equal(
-              (
-                await pool.query(
-                  "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant' AND text=$2",
-                  [turn, confirmationText],
-                )
-              ).rowCount,
-              0,
-            );
-            assert.equal(integrationFixture.writes.length, writes);
-          } finally {
-            confirmationValid = true;
-          }
+          assert.equal(declined.statusCode, 200, declined.body);
+          await waitFor(declined.json().turnId, 'succeeded');
+          assert.equal(integrationFixture.writes.length, writes);
         },
       );
+
+      await t.test('Gmail deletion confirmation names the verified email', async () => {
+        const writes = integrationFixture.writes.length;
+        const reads = executedApps.filter(
+          (action) => action === 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID',
+        ).length;
+        const turn = await propose(
+          'GMAIL_DELETE_MESSAGE',
+          { message_id: 'fixture-mail-1' },
+          'apps',
+        );
+        const [approval] = await approvalsFor(turn);
+        assert.equal(approval.status, 'pending');
+        assert.equal(approval.action, 'GMAIL_DELETE_MESSAGE');
+        const question = await confirmationFor(approval);
+        assert.match(question, /fixture-mail-1/);
+        assert.match(question, /Northstar review/);
+        assert.match(question, /alex@example.test/);
+        assert.equal(
+          executedApps.filter((action) => action === 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID').length,
+          reads + 1,
+        );
+        const recordedRead = await pool.query<{ basis: { kind: string } }>(
+          'SELECT basis FROM app_actions WHERE owner_id=$1 AND turn_id=$2 AND action=$3',
+          [ownerId, turn, 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID'],
+        );
+        assert.equal(recordedRead.rows[0]?.basis.kind, 'read');
+        assert.equal(integrationFixture.writes.length, writes);
+        const declined = await request('POST', '/api/messages', {
+          text: 'No',
+          replyToMessageId: approval.confirmation_message_id,
+          clientMessageId: randomUUID(),
+        });
+        assert.equal(declined.statusCode, 200, declined.body);
+        await waitFor(declined.json().turnId, 'succeeded');
+        assert.equal(integrationFixture.writes.length, writes);
+      });
+      await t.test('Gmail deletion stops when the target cannot be verified', async () => {
+        const writes = integrationFixture.writes.length;
+        const prompt = `Synthetic missing message ${randomUUID()}`;
+        plans.set(prompt, {
+          tool: 'apps',
+          action: 'GMAIL_DELETE_MESSAGE',
+          args: { message_id: 'missing-synthetic-message' },
+        });
+        const response = await request('POST', '/api/messages', { text: prompt });
+        assert.equal(response.statusCode, 200, response.body);
+        const turnId = response.json().turnId as string;
+        ids.push(response.json().threadId as string);
+        await waitFor(turnId, 'failed');
+        assert.deepEqual(await approvalsFor(turnId), []);
+        assert.equal(integrationFixture.writes.length, writes);
+      });
+      await t.test('Gmail deletion reports the specific metadata-read failure', async () => {
+        const writes = integrationFixture.writes.length;
+        const prompt = `Synthetic Gmail metadata outage ${randomUUID()}`;
+        plans.set(prompt, {
+          tool: 'apps',
+          action: 'GMAIL_DELETE_MESSAGE',
+          args: { message_id: 'fixture-mail-1' },
+        });
+        appOutage = true;
+        try {
+          const response = await request('POST', '/api/messages', { text: prompt });
+          assert.equal(response.statusCode, 200, response.body);
+          const turnId = response.json().turnId as string;
+          ids.push(response.json().threadId as string);
+          await waitFor(turnId, 'failed');
+          const turn = (await pool.query('SELECT error FROM turns WHERE id=$1', [turnId])).rows[0];
+          assert.match(turn.error, /Synthetic provider outage/);
+          assert.match(turn.error, /did not ask for approval or delete the message/);
+          assert.deepEqual(await approvalsFor(turnId), []);
+          assert.equal(integrationFixture.writes.length, writes);
+        } finally {
+          appOutage = false;
+        }
+      });
+      await t.test('an exact owner-authorized Gmail message ID keeps the direct path', async () => {
+        const deletes = executedApps.filter((action) => action === 'GMAIL_DELETE_MESSAGE').length;
+        const reads = executedApps.filter(
+          (action) => action === 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID',
+        ).length;
+        const prompt = `Delete Gmail message missing-synthetic-message ${randomUUID()}`;
+        asked.add(prompt);
+        try {
+          plans.set(prompt, {
+            tool: 'apps',
+            action: 'GMAIL_DELETE_MESSAGE',
+            args: { message_id: 'missing-synthetic-message' },
+          });
+          const response = await request('POST', '/api/messages', { text: prompt });
+          assert.equal(response.statusCode, 200, response.body);
+          const turnId = response.json().turnId as string;
+          ids.push(response.json().threadId as string);
+          await waitFor(turnId, 'failed|succeeded');
+          assert.deepEqual(await approvalsFor(turnId), []);
+          assert.equal(
+            executedApps.filter((action) => action === 'GMAIL_DELETE_MESSAGE').length,
+            deletes + 1,
+          );
+          assert.equal(
+            executedApps.filter((action) => action === 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID').length,
+            reads,
+          );
+        } finally {
+          asked.delete(prompt);
+        }
+      });
+      await t.test('Gmail deletion does not read metadata against an ask-first rule', async () => {
+        const writes = integrationFixture.writes.length;
+        const reads = executedApps.filter(
+          (action) => action === 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID',
+        ).length;
+        const priorRules = (
+          await pool.query<{ rules: string }>('SELECT rules FROM preferences WHERE owner_id=$1', [
+            ownerId,
+          ])
+        ).rows[0].rules;
+        await pool.query('UPDATE preferences SET rules=$2 WHERE owner_id=$1', [
+          ownerId,
+          'Ask before reading Gmail.',
+        ]);
+        try {
+          const prompt = `Synthetic ask-first delete ${randomUUID()}`;
+          plans.set(prompt, {
+            tool: 'apps',
+            action: 'GMAIL_DELETE_MESSAGE',
+            args: { message_id: 'fixture-mail-1' },
+          });
+          const response = await request('POST', '/api/messages', { text: prompt });
+          assert.equal(response.statusCode, 200, response.body);
+          const turnId = response.json().turnId as string;
+          ids.push(response.json().threadId as string);
+          await waitFor(turnId, 'failed');
+          assert.deepEqual(await approvalsFor(turnId), []);
+          assert.equal(
+            executedApps.filter((action) => action === 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID').length,
+            reads,
+          );
+          assert.equal(integrationFixture.writes.length, writes);
+        } finally {
+          await pool.query('UPDATE preferences SET rules=$2 WHERE owner_id=$1', [
+            ownerId,
+            priorRules,
+          ]);
+        }
+      });
+      await t.test('Gmail deletion stops if the verified account binding changes', async () => {
+        const writes = integrationFixture.writes.length;
+        const turn = await propose(
+          'GMAIL_DELETE_MESSAGE',
+          { message_id: 'fixture-mail-1' },
+          'apps',
+        );
+        const [approval] = await approvalsFor(turn);
+        assert.equal(approval.status, 'pending');
+        const connectionId = approval.args.connectionId as string;
+        const revision = (
+          await pool.query<{ watch_revision: number }>(
+            'SELECT watch_revision FROM app_connections WHERE id=$1 AND owner_id=$2',
+            [connectionId, ownerId],
+          )
+        ).rows[0].watch_revision;
+        await pool.query(
+          'UPDATE app_connections SET watch_revision=watch_revision+1 WHERE id=$1 AND owner_id=$2',
+          [connectionId, ownerId],
+        );
+        try {
+          const accepted = await request('POST', '/api/messages', {
+            text: 'Yes',
+            replyToMessageId: approval.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          assert.equal(accepted.statusCode, 200, accepted.body);
+          await waitFor(accepted.json().turnId, 'waiting|succeeded|failed');
+          assert.equal(integrationFixture.writes.length, writes);
+          assert.equal((await approvalsFor(turn))[0].status, 'expired');
+        } finally {
+          await pool.query(
+            'UPDATE app_connections SET watch_revision=$3 WHERE id=$1 AND owner_id=$2',
+            [connectionId, ownerId, revision],
+          );
+        }
+      });
 
       await t.test(
         "spending limits the owner didn't ask for change only after their yes",
@@ -1374,11 +1563,13 @@ test(
             const before = await request('GET', '/api/state');
             assert.equal(before.statusCode, 200, before.body);
             const beforeState = before.json<AppState>();
+            const confirmation = await confirmationFor(approval);
+            assert.match(confirmation, /NOD_schedule_pause/);
             assert.equal(
               beforeState.messages.find(
                 (message) => message.id === approval.confirmation_message_id,
               )?.text,
-              confirmationText,
+              confirmation,
             );
             const response = await request(
               method,
@@ -1490,7 +1681,8 @@ test(
             .find((task) => task.id === taskId);
           assert.ok(before);
           assert.equal(before.status, 'needs_you');
-          assert.equal(before.question, confirmationText);
+          const confirmation = await confirmationFor(approval);
+          assert.equal(before.question, confirmation);
           assert.equal(before.messageId, null);
           const turnCount = (
             await pool.query(
@@ -1552,7 +1744,7 @@ test(
           assert.ok(detail.task.questionMessageId);
           assert.notEqual(detail.task.questionMessageId, approval.confirmation_message_id);
           assert.equal(
-            detail.events.some((event) => event.summary === confirmationText),
+            detail.events.some((event) => event.summary === confirmation),
             false,
           );
           assert.ok(detail.events.some((event) => event.summary === detail.task.question));
@@ -1706,6 +1898,7 @@ test(
           const [approval] = await approvalsFor(turn);
           assert.equal(approval.status, 'pending');
           const messageId = approval.confirmation_message_id as string;
+          const confirmation = await confirmationFor(approval);
           const taskId = randomUUID();
           await transaction(async (client) => {
             await client.query(
@@ -1813,10 +2006,10 @@ test(
             await assertPaused(schedule);
             assert.equal((await approvalsFor(turn))[0].status, 'expired');
             assert.equal(posts.length, 2);
-            assert.deepEqual(posts[0], { threadId: 'synthetic-chat', text: confirmationText });
+            assert.deepEqual(posts[0], { threadId: 'synthetic-chat', text: confirmation });
             assert.equal(posts[1]?.threadId, 'synthetic-chat');
             assert.match(posts[1]?.text ?? '', /This task is still open/);
-            assert.notEqual(posts[1]?.text, confirmationText);
+            assert.notEqual(posts[1]?.text, confirmation);
             const noticeId = (
               await pool.query('SELECT continuation_message_id FROM tasks WHERE id=$1', [taskId])
             ).rows[0].continuation_message_id as string;
@@ -2102,7 +2295,7 @@ test(
       );
 
       await t.test(
-        'the small LLM checks actions and replies while the selected model writes confirmations',
+        'the small LLM checks actions and replies while the server writes confirmations',
         async () => {
           const reset = await request('POST', '/api/conversation/reset', { threadId: ids.at(-1) });
           assert.equal(reset.statusCode, 200, reset.body);
@@ -2129,11 +2322,11 @@ test(
           assert.equal(integrationFixture.writes.length, writes);
           assert.deepEqual(decisionInputs.slice(before), []);
           const checked = sendChecks();
-          assert.equal(checked.length, 2);
+          assert.equal(checked.length, 1);
           assert.equal(checked[0].action.arguments.body, body);
-          assert.deepEqual(Object.keys(checked[1]).sort(), ['data', 'purpose', 'text']);
-          assert.equal(checked[1].data.args.body, body);
-          assert.equal(checked[1].text, confirmationText);
+          const confirmation = await confirmationFor(pending);
+          assert.match(confirmation, /GMAIL_SEND_EMAIL/);
+          assert.match(confirmation, /decision@example.test/);
           const replyId = randomUUID();
           const accepted = await request('POST', '/api/messages', {
             text: 'Yes',
@@ -2147,7 +2340,7 @@ test(
           assert.equal(integrationFixture.writes.length, writes + 1);
           assert.deepEqual(decisionInputs.slice(before), []);
           assert.deepEqual(smallReplies.at(-1), { reply: 'Yes' });
-          assert.equal(sendChecks().length, 2);
+          assert.equal(sendChecks().length, 1);
           const rows = (
             await pool.query(
               'SELECT id,turn_id,cost_usd,details FROM model_usage WHERE owner_id=$1 AND NOT(id=ANY($2::text[])) ORDER BY created_at,id',
@@ -2197,7 +2390,7 @@ test(
             await waitFor(declined.json().turnId, 'succeeded');
             assert.equal((await approvalsFor(held))[0].status, 'declined');
             assert.equal(decisionInputs.length, count);
-            assert.equal(sendChecks().length, 4);
+            assert.equal(sendChecks().length, 2);
           } finally {
             decisionsEnabled = true;
           }
@@ -2426,18 +2619,18 @@ test(
             assert.deepEqual(card.args, { origin, kind: 'sign_in', itemId: login });
             assert.equal(injected.length, before);
             const checks = fallbackChecks.slice(checksFrom) as Array<Record<string, any>>;
-            for (const account of [
-              checks.find((check) => check.action?.name === 'NOD_sign_in')?.action.arguments
-                .account,
-              checks.find((check) => check.purpose === 'confirmation_review')?.data.details.account,
-            ]) {
-              assert.equal(typeof account, 'string');
-              assert.ok(account.includes(saved.json().label));
-              assert.ok(account.includes(saved.json().usernameHint));
-              assert.equal(account.includes('Model-supplied account name'), false);
-            }
+            const account = checks.find((check) => check.action?.name === 'NOD_sign_in')?.action
+              .arguments.account;
+            assert.equal(typeof account, 'string');
+            assert.ok(account.includes(saved.json().label));
+            assert.ok(account.includes(saved.json().usernameHint));
+            assert.equal(account.includes('Model-supplied account name'), false);
+            const confirmation = await confirmationFor(card);
+            assert.ok(confirmation.includes(saved.json().label));
+            assert.ok(confirmation.includes(saved.json().usernameHint));
+            assert.equal(confirmation.includes('Model-supplied account name'), false);
             assert.doesNotMatch(
-              JSON.stringify(checks),
+              JSON.stringify({ checks, confirmation }),
               /synthetic-bank-password|JBSWY3DP|otpauth/i,
             );
             if (kind === 'password') {
