@@ -194,6 +194,13 @@ function browserService(origin: string) {
 function failure(prefix: string, error: unknown) {
   return `${prefix}: ${error instanceof Error ? error.message : String(error)}`;
 }
+function requestFailure(prefix: string, error: unknown) {
+  const status = z.object({ status: z.number().int().min(100).max(599) }).safeParse(error);
+  return Object.assign(
+    new IntegrationError(failure(prefix, error), 502),
+    status.success ? { upstreamStatus: status.data.status } : {},
+  );
+}
 function messageIdentity(data: Record<string, unknown>, field: 'message' | 'thread') {
   const nested = data.message;
   const value =
@@ -1582,10 +1589,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           `${failure('The app request failed', error)} The selected ${known.slug} connection (${known.id}) lacks permissions for this action. Preserve this account and prepared work. Do not retry until permissions change. Ask before switching to browser sign-in unless the user already chose that recovery. The connection service's auth configuration must request the missing permission before reconnection can grant it; its operator may need to update it first. If the user chooses to reconnect, use manage_apps connect ${JSON.stringify({ service: known.slug, connectionId: known.id })}.`,
           403,
         );
-      throw new IntegrationError(
-        `${failure('The app request failed', error)} If the action name or arguments may be wrong, look them up with apps SEARCH_TOOLS.`,
-        502,
-      );
+      throw requestFailure('The app request failed', error);
     }
   }
 
@@ -1747,7 +1751,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             : {}),
         };
       } catch (error) {
-        throw new IntegrationError(failure('App tool search failed', error), 502);
+        throw requestFailure('App tool search failed', error);
       }
     }
     return executeApproved(

@@ -32,6 +32,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { create } from 'tar';
 import { copyBundleSource, copyEngineDependencies } from '../scripts/engine-dependencies.mjs';
+import { copyEngineSource } from '../scripts/engine-source.mjs';
 import { copySpeechSources } from '../scripts/speech-sources.mjs';
 import {
   assetHash,
@@ -2027,6 +2028,39 @@ test('bundle copy includes explicit release assets under .local while excluding 
     'runtime-release.json',
     'runtime.tar.gz',
   ]);
+});
+
+test('engine source includes its own documentation without site dependencies or media', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'nod-engine-docs-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'source');
+  const target = join(root, 'engine');
+  const page = 'docs/src/content/docs/trust/privacy.md';
+  for (const path of [
+    'src/server/index.ts',
+    page,
+    'docs/package.json',
+    'docs/src/assets/fixture.png',
+    'dist/web/index.html',
+    'LICENSE',
+    'NOTICE',
+    'desktop/main/engine.mjs',
+    'desktop/main/onepassword.mjs',
+    'desktop/runtime/index.mjs',
+    'desktop/runtime/assets.mjs',
+    'desktop/runtime/guest-config.mjs',
+  ]) {
+    await mkdir(dirname(join(source, path)), { recursive: true });
+    await writeFile(join(source, path), 'Synthetic engine fixture');
+  }
+  await writeFile(
+    join(source, 'package.json'),
+    JSON.stringify({ name: 'fixture', dependencies: {} }),
+  );
+  await copyEngineSource({ root: source, target });
+  assert.equal(await readFile(join(target, page), 'utf8'), 'Synthetic engine fixture');
+  await assert.rejects(access(join(target, 'docs/package.json')));
+  await assert.rejects(access(join(target, 'docs/src/assets/fixture.png')));
 });
 
 test('engine source imports only production dependencies outside the development server', async () => {

@@ -14,7 +14,7 @@ The short version: each attempt boots its own Nod with a real model. The apps, w
 For the landing-page results, benchmark definitions, and measurement limits, read [How we evaluate Nod](/how-it-works/benchmarks/).
 
 :::caution[Evals cost money]
-They call live models. An attempt costs about $0.10 to $0.50, and the default run has 261 attempts. The unit tests never call them.
+They call live models. An attempt costs about $0.10 to $0.50. A full controlled run has 291 attempts before time-window skips. The unit tests never call them.
 :::
 
 The collector requires a captured prompt for each successful background turn that opened the agent or recorded an agent request. A recorded source-screen result with no agent start or request needs no agent prompt. Missing records alone do not prove that a source screen ran. Its source reads and model usage still count. Missing prompts from executed agent work are measurement errors.
@@ -60,7 +60,7 @@ The fake apps are hand-written approximations of Composio's responses, not recor
    pnpm run eval:capability doctor --fix
    ```
 
-3. Run all 94 controlled cases, three attempts each.
+3. Run all 97 controlled cases, three attempts each.
 
    ```sh title="Terminal"
    pnpm run eval:capability run
@@ -72,13 +72,13 @@ For a small run, add `--tier pr --repeat 1`. To cap the spend at $20, add `--bud
 
 ### Run the release suite
 
-The release suite adds 235 cases: 188 of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
+The release suite adds 244 cases: 197 of everyday work across every connected app, the browser, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
 
 ```sh title="Terminal"
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500
 ```
 
-`--tier release` runs the release cases together with every controlled case, 329 attempts per repeat. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
+`--tier release` runs the release cases together with every controlled case, 341 attempts per repeat before time-window skips. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run. If a worker fails before it can save checks, its log records the phase: start, prepare, play, collect, or grade.
 
@@ -285,7 +285,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 333 cases: 94 controlled cases, 235 release cases, three live web cases and the harness canary.
+The suite has 345 cases: 97 controlled cases, 244 release cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -561,6 +561,14 @@ The `calendar-next-local-day` case checks a meeting whose local date differs fro
 Each saved attempt includes model usage by request, counts of owner interactions, browser handoffs, and turn status, background flag, errors, start and finish times. Active task time includes foreground turns that resume after an approval or private entry. Do not count only turns whose source is `user`. Tool traces include calls made inside scripts. Runtime observations and saved Pi calls are matched so each call appears once; the saved model arguments stay available for secret-leak checks. These measurements use the existing cost ledger. Judge and simulated-owner costs stay separate from Nod usage.
 
 ## Check first use
+
+The `discovery-*` cases start with a question about what Nod can do. They cover a connected inbox, more ideas, no apps, an empty inbox, failed reads, owner rules, an access question, a detailed tour and a recurring briefing. The first reply must give useful choices without starting work or requiring another connection. An access question must not read account content. A requested detailed tour must keep the requested detail.
+
+The cases then select an offer and require a result: a saved reply in the right email thread, a correct comparison from supplied quotes, or a briefing that is saved as a schedule and delivered when it fires. They include an already answered email and instructions inside a newsletter. Those instructions must not start work. A task card, promise or saved schedule without the required result fails. These cases are marked as awaiting calibration; their presence does not prove a model pass rate.
+
+```sh title="Terminal"
+pnpm run eval:capability run --scenario discovery-inbox,discovery-more-ideas,discovery-no-apps,discovery-empty,discovery-blocked,discovery-rules,discovery-access,discovery-tour,discovery-schedule --repeat 3 --budget 20
+```
 
 The `onboarding-first-value` case completes setup without a required interview, selects an immediate email task, and checks the delivered draft against the source thread. The `onboarding-no-apps` case uses quotes supplied in the first request and requires the requested comparison table. The original `onboarding-connected-*` cases check discovery and then require a useful delivered result. The calendar temporal cases stop at suggestion publication and reject preparation for elapsed or already-started events, including time-zone offsets and calendars containing only past events. They keep discovery reads separate from actions after task selection and reject saved or attempted schedules that the owner did not request.
 
