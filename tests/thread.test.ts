@@ -464,6 +464,7 @@ test(
           return operation();
         }),
       executeConfirmation: async () => undefined,
+      credentialRequestStatuses: vault.requestStatuses,
       bindVerificationQuestion: verification.bindQuestion,
       connectedApps: readConnectedApps,
       spendingLimit: async () => (limitReached ? { monthlyUsd: 25 } : null),
@@ -9664,6 +9665,118 @@ test(
             limitReached = false;
           }
           assert.equal(sends, 3);
+        },
+      );
+
+      await t.test(
+        'expired sign-in links reach the next turn without closing another session',
+        async () => {
+          await waitFor(settledThread);
+          const originalObserver = inspectObserver;
+          const mainPrompt = 'Synthetic Google sign-in request';
+          const otherPrompt = 'Synthetic separate sign-in request';
+          const mainOrigin = 'https://lab897-main.test';
+          const otherOrigin = 'https://lab897-other.test';
+          const links = new Map<string, string>();
+          inspectObserver = async (context) => {
+            if (context.prompt !== mainPrompt && context.prompt !== otherPrompt) return;
+            const main = context.prompt === mainPrompt;
+            const { url } = await vault.request(
+              { threadId: context.threadId, turnId: context.turnId, browserId: context.sessionId },
+              ownerId,
+              {
+                origin: main ? mainOrigin : otherOrigin,
+                label: main ? 'Synthetic Google sign-in' : 'Synthetic other sign-in',
+                kind: 'password',
+                passwordSelector: '#password',
+              },
+            );
+            links.set(context.prompt, url);
+            return {
+              status: 'waiting_credentials',
+              waitingFor: 'credentials',
+              message: `Sign in. [Continue](${url})`,
+            };
+          };
+          const formStatus = async (url: string) =>
+            (await request('GET', url.replace('/vault/', '/api/credential-requests/'))).json()
+              .status as string;
+          try {
+            const signIn = await thread.submitUserMessage(mainPrompt);
+            await waitFor(settled(signIn.turnId));
+            assert.equal(await turnStatus(signIn.turnId), 'waiting');
+            const mainLink = links.get(mainPrompt)!;
+            assert.equal(await formStatus(mainLink), 'pending');
+
+            const other = await thread.enqueueTurn(otherPrompt, {
+              source: 'event',
+              sessionId: randomUUID(),
+            });
+            await waitFor(settled(other));
+            assert.equal(await turnStatus(other), 'waiting');
+            const otherLink = links.get(otherPrompt)!;
+            assert.equal(await formStatus(otherLink), 'pending');
+
+            const next = await thread.submitUserMessage('Synthetic reminder follow-up');
+            await waitFor(settled(next.turnId));
+            assert.equal(await formStatus(mainLink), 'expired');
+            assert.equal(await formStatus(otherLink), 'pending');
+            assert.ok(ran(next.turnId)!.history.some(({ text }) => text.includes(mainLink)));
+            assert.deepEqual(
+              (ran(next.turnId)!.credentialRequests ?? []).filter(
+                (item) => item.origin === mainOrigin || item.origin === otherOrigin,
+              ),
+              [
+                {
+                  turnId: signIn.turnId,
+                  origin: mainOrigin,
+                  label: 'Synthetic Google sign-in',
+                  kind: 'password',
+                  status: 'expired',
+                },
+              ],
+            );
+            const instruction = firstInstruction(ran(next.turnId)!, true, new Set());
+            const requestData = JSON.parse(
+              instruction.split('Request data (JSON):\n')[1]!.split('\n\n')[0]!,
+            ) as { credentialRequests: string };
+            assert.match(requestData.credentialRequests, /lab897-main\.test/);
+            assert.match(requestData.credentialRequests, /"status":"expired"/);
+
+            const batchId = randomUUID();
+            const added = await db.pool.query<{ id: string }>(
+              `INSERT INTO credential_requests (
+                 id,token_hash,owner_id,thread_id,turn_id,root_turn_id,origin,label,kind,
+                 status,selectors,inspection,browser_id,flow_id,flow_expires_at,created_at
+               ) SELECT md5($2||':'||series.n::text),md5($2||':token:'||series.n::text),
+                 r.owner_id,r.thread_id,r.turn_id,r.root_turn_id,
+                 'https://lab897-extra-'||series.n::text||'.test','Synthetic previous sign-in',r.kind,
+                 'superseded',r.selectors,r.inspection,r.browser_id,r.flow_id,r.flow_expires_at,
+                 r.created_at+series.n*interval '1 second'
+               FROM credential_requests r CROSS JOIN generate_series(1,30) AS series(n)
+               WHERE r.turn_id=$1 RETURNING id`,
+              [signIn.turnId, batchId],
+            );
+            try {
+              const sessionId = (
+                await db.pool.query<{ session_id: string }>(
+                  'SELECT session_id FROM turns WHERE id=$1',
+                  [signIn.turnId],
+                )
+              ).rows[0]!.session_id;
+              const statuses = await vault.requestStatuses(signIn.threadId, sessionId, [
+                signIn.turnId,
+              ]);
+              assert.equal(statuses.length, 31);
+              assert.equal(statuses.find((item) => item.origin === mainOrigin)?.status, 'expired');
+            } finally {
+              await db.pool.query('DELETE FROM credential_requests WHERE id=ANY($1::text[])', [
+                added.rows.map((row) => row.id),
+              ]);
+            }
+          } finally {
+            inspectObserver = originalObserver;
+          }
         },
       );
     } finally {

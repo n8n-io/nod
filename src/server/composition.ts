@@ -1767,6 +1767,7 @@ async function initializeApplication(
       mailCheck,
       executeConfirmation: approvals.executeConfirmed,
       stoppedOutcomes: approvals.stoppedOutcomes,
+      credentialRequestStatuses: vault.requestStatuses,
       bindVerificationQuestion: chatVerification.bindQuestion,
       reactToMessage: reactions.react,
       proactivity: proactivity.context,

@@ -101,6 +101,8 @@ A planned task check takes the thread lock before it reads the task and its sess
 
 A secure form closes when a newer turn starts in its session, and a payment request when you send a newer message there. A chat message is in the chat session, so it never closes a background task's form or payment.
 
+The next turn checks server status for sign-in forms referenced by its recent chat history in the same session. An old link in chat history does not establish that its form is still open.
+
 ## Sessions
 
 | Session                                | Key                                                             | Reports to the conversation                                                                                                                                                                                                                       |
