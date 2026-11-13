@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   CalendarClock,
+  ChevronRight,
   Download,
   LoaderCircle,
   MessageCircle,
@@ -9,16 +10,15 @@ import {
   Zap,
 } from '../components/icons';
 import {
-  actionText,
   becauseText,
   type TrustEntry,
-  type TrustModel,
   type TrustOutside,
   type TrustPage,
   type TrustSource,
+  type TrustStep,
   type TrustView,
 } from '../../shared/trust';
-import { modelProviderNames, modelSource, type ModelsResponse } from '../../shared/models';
+import { modelSource, type ModelsResponse } from '../../shared/models';
 import type {
   VaultActivity,
   VaultActivityEntry,
@@ -38,7 +38,6 @@ import {
 } from '../lib/date-format';
 import { PageTitle } from '../components/page-title';
 import { StatementValue } from '../components/statement-value';
-import { Tooltip } from '../components/tooltip';
 import { Button, Input, Loading, Notice } from '../components/ui';
 import { VaultUse } from '../components/vault-activity';
 import { downloadExport } from '../lib/download';
@@ -371,91 +370,97 @@ function UsageSummary({
   );
 }
 
-function billingSource(model: TrustModel) {
-  if (model.billing === 'plan') return 'ChatGPT plan';
-  const provider = model.provider
-    ? modelProviderNames[model.provider as keyof typeof modelProviderNames]
-    : undefined;
-  return provider ? `${provider} API` : 'API usage';
+function TrustLog({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean }) {
+  const format = useDateFormat();
+  const log = usePageData<{ steps: TrustStep[] }>(`/api/trust/entries/${entry.id}/steps`);
+  return (
+    <div className="usage-log" id={`usage-log-${entry.id}`}>
+      {log.error ? (
+        <Notice>{log.error}</Notice>
+      ) : !log.data ? (
+        <Loading label="Opening the log…" />
+      ) : (
+        <ol>
+          {log.data.steps.map((step, index) => (
+            <li
+              key={`${step.at}${index}`}
+              data-kind={step.kind}
+              data-helper={step.helper ? 'true' : undefined}
+              className={step.failed ? 'is-failed' : undefined}
+            >
+              <time dateTime={step.at}>{formatTime(step.at, format, { seconds: true })}</time>
+              <span className="usage-log-text">
+                <b>{step.title}</b>
+                {step.detail && <span> · {step.detail}</span>}
+                {step.because && <small> · {becauseText(step.because)}</small>}
+              </span>
+              {showCosts && step.costUsd !== undefined && (
+                <span className="usage-log-cost">{money(step.costUsd)}</span>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+      {entry.messageId && (
+        <button
+          type="button"
+          className="usage-log-link"
+          onClick={() =>
+            window.dispatchEvent(
+              new CustomEvent('nod:focus-message', { detail: { messageId: entry.messageId } }),
+            )
+          }
+        >
+          Show in chat
+        </button>
+      )}
+    </div>
+  );
 }
 
 function TrustRow({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean }) {
   const format = useDateFormat();
-  const models = entry.models ?? [];
+  const [open, setOpen] = useState(false);
   const { icon: Icon, label } = sources[entry.source];
-  const actions = new Map<string, { text: string; why?: string; count: number }>();
-  for (const action of entry.actions) {
-    const text = actionText(action);
-    const why = action.because && becauseText(action.because);
-    const key = `${text}\n${why ?? ''}`;
-    const seen = actions.get(key);
-    if (seen) seen.count++;
-    else actions.set(key, { text, ...(why ? { why } : {}), count: 1 });
-  }
-  const content = (
+  const changes = [
+    ...new Set(entry.actions.filter((action) => !action.read).map((action) => action.label)),
+  ];
+  return (
     <>
-      <span className="vault-glyph" aria-hidden="true">
-        <Icon size={14} />
-      </span>
-      <span className="vault-use-text">
-        <b>{entry.title}</b>
-        <span className={entry.error ? 'is-error' : undefined}>
-          {[formatTime(entry.at, format), label].filter(Boolean).join(' · ')}
-          {entry.error ? ` · ${entry.error}` : ''}
+      <button
+        type="button"
+        className="vault-use usage-row"
+        aria-expanded={open}
+        aria-controls={`usage-log-${entry.id}`}
+        onClick={() => setOpen(!open)}
+      >
+        <span className="vault-glyph" aria-hidden="true">
+          <Icon size={14} />
         </span>
-        {[...actions.values()].map(({ text, why, count }) => {
-          const line = `${text}${count > 1 ? ` ×${count}` : ''}`;
-          return (
-            <Tooltip key={`${text}${why}`} content={why ? `${line} · ${why}` : line}>
-              <span className="usage-action">
-                {line}
-                {why && <small> · {why}</small>}
-              </span>
-            </Tooltip>
-          );
-        })}
-        {models.length > 0 && (
-          <span className="usage-models" aria-label="Models used">
-            {models.map((model) => (
-              <span key={`${model.provider}:${model.model}:${model.billing}`}>
-                {model.model ?? 'Model not recorded'}
-                <span className="usage-model-source"> · {billingSource(model)}</span>
-              </span>
-            ))}
+        <span className="vault-use-text">
+          <b>{entry.title}</b>
+          <span className={entry.error ? 'is-error' : undefined}>
+            {[formatTime(entry.at, format), label, entry.error ?? changes.join(', ')]
+              .filter(Boolean)
+              .join(' · ')}
           </span>
-        )}
-      </span>
-      {showCosts && entry.costUsd !== null ? (
-        <span className="usage-row-cost">
-          {money(entry.costUsd)}
-          {models.some((model) => model.billing === 'plan') && <small>API</small>}
         </span>
-      ) : (
-        entry.pricing && (
+        {showCosts && entry.costUsd !== null ? (
+          <span className="usage-row-cost">
+            {money(entry.costUsd)}
+            {entry.models?.some((model) => model.billing === 'plan') && <small>API</small>}
+          </span>
+        ) : entry.pricing ? (
           <span className="usage-row-cost is-label">
             {entry.pricing === 'plan' ? 'ChatGPT plan' : 'No price'}
           </span>
-        )
-      )}
-    </>
-  );
-  return entry.messageId ? (
-    <Tooltip content="Show in chat">
-      <button
-        type="button"
-        className="vault-use"
-        aria-label={`Open ${entry.title} in chat`}
-        onClick={() =>
-          window.dispatchEvent(
-            new CustomEvent('nod:focus-message', { detail: { messageId: entry.messageId } }),
-          )
-        }
-      >
-        {content}
+        ) : (
+          <span />
+        )}
+        <ChevronRight size={16} className="usage-chevron" aria-hidden="true" />
       </button>
-    </Tooltip>
-  ) : (
-    <div className="vault-use">{content}</div>
+      {open && <TrustLog entry={entry} showCosts={showCosts} />}
+    </>
   );
 }
 

@@ -3,7 +3,7 @@ import type { Pool, PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Task, TaskDetail, TaskStatus } from '../shared/contracts.ts';
-import { recordedTitle, toolTitle } from './action-presentation.ts';
+import { recordedAction, toolTitle } from './action-presentation.ts';
 import type { ChannelPresentation } from './channels.ts';
 import { classifyVerificationReply } from '../shared/verification-code.ts';
 import {
@@ -740,8 +740,10 @@ export function createTasks(options: {
           [id, ownerId],
         )
       ).rows.map((event) => {
-        if (event.type === 'action')
-          return { ...event, type: 'tool_complete', summary: recordedTitle(event.summary) };
+        if (event.type === 'action') {
+          const { label, target } = recordedAction(event.summary, event.site);
+          return { ...event, type: 'tool_complete', summary: label, site: target ?? null };
+        }
         return event.type === 'message' || event.type === 'step'
           ? event
           : { ...event, summary: toolTitle(event.summary) };

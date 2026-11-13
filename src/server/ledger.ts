@@ -9,9 +9,15 @@ import type { ProviderUsageEvent, UsageTelemetry } from '../ports/provider-usage
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { DecisionModel } from '../ports/decisions.ts';
 import type { SpeechProvider } from '../ports/speech.ts';
-import type { TrustAction, TrustEntry, TrustOutside, TrustView } from '../shared/trust.ts';
+import type {
+  TrustAction,
+  TrustEntry,
+  TrustOutside,
+  TrustStep,
+  TrustView,
+} from '../shared/trust.ts';
 import { becauseOf, type TrustBasis } from './trust-basis.ts';
-import { recordedTitle } from './action-presentation.ts';
+import { recordedAction, toolTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
 import type { UsageReport } from './usage-report.ts';
 import { afterCommit, transaction } from './transaction.ts';
@@ -83,6 +89,76 @@ function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'
   if (id.startsWith('reaction:')) return { source: 'chat', title: 'Your reaction' };
   if (task?.started) return { source: 'started', title: task.title };
   return { source: 'event', title: 'Woke for an email or app event' };
+}
+
+function reasonOf(basis: TrustBasis | null, said: boolean, whole: boolean | null) {
+  const reason = becauseOf(basis, said);
+  return reason?.kind === 'message' && whole ? { ...reason, whole: true as const } : reason;
+}
+
+const modelKinds: Record<string, string> = {
+  review: 'Check',
+  memory: 'Memory',
+  task_classification: 'Sorting',
+  tasks: 'Planning',
+};
+
+const tokens = (value: unknown) => {
+  const count = typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+  return count >= 1000 ? `${(count / 1000).toFixed(1).replace(/\.0$/, '')}k` : String(count);
+};
+
+function presentStep(row: Record<string, any>): TrustStep {
+  const at = row.at.toISOString();
+  const helper = row.helper ? { helper: true as const } : {};
+  if (row.kind === 'model') {
+    const usage = row.usage ?? {};
+    const input =
+      (Number(usage.inputTokens) || 0) +
+      (Number(usage.cacheReadTokens) || 0) +
+      (Number(usage.cacheWriteTokens) || 0);
+    const output = Number(usage.outputTokens) || 0;
+    return {
+      at,
+      kind: 'model',
+      title: [modelKinds[usage.category], usage.model || 'Model'].filter(Boolean).join(' · '),
+      ...(input || output ? { detail: `${tokens(input)} in · ${tokens(output)} out` } : {}),
+      ...(row.cost > 0 ? { costUsd: row.cost } : {}),
+      ...(usage.status === 'failed' ? { failed: true as const } : {}),
+      ...helper,
+    };
+  }
+  if (row.kind === 'action') {
+    const because = reasonOf(row.basis, row.said, row.whole);
+    const { label, target } = recordedAction(row.summary, row.detail);
+    return {
+      at,
+      kind: 'action',
+      title: label,
+      ...(target ? { detail: target } : {}),
+      ...(because ? { because } : {}),
+    };
+  }
+  if (row.kind === 'reply')
+    return {
+      at,
+      kind: 'reply',
+      title: 'Replied',
+      detail: String(row.summary)
+        .split('\n')[0]!
+        .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+        .replaceAll('**', ''),
+    };
+  if (row.type === 'step' || row.type === 'thought')
+    return { at, kind: 'note', title: String(row.summary), ...helper };
+  return {
+    at,
+    kind: 'tool',
+    title: toolTitle(String(row.summary)),
+    ...(row.detail ? { detail: String(row.detail) } : {}),
+    ...(row.type === 'tool_failed' ? { failed: true as const } : {}),
+    ...helper,
+  };
 }
 
 function modelUsed(usage: ProviderUsageEvent): Parameters<CaptureAnalytics>[0] {
@@ -573,13 +649,11 @@ export function createLedger({
           said: boolean;
           whole: boolean | null;
         }): TrustAction => {
-          const reason = becauseOf(item.basis, item.said);
-          const because =
-            reason?.kind === 'message' && item.whole ? { ...reason, whole: true as const } : reason;
+          const because = reasonOf(item.basis, item.said, item.whole);
           return {
-            label: recordedTitle(item.action),
-            ...(item.target ? { target: item.target } : {}),
+            ...recordedAction(item.action, item.target),
             ...(because ? { because } : {}),
+            ...(item.basis?.kind === 'read' ? { read: true as const } : {}),
           };
         },
       ),
@@ -594,6 +668,36 @@ export function createLedger({
       entries: page,
       next: rows.length > pageSize && last ? { at: last.at, id: last.id } : null,
     };
+  }
+
+  async function steps(turnIds: string[]) {
+    const { rows } = await pool.query(
+      `SELECT * FROM (
+         SELECT e.turn_id,e.created_at AS at,'event' AS kind,e.type,e.summary,e.site AS detail,NULL::jsonb AS basis,
+           false AS said,false AS whole,NULL::jsonb AS usage,NULL::float8 AS cost,e.parent_run_id IS NOT NULL AS helper,e.id::text AS id
+         FROM turn_events e JOIN turns u ON u.id=e.turn_id AND u.owner_id=$1
+         WHERE e.turn_id=ANY($2::uuid[]) AND e.type IN ('step','thought','tool_complete','tool_failed')
+           AND NOT (e.type<>'step' AND e.type<>'thought' AND e.summary IN ('apps','files'))
+         UNION ALL
+         SELECT a.turn_id,a.created_at,'action',NULL,a.action,a.target,a.basis,m.id IS NOT NULL,
+           COALESCE(regexp_replace(lower(m.text),'[^[:alnum:]]+','','g')=regexp_replace(lower(a.basis->>'quote'),'[^[:alnum:]]+','','g'),false),
+           NULL,NULL,false,a.id::text
+         FROM app_actions a LEFT JOIN messages m ON a.basis->>'kind'='message'
+           AND m.owner_id=$1 AND m.id=(a.basis->>'messageId')::uuid
+         WHERE a.owner_id=$1 AND a.turn_id=ANY($2::uuid[])
+         UNION ALL
+         SELECT turn_id,created_at,'model',NULL,NULL,NULL,NULL,false,false,details,cost_usd,parent_run_id IS NOT NULL,id
+         FROM model_usage WHERE owner_id=$1 AND turn_id=ANY($2::uuid[])
+         UNION ALL
+         SELECT turn_id,created_at,'reply',NULL,left(text,300),NULL,NULL,false,false,NULL,NULL,false,id::text
+         FROM messages WHERE owner_id=$1 AND turn_id=ANY($2::uuid[]) AND role='assistant' AND hidden_at IS NULL AND text<>''
+       ) s ORDER BY s.at,s.id`,
+      [ownerId, turnIds],
+    );
+    const grouped = new Map<string, TrustStep[]>();
+    for (const row of rows)
+      grouped.set(row.turn_id, [...(grouped.get(row.turn_id) ?? []), presentStep(row)]);
+    return grouped;
   }
 
   async function within(range: ActivityRange, limit: number | null) {
@@ -765,6 +869,10 @@ export function createLedger({
         query.session,
       );
     });
+    app.get<{ Params: { id: string } }>('/api/trust/entries/:id/steps', async (request) => {
+      const id = z.uuid().parse(request.params.id);
+      return { steps: (await steps([id])).get(id) ?? [] };
+    });
     app.put('/api/trust/limit', (request) => setLimits(request.body));
   }
 
@@ -842,6 +950,7 @@ export function createLedger({
     ) => activeExecution.run(execution, run),
     read,
     within,
+    steps,
     report,
     registerRoutes,
   };

@@ -875,7 +875,7 @@ test(
             ),
           );
           assert.match(log, /untrusted_tool_result source=\\"usage\\"/);
-          assert.ok(log.includes('Browser · click “Authorize payment” on bank.example.test'));
+          assert.ok(log.includes('Browser: click “Authorize payment” on bank.example.test'));
           const moved = await propose('click', { selector: '@e7' }, 'browser');
           const [stale] = await approvalsFor(moved);
           browserUrl = 'https://bank.example.test/payees/remove';

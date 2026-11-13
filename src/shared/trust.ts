@@ -13,6 +13,18 @@ export interface TrustAction {
   label: string;
   target?: string;
   because?: TrustBecause;
+  read?: true;
+}
+
+export interface TrustStep {
+  at: string;
+  kind: 'model' | 'action' | 'tool' | 'note' | 'reply';
+  title: string;
+  detail?: string;
+  because?: TrustBecause;
+  costUsd?: number;
+  helper?: true;
+  failed?: true;
 }
 
 export function actionText(action: Pick<TrustAction, 'label' | 'target'>) {

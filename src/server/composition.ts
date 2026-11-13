@@ -1736,6 +1736,7 @@ async function initializeApplication(
   const activityLog = createActivityLog({
     requests: ledger.within,
     vault: vaultAccess.within,
+    steps: ledger.steps,
   });
   payments = await createPayments(pool, {
     ownerId,

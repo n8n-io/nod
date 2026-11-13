@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import type { TrustEntry, TrustSource } from '../shared/trust.ts';
+import type { TrustEntry, TrustSource, TrustStep } from '../shared/trust.ts';
 import { actionText, becauseText } from '../shared/trust.ts';
 import type { VaultActivityEntry } from '../shared/contracts.ts';
 import { vaultActivityTitle, vaultReasons } from '../shared/vault-activity.ts';
@@ -41,10 +41,19 @@ interface Sources {
     end: Date | null,
     limit: number | null,
   ): Promise<{ entries: VaultActivityEntry[]; complete: boolean }>;
+  steps(turnIds: string[]): Promise<Map<string, TrustStep[]>>;
 }
 
-const localTime = (at: string, timeZone: string) =>
-  new Date(at).toLocaleString('sv-SE', { timeZone }).slice(0, 16);
+const kinds: Record<TrustStep['kind'], string> = {
+  model: 'Model',
+  action: 'Action',
+  tool: 'Tool',
+  note: 'Note',
+  reply: 'Reply',
+};
+
+const localTime = (at: string, timeZone: string, seconds = false) =>
+  new Date(at).toLocaleString('sv-SE', { timeZone }).slice(0, seconds ? 19 : 16);
 
 function fromRequest(entry: TrustEntry): ActivityLogEntry {
   return {
@@ -100,24 +109,60 @@ export function createActivityLog(log: Sources) {
   }
 
   async function csv(input: unknown) {
-    const { entries, timeZone } = await read(input, null);
-    const rows = [
-      [`Time (${timeZone})`, 'Request', 'Source', 'Action', 'Allowed by', 'Model cost (USD)'],
+    const range = activityRange.parse(input ?? {});
+    const requests = await log.requests(range, null);
+    const vault = range.session
+      ? []
+      : (await log.vault(requests.start, requests.end, null)).entries;
+    const steps = await log.steps(requests.entries.map((entry) => entry.id));
+    const time = (at: string) => localTime(at, requests.timeZone, true);
+    const rows: Array<Array<string | number | undefined>> = [
+      [
+        `Time (${requests.timeZone})`,
+        'Request',
+        'Source',
+        'Kind',
+        'Step',
+        'Detail',
+        'Allowed by',
+        'Cost (USD)',
+      ],
     ];
-    for (const entry of [...entries].reverse()) {
-      const did = entry.did.length ? entry.did : [{ action: '' }];
-      did.forEach((item, index) =>
+    const items = [
+      ...requests.entries.map((entry) => ({ at: entry.at, entry })),
+      ...vault.map((use) => ({ at: use.at, use })),
+    ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+    for (const item of items) {
+      if ('use' in item) {
+        const { use } = item;
         rows.push([
-          entry.at,
-          entry.request,
-          entry.source,
-          entry.error && !index
-            ? `${item.action ? `${item.action} · ` : ''}Failed: ${entry.error}`
-            : item.action,
-          item.allowedBy ?? '',
-          index || entry.costUsd === undefined ? '' : entry.costUsd.toFixed(4),
-        ]),
-      );
+          time(use.at),
+          use.task,
+          'Vault',
+          'Vault',
+          vaultActivityTitle(use, requests.locale),
+          '',
+          use.because ? becauseText(use.because) : vaultReasons[use.reason],
+          '',
+        ]);
+        continue;
+      }
+      const { entry } = item;
+      const base = [entry.title, sources[entry.source]];
+      const list = steps.get(entry.id) ?? [];
+      if (!list.length)
+        rows.push([time(entry.at), ...base, '', '', '', '', entry.costUsd?.toFixed(6)]);
+      for (const step of list)
+        rows.push([
+          time(step.at),
+          ...base,
+          kinds[step.kind],
+          `${step.title}${step.failed ? ' (failed)' : ''}`,
+          step.detail ?? '',
+          step.because ? becauseText(step.because) : '',
+          step.costUsd?.toFixed(6),
+        ]);
+      if (entry.error) rows.push([time(entry.at), ...base, 'Error', entry.error, '', '', '']);
     }
     return `${rows.map((row) => row.map(cell).join(',')).join('\r\n')}\r\n`;
   }

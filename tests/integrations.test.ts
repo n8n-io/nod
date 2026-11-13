@@ -56,7 +56,7 @@ import { createLedger } from '../src/server/ledger.ts';
 import { createActivityLog } from '../src/server/activity-log.ts';
 import { createVaultAccess } from '../src/server/vault-access.ts';
 import { usagePdf } from '../src/server/usage-report.ts';
-import type { TrustEntry } from '../src/shared/trust.ts';
+import type { TrustEntry, TrustStep } from '../src/shared/trust.ts';
 import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
 import { createWorkAdmission } from '../src/server/work-admission.ts';
 import { integrationServiceIds, integrationServices } from '../src/shared/integrations.ts';
@@ -9196,7 +9196,7 @@ test(
         CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,source text NOT NULL,source_id text,
           message_id uuid,prompt text NOT NULL,channel text NOT NULL DEFAULT 'web',status text NOT NULL DEFAULT 'succeeded',
           error text,created_at timestamptz NOT NULL DEFAULT now(),thread_id uuid,session_id uuid);
-        CREATE TABLE turn_events(id uuid DEFAULT gen_random_uuid(),turn_id uuid,type text,summary text DEFAULT '',created_at timestamptz NOT NULL DEFAULT now());
+        CREATE TABLE turn_events(id uuid DEFAULT gen_random_uuid(),turn_id uuid,type text,summary text DEFAULT '',site text,parent_run_id uuid,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,thread_id uuid,created_at timestamptz DEFAULT now(),hidden_at timestamptz);
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);
         CREATE TABLE schedules(id uuid,owner_id text,title text);
@@ -9238,7 +9238,11 @@ test(
           throw new Error('Reads need no check.');
         },
       });
-      const activity = createActivityLog({ requests: ledger.within, vault: vaultAccess.within });
+      const activity = createActivityLog({
+        requests: ledger.within,
+        vault: vaultAccess.within,
+        steps: ledger.steps,
+      });
       activity.registerRoutes(app);
       const usage = (turnId: string, costUsd: number | null): AgentEvent => ({
         type: 'model_usage',
@@ -9366,7 +9370,7 @@ test(
       assert.equal(scheduledEntry.messageId, null);
       assert.equal(scheduledEntry.costUsd, 0.1);
       assert.deepEqual(chatEntry(view.entries).actions, [
-        { label: 'Gmail: fetch emails' },
+        { label: 'Gmail: fetch emails', read: true },
         {
           label: 'Gmail: send email',
           target: 'sam@example.test · Quote accepted',
@@ -9485,13 +9489,23 @@ test(
           });
       const rows = cells(exported.body);
       assert.ok(rows.every((row) => row.length === rows[0]!.length));
+      const chatSteps = (await app.inject(`/api/trust/entries/${chat}/steps`)).json().steps;
+      assert.ok(chatSteps.some((step: TrustStep) => step.kind === 'model' && step.costUsd));
+      assert.ok(
+        chatSteps.some(
+          (step: TrustStep) =>
+            step.kind === 'action' && step.detail === 'sam@example.test · Quote accepted',
+        ),
+      );
+      assert.deepEqual((await app.inject(`/api/trust/entries/${foreign}/steps`)).json().steps, []);
       assert.ok(
         rows.some(
           (row) =>
             row[1] === 'Tell Sam we take the quote' &&
-            row[3]!.endsWith('sam@example.test · Quote accepted'),
+            row[5] === 'sam@example.test · Quote accepted',
         ),
       );
+      assert.ok(rows.some((row) => row[1] === 'Tell Sam we take the quote' && Number(row[7]) > 0));
       assert.ok(rows.some((row) => row[1] === `'=HYPERLINK("https://attacker.example.test")`));
       assert.doesNotMatch(exported.body, /Foreign|foreign\.example/);
       const scoped = cells((await app.inject(`/api/trust/export?session=${scheduled}`)).body);

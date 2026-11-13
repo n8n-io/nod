@@ -218,6 +218,7 @@ const tools: Record<string, string> = {
   'fetch content': 'Read a web page',
   'get search content': 'Read search results',
   'source check': 'Checked a source',
+  'read source': 'Read a source',
   browser: 'Used the browser',
   'sign in': 'Signed in',
   pay: 'Entered a card',
@@ -238,6 +239,8 @@ const tools: Record<string, string> = {
 };
 
 export function toolTitle(summary: string) {
+  const browser = /^browser ([a-z_]+)$/.exec(summary)?.[1];
+  if (browser) return `Browser: ${browser.replaceAll('_', ' ')}`;
   const server = /^mcp {2}(.+?) {2}.+$/.exec(summary)?.[1];
   return server ? `Used ${server}` : (tools[summary] ?? summary);
 }
@@ -280,6 +283,11 @@ export function recordedTitle(action: string) {
   if (action.startsWith('NOD_') && action !== 'NOD_read_source') return approvalTitle(action).title;
   const { app, label } = actionTitle(action);
   return app ? `${app}: ${label}` : label;
+}
+
+export function recordedAction(action: string, target?: string | null) {
+  if (action === 'NOD_browser' && target) return { label: `Browser: ${target}` };
+  return { label: recordedTitle(action), ...(target ? { target } : {}) };
 }
 
 export function actionTarget(
