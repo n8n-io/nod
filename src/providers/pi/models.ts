@@ -1352,7 +1352,7 @@ export async function createPiModelRuntime(
         const available = budget.window - estimateModelTokens(body) - budget.margin;
         if (available < 128)
           throw new Error(
-            `This request does not fit ${target.id}'s ${budget.window}-token context. Use a model with a larger context or a shorter request.`,
+            `Context length exceeded: This request does not fit ${target.id}'s ${budget.window}-token context. Use a model with a larger context or a shorter request.`,
           );
         const output = Math.min(options?.maxTokens ?? budget.output, budget.output, available);
         for (const field of ['max_tokens', 'max_completion_tokens', 'max_output_tokens'])

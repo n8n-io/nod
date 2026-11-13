@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
@@ -56,6 +57,7 @@ test(
       string,
       { tool?: string; action: string; args: Record<string, unknown> }
     >();
+    const activePlan = new AsyncLocalStorage<string>();
     const batches = new Map<
       string,
       {
@@ -284,27 +286,28 @@ test(
                   assert.equal(messages.length, 1);
                   text = messages[0]!.text;
                 }
-                const plan =
+                const instruction =
                   phase === 0
-                    ? plans.get(
-                        JSON.parse(text.split('Request data (JSON):\n')[1]!.split('\n')[0]!)
-                          .currentInstruction,
-                      )
+                    ? (JSON.parse(text.split('Request data (JSON):\n')[1]!.split('\n')[0]!)
+                        .currentInstruction as string)
                     : undefined;
-                if (plan) {
-                  const result = await options.tools
-                    .find((tool) => tool.name === (plan.tool ?? 'manage_personal_context'))!
-                    .execute(
-                      plan.tool === 'send_message'
-                        ? plan.args
-                        : plan.tool === 'read_source'
-                          ? { input: plan.args }
-                          : plan.tool === 'browser' ||
-                              plan.tool === 'sign_in' ||
-                              plan.tool === 'files'
-                            ? { action: plan.action, ...plan.args }
-                            : { action: plan.action, args: plan.args },
-                    );
+                const plan = instruction === undefined ? undefined : plans.get(instruction);
+                if (plan && instruction !== undefined) {
+                  const result = await activePlan.run(instruction, () =>
+                    options.tools
+                      .find((tool) => tool.name === (plan.tool ?? 'manage_personal_context'))!
+                      .execute(
+                        plan.tool === 'send_message'
+                          ? plan.args
+                          : plan.tool === 'read_source'
+                            ? { input: plan.args }
+                            : plan.tool === 'browser' ||
+                                plan.tool === 'sign_in' ||
+                                plan.tool === 'files'
+                              ? { action: plan.action, ...plan.args }
+                              : { action: plan.action, args: plan.args },
+                      ),
+                  );
                   results.set(options.turnId, result);
                   return;
                 }
@@ -485,7 +488,10 @@ test(
         assert.notEqual(turn.status, 'failed', turn.error);
         await delay(20);
       }
-      assert.fail(`Synthetic turn did not become ${status}.`);
+      const turn = (await pool.query('SELECT status,error FROM turns WHERE id=$1', [id])).rows[0];
+      assert.fail(
+        `Synthetic turn did not become ${status}; status=${turn.status}, error=${turn.error ?? 'none'}.`,
+      );
     }
     async function propose(
       action: string,
@@ -1597,6 +1603,7 @@ test(
               ['GMAIL_DELETE_MESSAGE', { message_id: 'fixture-mail-1' }],
               ['GMAIL_DELETE_DRAFT', { draft_id: draft.id }],
             ] as const) {
+              const prompt = `Synthetic account race ${randomUUID()}`;
               let rebound = false;
               const reads = executedApps.length;
               const deletes = integrationFixture.writes.filter((write) =>
@@ -1605,6 +1612,7 @@ test(
               pool.query = (async (...args: any[]) => {
                 if (
                   !rebound &&
+                  activePlan.getStore() === prompt &&
                   typeof args[0] === 'string' &&
                   args[0].startsWith('SELECT * FROM app_connections WHERE owner_id=$1 AND id=$2') &&
                   args[1]?.[1] === primary.id
@@ -1624,7 +1632,6 @@ test(
                 return originalQuery(...args);
               }) as typeof pool.query;
               try {
-                const prompt = `Synthetic account race ${randomUUID()}`;
                 plans.set(prompt, {
                   tool: 'apps',
                   action,

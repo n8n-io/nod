@@ -25,6 +25,7 @@ const imageTypes: Record<string, string> = {
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
   '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
 };
 
 const listProgram =

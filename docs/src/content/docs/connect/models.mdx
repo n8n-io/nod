@@ -244,6 +244,8 @@ For a context window below 65,536 tokens, Nod uses short instructions and loads 
 
 Nod reserves space for the reply and starts history compaction earlier. It keeps your current request and rules complete. If a request still does not fit, Nod asks for a shorter request or a model with a larger context window. Large images and tool schemas can need a larger window. Token estimates cannot guarantee that every provider accepts a request.
 
+Switching to a model with a smaller window can reduce the older context before the next reply. The full chat stays saved, and Nod can search it when it needs earlier details. If an unfinished request alone exceeds the new window, choose a model with more context or reset the conversation.
+
 The same server checks still decide app actions, sign-ins and payments. A smaller context window does not change those checks. Model ability still affects whether Nod can complete a task.
 
 ## Decision checks
