@@ -172,6 +172,11 @@
 .usage-row[aria-expanded='true'] .usage-chevron {
   transform: rotate(90deg);
 }
+@media (prefers-reduced-motion: reduce) {
+  .usage-chevron {
+    transition: none;
+  }
+}
 .usage-log {
   display: grid;
   justify-items: start;

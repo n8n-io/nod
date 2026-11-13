@@ -248,13 +248,14 @@ export function toolTitle(summary: string) {
 const browserVerbs: Record<string, string> = {
   accept_dialog: 'accept a dialog',
   evaluate: 'run a page script',
-  type: 'press Enter',
+  type: 'type and press Enter',
 };
 
 const settingNames: Record<string, string> = {
   notificationRule: 'notifications',
   rules: 'your rules',
   speechReply: 'voice replies',
+  speechVoice: 'voice',
   timeZone: 'time zone',
   locale: 'region',
   hourCycle: 'clock',

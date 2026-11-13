@@ -118,11 +118,18 @@ function presentStep(row: Record<string, any>): TrustStep {
       (Number(usage.cacheReadTokens) || 0) +
       (Number(usage.cacheWriteTokens) || 0);
     const output = Number(usage.outputTokens) || 0;
+    const plan = row.cost === null && Number(usage.estimateUsd) > 0 ? 'ChatGPT plan' : '';
     return {
       at,
       kind: 'model',
       title: [modelKinds[usage.category], usage.model || 'Model'].filter(Boolean).join(' · '),
-      ...(input || output ? { detail: `${tokens(input)} in · ${tokens(output)} out` } : {}),
+      ...(input || output || plan
+        ? {
+            detail: [input || output ? `${tokens(input)} in · ${tokens(output)} out` : '', plan]
+              .filter(Boolean)
+              .join(' · '),
+          }
+        : {}),
       ...(row.cost > 0 ? { costUsd: row.cost } : {}),
       ...(usage.status === 'failed' ? { failed: true as const } : {}),
       ...helper,

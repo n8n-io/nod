@@ -9460,8 +9460,9 @@ test(
       await pool.query(
         `INSERT INTO vault_activity(id,owner_id,action,origin,item_kind,task,reason,amount_minor,currency) VALUES
           ($1,'owner','card','https://shop.example.test','card','=HYPERLINK("https://attacker.example.test")','said_yes',1200,'EUR'),
-          ($2,'other','card','https://foreign.example.test','card','Foreign task','said_yes',900,'EUR')`,
-        [randomUUID(), randomUUID()],
+          ($2,'other','card','https://foreign.example.test','card','Foreign task','said_yes',900,'EUR'),
+          ($3,'owner','card','https://shop.example.test','card','@SUM(1+1)','said_yes',300,'EUR')`,
+        [randomUUID(), randomUUID(), randomUUID()],
       );
       const exported = await app.inject('/api/trust/export');
       assert.equal(exported.statusCode, 200);
@@ -9507,6 +9508,7 @@ test(
       );
       assert.ok(rows.some((row) => row[1] === 'Tell Sam we take the quote' && Number(row[7]) > 0));
       assert.ok(rows.some((row) => row[1] === `'=HYPERLINK("https://attacker.example.test")`));
+      assert.ok(rows.some((row) => row[1] === `'@SUM(1+1)`));
       assert.doesNotMatch(exported.body, /Foreign|foreign\.example/);
       const scoped = cells((await app.inject(`/api/trust/export?session=${scheduled}`)).body);
       assert.deepEqual([...new Set(scoped.slice(1).map((row) => row[1]))], ['Morning brief']);

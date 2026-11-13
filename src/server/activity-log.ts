@@ -85,7 +85,7 @@ function fromVault(entry: VaultActivityEntry, locale: string): ActivityLogEntry 
 
 const cell = (value: string | number | undefined) => {
   const text = value === undefined ? '' : String(value);
-  const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+  const safe = /^[=+\-@\t\r\n]/.test(text) ? `'${text}` : text;
   return /[",\n\r]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe;
 };
 
