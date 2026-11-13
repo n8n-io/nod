@@ -165,6 +165,11 @@ export interface ThreadDependencies {
     signal: AbortSignal,
   ) => Promise<{ prompt: string } | undefined>;
   stoppedOutcomes?: (turnId: string) => Promise<string[]>;
+  credentialRequestStatuses?: (
+    threadId: string,
+    sessionId: string,
+    turnIds: string[],
+  ) => Promise<NonNullable<RuntimeContext['credentialRequests']>>;
   bindVerificationQuestion?: (
     turnId: string,
     messageId: string,
@@ -1554,12 +1559,21 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
     dependencies.stoppedOutcomes?.(turn.id),
   ]);
   const preference = preferences.rows[0];
-  const related =
+  const historyTurnIds = [
+    ...new Set<string>(
+      history.rows.flatMap((message) =>
+        message.role === 'assistant' && typeof message.turnId === 'string' ? [message.turnId] : [],
+      ),
+    ),
+  ];
+  const [related, credentialRequests] = await Promise.all([
     !turn.background && sourceMessageId && dependencies.recall
-      ? await dependencies
+      ? dependencies
           .recall(String(turn.prompt ?? ''), history.rows[0]?.createdAt, sourceMessageId)
           .catch(() => [])
-      : [];
+      : [],
+    dependencies.credentialRequestStatuses?.(threadId, turn.session_id, historyTurnIds) ?? [],
+  ]);
   const timeZone: string | undefined = preference?.time_zone || undefined;
   return {
     sourceMessageId,
@@ -1591,6 +1605,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
           }
         : {}),
       ...(confirmedActions?.length ? { confirmedActions } : {}),
+      ...(credentialRequests.length ? { credentialRequests } : {}),
       ...(related.length ? { relatedConversation: related } : {}),
       ...(learnedSkills?.length ? { learnedSkills } : {}),
       ...(connectedApps ? { connectedApps } : {}),

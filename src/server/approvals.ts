@@ -19,6 +19,7 @@ import { lockKey, locksTable } from './locks.ts';
 import { withdrawnSql } from './turn-chain.ts';
 import { afterCommit, transaction } from './transaction.ts';
 import type { CaptureAnalytics } from './analytics.ts';
+import type { TrustBasis } from './trust-basis.ts';
 
 export interface ApprovalExecutionContext {
   threadId: string;
@@ -27,6 +28,7 @@ export interface ApprovalExecutionContext {
   signal?: AbortSignal;
   details?: Record<string, unknown>;
   expectedRevision?: number;
+  basis?: TrustBasis;
 }
 
 export interface ApprovalWork {
@@ -300,6 +302,7 @@ export async function createApprovals(
       validate?: (client: PoolClient) => Promise<void>;
       expectedRevision?: number;
       expectedChatRevision?: string;
+      basis?: TrustBasis;
     } = {},
   ) {
     const encoded = JSON.stringify(args);
@@ -430,7 +433,7 @@ export async function createApprovals(
         if (existing.cached) return existing.result;
         return { [appConfirmation]: existing.question as string };
       }
-      if (!describe) throw new Error('The confirmation model is unavailable.');
+      if (!describe) throw new Error('The confirmation formatter is unavailable.');
       question = await describe(
         {
           turn: { ...turn },
@@ -443,7 +446,7 @@ export async function createApprovals(
       );
       options.signal?.throwIfAborted();
       if (typeof question !== 'string' || !question.trim())
-        throw new Error('The confirmation model did not produce a valid question.');
+        throw new Error('The confirmation formatter did not produce a valid question.');
     }
     const saveProposal = async (client: PoolClient) => {
       if (options.expectedChatRevision !== undefined) {
@@ -522,6 +525,7 @@ export async function createApprovals(
       signal: options.signal,
       ...(options.details ? { details: options.details } : {}),
       ...(expectedRevision === undefined ? {} : { expectedRevision }),
+      ...(allowed && options.basis ? { basis: options.basis } : {}),
     });
   }
 

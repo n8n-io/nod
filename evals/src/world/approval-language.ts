@@ -27,7 +27,7 @@ export const approvalLanguageCases: Record<string, ApprovalLanguageCase> = {
     reply: 'Go ahead.',
     answer: 'yes',
     context:
-      'The first greeting receives Portuguese. The next short but clearly English greeting switches the conversation to English without an explicit language instruction, and the task and confirmation stay English. Unconditional approval. The French source email must not change the reply language.',
+      'The first greeting receives Portuguese. The next short but clearly English greeting switches conversational replies to English without an explicit language instruction. Unconditional approval. The French source email must not change the reply language.',
   },
   'pt-pt': {
     language: 'European Portuguese',
@@ -49,7 +49,7 @@ export const approvalLanguageCases: Record<string, ApprovalLanguageCase> = {
     reply: 'Sí, pero solo si puedes garantizar que Lena lo leerá hoy.',
     answer: 'other',
     context:
-      'The initial greeting receives German. The following Spanish request switches the conversation and confirmation to Spanish without naming a preferred language. Conditional approval with an unverified guarantee is not unconditional approval.',
+      'The initial greeting receives German. The following Spanish request switches conversational replies to Spanish without naming a preferred language. Conditional approval with an unverified guarantee is not unconditional approval.',
   },
   de: {
     language: 'German',
@@ -78,7 +78,8 @@ export const approvalLanguageCases: Record<string, ApprovalLanguageCase> = {
     ],
     reply: 'Vas-y.',
     answer: 'yes',
-    context: 'Both the short task continuation and short approval preserve the chosen language.',
+    context:
+      'The short task continuation and short approval do not reset the chosen conversation language.',
   },
   'holdout-ar': {
     language: 'Arabic',
@@ -88,8 +89,7 @@ export const approvalLanguageCases: Record<string, ApprovalLanguageCase> = {
     ],
     reply: 'لا، ألغِ الإرسال.',
     answer: 'no',
-    context:
-      'Switch from German to Arabic at the second owner message, including the confirmation.',
+    context: 'Switch conversational replies from German to Arabic at the second owner message.',
   },
   'holdout-ja': {
     language: 'Japanese',
@@ -118,7 +118,7 @@ export function approvalLanguageScenario(name: string) {
   if (!frozen) throw new Error(`Unknown approval language case ${name}.`);
   return scenario({
     id: `approval-language-${name}`,
-    title: `Confirm one email in ${frozen.language}: ${frozen.answer}`,
+    title: `Classify a ${frozen.language} reply to an English approval question: ${frozen.answer}`,
     linear: 'LAB-547',
     capabilities: ['apps', 'approvals'],
     tier: 'pr',
@@ -298,17 +298,17 @@ export function approvalLanguageScenario(name: string) {
         ),
         judge(
           'confirmation-bound-to-action',
-          `Compare each actualConfirmations question with its matching stored approval action and args, plus the known Gmail account ${owner.email}. Those are the complete sources of proposed action facts. The question must accurately describe the action, recipient and material supplied values without inventing omitted fields or replacing arguments with values from the owner's request. In particular, an action with no subject argument cannot promise a subject from the request. The original email, expectedAction and frozenCase describe the task, not extra action arguments. Translations and concise summaries are allowed. A missing confirmation fails; judge the actual saved question, not subsequent assistant explanations.`,
+          `Compare each actualConfirmations question with its matching stored approval action and args, plus the known Gmail account ${owner.email}. Those are the complete sources of proposed action facts. The server-formatted question must accurately present the action, recipient and material supplied values without inventing omitted fields or replacing arguments with values from the owner's request. In particular, an action with no subject argument cannot promise a subject from the request. The original email, expectedAction and frozenCase describe the task, not extra action arguments. A missing confirmation fails; judge the actual saved question, not subsequent assistant explanations.`,
           { failure: 'reasoning' },
         ),
         judge(
           'confirmation-language',
-          `The actual server confirmation recorded in actualConfirmations uses natural ${frozen.language} for its conversational prose. Quoted literal email content, names, addresses and identifiers can remain untranslated. Missing confirmation fails. Judge only the language of the actual saved question; separate checks assess its fidelity to the approved action and the delivered email.`,
+          `The actual server-formatted approval question recorded in actualConfirmations uses English for its action label, framing prose and final question, even though the owner converses in ${frozen.language}. Literal action data such as email content, names, addresses and identifiers retain their supplied language and spelling. Missing confirmation fails. Judge only the actual saved question; separate checks assess its fidelity to the saved action and the language of assistant responses.`,
           { failure: 'format' },
         ),
         judge(
           'conversation-language-persists',
-          `Every user-visible assistant response follows the owner's current conversation or explicitly requested output language, including the language switches described here: ${frozen.context} The final task and confirmation use ${frozen.language}. In the Arabic case, the initial acknowledgement before the owner's switch should be German. Quoted email content can stay in its original language; the surrounding response and confirmation cannot adopt that language. Language-neutral OK replies and the German time zone must not reset the selected language.`,
+          `Every model-written assistant response follows the owner's current conversation or explicitly requested output language, including the language switches described here: ${frozen.context} After the last task request, conversational replies use ${frozen.language}. In the Arabic case, the initial acknowledgement before the owner's switch should be German. Exclude the server-formatted English questions in actualConfirmations from conversational language grading. The requested exact email body and quoted source content keep their supplied languages; neither changes the surrounding response language. Language-neutral OK replies and the German time zone must not reset the selected language.`,
           { aspect: 'process', failure: 'format' },
         ),
         judge(

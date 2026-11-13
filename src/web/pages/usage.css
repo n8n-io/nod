@@ -67,21 +67,9 @@
   font-size: var(--text-control);
   font-variant-numeric: tabular-nums;
 }
-.usage-row-cost small,
-.vault-use-text .usage-model-source {
+.usage-row-cost small {
   color: var(--muted-foreground);
   font-size: 12px;
-}
-.vault-use-text .usage-models {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  font-size: 12px;
-}
-.vault-use-text .usage-models > span {
-  color: var(--foreground);
 }
 .usage-row-cost.is-label {
   color: var(--muted-foreground);
@@ -173,4 +161,115 @@
   color: var(--foreground);
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+.vault-use.usage-row {
+  grid-template-columns: 28px minmax(0, 1fr) auto 16px;
+}
+.usage .vault-day > ul > li {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 56px;
+}
+.usage-chevron {
+  color: var(--muted-foreground);
+  transition: transform 150ms var(--ease-enter);
+}
+.usage-row[aria-expanded='true'] .usage-chevron {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .usage-chevron {
+    transition: none;
+  }
+}
+@media (max-width: 640px) {
+  .vault-use.usage-row {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+  }
+  .usage-chevron {
+    display: none;
+  }
+}
+.usage-log {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  margin: 2px 12px 12px 26px;
+  padding: 4px 0 4px 26px;
+  border-left: 1px solid var(--border);
+}
+.usage-log-rows {
+  position: relative;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.usage-log-rows li {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  height: 26px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.usage-log time {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.usage-log-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.usage-log-text b {
+  font-weight: 500;
+}
+.usage-log-text span,
+.usage-log-text small {
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.usage-log li[data-kind='note'] b,
+.usage-log li[data-kind='reply'] b {
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+.usage-log li[data-kind='note'] b {
+  font-style: italic;
+}
+.usage-log li[data-helper='true'] .usage-log-text {
+  padding-left: 16px;
+}
+.usage-log li.is-failed b {
+  color: var(--error);
+}
+.usage-log-pending {
+  grid-column: 1 / -1;
+  height: 8px;
+  width: 60%;
+  border-radius: 4px;
+  background: var(--surface-subtle);
+}
+.usage-log-cost {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.usage-log-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.usage-log-link:hover {
+  text-decoration: underline;
 }

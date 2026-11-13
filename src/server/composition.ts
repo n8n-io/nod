@@ -150,6 +150,7 @@ import { createDocumentation } from './documentation.ts';
 import { initializeDatabase, pool } from './db.ts';
 import { events, refresh } from './events.ts';
 import { createIntegrations } from './integrations.ts';
+import { gmailMessageTarget } from './action-presentation.ts';
 import {
   createErrorRedactor,
   createRedactor,
@@ -157,6 +158,8 @@ import {
   environmentSecrets,
 } from './redaction.ts';
 import { createLedger, limitsInput } from './ledger.ts';
+import { createActivityLog } from './activity-log.ts';
+import { actionTarget } from './action-presentation.ts';
 import { usageFileName, usagePdf } from './usage-report.ts';
 import { buildFeedbackReport, type FeedbackReportOptions } from './bug-report.ts';
 import { registerFeedback } from './feedback.ts';
@@ -781,6 +784,18 @@ async function initializeApplication(
   }
   await sweepArtifacts();
   const secrets = environmentSecrets(process.env);
+  const redactIntegrationFailure = createErrorRedactor(secrets);
+  const safeIntegrationFailure = (error: unknown) => {
+    const status =
+      (error as { statusCode?: unknown; status?: unknown } | null)?.statusCode ??
+      (error as { status?: unknown } | null)?.status;
+    const code =
+      typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599
+        ? `HTTP ${status}: `
+        : '';
+    const message = error instanceof Error ? error.message : String(error);
+    return `${code}${publicText(redactIntegrationFailure(message)).slice(0, 600)}`;
+  };
   adapters.models?.onSecrets((values) => {
     for (const value of values) if (!secrets.includes(value)) secrets.push(value);
   });
@@ -1318,6 +1333,26 @@ async function initializeApplication(
                 : action.startsWith('NOD_')
                   ? personal.manage(action.slice('NOD_'.length), args, provenance)
                   : (async () => {
+                      const savedBinding = provenance.details?.verifiedBinding;
+                      const verifiedBinding =
+                        typeof savedBinding === 'string' ? savedBinding : undefined;
+                      if (action === 'GMAIL_DELETE_MESSAGE') {
+                        const currentBinding = await integrations
+                          .binding(String(args.connectionId ?? ''))
+                          .catch((error: unknown) => {
+                            throw Object.assign(
+                              new Error(
+                                `Nod could not check the selected Gmail account for deletion: ${safeIntegrationFailure(error)}`,
+                              ),
+                              { notRun: true },
+                            );
+                          });
+                        if (!verifiedBinding || currentBinding !== verifiedBinding)
+                          throw Object.assign(
+                            new Error('The selected Gmail account changed after confirmation.'),
+                            { notRun: true },
+                          );
+                      }
                       const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
                       const ready = hasWorkspaceFiles(args)
                         ? await integrations
@@ -1335,8 +1370,14 @@ async function initializeApplication(
                         ready,
                         turn,
                         provenance.signal,
+                        action === 'GMAIL_DELETE_MESSAGE' ? verifiedBinding : undefined,
                       );
-                      await ledger.action(provenance.turnId, action, { kind: 'approved' });
+                      await ledger.action(
+                        provenance.turnId,
+                        action,
+                        provenance.basis ?? { kind: 'approved' },
+                        actionTarget(action, args, provenance.details),
+                      );
                       return privateEmailResult(
                         (
                           await saveIntegrationFiles(result, async (file) => {
@@ -1348,6 +1389,13 @@ async function initializeApplication(
                         mailCheck,
                       );
                     })());
+      if (action.startsWith('NOD_') && action !== 'NOD_vault_allow')
+        await ledger.action(
+          provenance.turnId,
+          action,
+          provenance.basis ?? { kind: 'approved' },
+          actionTarget(action, args, provenance.details),
+        );
       return result;
     },
     async (action, args, expectedRevision, client) => {
@@ -1685,6 +1733,14 @@ async function initializeApplication(
     check: trust.check,
     refresh,
   });
+  const activityLog = createActivityLog({
+    bounds: ledger.bounds,
+    within: ledger.within,
+    chunk: ledger.chunk,
+    vault: vaultAccess.within,
+    steps: (turnIds, page) => ledger.steps(turnIds, page),
+    vaultPage: vaultAccess.ascending,
+  });
   payments = await createPayments(pool, {
     ownerId,
     analytics: captureAnalytics,
@@ -1767,6 +1823,7 @@ async function initializeApplication(
       mailCheck,
       executeConfirmation: approvals.executeConfirmed,
       stoppedOutcomes: approvals.stoppedOutcomes,
+      credentialRequestStatuses: vault.requestStatuses,
       bindVerificationQuestion: chatVerification.bindQuestion,
       reactToMessage: reactions.react,
       proactivity: proactivity.context,
@@ -1825,7 +1882,13 @@ async function initializeApplication(
         const args = browserStepArgs(request);
         const verdict = await trust.check(turn, 'NOD_browser', args, signal);
         if (!verdict.confirm) {
-          if (!verdict.chatRevision || verdict.basis.kind === 'read') return 'run';
+          if (verdict.basis.kind === 'read') return 'run';
+          const basis = verdict.basis;
+          const allowed = {
+            record: () =>
+              ledger.action(turn.turnId, 'NOD_browser', basis, actionTarget('NOD_browser', args)),
+          };
+          if (!verdict.chatRevision) return allowed;
           const handoff = await approvals.request(turn, 'NOD_browser', args, {
             allowed: true,
             expectedChatRevision: verdict.chatRevision,
@@ -1833,7 +1896,7 @@ async function initializeApplication(
             run: async () => 'run',
           });
           return handoff === 'run'
-            ? 'run'
+            ? allowed
             : handoff && typeof handoff === 'object' && appConfirmation in handoff
               ? handoff
               : { result: handoff };
@@ -1930,6 +1993,7 @@ async function initializeApplication(
           return approvals.request(turn, 'NOD_limits_update', input, {
             ...provenance,
             allowed: !verdict.confirm,
+            ...(verdict.confirm ? {} : { basis: verdict.basis }),
             expectedChatRevision: verdict.chatRevision,
             admit,
             details: {
@@ -1996,6 +2060,7 @@ async function initializeApplication(
           return approvals.request(turn, `NOD_${action}`, input, {
             ...provenance,
             allowed: !verdict.confirm,
+            ...(verdict.confirm ? {} : { basis: verdict.basis }),
             expectedChatRevision: verdict.chatRevision,
             admit,
             expectedRevision: schedule?.revision,
@@ -2034,6 +2099,7 @@ async function initializeApplication(
           return approvals.request(turn, `NOD_${action}`, input, {
             ...provenance,
             allowed: !verdict.confirm,
+            ...(verdict.confirm ? {} : { basis: verdict.basis }),
             expectedChatRevision: verdict.chatRevision,
             admit,
             details: verdict.confirm ? { reason: verdict.reason } : {},
@@ -2060,7 +2126,13 @@ async function initializeApplication(
             withTurnLock(turn.turnId, write),
           );
         }
-        if (action === 'usage_get') return ledger.read();
+        if (action === 'usage_get')
+          return untrustedBlock(
+            'usage',
+            JSON.stringify(
+              Object.keys(args).length ? await activityLog.read(args, 200) : await ledger.read(),
+            ),
+          );
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },
       requestPayment: async (turn, input, show) => {
@@ -2187,6 +2259,61 @@ async function initializeApplication(
               )
             : undefined;
         const path = account?.accessPaths?.find((item) => item.id === prepared.pathId);
+        let target: ReturnType<typeof gmailMessageTarget>;
+        let deleteBinding: string | undefined;
+        if (verdict.confirm && action === 'GMAIL_DELETE_MESSAGE') {
+          const messageId = prepared.message_id;
+          const connectionId = prepared.connectionId;
+          if (
+            typeof messageId !== 'string' ||
+            !messageId.trim() ||
+            typeof connectionId !== 'string'
+          )
+            throw new Error('Nod cannot identify the Gmail message proposed for deletion.');
+          deleteBinding = await integrations.binding(connectionId);
+          if (!deleteBinding)
+            throw new Error('The selected Gmail account is no longer available for deletion.');
+          const metadataArgs = {
+            connectionId,
+            message_id: messageId,
+            format: 'metadata',
+            ...(typeof prepared.user_id === 'string' ? { user_id: prepared.user_id } : {}),
+          };
+          const readVerdict = await trust.check(
+            turn,
+            'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID',
+            metadataArgs,
+            options.signal,
+          );
+          if (readVerdict.confirm)
+            throw new Error(
+              readVerdict.reason === 'rule'
+                ? 'Your rules require confirmation before reading this Gmail message, so Nod did not identify it or propose deletion. Allow this read in your rules before asking to delete it.'
+                : 'Nod could not authorize the Gmail metadata read needed to identify this message, so it did not propose deletion.',
+            );
+          let observed: unknown;
+          try {
+            observed = await integrations.execute(
+              ownerId,
+              'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID',
+              metadataArgs,
+              turn,
+              options.signal,
+              deleteBinding,
+            );
+          } catch (error) {
+            options.signal?.throwIfAborted();
+            throw new Error(
+              `The Gmail metadata read failed: ${safeIntegrationFailure(error)} Nod did not ask for approval or delete the message.`,
+            );
+          }
+          await ledger.action(turn.turnId, 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID', readVerdict.basis);
+          target = gmailMessageTarget(observed, messageId);
+          if (!target)
+            throw new Error(
+              'Nod cannot verify which Gmail message this would delete, so it did not ask for approval or delete it.',
+            );
+        }
         const result = await approvals.request(turn, action, prepared, {
           allowed: !verdict.confirm,
           expectedChatRevision:
@@ -2199,11 +2326,13 @@ async function initializeApplication(
               prepared,
               turn,
               options.signal,
+              deleteBinding,
             );
             await ledger.action(
               turn.turnId,
               action,
               verdict.confirm ? { kind: 'approved' } : verdict.basis,
+              actionTarget(action, prepared),
             );
             return result;
           },
@@ -2218,6 +2347,8 @@ async function initializeApplication(
                   },
                 }
               : {}),
+            ...(target ? { target } : {}),
+            ...(deleteBinding ? { verifiedBinding: deleteBinding } : {}),
           },
         });
         return result;
@@ -2308,6 +2439,7 @@ async function initializeApplication(
     updatesEmail: onboardingProfile.available,
   }).register(app);
   ledger.registerRoutes(app);
+  activityLog.registerRoutes(app);
   registerSpeechSettings(app, {
     speech,
     preferences: speechPreferences,
