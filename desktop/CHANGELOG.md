@@ -2,6 +2,54 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.7.6 - 2026-11-13
+
+### Features
+
+- **desktop:** Add font size controls to appearance settings. [#868](https://github.com/n8n-io/nod/pull/868) (5b9e1b2)
+- **tasks:** Show workspace commands in Usage and CSV exports. [#830](https://github.com/n8n-io/nod/pull/830) (d978807)
+- **proactivity:** Skip idle work and batch changes through quiet hours. [commit](https://github.com/n8n-io/nod/commit/842becde0adeac0fcb3eabfb8b813deeb0efdffc) (842becd)
+
+### Fixes
+
+- **integrations:** Recover Gmail polling after transient proxy errors. [#875](https://github.com/n8n-io/nod/pull/875) (3ab2f07)
+- **composio:** Preserve catalog proxy failures (LAB-983). [#874](https://github.com/n8n-io/nod/pull/874) (76ecbb2)
+- Trust system certificates in desktop engine (LAB-983). [#873](https://github.com/n8n-io/nod/pull/873) (675886f)
+- **approvals:** Restore clear questions and action labels. [#864](https://github.com/n8n-io/nod/pull/864) (9b82c5f)
+- Fit onboarding window to screen and clean up chat UI. [#863](https://github.com/n8n-io/nod/pull/863) (a239b50)
+- **sign-in:** Keep fresh method choices open for 30 minutes. [#869](https://github.com/n8n-io/nod/pull/869) (5ac5f3d)
+- **proactivity:** Stagger periodic checks by installation. [#870](https://github.com/n8n-io/nod/pull/870) (3816f36)
+- **payments:** Clarify web approval and unblock unrelated chat. [#796](https://github.com/n8n-io/nod/pull/796) (cf362e5)
+
+### Documentation
+
+- Keep the cover shadow inside its frame and let the results heading wrap on phones. [commit](https://github.com/n8n-io/nod/commit/0889cc0283203149d34670a559fd6c92b6ac868e) (0889cc0)
+- Restore the results heading with the test run count. [commit](https://github.com/n8n-io/nod/commit/3f86e131519bee7ed1644e6d302adcc1fc756a0b) (3f86e13)
+- Match the README roadmap to the landing page. [commit](https://github.com/n8n-io/nod/commit/63ebe1b38166c5daeebab90e66e79f37b1d7090f) (63ebe1b)
+- Use the new hero collage, add a shadow to the video cover and expand the video on play. [commit](https://github.com/n8n-io/nod/commit/742c08ca0d418789dbbfc0c56cbea7beb34b2c8c) (742c08c)
+- Keep the video poster visible while loading and honour reduced motion in the FAQ. [commit](https://github.com/n8n-io/nod/commit/d076b181451308149338520e59e5cd4a9a56e871) (d076b18)
+- Tighten the landing page hero and give the video cover more room. [commit](https://github.com/n8n-io/nod/commit/360e59719c2fb9986bd8dc163de53ea09d33e90e) (360e597)
+- Centre the memory and results sections, reorder the landing page and tighten the hero. [commit](https://github.com/n8n-io/nod/commit/2a7f152a900a7a1c5ac6e34c51b090f2f49e99f1) (2a7f152)
+- Rework the landing page footer and hero tag, and shrink the headline. [commit](https://github.com/n8n-io/nod/commit/212ca0d00516aef0482a327ddcf914843a7cfefe) (212ca0d)
+- Restyle the landing page header, use an app screenshot as the video cover and move the closing button onto the dot grid. [commit](https://github.com/n8n-io/nod/commit/555ad4a3cfa224c7a3aab12dacc98a12bdeef1e6) (555ad4a)
+- Self-host the landing page demo video and rework the memory, stats and roadmap sections. [commit](https://github.com/n8n-io/nod/commit/cd9045f1c9660f33cf15b7e46b3c1db07a4f2727) (cd9045f)
+- Polish the landing page stats, roadmap icons, links and FAQ. [commit](https://github.com/n8n-io/nod/commit/b1bd0ff3fa960e6ef7c2dec47df35be40d0e6420) (b1bd0ff)
+- Rework the landing page stats, headings and hero spacing. [commit](https://github.com/n8n-io/nod/commit/3abe57ff88ca84f403779a2dfe3d9d706630adbe) (3abe57f)
+- Rework the landing page header, hero and section order. [commit](https://github.com/n8n-io/nod/commit/cd83994564948a413a0563fbbb1d5ed0389e5315) (cd83994)
+- Simplify the landing page and add platform icons. [commit](https://github.com/n8n-io/nod/commit/e5d801b96f2b93e06f28a878075460d6fa6149d5) (e5d801b)
+- Match the landing page dot grid to the n8n site. [commit](https://github.com/n8n-io/nod/commit/52a323fd58abec0799669ab27fee8f0c66149538) (52a323f)
+- Polish the landing page FAQ. [commit](https://github.com/n8n-io/nod/commit/5d95a5ce11b392a8c4f30e40128061999c2731c0) (5d95a5c)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.7.5...3ab2f076766bff409567ce850a2cb18bc5628dbf)
+
+<details>
+<summary>Build details</summary>
+
+Source: `3ab2f076766bff409567ce850a2cb18bc5628dbf`
+Previous release: `nod-v0.7.5`
+
+</details>
+
 ## 0.7.5 - 2026-11-13
 
 ### Features
