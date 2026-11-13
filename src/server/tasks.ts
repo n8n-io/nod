@@ -3,7 +3,7 @@ import type { Pool, PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Task, TaskDetail, TaskStatus } from '../shared/contracts.ts';
-import { actionTitle, toolTitle } from './action-presentation.ts';
+import { recordedTitle, toolTitle } from './action-presentation.ts';
 import type { ChannelPresentation } from './channels.ts';
 import { classifyVerificationReply } from '../shared/verification-code.ts';
 import {
@@ -729,7 +729,7 @@ export function createTasks(options: {
          WHERE u.task_id=$1 AND u.owner_id=$2 AND e.type IN ('step','tool_complete','tool_failed')
            AND NOT (e.type='tool_complete' AND e.summary='apps')
          UNION ALL
-         SELECT a.id,'action',a.action,NULL,NULL,NULL,a.created_at
+         SELECT a.id,'action',a.action,a.target,NULL,NULL,a.created_at
          FROM app_actions a JOIN turns u ON u.id=a.turn_id
          WHERE u.task_id=$1 AND u.owner_id=$2 AND a.owner_id=$2
          UNION ALL
@@ -740,10 +740,8 @@ export function createTasks(options: {
           [id, ownerId],
         )
       ).rows.map((event) => {
-        if (event.type === 'action') {
-          const { app, label } = actionTitle(event.summary);
-          return { ...event, type: 'tool_complete', summary: app ? `${app}: ${label}` : label };
-        }
+        if (event.type === 'action')
+          return { ...event, type: 'tool_complete', summary: recordedTitle(event.summary) };
         return event.type === 'message' || event.type === 'step'
           ? event
           : { ...event, summary: toolTitle(event.summary) };

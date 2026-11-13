@@ -19,6 +19,7 @@ import { lockKey, locksTable } from './locks.ts';
 import { withdrawnSql } from './turn-chain.ts';
 import { afterCommit, transaction } from './transaction.ts';
 import type { CaptureAnalytics } from './analytics.ts';
+import type { TrustBasis } from './trust-basis.ts';
 
 export interface ApprovalExecutionContext {
   threadId: string;
@@ -27,6 +28,7 @@ export interface ApprovalExecutionContext {
   signal?: AbortSignal;
   details?: Record<string, unknown>;
   expectedRevision?: number;
+  basis?: TrustBasis;
 }
 
 export interface ApprovalWork {
@@ -300,6 +302,7 @@ export async function createApprovals(
       validate?: (client: PoolClient) => Promise<void>;
       expectedRevision?: number;
       expectedChatRevision?: string;
+      basis?: TrustBasis;
     } = {},
   ) {
     const encoded = JSON.stringify(args);
@@ -522,6 +525,7 @@ export async function createApprovals(
       signal: options.signal,
       ...(options.details ? { details: options.details } : {}),
       ...(expectedRevision === undefined ? {} : { expectedRevision }),
+      ...(allowed && options.basis ? { basis: options.basis } : {}),
     });
   }
 

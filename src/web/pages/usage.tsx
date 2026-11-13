@@ -1,19 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   CalendarClock,
+  Download,
   LoaderCircle,
   MessageCircle,
   ScanSearch,
   Undo2,
   Zap,
 } from '../components/icons';
-import type {
-  TrustEntry,
-  TrustModel,
-  TrustOutside,
-  TrustPage,
-  TrustSource,
-  TrustView,
+import {
+  actionText,
+  becauseText,
+  type TrustEntry,
+  type TrustModel,
+  type TrustOutside,
+  type TrustPage,
+  type TrustSource,
+  type TrustView,
 } from '../../shared/trust';
 import { modelProviderNames, modelSource, type ModelsResponse } from '../../shared/models';
 import type {
@@ -38,7 +41,7 @@ import { StatementValue } from '../components/statement-value';
 import { Tooltip } from '../components/tooltip';
 import { Button, Input, Loading, Notice } from '../components/ui';
 import { VaultUse } from '../components/vault-activity';
-import { becauseText } from '../lib/trust-because';
+import { downloadExport } from '../lib/download';
 import { money } from '../lib/money';
 import { vaultItems } from './vault';
 
@@ -380,17 +383,15 @@ function TrustRow({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean 
   const format = useDateFormat();
   const models = entry.models ?? [];
   const { icon: Icon, label } = sources[entry.source];
-  const did = [...new Set(entry.actions.map((action) => action.label))].join(', ');
-  const explained = entry.actions.filter((action) => action.because);
-  const reasons = [
-    ...new Set(
-      explained.map((action) =>
-        new Set(explained.map((item) => item.label)).size > 1
-          ? `${action.label} · ${becauseText(action.because!)}`
-          : becauseText(action.because!),
-      ),
-    ),
-  ];
+  const actions = new Map<string, { text: string; why?: string; count: number }>();
+  for (const action of entry.actions) {
+    const text = actionText(action);
+    const why = action.because && becauseText(action.because);
+    const key = `${text}\n${why ?? ''}`;
+    const seen = actions.get(key);
+    if (seen) seen.count++;
+    else actions.set(key, { text, ...(why ? { why } : {}), count: 1 });
+  }
   const content = (
     <>
       <span className="vault-glyph" aria-hidden="true">
@@ -400,8 +401,19 @@ function TrustRow({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean 
         <b>{entry.title}</b>
         <span className={entry.error ? 'is-error' : undefined}>
           {[formatTime(entry.at, format), label].filter(Boolean).join(' · ')}
-          {entry.error ? ` · ${entry.error}` : did ? ` · ${did}` : ''}
+          {entry.error ? ` · ${entry.error}` : ''}
         </span>
+        {[...actions.values()].map(({ text, why, count }) => {
+          const line = `${text}${count > 1 ? ` ×${count}` : ''}`;
+          return (
+            <Tooltip key={`${text}${why}`} content={why ? `${line} · ${why}` : line}>
+              <span className="usage-action">
+                {line}
+                {why && <small> · {why}</small>}
+              </span>
+            </Tooltip>
+          );
+        })}
         {models.length > 0 && (
           <span className="usage-models" aria-label="Models used">
             {models.map((model) => (
@@ -412,11 +424,6 @@ function TrustRow({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean 
             ))}
           </span>
         )}
-        {reasons.map((reason) => (
-          <Tooltip key={reason} content={reason}>
-            <small className="usage-because">{reason}</small>
-          </Tooltip>
-        ))}
       </span>
       {showCosts && entry.costUsd !== null ? (
         <span className="usage-row-cost">
@@ -672,6 +679,8 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
   useEffect(() => {
     if (!hidden) setSession(sessionFilter());
   }, [hidden]);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
   const trust = usePageData<TrustView>('/api/trust');
   const models = usePageData<ModelsResponse>('/api/models');
   const vault = usePageData<VaultActivity>('/api/vault/activity');
@@ -709,7 +718,25 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
     <div className="content-page secondary-page" hidden={hidden}>
       <header className="page-heading secondary-heading">
         <PageTitle path="/usage" />
+        <div className="secondary-heading-actions">
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={exporting}
+            onClick={() => {
+              setExporting(true);
+              setExportError('');
+              downloadExport('/api/trust/export', 'nod-activity.csv', 'Your activity')
+                .catch((cause) => setExportError(errorMessage(cause)))
+                .finally(() => setExporting(false));
+            }}
+          >
+            <Download size={16} aria-hidden="true" />
+            Export
+          </Button>
+        </div>
       </header>
+      {exportError && <Notice>{exportError}</Notice>}
       {itemsError && <Notice>{itemsError}</Notice>}
       {trust.data && vault.data && models.data ? (
         <div className="usage">

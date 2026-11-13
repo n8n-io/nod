@@ -11,7 +11,7 @@ import type { DecisionModel } from '../ports/decisions.ts';
 import type { SpeechProvider } from '../ports/speech.ts';
 import type { TrustAction, TrustEntry, TrustOutside, TrustView } from '../shared/trust.ts';
 import { becauseOf, type TrustBasis } from './trust-basis.ts';
-import { actionTitle } from './action-presentation.ts';
+import { recordedTitle } from './action-presentation.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
 import type { UsageReport } from './usage-report.ts';
 import { afterCommit, transaction } from './transaction.ts';
@@ -31,6 +31,10 @@ const usd = z
       Number.isSafeInteger(Math.round(value * 100)) && Math.round(value * 100) / 100 === value,
   )
   .nullable();
+export const activityRange = z
+  .object({ from: z.iso.date().optional(), to: z.iso.date().optional() })
+  .strict();
+export type ActivityRange = z.infer<typeof activityRange>;
 export const limitsInput = z
   .object({ monthlyUsd: usd.optional(), taskUsd: usd.optional() })
   .strict()
@@ -144,6 +148,7 @@ export function createLedger({
       action text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
     );
     ALTER TABLE app_actions ADD COLUMN IF NOT EXISTS basis jsonb;
+    ALTER TABLE app_actions ADD COLUMN IF NOT EXISTS target text;
     CREATE INDEX IF NOT EXISTS app_actions_owner_time ON app_actions(owner_id,created_at);
     CREATE INDEX IF NOT EXISTS app_actions_turn ON app_actions(turn_id);
     CREATE TABLE IF NOT EXISTS spending_limits (
@@ -328,11 +333,11 @@ export function createLedger({
     };
   }
 
-  function action(turnId: string, name: string, basis: TrustBasis) {
+  function action(turnId: string, name: string, basis: TrustBasis, target?: string) {
     return save(
-      `INSERT INTO app_actions(owner_id,turn_id,action,basis)
-       SELECT $1,id,$3,$4 FROM turns WHERE id=$2 AND owner_id=$1`,
-      [ownerId, turnId, name.slice(0, 200), JSON.stringify(basis)],
+      `INSERT INTO app_actions(owner_id,turn_id,action,basis,target)
+       SELECT $1,id,$3,$4,$5 FROM turns WHERE id=$2 AND owner_id=$1`,
+      [ownerId, turnId, name.slice(0, 200), JSON.stringify(basis), target?.slice(0, 300) ?? null],
     );
   }
 
@@ -483,7 +488,19 @@ export function createLedger({
     return rows[0]?.cost ?? null;
   }
 
-  async function entries(before?: { at: string; id: string }, session?: string) {
+  async function select({
+    before,
+    session,
+    start,
+    end,
+    limit,
+  }: {
+    before?: { at: string; id: string };
+    session?: string;
+    start?: Date | null;
+    end?: Date | null;
+    limit: number | null;
+  }) {
     const { rows } = await pool.query(
       `SELECT u.id,u.source,u.source_id,u.channel,u.status,u.error,u.created_at,
          (SELECT m.id FROM messages m JOIN threads th ON th.id=m.thread_id
@@ -495,7 +512,7 @@ export function createLedger({
          (SELECT json_build_object('title',t.title,'started',t.activity_key IS NOT NULL) FROM tasks t
            WHERE t.owner_id=$1 AND t.session_id=u.session_id LIMIT 1) AS task,
          EXISTS(SELECT 1 FROM turn_events e WHERE e.turn_id=u.id AND e.type='source_screened') AS screened,
-         (SELECT json_agg(json_build_object('action',a.action,'basis',a.basis,'said',m.id IS NOT NULL) ORDER BY a.created_at)
+         (SELECT json_agg(json_build_object('action',a.action,'target',a.target,'basis',a.basis,'said',m.id IS NOT NULL) ORDER BY a.created_at)
            FROM app_actions a LEFT JOIN messages m ON a.basis->>'kind'='message'
              AND m.owner_id=$1 AND m.id=(a.basis->>'messageId')::uuid
            WHERE a.turn_id=u.id AND a.owner_id=$1) AS actions
@@ -509,11 +526,20 @@ export function createLedger({
          FROM model_usage WHERE turn_id=u.id AND owner_id=$1) c ON true
        WHERE u.owner_id=$1 AND ($2::timestamptz IS NULL OR (u.created_at,u.id)<($2,$3::uuid))
          AND ($4::uuid IS NULL OR u.session_id=$4)
+         AND ($5::timestamptz IS NULL OR u.created_at>=$5) AND ($6::timestamptz IS NULL OR u.created_at<$6)
          AND (c.used>0 OR EXISTS(SELECT 1 FROM app_actions a WHERE a.turn_id=u.id AND a.owner_id=$1))
-       ORDER BY u.created_at DESC,u.id DESC LIMIT ${pageSize + 1}`,
-      [ownerId, before?.at ?? null, before?.id ?? null, session ?? null],
+       ORDER BY u.created_at DESC,u.id DESC LIMIT $7`,
+      [
+        ownerId,
+        before?.at ?? null,
+        before?.id ?? null,
+        session ?? null,
+        start ?? null,
+        end ?? null,
+        limit,
+      ],
     );
-    const page = rows.slice(0, pageSize).map((row): TrustEntry => ({
+    return rows.map((row): TrustEntry => ({
       id: row.id,
       messageId: row.message_id ?? null,
       at: row.created_at.toISOString(),
@@ -535,17 +561,59 @@ export function createLedger({
           ),
       ),
       actions: (row.actions ?? []).map(
-        (item: { action: string; basis: TrustBasis | null; said: boolean }): TrustAction => {
-          const { app, label } = actionTitle(item.action);
+        (item: {
+          action: string;
+          target: string | null;
+          basis: TrustBasis | null;
+          said: boolean;
+        }): TrustAction => {
           const because = becauseOf(item.basis, item.said);
-          return { label: app ? `${app}: ${label}` : label, ...(because ? { because } : {}) };
+          return {
+            label: recordedTitle(item.action),
+            ...(item.target ? { target: item.target } : {}),
+            ...(because ? { because } : {}),
+          };
         },
       ),
     }));
+  }
+
+  async function entries(before?: { at: string; id: string }, session?: string) {
+    const rows = await select({ before, session, limit: pageSize + 1 });
+    const page = rows.slice(0, pageSize);
     const last = page.at(-1);
     return {
       entries: page,
       next: rows.length > pageSize && last ? { at: last.at, id: last.id } : null,
+    };
+  }
+
+  async function within(range: ActivityRange, limit: number | null) {
+    const bounds = (
+      await pool.query<{
+        zone: string;
+        locale: string | null;
+        start_at: Date | null;
+        end_at: Date | null;
+      }>(
+        `SELECT ${zone} AS zone,(SELECT locale FROM preferences WHERE owner_id=$1),
+           ($2::date::timestamp AT TIME ZONE ${zone}) AS start_at,
+           (($3::date+1)::timestamp AT TIME ZONE ${zone}) AS end_at`,
+        [ownerId, range.from ?? null, range.to ?? range.from ?? null],
+      )
+    ).rows[0]!;
+    const rows = await select({
+      start: bounds.start_at,
+      end: bounds.end_at,
+      limit: limit === null ? null : limit + 1,
+    });
+    return {
+      timeZone: bounds.zone,
+      locale: formattingLocale(localeRegion(bounds.locale) ?? timeZoneRegion(bounds.zone)),
+      start: bounds.start_at,
+      end: bounds.end_at,
+      entries: limit === null ? rows : rows.slice(0, limit),
+      complete: limit === null || rows.length <= limit,
     };
   }
 
@@ -764,6 +832,7 @@ export function createLedger({
       run: () => T,
     ) => activeExecution.run(execution, run),
     read,
+    within,
     report,
     registerRoutes,
   };

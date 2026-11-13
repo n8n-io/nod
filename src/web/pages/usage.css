@@ -174,3 +174,10 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+.vault-use-text .usage-action {
+  color: var(--text-secondary);
+}
+.vault-use-text .usage-action small {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}

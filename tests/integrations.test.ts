@@ -53,6 +53,7 @@ import { createIntegrations, initializeIntegrationSchema } from '../src/server/i
 import { cachedIcons } from '../src/server/link-previews.ts';
 import { createErrorRedactor } from '../src/server/redaction.ts';
 import { createLedger } from '../src/server/ledger.ts';
+import { createActivityLog } from '../src/server/activity-log.ts';
 import { usagePdf } from '../src/server/usage-report.ts';
 import type { TrustEntry } from '../src/shared/trust.ts';
 import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
@@ -9230,6 +9231,29 @@ test(
       const ledger = createLedger({ pool, ownerId: 'owner' });
       await ledger.initialize();
       ledger.registerRoutes(app);
+      const activity = createActivityLog({
+        requests: ledger.within,
+        vault: async (start, end) => ({
+          entries: [
+            {
+              id: randomUUID(),
+              at: new Date().toISOString(),
+              action: 'card' as const,
+              origin: 'https://shop.example.test',
+              itemKind: 'card' as const,
+              amount: { minor: 1200, currency: 'EUR' },
+              task: '=HYPERLINK("https://attacker.example.test")',
+              reason: 'said_yes' as const,
+            },
+          ].filter(
+            (entry) =>
+              (!start || Date.parse(entry.at) >= start.getTime()) &&
+              (!end || Date.parse(entry.at) < end.getTime()),
+          ),
+          complete: true,
+        }),
+      });
+      activity.registerRoutes(app);
       const usage = (turnId: string, costUsd: number | null): AgentEvent => ({
         type: 'model_usage',
         id: randomUUID(),
@@ -9299,8 +9323,13 @@ test(
           .curate({ task: 'review', instructions: 'Synthetic', input: {} }),
       );
       await ledger.action(chat, 'GMAIL_FETCH_EMAILS', { kind: 'read' });
-      await ledger.action(chat, 'GMAIL_SEND_EMAIL', { kind: 'approved' });
-      await ledger.action(foreign, 'GMAIL_SEND_EMAIL', { kind: 'approved' });
+      await ledger.action(
+        chat,
+        'GMAIL_SEND_EMAIL',
+        { kind: 'approved' },
+        'sam@example.test · Quote accepted',
+      );
+      await ledger.action(foreign, 'GMAIL_SEND_EMAIL', { kind: 'approved' }, 'Foreign target');
       for (let attempt = 0; attempt < 50; attempt++) {
         const rows = await pool.query('SELECT count(*)::int AS count FROM model_usage');
         if (rows.rows[0].count === 5) break;
@@ -9352,7 +9381,11 @@ test(
       assert.equal(scheduledEntry.costUsd, 0.1);
       assert.deepEqual(chatEntry(view.entries).actions, [
         { label: 'Gmail: fetch emails' },
-        { label: 'Gmail: send email', because: { kind: 'approved' } },
+        {
+          label: 'Gmail: send email',
+          target: 'sam@example.test · Quote accepted',
+          because: { kind: 'approved' },
+        },
       ]);
       const said = randomUUID();
       const foreignSaid = randomUUID();
@@ -9434,6 +9467,32 @@ test(
           .entries.map((entry: TrustEntry) => entry.id),
         [scheduled],
       );
+      const exported = await app.inject('/api/trust/export');
+      assert.equal(exported.statusCode, 200);
+      assert.match(String(exported.headers['content-disposition']), /nod-activity-.*\.csv/);
+      const csv = exported.body.replace(/^\ufeff/, '').split('\r\n');
+      assert.equal(csv[0], 'Time,Request,Source,Action,Allowed by,Model cost (USD)');
+      assert.ok(
+        csv.some((row) =>
+          row.endsWith(
+            ',Tell Sam we take the quote,Chat,Gmail: send email · sam@example.test · Quote accepted,You approved it,',
+          ),
+        ),
+      );
+      assert.ok(
+        csv.some((row) =>
+          row.includes(',Chat,Slack: send message,You said “Tell Sam we take the quote”,'),
+        ),
+      );
+      assert.ok(
+        csv.some((row) =>
+          row.includes(
+            `,"'=HYPERLINK(""https://attacker.example.test"")",Vault,Submitted card for €12.00 at shop.example.test,You approved,`,
+          ),
+        ),
+      );
+      assert.doesNotMatch(exported.body, /Foreign/);
+      assert.deepEqual((await activity.read({ from: '2000-01-01' }, 200)).entries, []);
       await pool.query(
         "DELETE FROM app_actions WHERE action='SLACK_SEND_MESSAGE' OR (turn_id=$1 AND action='GMAIL_FETCH_EMAILS')",
         [scheduled],

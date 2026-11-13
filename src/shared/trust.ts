@@ -10,7 +10,21 @@ export type TrustBecause =
 
 export interface TrustAction {
   label: string;
+  target?: string;
   because?: TrustBecause;
+}
+
+export function actionText(action: Pick<TrustAction, 'label' | 'target'>) {
+  return action.target ? `${action.label} · ${action.target}` : action.label;
+}
+
+export function becauseText(reason: TrustBecause) {
+  if (reason.kind === 'approved') return 'You approved it';
+  const quote = `“${reason.text}”`;
+  if (reason.kind === 'message') return `You said ${quote}`;
+  if (reason.kind === 'schedule') return `Your schedule says ${quote}`;
+  if (reason.kind === 'standing') return `Your standing instruction says ${quote}`;
+  return `Your rule says ${quote}`;
 }
 
 export interface TrustModel {

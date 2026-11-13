@@ -47,7 +47,7 @@ import {
 } from '../components/ui';
 import { usePageData } from '../hooks/use-page-data';
 import { api, errorMessage } from '../lib/api';
-import { exportMemory } from '../lib/memory-export';
+import { downloadExport } from '../lib/download';
 import { Tooltip } from '../components/tooltip';
 import { ActionMenu, ActionMenuItem } from '../components/action-menu';
 import { useSettingsDraft } from '../components/settings-drafts';
@@ -1585,7 +1585,7 @@ export function Memory({
               onClick={() => {
                 setExporting(true);
                 setSettingError('');
-                exportMemory()
+                downloadExport('/api/memory/export', 'nod-memory.md', 'Your memory')
                   .catch((cause) => setSettingError(errorMessage(cause)))
                   .finally(() => setExporting(false));
               }}
