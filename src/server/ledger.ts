@@ -677,12 +677,11 @@ export function createLedger({
   }
 
   async function entries(before?: { at: string; id: string }, session?: string) {
-    const rows = (await select({ before, session, limit: pageSize + 1 })).entries;
+    const { entries: rows, cursors } = await select({ before, session, limit: pageSize + 1 });
     const page = rows.slice(0, pageSize);
-    const last = page.at(-1);
     return {
       entries: page,
-      next: rows.length > pageSize && last ? { at: last.at, id: last.id } : null,
+      next: rows.length > pageSize ? (cursors[pageSize - 1] ?? null) : null,
     };
   }
 

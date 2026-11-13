@@ -250,7 +250,11 @@ export async function createVaultAccess(
     };
   };
 
-  async function within(start: Date | null, end: Date | null, limit: number | null) {
+  async function within(
+    start: Date | string | null,
+    end: Date | string | null,
+    limit: number | null,
+  ) {
     const { rows } = await pool.query<Omit<Row, 'cursor'>>(
       `SELECT id,at,action,origin,item_id,item_kind,amount_minor,currency,task,reason,basis,
        EXISTS(SELECT 1 FROM messages m WHERE a.basis->>'kind'='message'

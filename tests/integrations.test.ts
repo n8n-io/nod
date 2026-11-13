@@ -56,7 +56,7 @@ import { createLedger } from '../src/server/ledger.ts';
 import { createActivityLog } from '../src/server/activity-log.ts';
 import { createVaultAccess } from '../src/server/vault-access.ts';
 import { usagePdf } from '../src/server/usage-report.ts';
-import type { TrustEntry, TrustStep } from '../src/shared/trust.ts';
+import type { TrustEntry, TrustPage, TrustStep } from '../src/shared/trust.ts';
 import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
 import { createWorkAdmission } from '../src/server/work-admission.ts';
 import { integrationServiceIds, integrationServices } from '../src/shared/integrations.ts';
@@ -9515,7 +9515,7 @@ test(
       const scoped = cells((await app.inject(`/api/trust/export?session=${scheduled}`)).body);
       assert.deepEqual([...new Set(scoped.slice(1).map((row) => row[1]))], ['Morning brief']);
       assert.deepEqual((await activity.read({ from: '2000-01-01' }, 200)).entries, []);
-      const tied = Array.from({ length: 5 }, () => randomUUID());
+      const tied = Array.from({ length: 31 }, () => randomUUID());
       await pool.query(
         `INSERT INTO turns(id,owner_id,source,prompt,thread_id,session_id,created_at)
          SELECT id,'owner','user','Tied request',$2,id,'2026-01-01T00:00:00.123456Z' FROM unnest($1::uuid[]) id`,
@@ -9537,6 +9537,16 @@ test(
       assert.equal(new Set(paged).size, paged.length);
       assert.ok(tied.every((id) => paged.includes(id)));
       assert.ok(!paged.includes(foreign));
+      const listed: string[] = [];
+      let before = '';
+      for (;;) {
+        const page = (await app.inject(`/api/trust/entries${before}`)).json() as TrustPage;
+        listed.push(...page.entries.map((entry) => entry.id));
+        if (!page.next) break;
+        before = `?at=${encodeURIComponent(page.next.at)}&id=${page.next.id}`;
+      }
+      assert.equal(new Set(listed).size, listed.length);
+      assert.ok(tied.every((id) => listed.includes(id)));
       await pool.query(
         "DELETE FROM app_actions WHERE action='SLACK_SEND_MESSAGE' OR (turn_id=$1 AND action='GMAIL_FETCH_EMAILS')",
         [scheduled],

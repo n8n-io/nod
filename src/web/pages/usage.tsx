@@ -40,7 +40,6 @@ import { PageTitle } from '../components/page-title';
 import { StatementValue } from '../components/statement-value';
 import { Button, Input, Loading, Notice } from '../components/ui';
 import { VaultUse } from '../components/vault-activity';
-import { downloadExport } from '../lib/download';
 import { money } from '../lib/money';
 import { vaultItems } from './vault';
 
@@ -405,13 +404,7 @@ function TrustLog({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean 
   const loading = useRef(new Set<number>());
   const list = useRef<HTMLOListElement>(null);
   useEffect(() => {
-    const last = Math.floor(Math.max(total - 1, 0) / stepPage);
-    setPages((current) => {
-      if (!current.has(last)) return current;
-      const next = new Map(current);
-      next.delete(last);
-      return next;
-    });
+    setPages((current) => (current.size ? new Map() : current));
   }, [total]);
   useEffect(() => {
     const target = list.current;
@@ -466,29 +459,34 @@ function TrustLog({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean 
         <Notice>{first.error}</Notice>
       ) : !first.data ? (
         <Loading label="Opening the log…" />
+      ) : !total ? (
+        <p className="statement-empty">No steps were recorded for this request.</p>
       ) : (
         <ol ref={list} className="usage-log-rows" style={{ height: total * stepHeight }}>
-          {Array.from({ length: Math.max(0, range[1] - range[0]) }, (_, offset) => {
-            const index = range[0] + offset;
-            const step = stepAt(index);
-            return (
-              <li
-                key={index}
-                aria-setsize={total}
-                aria-posinset={index + 1}
-                style={{ transform: `translateY(${index * stepHeight}px)` }}
-                data-kind={step?.kind}
-                data-helper={step?.helper ? 'true' : undefined}
-                className={step?.failed ? 'is-failed' : undefined}
-              >
-                {step ? (
-                  <StepLine step={step} showCosts={showCosts} />
-                ) : (
-                  <span className="usage-log-pending" aria-label="Loading" />
-                )}
-              </li>
-            );
-          })}
+          {Array.from(
+            { length: Math.max(0, Math.min(range[1], total) - range[0]) },
+            (_, offset) => {
+              const index = range[0] + offset;
+              const step = stepAt(index);
+              return (
+                <li
+                  key={index}
+                  aria-setsize={total}
+                  aria-posinset={index + 1}
+                  style={{ transform: `translateY(${index * stepHeight}px)` }}
+                  data-kind={step?.kind}
+                  data-helper={step?.helper ? 'true' : undefined}
+                  className={step?.failed ? 'is-failed' : undefined}
+                >
+                  {step ? (
+                    <StepLine step={step} showCosts={showCosts} />
+                  ) : (
+                    <span className="usage-log-pending" aria-label="Loading" />
+                  )}
+                </li>
+              );
+            },
+          )}
         </ol>
       )}
       {error && (
@@ -782,8 +780,6 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
   useEffect(() => {
     if (!hidden) setSession(sessionFilter());
   }, [hidden]);
-  const [exporting, setExporting] = useState(false);
-  const [exportError, setExportError] = useState('');
   const trust = usePageData<TrustView>('/api/trust');
   const models = usePageData<ModelsResponse>('/api/models');
   const vault = usePageData<VaultActivity>('/api/vault/activity');
@@ -825,25 +821,18 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
           <Button
             variant="ghost"
             size="sm"
-            disabled={exporting}
-            onClick={() => {
-              setExporting(true);
-              setExportError('');
-              downloadExport(
-                `/api/trust/export${session ? `?session=${session}` : ''}`,
-                'nod-activity.csv',
-                'Your activity',
-              )
-                .catch((cause) => setExportError(errorMessage(cause)))
-                .finally(() => setExporting(false));
-            }}
+            onClick={() =>
+              Object.assign(document.createElement('a'), {
+                href: `/api/trust/export${session ? `?session=${session}` : ''}`,
+                download: '',
+              }).click()
+            }
           >
             <Download size={16} aria-hidden="true" />
             Export
           </Button>
         </div>
       </header>
-      {exportError && <Notice>{exportError}</Notice>}
       {itemsError && <Notice>{itemsError}</Notice>}
       {trust.data && vault.data && models.data ? (
         <div className="usage">

@@ -57,8 +57,8 @@ interface Sources {
     size: number,
   ): Promise<{ entries: TrustEntry[]; next: Cursor | null }>;
   vault(
-    start: Date | null,
-    end: Date | null,
+    start: Date | string | null,
+    end: Date | string | null,
     limit: number | null,
   ): Promise<{ entries: VaultActivityEntry[]; complete: boolean }>;
   steps(turnIds: string[]): Promise<Map<string, TrustStep[]>>;
@@ -139,7 +139,7 @@ export function createActivityLog(log: Sources) {
     const time = (at: string) => local(at, true);
     yield `﻿${line([`Time (${span.timeZone})`, 'Request', 'Source', 'Kind', 'Step', 'Detail', 'Allowed by', 'Cost (USD)'])}`;
     let after: Cursor | null = null;
-    let from = span.start;
+    let from: Date | string | null = span.start;
     for (;;) {
       const { entries, next }: { entries: TrustEntry[]; next: Cursor | null } = await log.chunk(
         span,
@@ -147,7 +147,7 @@ export function createActivityLog(log: Sources) {
         chunkSize,
       );
       const last = entries.length < chunkSize || !next;
-      const until = last ? span.end : new Date(next.at);
+      const until = last ? span.end : next.at;
       const uses = span.session ? [] : (await log.vault(from, until, null)).entries;
       const steps = entries.length
         ? await log.steps(entries.map((entry) => entry.id))
