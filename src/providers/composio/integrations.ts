@@ -8,6 +8,7 @@ import { readInboxSnippets, readInboxThreads, readSentEmails } from './sent-emai
 import { readVerificationEmails } from './verification-email.ts';
 import {
   IntegrationCatalogAccessDenied,
+  IntegrationCatalogFailure,
   IntegrationConnectionError,
   IntegrationInboxCursorExpired,
   IntegrationPermissionError,
@@ -190,31 +191,50 @@ function identityFields(
   };
 }
 
+function proxyRequestFailure(
+  error: unknown,
+  signal?: AbortSignal,
+):
+  | {
+      reason: IntegrationConnectionError['reason'];
+      status?: number;
+      code?: unknown;
+    }
+  | undefined {
+  const status = error && typeof error === 'object' && 'status' in error ? error.status : undefined;
+  const kind = error instanceof Error ? error.constructor.name : '';
+  const reason =
+    status === 401
+      ? 'authorization'
+      : status === 403
+        ? 'permission'
+        : status === 429
+          ? 'rate_limit'
+          : status === 408 ||
+              status === 504 ||
+              kind === 'APIConnectionTimeoutError' ||
+              (signal?.aborted && signal.reason?.name === 'TimeoutError')
+            ? 'timeout'
+            : (typeof status === 'number' && status >= 500 && status <= 599) ||
+                kind === 'APIConnectionError'
+              ? 'unavailable'
+              : typeof status === 'number' && status >= 400 && status <= 499
+                ? 'invalid_request'
+                : undefined;
+  if (!reason) return;
+  const body = error && typeof error === 'object' && 'error' in error ? error.error : undefined;
+  const code = body && typeof body === 'object' && 'error' in body ? body.error : undefined;
+  return {
+    reason,
+    status: typeof status === 'number' ? status : undefined,
+    code,
+  };
+}
+
 function connectionFailure(phase: IntegrationConnectionError['phase'], signal?: AbortSignal) {
   return (error: unknown): never => {
-    const status =
-      error && typeof error === 'object' && 'status' in error ? error.status : undefined;
-    const kind = error instanceof Error ? error.constructor.name : '';
-    const reason =
-      status === 401
-        ? 'authorization'
-        : status === 403
-          ? 'permission'
-          : status === 429
-            ? 'rate_limit'
-            : status === 408 ||
-                status === 504 ||
-                kind === 'APIConnectionTimeoutError' ||
-                (signal?.aborted && signal.reason?.name === 'TimeoutError')
-              ? 'timeout'
-              : (typeof status === 'number' && status >= 500 && status <= 599) ||
-                  kind === 'APIConnectionError'
-                ? 'unavailable'
-                : typeof status === 'number' && status >= 400 && status <= 499
-                  ? 'invalid_request'
-                  : undefined;
-    if (reason) {
-      const body = (error as { error?: { error?: unknown } }).error;
+    const failure = proxyRequestFailure(error, signal);
+    if (failure) {
       const code = z
         .enum([
           'installation_busy',
@@ -222,11 +242,11 @@ function connectionFailure(phase: IntegrationConnectionError['phase'], signal?: 
           'service_unavailable',
           'security_service_unavailable',
         ])
-        .safeParse(body?.error);
+        .safeParse(failure.code);
       throw new IntegrationConnectionError(
-        reason,
+        failure.reason,
         phase,
-        typeof status === 'number' ? status : undefined,
+        failure.status,
         code.success ? code.data : undefined,
       );
     }
@@ -269,8 +289,8 @@ export function createComposioProvider(options: {
   async function listServices(): Promise<IntegrationServiceInfo[]> {
     if (catalog && catalog.expiresAt > Date.now()) return catalog.services;
     if (catalogRequest) return catalogRequest;
+    const operation = AbortSignal.timeout(10_000);
     const pending = (async () => {
-      const operation = AbortSignal.timeout(10_000);
       const services = new Map(builtInServices().map((service) => [service.slug, service]));
       const cursors = new Set<string>();
       let cursor: string | undefined;
@@ -339,10 +359,44 @@ export function createComposioProvider(options: {
       return result;
     })().catch((error: unknown) => {
       catalogRetryAfter = Date.now() + 30_000;
-      if (error instanceof IntegrationConnectionError) throw error;
-      const status =
-        error && typeof error === 'object' && 'status' in error ? error.status : undefined;
-      if (status === 403) throw new IntegrationCatalogAccessDenied();
+      if (error instanceof IntegrationConnectionError || error instanceof IntegrationCatalogFailure)
+        throw error;
+      const failure = proxyRequestFailure(error, operation);
+      if (failure?.reason === 'permission') {
+        const code = z
+          .enum([
+            'installation_enrollment_required',
+            'installation_revoked',
+            'browser_pairing_required',
+          ])
+          .safeParse(failure.code);
+        throw new IntegrationCatalogAccessDenied(code.success ? code.data : undefined);
+      }
+      if (failure) {
+        const code = z
+          .enum([
+            'rate_limited',
+            'installation_busy',
+            'public_budget_exceeded',
+            'provider_rate_limited',
+            'service_unavailable',
+            'security_service_unavailable',
+            'public_access_unavailable',
+            'provider_unavailable',
+            'provider_request_failed',
+            'catalog_unavailable',
+            'operation_timeout',
+            'invalid_limit_configuration',
+            'invalid_provider_response',
+            'unsafe_provider_response',
+          ])
+          .safeParse(failure.code);
+        throw new IntegrationCatalogFailure(
+          failure.reason,
+          failure.status,
+          code.success ? code.data : undefined,
+        );
+      }
       throw new Error('The app catalog could not be loaded. Try again later.');
     });
     catalogRequest = pending;

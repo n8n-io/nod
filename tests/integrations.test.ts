@@ -33,6 +33,7 @@ import type { Agent, AgentEvent, AgentToolResult, RuntimeContext } from '../src/
 import { type DiscoveredOAuthState } from '../src/ports/discovered.ts';
 import {
   IntegrationCatalogAccessDenied,
+  IntegrationCatalogFailure,
   IntegrationConnectionError,
   IntegrationPermissionError,
   type IntegrationFile,
@@ -3380,6 +3381,37 @@ test(
     assert.deepEqual(Object.keys(missingAuthAccess.json()), ['error']);
     assert.match(missingAuthAccess.json().error, /connection service/);
     assert.doesNotMatch(missingAuthAccess.body, /synthetic-private-auth-response/);
+    failure = Object.assign(
+      new IntegrationCatalogFailure('rate_limit', 429, 'public_budget_exceeded'),
+      {
+        cause: new Error('synthetic-private-catalog-response'),
+      },
+    );
+    const limitedCatalog = await f.app.inject({ url: '/api/apps/catalog' });
+    assert.equal(limitedCatalog.statusCode, 429);
+    assert.deepEqual(Object.keys(limitedCatalog.json()), ['error']);
+    assert.match(limitedCatalog.json().error, /public_budget_exceeded/);
+    assert.match(limitedCatalog.json().error, /429/);
+    assert.doesNotMatch(limitedCatalog.body, /synthetic-private-catalog-response/);
+    await assert.rejects(
+      f.service.manageConnections('discover', undefined, undefined, undefined, undefined, 'gmail'),
+      (error: unknown) =>
+        error instanceof IntegrationCatalogFailure && error.code === 'public_budget_exceeded',
+    );
+    failure = new IntegrationCatalogFailure('unavailable', 503, 'security_service_unavailable');
+    const unavailableCatalog = await f.app.inject({ url: '/api/apps/catalog' });
+    assert.equal(unavailableCatalog.statusCode, 503);
+    assert.match(unavailableCatalog.json().error, /security_service_unavailable/);
+    assert.match(unavailableCatalog.json().error, /503/);
+    failure = new IntegrationCatalogFailure('unavailable', 502, 'invalid_provider_response');
+    const invalidProviderCatalog = await f.app.inject({ url: '/api/apps/catalog' });
+    assert.equal(invalidProviderCatalog.statusCode, 502);
+    assert.match(invalidProviderCatalog.json().error, /invalid_provider_response/);
+    assert.match(invalidProviderCatalog.json().error, /502/);
+    failure = new IntegrationCatalogAccessDenied('installation_revoked');
+    const revoked = await f.app.inject({ url: '/api/apps/catalog' });
+    assert.equal(revoked.statusCode, 403);
+    assert.match(revoked.json().error, /installation_revoked/);
     failure = new IntegrationCatalogAccessDenied();
     const denied = await f.app.inject({ url: '/api/apps/catalog' });
     assert.equal(denied.statusCode, 403);
@@ -8992,14 +9024,18 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
   await session.execute('GMAIL_SEND_EMAIL', {}, 'fixture-account');
 });
 
-test('Composio connection requests classify HTTP failures without repeating consent or exposing provider details', async (t) => {
+test('Composio catalog and connection requests classify HTTP failures without exposing provider details', async (t) => {
   const { createServer } = await import('node:http');
   const { IntegrationConnectionError } = await import('../src/ports/integrations.ts');
   let failure: { phase: string; status: number; code?: string } | undefined;
   let rejected = 0;
   const server = createServer(async (request, response) => {
     const path = new URL(request.url!, 'http://localhost').pathname;
-    const phase = path.endsWith('/tool_router/session') ? 'session' : undefined;
+    const phase = path.endsWith('/toolkits')
+      ? 'catalog'
+      : path.endsWith('/tool_router/session')
+        ? 'session'
+        : undefined;
     response.setHeader('content-type', 'application/json');
     if (failure && failure.phase === phase && phase) {
       rejected++;
@@ -9051,6 +9087,68 @@ test('Composio connection requests classify HTTP failures without repeating cons
       }),
     }),
   });
+  for (const [status, reason, code] of [
+    [429, 'rate_limit', 'public_budget_exceeded'],
+    [429, 'rate_limit', 'rate_limited'],
+    [429, 'rate_limit', 'provider_rate_limited'],
+    [503, 'unavailable', 'security_service_unavailable'],
+    [503, 'unavailable', 'provider_unavailable'],
+    [503, 'unavailable', 'invalid_limit_configuration'],
+    [502, 'unavailable', 'invalid_provider_response'],
+    [502, 'unavailable', 'unsafe_provider_response'],
+    [504, 'timeout', undefined],
+  ] as const) {
+    failure = { phase: 'catalog', status, code };
+    const before = rejected;
+    await assert.rejects(provider.listServices!(), (error: unknown) => {
+      assert.ok(error instanceof IntegrationCatalogFailure);
+      assert.equal(error.reason, reason);
+      assert.equal(error.status, status);
+      assert.equal(error.statusCode, status);
+      assert.equal(error.code, code);
+      assert.ok(error.message.includes(String(status)));
+      assert.doesNotMatch(String(error), /synthetic-private|fixture-key/);
+      assert.equal(error.cause, undefined);
+      return true;
+    });
+    assert.ok(rejected > before);
+  }
+  failure = { phase: 'catalog', status: 503, code: 'synthetic-private-provider-body' };
+  await assert.rejects(provider.listServices!(), (error: unknown) => {
+    assert.ok(error instanceof IntegrationCatalogFailure);
+    assert.equal(error.status, 503);
+    assert.equal(error.code, undefined);
+    assert.doesNotMatch(String(error), /synthetic-private|fixture-key/);
+    return true;
+  });
+  for (const code of [
+    'installation_enrollment_required',
+    'installation_revoked',
+    'browser_pairing_required',
+  ]) {
+    failure = { phase: 'catalog', status: 403, code };
+    await assert.rejects(provider.listServices!(), (error: unknown) => {
+      assert.ok(error instanceof IntegrationCatalogAccessDenied);
+      assert.equal(error.code, code);
+      assert.match(error.message, /HTTP 403/);
+      return true;
+    });
+  }
+  failure = { phase: 'catalog', status: 403 };
+  await assert.rejects(provider.listServices!(), IntegrationCatalogAccessDenied);
+  failure = undefined;
+  const timeout = t.mock.method(client.getClient().toolkits, 'list', async () => {
+    throw new APIConnectionTimeoutError();
+  });
+  await assert.rejects(provider.listServices!(), (error: unknown) => {
+    assert.ok(error instanceof IntegrationCatalogFailure);
+    assert.equal(error.reason, 'timeout');
+    assert.equal(error.statusCode, 504);
+    assert.equal(error.status, undefined);
+    return true;
+  });
+  timeout.mock.restore();
+  assert.ok((await provider.listServices!()).some((service) => service.slug === 'gmail'));
   const connect = async () => {
     const session = await provider.createSession('fixture-owner', {});
     return session.authorize('gmail', 'http://localhost:4310/api/apps/callback');

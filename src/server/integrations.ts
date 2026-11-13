@@ -8,6 +8,7 @@ import { getDomain } from 'tldts';
 import type { AppSetupStatus, Connection, VaultLoginEntry } from '../shared/contracts.ts';
 import {
   IntegrationCatalogAccessDenied,
+  IntegrationCatalogFailure,
   IntegrationConnectionError,
   IntegrationInboxCursorExpired,
   IntegrationPermissionError,
@@ -449,7 +450,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     } catch (error) {
       if (error instanceof IntegrationCatalogAccessDenied)
         throw new IntegrationError(error.message, 403);
-      if (error instanceof IntegrationConnectionError) throw error;
+      if (error instanceof IntegrationConnectionError || error instanceof IntegrationCatalogFailure)
+        throw error;
       logFailure('app_catalog_failed', error);
       throw new IntegrationError('The app catalog is unavailable. Try again later.', 502);
     }
@@ -2407,6 +2409,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       scope.setErrorHandler((error, _request, reply) => {
         const status =
           error instanceof IntegrationError ||
+          error instanceof IntegrationCatalogFailure ||
           error instanceof IntegrationConnectionError ||
           error instanceof DiscoveredConnectionError ||
           error instanceof BrowserConnectionError
@@ -2414,11 +2417,15 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             : error instanceof z.ZodError
               ? 400
               : 502;
-        if (status === 502 && !(error instanceof IntegrationError))
+        if (
+          status === 502 &&
+          !(error instanceof IntegrationError || error instanceof IntegrationCatalogFailure)
+        )
           logFailure('connection_failed', error);
         reply.code(status).send({
           error:
             error instanceof IntegrationError ||
+            error instanceof IntegrationCatalogFailure ||
             error instanceof IntegrationConnectionError ||
             error instanceof DiscoveredConnectionError ||
             error instanceof BrowserConnectionError
