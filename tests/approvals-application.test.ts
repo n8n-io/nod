@@ -981,7 +981,11 @@ test(
             args: { sourceId: 'fixture:notes', ids: ['record/1'] },
           });
           try {
-            await application.triage.updatePreferences({ notificationRule: '', rules: '' });
+            await application.triage.updatePreferences({
+              notificationRule: '',
+              rules: '',
+              proactivePaused: false,
+            });
             const turnId = await enqueueTurn(prompt, {
               source: 'event',
               background: true,
@@ -1012,6 +1016,7 @@ test(
       await t.test(
         'a proactive app read runs only what the read-only check calls a read',
         async () => {
+          const previous = await application.triage.getPreferences();
           const connection = (
             await pool.query(
               "SELECT id FROM app_connections WHERE owner_id=$1 AND slug='gmail' AND NOT revoked",
@@ -1053,6 +1058,7 @@ test(
             return turn.status === 'succeeded' ? JSON.stringify(results.get(turnId)) : turn.error;
           };
           try {
+            await application.triage.updatePreferences({ proactivePaused: false });
             assert.match(
               await read({ tool: 'GMAIL_FETCH_EMAILS', args: { query: 'invoice' } }),
               /Search this source/,
@@ -1097,6 +1103,7 @@ test(
           } finally {
             toolSearch = undefined;
             readOnlyActions.clear();
+            await application.triage.updatePreferences(previous);
           }
         },
       );

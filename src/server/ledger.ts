@@ -382,6 +382,7 @@ export function createLedger({
           + COALESCE((SELECT sum(maximum_usd) FROM preparation_reservations WHERE owner_id=$1 AND month=${monthStart}),0))::float8 AS committed`,
         [ownerId],
       );
+      if (scope.closed) throw new Error('This automatic preparation has stopped.');
       month = rows[0].month;
       if (
         rows[0].committed >= rows[0].maximum ||
@@ -400,7 +401,7 @@ export function createLedger({
       );
     }, pool);
     let settled = false;
-    return async (spentUsd: number | null) => {
+    const settle = async (spentUsd: number | null) => {
       if (settled || spentUsd === null || !Number.isFinite(spentUsd) || spentUsd < 0) return;
       settled = true;
       await pool
@@ -411,6 +412,11 @@ export function createLedger({
         .catch((error) => logFailure('preparation_reservation_settle', error));
       if (scope.closed) await releasePreparation(scope.id);
     };
+    if (scope.closed) {
+      await settle(0);
+      throw new Error('This automatic preparation has stopped.');
+    }
+    return settle;
   }
 
   async function releasePreparation(id: string) {

@@ -472,15 +472,7 @@ export function createDefaultAdapters(
     },
     models,
     agent: createPiAgent({
-      resolve: async (session) => {
-        if (!session.restricted) return models.resolve();
-        const access = await models.resolveClassification();
-        if (!access)
-          throw new Error(
-            'Automatic preparation needs a small model on your selected connection. Open Settings > Models and reload its models or choose another connection.',
-          );
-        return access;
-      },
+      resolve: () => models.resolve(),
       provider,
       model,
       sessionRoot: join(dataRoot, 'sessions'),
@@ -1797,8 +1789,7 @@ async function initializeApplication(
     modelAvailable: async () =>
       !(await ledger.preparationLimit()).reached &&
       (adapters.models
-        ? adapters.models.hasClassificationModel() &&
-          (await adapters.models.automaticRequestsAllowed())
+        ? await adapters.models.automaticRequestsAllowed()
         : adapters.model.configured),
     redact: createTextRedactor(secrets),
     sources: (client) => observations.sources(client),

@@ -15,11 +15,11 @@ Saved work starts observation when at least one saved task exists. An empty loca
 
 App events, source change tokens, and due matters feed one observer for your active conversation. Code checks the signals before any model request. An unchanged source with no due matter starts no monitoring model call. There is no periodic model search through every connected app.
 
-The server reads a bounded batch through the normal Trust check. It collects source pages before the model assessment, within 12 reads and a 96 KB soft input bound. Each source gets a share of the read allowance. Saved cursors keep the remaining pages for later checks. It compares record versions with the last successful assessment. It passes changed records to one small observer as untrusted data. There is no separate model assessment for each record. Failed reads remain unknown and do not start a larger model. A later check can retry them.
+The server reads a bounded batch through the normal Trust check. It collects source pages before the model assessment, within 12 page reads and a 96 KB soft input bound. Each source gets a share of the read allowance. Saved cursors keep the remaining pages for later checks. It compares record versions with the last successful assessment. It passes changed records to one observer as untrusted data. There is no separate model assessment for each record. Failed reads remain unknown and do not start a larger model. A later check can retry them.
 
 The observer reads current facts and relevant memory, then saves useful work. It keeps its context while the provider cache is warm. Saved matters carry the state between sessions. Events that arrive during a read stay pending for the next check.
 
-The observer uses a known small model from your selected connection. It never falls back to your larger chat model. Without a supported small model, automatic preparation waits. Work that needs normal tools starts a separate task with your selected model. Both stages share the preparation allowance. Server code controls permission, freshness, and delivery.
+The observer uses your selected model after the code gate finds new work. It has no separate model selector. Work that needs normal tools starts a separate task. Both stages share the preparation allowance. The benchmark found that forcing the smallest model could miss important work. Server code controls permission, freshness, and delivery.
 
 ```mermaid
 flowchart TD
@@ -90,7 +90,7 @@ There's no message count. The worker offers only work worth an interruption, wei
 
 - **One saved identity.** Related reports reuse the same primary source record and matter key. The model must recognize that they describe the same matter. Different keys can still cause repeated nudges.
 - **Once per matter.** A matter nudges you again only when its evidence changes and the change matters, such as an earlier deadline or a new option.
-- **Quiet hours.** A nudge that comes up at night goes out when they end, unless it's high impact with strong evidence and its deadline comes first. The small observer can assess a changed source, but an offer must pass these delivery rules. A saved matter that comes due at night waits for the end unless its deadline comes first. A task the observer starts at night begins when they end, so its questions and approvals wait.
+- **Quiet hours.** A nudge that comes up at night goes out when they end, unless it's high impact with strong evidence and its deadline comes first. The observer can assess a changed source, but an offer must pass these delivery rules. A saved matter that comes due at night waits for the end unless its deadline comes first. A task the observer starts at night begins when they end, so its questions and approvals wait.
 - **Snooze and pause.** A snoozed matter waits until its time. "Pause preparation" stops source checks, nudges, new tasks Nod would start, planned checks of tasks it started, and the email checks on new Gmail mail. Schedules and tasks you started keep running.
 
 "Fewer of these" or "that wasn't useful" becomes feedback the worker uses next time.

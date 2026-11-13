@@ -387,13 +387,7 @@ export async function startStack(options: {
             provider: model.provider,
             model: model.name,
             apiKey: model.apiKey,
-            resolve: async (session) => {
-              if (!session?.restricted) return models.resolve();
-              const access = await models.resolveClassification();
-              if (!access)
-                throw new Error('The evaluation connection has no small background model.');
-              return access;
-            },
+            resolve: () => models.resolve(),
             sessionRoot,
             ...(model.effort
               ? {

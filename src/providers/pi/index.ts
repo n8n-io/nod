@@ -37,7 +37,7 @@ import { audioContext, audioMessage, readsNativeAudio } from './audio.ts';
 import { piModelTrace } from './traces.ts';
 import type { ModelTraces } from '../../ports/traces.ts';
 import type { ModelAccess } from '../../ports/models.ts';
-import type { AgentSessionOptions, Agent } from '../../ports/agent.ts';
+import type { Agent } from '../../ports/agent.ts';
 import {
   closeInterruptedCalls,
   completeAssistantMessage,
@@ -437,7 +437,7 @@ function checkpointOversizedHistory(
 
 export function createPiAgent(options: {
   provider: string;
-  resolve?: (session: AgentSessionOptions) => Promise<ModelAccess>;
+  resolve?: () => Promise<ModelAccess>;
   model?: string;
   apiKey?: string;
   sessionRoot: string;
@@ -455,7 +455,7 @@ export function createPiAgent(options: {
   return {
     async open(input) {
       if (disposed) throw new Error('The agent service has stopped.');
-      const access = await options.resolve?.(input);
+      const access = await options.resolve?.();
       if (input.automatic) await access?.prepareRequest?.(access.definition.choice.id, true);
       if (!access && !options.apiKey)
         throw new Error('Configure the selected model provider to enable the assistant.');

@@ -41,7 +41,7 @@ See [Capability evals](/contribute/evals/#stress-proactive-work) for commands. L
 
 ## Compare the change gate
 
-Keep automatic preparation on in both versions. Otherwise an opt-out can look like a cost improvement. Run both code revisions with the same source fixtures, owner rules, selected model, and judge. The candidate uses the production small-observer route. Tasks still use the selected model.
+Keep automatic preparation on in both versions. Otherwise an opt-out can look like a cost improvement. Run both code revisions with the same source fixtures, owner rules, selected model, and judge. The candidate uses production model selection. The observer and its tasks use the selected model after code checks the change signal.
 
 Measure idle checks separately from useful-work cases. Include repeated events, later pages, outages, dismissal, snooze, changed goals, and hostile source data. Report missed important work with cost. A cheap run that misses needed work is a failure.
 

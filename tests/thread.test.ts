@@ -8295,6 +8295,26 @@ test(
                   assert.ok(Math.abs(final.spentUsd - 0.3) < 1e-12);
                   assert.equal(final.reservedUsd, 0);
                   assert.equal(final.reached, false);
+                  const admission = await db.pool.connect();
+                  await admission.query('BEGIN');
+                  await admission.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+                    `preparation-budget:${ownerId}`,
+                  ]);
+                  let delayed!: Promise<unknown>;
+                  try {
+                    await ledger.withPreparation(randomUUID(), async () => {
+                      delayed = ledger.reserve(0.1).then(
+                        () => undefined,
+                        (error) => error,
+                      );
+                      await delay(5);
+                    });
+                  } finally {
+                    await admission.query('COMMIT');
+                    admission.release();
+                  }
+                  assert.match(String(await delayed), /has stopped/);
+                  assert.equal((await ledger.preparationLimit()).reservedUsd, 0);
                 } finally {
                   await ledger.setLimits({ preparationUsd: 5 });
                   await db.pool.query(
