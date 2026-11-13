@@ -19,7 +19,7 @@ The server reads a bounded batch through the normal Trust check. It collects sou
 
 The observer reads current facts and relevant memory, then saves useful work. It keeps its context while the provider cache is warm. Saved matters carry the state between sessions. Events that arrive during a read stay pending for the next check.
 
-The observer uses your selected model after the code gate finds new work. It has no separate model selector. Work that needs normal tools starts a separate task. Both stages share the preparation allowance. The benchmark found that forcing the smallest model could miss important work. Server code controls permission, freshness, and delivery.
+The observer uses your selected model after the code gate finds new work. It has no separate model selector. Work that needs normal tools starts a separate task. Both stages share the preparation allowance. Server code controls permission, freshness, and delivery.
 
 ```mermaid
 flowchart TD

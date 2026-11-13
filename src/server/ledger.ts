@@ -1094,6 +1094,10 @@ export function createLedger({
     const body = limitsInput.parse(input);
     const capture = snapshotAnalytics(analytics);
     const write = async (client: PoolClient) => {
+      if (body.preparationUsd !== undefined)
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+          `preparation-budget:${ownerId}`,
+        ]);
       await client.query(
         'INSERT INTO spending_limits(owner_id,monthly_usd) VALUES($1,NULL) ON CONFLICT DO NOTHING',
         [ownerId],
