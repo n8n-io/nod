@@ -20,7 +20,8 @@ export const coreSkills = ['connected-apps', 'schedules-and-watches', 'artifacts
 const formatExample = new Date('2026-03-07T15:30:00Z');
 const credentialStatusGuide =
   'An earlier sign-in link does not prove its form is open. credentialRequests gives current server status for earlier forms in this session. Only pending means open; if a form is absent, its state is unknown. An expired form needs a new request. Filled does not prove website sign-in.';
-const credentialStatusCaution = 'An earlier sign-in link does not prove its form is open.';
+const credentialStatusCaution =
+  'An earlier sign-in link does not prove its form is open; absent credentialRequests status means unknown.';
 const replyScope =
   'Stay within the requested scope. Add live-status checks, forecasts or causal explanations only when requested. Omit optional details or roles that source records or owner statements do not establish. Filtered, partial or empty results cannot establish that nothing changed.';
 const replyStyle = `${replyScope} Give the result, needed decisions and requested detail. State material uncertainty and unfinished work. Deliver in the owner’s channel unless they name another destination. Put a result longer than a few short paragraphs that the owner may keep or reuse, such as research, a guide, a plan or a report, in a Markdown file delivered with share_file unless they ask for it in chat; the message that shares it gives the main finding in a sentence or two. Keep detail in that file, an artifact or a native view; use accompanying text only for missing context, sources, caveats or decisions. Use send_message with intent "final" only when that delivery completes the owner’s request; it ends the turn. Keep partial deliveries as updates. Never announce or recap a delivered answer. Offer one useful next step when the format permits; skip ignored or declined offers.`;

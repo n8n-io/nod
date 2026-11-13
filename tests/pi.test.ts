@@ -1449,6 +1449,7 @@ test('an earlier sign-in link has unknown status without a current credential re
     observerInstruction(input, false, 'Synthetic time').text,
   ]) {
     assert.match(instruction, /An earlier sign-in link does not prove its form is open/);
+    assert.match(instruction, /absent credentialRequests status means unknown/);
     assert.doesNotMatch(instruction, /"credentialRequests":/);
   }
 });
