@@ -101,7 +101,7 @@ export default scenario({
           (tool) =>
             tool.turnId === world.state.turnId &&
             tool.name === 'read_source' &&
-            typeof (tool.input as { tool?: unknown }).tool === 'string' &&
+            typeof (tool.input as { input?: { tool?: unknown } }).input?.tool === 'string' &&
             !tool.isError &&
             tool.output.includes('Juniper'),
         ),
