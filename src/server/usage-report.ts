@@ -1,5 +1,5 @@
 import { clockOptions } from '../shared/date-locale.ts';
-import type { TrustEntry, TrustView } from '../shared/trust.ts';
+import { actionText, type TrustEntry, type TrustView } from '../shared/trust.ts';
 
 export interface UsageReport {
   view: TrustView;
@@ -151,7 +151,7 @@ export function usagePdf(report: UsageReport, exported: Date) {
       ...clockOptions(locale, report.hourCycle),
       timeZone,
     });
-    const did = [...new Set(entry.actions.map((action) => action.label))].join(', ');
+    const did = [...new Set(entry.actions.map(actionText))].join(', ');
     line(
       `${time}  ${entry.title}${did ? ` (${did})` : ''}`,
       9,

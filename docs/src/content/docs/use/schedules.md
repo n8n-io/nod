@@ -25,6 +25,7 @@ Nod uses your time zone, saved from your browser the first time you use Nod. Cha
 Open **Scheduled**. Select **New schedule** to start a conversation with Nod, which asks one question at a time about what to do and when. Existing schedules show their timing and next run.
 
 - Use the switch to pause or resume it.
+- Select **Run now** to start one run and open its history.
 - Select **See details** to read the instruction, any saved baseline, and that schedule's runs.
 - Select **Edit schedule** to change its name, instructions or timing.
 - Select **Ask Nod** to change it in your own words.
@@ -33,6 +34,16 @@ Open **Scheduled**. Select **New schedule** to start a conversation with Nod, wh
 Pausing or deleting a schedule here removes any unanswered request to change or cancel it from Nod's chat. A request already sent to Telegram or WhatsApp remains there, but replying to it cannot change the schedule.
 
 In chat, "stop the morning summary" asks Nod to pause the schedule. If Nod asks for confirmation, it stays active until you approve. Once paused, you can resume it in **Scheduled**; use **Delete schedule** to remove it.
+
+## Run a schedule now
+
+Open **Scheduled** and select **Run now** on a schedule. Nod opens its details so you can follow the run. The new result opens when it is available.
+
+The extra run uses the saved instruction and delivery channel. The usual approval checks still apply. It does not change the next scheduled time or resume a paused schedule. You can also run a completed one-time schedule again.
+
+The button shows **Queued**, **Working**, or **Needs your input** while a run is active. You cannot start another run until that run ends. A recurring schedule skips timed runs that fall due during an active run. A one-time schedule waits for the active run to end.
+
+**Run now** runs a watch even when its connected accounts have no changes. If the connection drops, **Try again** checks or starts the same run. It cannot start a second copy.
 
 ## What happens when a schedule runs
 
@@ -50,7 +61,7 @@ flowchart TD
 - **A failed run tells you.** If a run stops on an error, Nod sends a short message that names the schedule and says what stopped it, so a missing summary never goes unnoticed.
 - **It replies where you asked.** A schedule you set up on Telegram sends its messages to Telegram.
 - **Approvals still apply.** Each action is checked against the instruction that created the schedule. If an action isn't covered, Nod asks you first, naming the schedule and what it's for. If the check itself can't decide, the action doesn't run and you aren't asked. See [Approvals](/trust/approvals/).
-- **One run at a time.** While a run is still queued, working or waiting for your answer, a recurring schedule skips its next runs, so it doesn't ask you again while a question is open. A run does its work itself and can't set up more schedules.
+- **One run at a time.** While a run is still queued, working or waiting for your answer, a recurring schedule skips its next runs. A one-time schedule waits for the active run to end. A run does its work itself and can't set up more schedules.
 - **Watches skip unchanged runs.** When a recurring check can only find something new after a change in your connected accounts, such as waiting for a reply, Nod saves which accounts it watches. Before each run, Nod checks those accounts for new mail, changed events or app activity without a model call, and skips the run when nothing changed since the last finished run. The first run, and the run after a failed one, always run. Reminders, digests, websites and checks tied to a time don't skip.
 
 Open a schedule's **See details** to read its runs, newest first. Select **Load earlier runs** for older results. Completed one-time schedules remain under **Inactive**, with their runs available to review.

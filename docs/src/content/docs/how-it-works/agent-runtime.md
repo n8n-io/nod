@@ -9,11 +9,11 @@ This page explains what happens inside a turn: the Pi session, the tools the mod
 
 The short version: `src/runtime` runs each turn in a Pi session. Every tool call goes through one turn guard. Results from the outside world reach the model wrapped as untrusted data.
 
-Nod has its own warm, direct voice. It uses normal sentence capitalization and preserves names and acronyms. It follows the conversation language and explicit style requests, and translates what it reads in websites, email and documents, keeping their original wording only in quotes, such as a button name. It does not copy the user's casing, slang or tone. These rules also apply to channel notices and confirmation questions.
+Nod has its own warm, direct voice. It uses normal sentence capitalization and preserves names and acronyms. It follows the conversation language and explicit style requests, and translates what it reads in websites, email and documents, keeping their original wording only in quotes, such as a button name. It does not copy the user's casing, slang or tone. These rules also apply to channel notices. Approval questions use server-owned English framing around the frozen action data.
 
 The prompt allows Nod to address you by name only when your own words establish it, including saved memory based on those words. It tells Nod to omit the name otherwise. Connected-account labels, email addresses and names in outside content do not establish your name.
 
-Replies, task updates, questions and confirmations share one writing rule. They use short paragraphs with blank lines between them. Long answers are allowed when useful. They use lists and headings when those help you read. On Telegram and WhatsApp they use lists instead of tables and headings. A long result you may keep or reuse, such as research, a guide, a plan or a report, comes as a Markdown file with a short message giving the main finding, unless you ask for it in chat. A confirmation asks once and separates the necessary details into short paragraphs.
+Replies, task updates and questions share one writing rule. They use short paragraphs with blank lines between them. Long answers are allowed when useful. They use lists and headings when those help you read. On Telegram and WhatsApp they use lists instead of tables and headings. A long result you may keep or reuse, such as research, a guide, a plan or a report, comes as a Markdown file with a short message giving the main finding, unless you ask for it in chat. A confirmation asks once and shows the action data separately.
 
 The prompt asks Nod to preserve source titles and identifying context in the visible reply, including a meeting's known date or a document's project. A link or the period searched does not replace that context. Context already clear for the item need not be repeated. The reply says when details are unknown, including people's roles or an item's purpose, without dropping known facts or inventing context.
 
@@ -58,6 +58,8 @@ History search returns message IDs and turn IDs. Its `around` option accepts eit
 Nod repairs incomplete assistant text and thinking blocks when it restores or saves a session and before each model request. This also covers tool continuations and summary requests. The repair keeps valid text and tool calls and does not repeat an action.
 
 Pi validates tool arguments as JSON Schema with `@earendil-works/pi-schema`. It can convert a numeric string to a number or a single value to an array. This also applies to MCP tools. TypeBox refinements and custom TypeBox formats do not run. Nod's tool checks, turn guard, and trust check still apply before an action runs.
+
+When an action has one matching input form, a rejected call names its missing or invalid fields. Five repeated input, tool availability, sign-in binding, or action review failures for the same tool end the run before another model request. A successful call to that tool clears its count. Parent and helper sessions have separate counts. The failure keeps its last specific cause after secret removal. This limit does not repeat any tool or bypass an approval.
 
 Nod applies provider settings when it opens a model connection. Groq Qwen uses the system message role. OpenRouter MiMo V2.6 Flash uses tools without optional strict sampling, so tools with different sampling settings can share a request. A tool that requires strict sampling still refuses a model that cannot supply it. OpenRouter's free route keeps reasoning enabled because a routed model can require it. Its picker does not offer Off; a saved Off choice uses the lowest supported effort. Ollama models with on or off thinking use boolean controls instead of a named effort. OpenCode helper calls get a separate session ID for each helper request, shared by that request's model retries.
 
@@ -133,6 +135,7 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/nod/
 | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `read`, `bash`, `edit`, `write`, `find`, `ls`                       | Pi's native tools. They run inside the workspace container.                                                                                 |
 | `skills`                                                            | Reads a [guide](/how-it-works/skills/) or [learned skill](/how-it-works/memory/#learned-skills); only owner-started work writes one.        |
+| `nod_docs`                                                          | Searches the documentation shipped with Nod and reads relevant sections with source links.                                                  |
 | `set_status`                                                        | Replaces the live activity description for a chat or saved task. It sends no chat message.                                                  |
 | `send_message`                                                      | Sends a message now. Schedule and event runs use explicit delivery; saved tasks also deliver their final reply.                             |
 | `ask_user`                                                          | Asks one question and ends the turn as waiting.                                                                                             |
@@ -153,6 +156,14 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/nod/
 | `codemode`                                                          | Runs a model-written script that calls workspace, web and connected MCP server tools.                                                       |
 
 The `pi-web-access` extension runs in the server process with the server's permissions, but has no direct access to workspace files and never uses the server's own logins, such as a GitHub CLI session. Its connections go only to public addresses, checked when each connection opens, IP addresses included. Nod drops any proxy, whether the model names it or the settings file sets it. Its settings live in `NOD_DATA_ROOT/pi/web-search.json`.
+
+### Questions about Nod
+
+Nod searches its own documentation before answering any question about Nod. This covers setup, models, channels, schedules, memory, privacy, safety, troubleshooting, and development. It reads the relevant sections and links to them. The same rule applies when Nod uses its shorter instructions for a small model context.
+
+The `nod_docs` tool builds an index on its first use and keeps it in memory. Search ignores case and accents, while keeping different words distinct. It gives more weight to section titles and terms that occur in fewer sections. Search adjusts for section length and limits the effect of repeated words. Search returns up to five results with short excerpts. A read returns up to 8,000 characters. Longer sections include an offset to read the next part. Neither action calls a model or sends a network request.
+
+Desktop packages and self-hosted images include the Markdown and MDX pages from the same source as the application. The tool reads only indexed sections. It accepts no file path or website address. Documentation is data, not permission to act. Nod still uses live tools to check current account state and owner settings.
 
 ## The turn guard
 
@@ -220,7 +231,7 @@ Task IDs stay in the turn message. Pi supplies the workspace path after the shar
 
 For OpenAI API models that support explicit cache boundaries, Nod marks the end of the shared instructions before the workspace path. This boundary also covers tool definitions that precede the instructions. The request keeps implicit caching for the growing conversation and uses the provider's default cache lifetime.
 
-For Anthropic API models, Nod moves the system text's cache marker to that same boundary. The workspace path follows in a second text block. The request keeps the SDK's tool and conversation markers, cache lifetime and total number of markers. Disabled caching stays disabled.
+For ordinary Anthropic API turns, Nod moves the system text's cache marker to that same boundary. The workspace path follows in a second text block. The request keeps the SDK's tool and conversation markers, cache lifetime and total number of markers. Disabled caching stays disabled.
 
 ChatGPT subscriptions and other model APIs keep their existing cache settings.
 
@@ -233,6 +244,12 @@ The owner context is a message of its own, never part of the system prompt, so a
 - Compaction summaries leave the owner context out. A session that compacts it away gets it again with its next request.
 
 Providers that take a prompt cache key, such as OpenAI, get the same one from every session of a thread: a keyed hash of the thread ID that changes when Nod restarts. When a session's system prompt and tools match a recent request from the same thread, as they do for back-to-back background runs even after memory changes, the provider reads them from its cache and bills them at its cheaper cache-read rate. The code is in [`src/providers/pi/index.ts`](https://github.com/n8n-io/nod/blob/main/src/providers/pi/index.ts).
+
+### Scheduled turn caching
+
+Each scheduled run starts a separate Pi session. For Anthropic API models, Nod places owner context and unchanged request fields ahead of the task ledger, recent chat, current instruction and time. It marks the owner context and stable request prefix for caching, so a later run with the same prefix can reuse them even though the sessions are separate. The changing tail keeps the five-minute cache lifetime.
+
+For an enabled recurring schedule on its current revision, Nod chooses the stable prefix's lifetime from the planned gap between runs: five minutes for gaps up to five minutes, and one hour for gaps longer than five minutes and at most 55 minutes. Longer gaps and one-time schedules use the provider's default caching. A failed cadence lookup also uses default caching and does not stop the scheduled turn. Anthropic [bills cached input at its cache-read rate](https://platform.claude.com/docs/en/build-with-claude/prompt-caching), while the one-hour option has a higher cache-write cost, so it is reserved for intervals likely to reuse it.
 
 ## Message cadence
 

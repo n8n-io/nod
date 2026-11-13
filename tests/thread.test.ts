@@ -464,6 +464,7 @@ test(
           return operation();
         }),
       executeConfirmation: async () => undefined,
+      credentialRequestStatuses: vault.requestStatuses,
       bindVerificationQuestion: verification.bindQuestion,
       connectedApps: readConnectedApps,
       spendingLimit: async () => (limitReached ? { monthlyUsd: 25 } : null),
@@ -822,6 +823,23 @@ test(
           assert.equal(text.length, 100_000);
           assert.ok(displayText.length > 700_000);
           assert.ok(Buffer.byteLength(message) > 1024 * 1024);
+          const overText = await isolated.inject({
+            method: 'POST',
+            url: '/api/messages',
+            headers: { ...headers, 'content-type': 'application/json' },
+            payload: JSON.stringify({ text: 'x'.repeat(100_001) }),
+          });
+          assert.equal(overText.statusCode, 400);
+          assert.equal(overText.json().code, 'message_too_long');
+          const overAudioText = await isolated.inject(
+            audioRequest({
+              text: 'x'.repeat(100_001),
+              clientMessageId: randomUUID(),
+              threadId: randomUUID(),
+            }),
+          );
+          assert.equal(overAudioText.statusCode, 400);
+          assert.equal(overAudioText.json().code, 'message_too_long');
           assert.equal(
             (
               await isolated.inject({
@@ -2015,6 +2033,179 @@ test(
         assert.equal((await sendJson({ text: ` ${'x'.repeat(100_000)}` })).statusCode, 400);
       });
 
+      await t.test(
+        'a task start reuses an acknowledgement in the same owner request',
+        async (t) => {
+          const previousObserver = inspectObserver;
+          const startMessage = 'I will review the synthetic inbox and flag urgent messages.';
+          const resultText = 'Three synthetic messages need review. Two reply drafts are saved.';
+          const cases = [
+            {
+              prompt: 'Review the synthetic inbox and flag urgent messages.',
+              prior: 'On it. I will review the synthetic inbox.',
+              start: startMessage,
+              expected: ['On it. I will review the synthetic inbox.'],
+              anchor: 0,
+            },
+            {
+              prompt: 'Review the synthetic inbox after checking the invoice.',
+              prior: 'On it. I will review the synthetic inbox.',
+              between: 'The invoice is due Friday for €450.',
+              start: startMessage,
+              expected: [
+                'On it. I will review the synthetic inbox.',
+                'The invoice is due Friday for €450.',
+              ],
+              anchor: 0,
+            },
+            {
+              prompt: 'Review the synthetic Gmail inbox and save reply drafts.',
+              prior:
+                "On it! I'll go through your Gmail, pull out anything urgent, and save reply drafts for the emails that need an answer. Nothing gets sent without your OK.",
+              start:
+                "I've started on your inbox, Synthetic account 1. I'll sort your Gmail into groups, point out anything urgent and why, and save draft replies for people who need an answer.",
+              expected: [
+                "On it! I'll go through your Gmail, pull out anything urgent, and save reply drafts for the emails that need an answer. Nothing gets sent without your OK.",
+              ],
+              anchor: 0,
+            },
+            {
+              prompt: 'Prepare synthetic email reply drafts and wait for approval.',
+              prior:
+                "On it. I'll draft email replies. No email replies will be sent without your approval.",
+              start:
+                "I've started drafting email replies. No email replies will be sent without your approval.",
+              expected: [
+                "On it. I'll draft email replies. No email replies will be sent without your approval.",
+              ],
+              anchor: 0,
+            },
+            {
+              prompt: 'Revisa el buzón sintético y prepara borradores.',
+              prior:
+                'Ya estoy revisando tu buzón y preparando borradores de respuesta. No enviaré nada sin tu aprobación.',
+              handoff: true,
+              start:
+                'Ya he empezado a revisar tu buzón y preparar borradores de respuesta. No enviaré nada sin tu aprobación.',
+              expected: [
+                'Ya estoy revisando tu buzón y preparando borradores de respuesta. No enviaré nada sin tu aprobación.',
+              ],
+              anchor: 0,
+            },
+            {
+              prompt: 'Review the synthetic inbox after confirming the deadline.',
+              prior:
+                'I found 3 urgent synthetic inbox messages. The invoice is due Friday for €450.',
+              start: startMessage,
+              expected: [
+                'I found 3 urgent synthetic inbox messages. The invoice is due Friday for €450.',
+                startMessage,
+              ],
+              anchor: 1,
+            },
+            {
+              prompt: 'Review the synthetic inbox after checking the messages.',
+              prior: 'I found urgent synthetic inbox messages and flagged them.',
+              start: startMessage,
+              expected: ['I found urgent synthetic inbox messages and flagged them.', startMessage],
+              anchor: 1,
+            },
+            {
+              prompt: 'Check the synthetic invoice due Friday.',
+              prior: 'No, the synthetic invoice is due Friday.',
+              start: 'Check the synthetic invoice due Friday.',
+              expected: [
+                'No, the synthetic invoice is due Friday.',
+                'Check the synthetic invoice due Friday.',
+              ],
+              anchor: 1,
+            },
+            {
+              prompt: 'Review whether the synthetic invoice can be approved.',
+              prior: 'I will not approve the synthetic invoice.',
+              start: 'I will approve the synthetic invoice.',
+              expected: [
+                'I will not approve the synthetic invoice.',
+                'I will approve the synthetic invoice.',
+              ],
+              anchor: 1,
+            },
+          ] as const;
+          const started = new Map<string, Task>();
+          inspectObserver = async (context) => {
+            const scenario = cases.find(({ prompt }) => prompt === context.prompt);
+            if (!scenario) return;
+            if (context.taskContext) {
+              await context.reply(resultText);
+              await context.task!({
+                action: 'finish',
+                id: context.taskContext.id,
+                status: 'done',
+                result: resultText,
+              });
+              return { status: 'succeeded' };
+            }
+            await context.reply(
+              scenario.prior,
+              undefined,
+              undefined,
+              undefined,
+              'handoff' in scenario && scenario.handoff,
+            );
+            if ('between' in scenario) await context.reply(scenario.between);
+            started.set(
+              context.prompt,
+              (await context.task!({
+                action: 'start',
+                title: 'Review synthetic inbox',
+                message: scenario.start,
+                doneWhen: 'Urgent messages are flagged and reply drafts saved',
+                now: 'Reading synthetic messages',
+              })) as Task,
+            );
+            return { status: 'succeeded' };
+          };
+          t.after(() => {
+            inspectObserver = previousObserver;
+          });
+          for (const scenario of cases) {
+            const request = await userMessages.submit(scenario.prompt);
+            await waitFor(settled(request.turnId));
+            const task = started.get(scenario.prompt);
+            assert.ok(task);
+            const replies = (
+              await db.pool.query<{ id: string; text: string }>(
+                "SELECT id,text FROM messages WHERE owner_id=$1 AND turn_id=$2 AND role='assistant' AND hidden_at IS NULL ORDER BY created_at,id",
+                [ownerId, request.turnId],
+              )
+            ).rows;
+            assert.deepEqual(
+              replies.map(({ text }) => text),
+              scenario.expected,
+            );
+            assert.equal(task.messageId, replies[scenario.anchor]!.id);
+            const taskTurn = (
+              await db.pool.query<{ id: string }>(
+                "SELECT id FROM turns WHERE owner_id=$1 AND session_id=$2 AND source='task'",
+                [ownerId, task.id],
+              )
+            ).rows[0]!.id;
+            await waitFor(settled(taskTurn));
+            const taskReplies = (
+              await db.pool.query<{ text: string }>(
+                "SELECT text FROM messages WHERE owner_id=$1 AND turn_id=$2 AND role='assistant' AND hidden_at IS NULL",
+                [ownerId, taskTurn],
+              )
+            ).rows;
+            assert.deepEqual(
+              taskReplies.map(({ text }) => text),
+              [resultText],
+            );
+            assert.equal((await tasks.read()).find(({ id }) => id === task.id)?.status, 'done');
+          }
+        },
+      );
+
       await t.test('a task resumes its own session when its next check is due', async (t) => {
         const previousObserver = inspectObserver;
         const prompt = 'Track a synthetic reply after connecting its source.';
@@ -2417,6 +2608,23 @@ test(
         await waitFor(settled(background));
         assert.equal(await turnStatus(background), 'failed');
         assert.equal(ran(background), undefined);
+      });
+
+      await t.test('a scheduled turn continues when cache policy lookup fails', async (t) => {
+        const previous = dependencies.scheduleCache;
+        dependencies.scheduleCache = async () => {
+          throw new Error('Synthetic cache policy lookup failure');
+        };
+        t.after(() => {
+          dependencies.scheduleCache = previous;
+        });
+        const turnId = await thread.enqueueTurn('schedule cache lookup failure fixture', {
+          source: 'schedule',
+          sourceId: randomUUID(),
+        });
+        await waitFor(settled(turnId));
+        assert.equal(await turnStatus(turnId), 'succeeded');
+        assert.equal(ran(turnId)?.scheduleCache, undefined);
       });
 
       await t.test(
@@ -2984,6 +3192,21 @@ test(
           );
         },
       );
+
+      await t.test('voice transcript overflow rejects without saving a message', async () => {
+        const clientMessageId = randomUUID();
+        const response = await sendAudio({
+          threadId,
+          clientMessageId,
+          text: 'x'.repeat(99_990),
+        });
+        assert.equal(response.statusCode, 400, response.body);
+        assert.equal(response.json().code, 'message_too_long');
+        assert.equal(
+          (await db.pool.query('SELECT 1 FROM messages WHERE id=$1', [clientMessageId])).rowCount,
+          0,
+        );
+      });
 
       await t.test(
         'native audio reads only attached recordings in the active owned turn',
@@ -6741,6 +6964,9 @@ test(
           let version = 'v1';
           let afterRead = async () => {};
           let changeToken: string | undefined;
+          let sourceFailure: Error | undefined;
+          let sourceReads = 0;
+          let toolSource = false;
           const options = {
             pool: db.pool,
             ownerId,
@@ -6755,10 +6981,13 @@ test(
                       changeToken,
                       readable: true,
                       revision,
+                      tools: toolSource,
                     },
                   ]
                 : [],
             read: async (_turn: unknown, input: Record<string, unknown>) => {
+              sourceReads++;
+              if (sourceFailure) throw sourceFailure;
               const snapshot = {
                 checkedAt: new Date().toISOString(),
                 records: [
@@ -6829,6 +7058,9 @@ test(
             connected = true;
             revision = 'account-one';
             changeToken = undefined;
+            sourceFailure = undefined;
+            sourceReads = 0;
+            toolSource = false;
             engine.release(turnId);
             await db.pool.query('DELETE FROM proactive_issues WHERE owner_id=$1', [ownerId]);
             await db.pool.query('DELETE FROM proactive_closures WHERE owner_id=$1', [ownerId]);
@@ -6847,6 +7079,105 @@ test(
             });
           }
           try {
+            await t.test(
+              'failed service reads wait for another check and allow recovery',
+              async () => {
+                await reset();
+                sourceFailure = Object.assign(new Error('Synthetic invalid source arguments.'), {
+                  statusCode: 502,
+                  upstreamStatus: 400,
+                });
+                await assert.rejects(
+                  engine.read(ref, { sourceId }, new AbortController().signal),
+                  sourceFailure,
+                );
+                sourceFailure = undefined;
+                await engine.read(ref, { sourceId }, new AbortController().signal);
+                assert.equal(sourceReads, 2);
+                await reset();
+                sourceFailure = Object.assign(new Error('Synthetic service unavailable.'), {
+                  status: 503,
+                });
+                await assert.rejects(
+                  engine.read(ref, { sourceId }, new AbortController().signal),
+                  sourceFailure,
+                );
+                const count = sourceReads;
+                sourceFailure = undefined;
+                for (let i = 0; i < 20; i++)
+                  await assert.rejects(
+                    engine.read(ref, { sourceId }, new AbortController().signal),
+                    (error: Error) => {
+                      assert.match(error.message, /next scheduled check/);
+                      assert.match(error.message, /503/);
+                      assert.match(error.message, /Synthetic service unavailable/);
+                      return true;
+                    },
+                  );
+                assert.equal(sourceReads, count);
+                assert.equal((await engine.view()).coverage[0].status, 'unavailable');
+                const next = { turnId: randomUUID(), threadId: currentThread };
+                await db.pool.query(
+                  "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,proactive,started_at) VALUES($1,$2,$3,'event','Synthetic recovery check','running',true,true,now())",
+                  [next.turnId, ownerId, currentThread],
+                );
+                try {
+                  await engine.read(next, { sourceId }, new AbortController().signal);
+                  assert.equal(sourceReads, count + 1);
+                  assert.equal((await engine.view()).coverage[0].status, 'ready');
+                } finally {
+                  engine.release(next.turnId);
+                  await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [
+                    next.turnId,
+                  ]);
+                }
+              },
+            );
+            await t.test(
+              'evidence failures identify the record and preserve every save fence',
+              async () => {
+                await reset();
+                toolSource = true;
+                const earlier = randomUUID();
+                await db.pool.query(
+                  "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,proactive) VALUES($1,$2,$3,'event','Synthetic earlier check','succeeded',true,true)",
+                  [earlier, ownerId, currentThread],
+                );
+                const read = () =>
+                  engine.read(
+                    ref,
+                    { sourceId, query: 'Read the synthetic record.' },
+                    new AbortController().signal,
+                  );
+                for (const [table, patch, reason] of [
+                  ['proactive_evidence', `turn_id='${earlier}'`, /earlier turn/],
+                  ['proactive_evidence', "version='v2'", /version changed/],
+                  ['proactive_evidence', "checked_at=now()-interval '3 minutes'", /two minutes/],
+                  ['proactive_evidence', "source_revision='old-account'", /connection changed/],
+                  ['proactive_sources', "status='unavailable'", /not ready/],
+                ] as const) {
+                  await read();
+                  await db.pool.query(`UPDATE ${table} SET ${patch} WHERE owner_id=$1`, [ownerId]);
+                  await assert.rejects(save(), (error: Error) => {
+                    assert.match(error.message, reason);
+                    assert.ok(error.message.includes(sourceId));
+                    assert.ok(error.message.includes('thread1'));
+                    return true;
+                  });
+                  assert.equal((await engine.view()).issues.length, 0);
+                  assert.equal(await delivered(), 0);
+                }
+                await read();
+                await assert.rejects(
+                  save({ sources: [{ sourceId, id: 'missing', version }] }),
+                  /missing/,
+                );
+                assert.equal(
+                  ((await save({ delivery: 'private' })) as { status: string }).status,
+                  'prepared',
+                );
+              },
+            );
             await t.test(
               'prepared outcomes and owner controls emit only committed bounded changes',
               async () => {
@@ -9334,6 +9665,118 @@ test(
             limitReached = false;
           }
           assert.equal(sends, 3);
+        },
+      );
+
+      await t.test(
+        'expired sign-in links reach the next turn without closing another session',
+        async () => {
+          await waitFor(settledThread);
+          const originalObserver = inspectObserver;
+          const mainPrompt = 'Synthetic Google sign-in request';
+          const otherPrompt = 'Synthetic separate sign-in request';
+          const mainOrigin = 'https://lab897-main.test';
+          const otherOrigin = 'https://lab897-other.test';
+          const links = new Map<string, string>();
+          inspectObserver = async (context) => {
+            if (context.prompt !== mainPrompt && context.prompt !== otherPrompt) return;
+            const main = context.prompt === mainPrompt;
+            const { url } = await vault.request(
+              { threadId: context.threadId, turnId: context.turnId, browserId: context.sessionId },
+              ownerId,
+              {
+                origin: main ? mainOrigin : otherOrigin,
+                label: main ? 'Synthetic Google sign-in' : 'Synthetic other sign-in',
+                kind: 'password',
+                passwordSelector: '#password',
+              },
+            );
+            links.set(context.prompt, url);
+            return {
+              status: 'waiting_credentials',
+              waitingFor: 'credentials',
+              message: `Sign in. [Continue](${url})`,
+            };
+          };
+          const formStatus = async (url: string) =>
+            (await request('GET', url.replace('/vault/', '/api/credential-requests/'))).json()
+              .status as string;
+          try {
+            const signIn = await thread.submitUserMessage(mainPrompt);
+            await waitFor(settled(signIn.turnId));
+            assert.equal(await turnStatus(signIn.turnId), 'waiting');
+            const mainLink = links.get(mainPrompt)!;
+            assert.equal(await formStatus(mainLink), 'pending');
+
+            const other = await thread.enqueueTurn(otherPrompt, {
+              source: 'event',
+              sessionId: randomUUID(),
+            });
+            await waitFor(settled(other));
+            assert.equal(await turnStatus(other), 'waiting');
+            const otherLink = links.get(otherPrompt)!;
+            assert.equal(await formStatus(otherLink), 'pending');
+
+            const next = await thread.submitUserMessage('Synthetic reminder follow-up');
+            await waitFor(settled(next.turnId));
+            assert.equal(await formStatus(mainLink), 'expired');
+            assert.equal(await formStatus(otherLink), 'pending');
+            assert.ok(ran(next.turnId)!.history.some(({ text }) => text.includes(mainLink)));
+            assert.deepEqual(
+              (ran(next.turnId)!.credentialRequests ?? []).filter(
+                (item) => item.origin === mainOrigin || item.origin === otherOrigin,
+              ),
+              [
+                {
+                  turnId: signIn.turnId,
+                  origin: mainOrigin,
+                  label: 'Synthetic Google sign-in',
+                  kind: 'password',
+                  status: 'expired',
+                },
+              ],
+            );
+            const instruction = firstInstruction(ran(next.turnId)!, true, new Set());
+            const requestData = JSON.parse(
+              instruction.split('Request data (JSON):\n')[1]!.split('\n\n')[0]!,
+            ) as { credentialRequests: string };
+            assert.match(requestData.credentialRequests, /lab897-main\.test/);
+            assert.match(requestData.credentialRequests, /"status":"expired"/);
+
+            const batchId = randomUUID();
+            const added = await db.pool.query<{ id: string }>(
+              `INSERT INTO credential_requests (
+                 id,token_hash,owner_id,thread_id,turn_id,root_turn_id,origin,label,kind,
+                 status,selectors,inspection,browser_id,flow_id,flow_expires_at,created_at
+               ) SELECT md5($2||':'||series.n::text),md5($2||':token:'||series.n::text),
+                 r.owner_id,r.thread_id,r.turn_id,r.root_turn_id,
+                 'https://lab897-extra-'||series.n::text||'.test','Synthetic previous sign-in',r.kind,
+                 'superseded',r.selectors,r.inspection,r.browser_id,r.flow_id,r.flow_expires_at,
+                 r.created_at+series.n*interval '1 second'
+               FROM credential_requests r CROSS JOIN generate_series(1,30) AS series(n)
+               WHERE r.turn_id=$1 RETURNING id`,
+              [signIn.turnId, batchId],
+            );
+            try {
+              const sessionId = (
+                await db.pool.query<{ session_id: string }>(
+                  'SELECT session_id FROM turns WHERE id=$1',
+                  [signIn.turnId],
+                )
+              ).rows[0]!.session_id;
+              const statuses = await vault.requestStatuses(signIn.threadId, sessionId, [
+                signIn.turnId,
+              ]);
+              assert.equal(statuses.length, 31);
+              assert.equal(statuses.find((item) => item.origin === mainOrigin)?.status, 'expired');
+            } finally {
+              await db.pool.query('DELETE FROM credential_requests WHERE id=ANY($1::text[])', [
+                added.rows.map((row) => row.id),
+              ]);
+            }
+          } finally {
+            inspectObserver = originalObserver;
+          }
         },
       );
     } finally {

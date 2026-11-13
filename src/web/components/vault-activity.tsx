@@ -1,41 +1,12 @@
 import { Tooltip } from './tooltip';
 import { useEffect, useRef, useState } from 'react';
 import { CircleHelp, CreditCard, Hash, KeyRound, Pause } from './icons';
-import type {
-  VaultActivity,
-  VaultActivityEntry,
-  VaultActivityReason,
-} from '../../shared/contracts';
+import type { VaultActivity, VaultActivityEntry } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
-import { formatDayLabel, formatTime, useDateFormat } from '../lib/date-format';
-import { originLabel } from '../lib/vault-name';
+import { formatDayLabel, formatTime, useDateFormat, type DateFormat } from '../lib/date-format';
 import { Button, Notice } from './ui';
-import { becauseText } from '../lib/trust-because';
-
-const reasons: Record<VaultActivityReason, string> = {
-  owner: 'You requested it',
-  asked: 'You asked',
-  schedule: 'Schedule',
-  always: 'Always for this site',
-  allowed: 'You allowed it',
-  revoked: 'You removed access',
-  entered: 'You entered it',
-  picked: 'You chose it',
-  mailbox: 'From your email',
-  readonly: 'Read-only work',
-  background: 'Background work',
-  injection: 'A page had instructions',
-  unrequested: 'You didn’t mention it',
-  rule: 'Your rule',
-  payment: 'You approved',
-  code_typed: 'You approved',
-  said_yes: 'You approved',
-};
-
-function formatMoney(amount: { minor: number; currency: string }) {
-  const format = new Intl.NumberFormat(undefined, { style: 'currency', currency: amount.currency });
-  return format.format(amount.minor / 10 ** (format.resolvedOptions().maximumFractionDigits ?? 2));
-}
+import { becauseText } from '../../shared/trust';
+import { vaultActivityTitle, vaultReasons as reasons } from '../../shared/vault-activity';
 
 const icons = {
   sign_in: KeyRound,
@@ -49,32 +20,6 @@ const icons = {
   reveal: KeyRound,
 };
 
-function title(entry: VaultActivityEntry) {
-  const site = originLabel(entry.origin).replace(/^www\./, '');
-  const amount = entry.amount ? `${formatMoney(entry.amount)} ` : '';
-  const card = entry.itemKind === 'card';
-  switch (entry.action) {
-    case 'card':
-      return `Submitted card for ${amount}at ${site}`;
-    case 'uncertain':
-      return `Result unknown at ${site}`;
-    case 'permission':
-      return card ? 'Changed payment permission' : `Changed access to ${site}`;
-    case 'reveal':
-      return card ? 'Revealed a saved card value' : `Revealed a saved value for ${site}`;
-    case 'session':
-      return `Opened a saved session on ${site}`;
-    case 'code':
-      return `Entered a code on ${site}`;
-    case 'held':
-      return card ? `Didn’t pay at ${site}` : `Didn’t sign in to ${site}`;
-    case 'asked':
-      return card ? `Asked to pay ${amount}at ${site}` : `Asked to sign in to ${site}`;
-    default:
-      return `Submitted a login to ${site}`;
-  }
-}
-
 function pill(entry: VaultActivityEntry): [string, string] {
   if (entry.action === 'asked') return ['Not used', 'is-held'];
   if (entry.action === 'held') return [`Held: ${reasons[entry.reason].toLowerCase()}`, 'is-held'];
@@ -84,8 +29,17 @@ function pill(entry: VaultActivityEntry): [string, string] {
   return [reasons[entry.reason], ''];
 }
 
-export function VaultUse({ entry, open }: { entry: VaultActivityEntry; open?(): void }) {
-  const format = useDateFormat();
+export function VaultUse({
+  entry,
+  open,
+  format,
+}: {
+  entry: VaultActivityEntry;
+  open?(): void;
+  format?: DateFormat;
+}) {
+  const savedFormat = useDateFormat();
+  const displayFormat = format ?? savedFormat;
   const Icon = icons[entry.action];
   const [text, tone] = pill(entry);
   const content = (
@@ -94,8 +48,8 @@ export function VaultUse({ entry, open }: { entry: VaultActivityEntry; open?(): 
         <Icon size={14} />
       </span>
       <span className="vault-use-text">
-        <b>{title(entry)}</b>
-        <span>{[formatTime(entry.at, format), entry.task].filter(Boolean).join(' · ')}</span>
+        <b>{vaultActivityTitle(entry, displayFormat.locale)}</b>
+        <span>{[formatTime(entry.at, displayFormat), entry.task].filter(Boolean).join(' · ')}</span>
         {entry.because && entry.because.kind !== 'approved' && (
           <Tooltip content={becauseText(entry.because)}>
             <small className="usage-because">{becauseText(entry.because)}</small>

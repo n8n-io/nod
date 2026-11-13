@@ -17,7 +17,11 @@ export interface ModelRecord {
   credential?: ModelCredential;
   requestPauses?: Record<
     string,
-    { credentialTag: string; kind: 'daily_quota' | 'zero_quota'; retryAt: number | null }
+    {
+      credentialTag: string;
+      kind: 'daily_quota' | 'zero_quota' | 'credits_depleted';
+      retryAt: number | null;
+    }
   >;
 }
 

@@ -8,6 +8,7 @@ import type { BrowserAction, BrowserPage, CredentialKind, WorkspaceSession } fro
 import type {
   AgentReactionResult,
   Artifact,
+  CredentialRequest,
   MessageReaction,
   SpeechReplyMode,
 } from '../shared/contracts.ts';
@@ -119,7 +120,9 @@ export interface RuntimeContext {
   prompt: string;
   audioCaption?: string;
   background?: boolean;
+  scheduleCache?: 'short' | 'long';
   channel?: string;
+  runtimeHost?: 'desktop' | 'server';
   timeZone?: string;
   locale?: string;
   hourCycle?: 'auto' | 'h12' | 'h23';
@@ -165,6 +168,9 @@ export interface RuntimeContext {
   previousFailure?: string;
   withdrawnRequest?: 'stopped' | 'failed';
   confirmedActions?: string[];
+  credentialRequests?: Array<
+    Pick<CredentialRequest, 'turnId' | 'origin' | 'label' | 'kind' | 'status'>
+  >;
   taskContext?: {
     id: string;
     title: string;
@@ -190,6 +196,7 @@ export interface RuntimeContext {
     streamId?: string,
     replyToMessageId?: string,
     presentation?: Presentation,
+    handoff?: boolean,
   ): Promise<void>;
   reactToMessage?(
     messageId: string,
@@ -206,7 +213,13 @@ export interface RuntimeContext {
   browserConnection?(request: BrowserConnectionRequest): Promise<unknown>;
   browserStep?(
     request: BrowserStep,
-  ): Promise<'run' | 'refused' | { [appConfirmation]: string } | { result: unknown }>;
+  ): Promise<
+    | 'run'
+    | 'refused'
+    | { record(): Promise<void> }
+    | { [appConfirmation]: string }
+    | { result: unknown }
+  >;
   delta(text: string, streamId?: string, done?: boolean): void;
   publish(path: string, name?: string): Promise<Artifact>;
   readAudio?(audio: AgentAudio, signal: AbortSignal): Promise<Uint8Array>;
@@ -299,6 +312,19 @@ export interface SkillLibrary {
   core?: readonly string[];
   read(name: string, file?: string): { name: string; file: string; content: string };
 }
+export interface DocumentationSection {
+  id: string;
+  title: string;
+  heading: string;
+  url: string;
+}
+export interface Documentation {
+  search(query: string): Promise<Array<DocumentationSection & { excerpt: string }>>;
+  read(
+    id: string,
+    offset?: number,
+  ): Promise<DocumentationSection & { content: string; nextOffset?: number }>;
+}
 export type AgentEvent =
   | { type: 'provider_usage'; usage: ProviderUsageEvent }
   | { type: 'turn_start' }
@@ -322,11 +348,16 @@ export interface AgentAudioInput {
   files: AgentAudio[];
   fallback: string;
 }
+export interface AgentToolOutcome {
+  name: string;
+  error?: string;
+}
 export interface AgentSessionOptions extends ExecutionScope {
   automatic?: boolean;
   restricted?: boolean;
   ephemeral?: boolean;
   restartable?: boolean;
+  scheduleCache?: 'short' | 'long';
   keepWarm?(): Promise<boolean>;
   systemPrompt: string;
   ownerContext?: string;
@@ -341,7 +372,7 @@ export interface AgentSessionOptions extends ExecutionScope {
     options?: { nested?: boolean },
   ): Promise<AgentToolResult>;
   onEvent(event: AgentEvent): void;
-  shouldStop(): boolean;
+  shouldStop(results?: AgentToolOutcome[]): boolean;
   readAudio?(audio: AgentAudio, signal: AbortSignal): Promise<Uint8Array>;
   nextMessages?(): Promise<Array<{ text: string; images: AgentImage[]; audio?: AgentAudioInput }>>;
 }

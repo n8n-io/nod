@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import type { SpeechService } from './speech.ts';
 import { messageInput, registerAudioMessages } from './audio-messages.ts';
+import { messageTooLongError } from '../shared/message-limits.ts';
 import type { ServerResponse } from 'node:http';
 import { z } from 'zod';
 import { pool } from './db.ts';
@@ -260,6 +261,15 @@ export async function createApp(dependencies: AppDependencies = {}) {
         ? (error as Error & { statusCode?: number; retryable?: boolean; code?: string })
         : undefined;
     const status = error instanceof z.ZodError ? 400 : known?.statusCode || 500;
+    const messageTooLong =
+      (request.routeOptions.url === '/api/messages' ||
+        request.routeOptions.url === '/api/messages/audio') &&
+      (known?.code === 'message_too_long' ||
+        (error instanceof z.ZodError &&
+          error.issues.some(
+            (issue) =>
+              issue.code === 'too_big' && issue.path.length === 1 && issue.path[0] === 'text',
+          )));
     if (status >= 500)
       logFailure('request_failed', error, {
         method: request.method,
@@ -271,8 +281,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
       ...(status === 409 && known?.code === 'question_unavailable'
         ? { code: 'question_unavailable' }
         : {}),
-      error:
-        error instanceof z.ZodError
+      ...(messageTooLong ? { code: 'message_too_long' } : {}),
+      error: messageTooLong
+        ? messageTooLongError
+        : error instanceof z.ZodError
           ? 'Check the supplied values.'
           : status < 500
             ? known?.message
@@ -669,7 +681,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const latest = await pool.query(
       `SELECT left(COALESCE(m.text,u.prompt),100) AS title,u.status,COALESCE(e.created_at,u.created_at) AS "lastActivityAt"
        FROM turns u LEFT JOIN messages m ON m.id=u.message_id
-       LEFT JOIN LATERAL (SELECT created_at FROM turn_events WHERE turn_id=u.id AND type IN ('tool_start','tool_complete') AND summary='browser' ORDER BY created_at DESC LIMIT 1) e ON true
+       LEFT JOIN LATERAL (SELECT created_at FROM turn_events WHERE turn_id=u.id AND type IN ('tool_start','tool_complete') AND (summary='browser' OR summary LIKE 'browser %') ORDER BY created_at DESC LIMIT 1) e ON true
        WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.session_id=$2 AND e.created_at IS NOT NULL
        ORDER BY e.created_at IS NULL,COALESCE(e.created_at,u.created_at) DESC LIMIT 1`,
       [ownerId, thread.id],

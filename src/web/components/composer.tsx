@@ -14,6 +14,7 @@ import {
 } from './icons';
 import type { Artifact, Message } from '../../shared/contracts';
 import { fileBytes } from '../../shared/files';
+import { messageTextLimit, messageTooLongError } from '../../shared/message-limits';
 import { api, errorMessage } from '../lib/api';
 import { isEditingTarget, shortcutLabel } from '../lib/navigation';
 import { Tooltip } from './tooltip';
@@ -630,6 +631,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const sentAttachments = attachmentValues.current;
     const includesAudio = recorder.phase === 'recording' || Boolean(recorder.recording);
     if (!sentText && !sentAttachments.length && !includesAudio) return;
+    if (sentText.length > messageTextLimit) return;
     if (includesAudio) audioSend.current = true;
     const sequence = ++sends.current;
     pendingSends.current++;
@@ -735,6 +737,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   );
   const { setDrafts } = drawer;
   const hasRecording = recorder.phase !== 'idle';
+  const lengthError = text.length > messageTextLimit ? messageTooLongError : '';
   const showStop = Boolean(onStop && !text.trim() && !attachments.length && !hasRecording);
   function releaseRecording() {
     const press = recordingPress.current;
@@ -865,6 +868,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       : 'Send message';
   const sendDisabled =
     !ready ||
+    Boolean(lengthError) ||
     pendingUploads > 0 ||
     recordingPending ||
     sendingAudio ||
@@ -880,7 +884,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }, [images, setDrafts]);
   return (
     <div className="composer-wrap">
-      {(error || audioSetupError) && <Notice>{error || audioSetupError}</Notice>}
+      {(lengthError || error || audioSetupError) && (
+        <Notice>{lengthError || error || audioSetupError}</Notice>
+      )}
       {replyTo && (
         <div className="reply-context composer-reply">
           <CornerUpLeft size={16} />

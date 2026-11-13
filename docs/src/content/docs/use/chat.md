@@ -17,6 +17,8 @@ Type in the message box and press Enter. Press Shift+Enter for a new line.
 
 Pasted text stays literal. Nod uses the clipboard's plain text even when the source also offers formatting. Line breaks, indentation and Markdown-looking characters such as `*priority*`, `# call` and `<u>text</u>` stay as written in the composer, the sent message and Nod's request. An unsent pasted draft keeps them after a reload.
 
+Messages can contain up to 100,000 characters. Some emoji and symbols count as two characters toward this limit. If your text is longer, the composer keeps your draft and asks you to shorten it or attach the content as a file.
+
 Web and desktop chat limit text message attempts to 120 per minute and audio message attempts to 120 per minute. If you reach either limit, wait and send again.
 
 Use the formatting toolbar when you want formatted text, including underline. Code stays literal, including text that looks like a link or a code fence.
@@ -188,6 +190,8 @@ You can also tell Nod in the main chat, from any app, for example "stop everythi
 When a run you started stops on an error or on your spending limit, Nod tells you what failed in the main chat or as a reply to the affected task. For a failed agent model request, Nod shows the provider and model that handled it, the service's specific reason and status, and useful details after removing secrets.
 
 The failure links to **Settings > Models**. You can check the connection or choose another model there. A connection or stream failure also keeps the available cause and request phase. It does not establish whether a provider outage or your network caused the failure. After a known Google daily or zero quota, automatic work on that model pauses on that connection. You can still start a new request yourself. See [Models](/connect/models/) for recovery details.
+
+An explicit Google prepayment credit failure pauses automatic work on that connection. Nod can also end a run after five repeated failures for the same tool. These include invalid input, unavailable tools, and failed sign-in or action review checks. A successful call resets that tool's count. Nod keeps the last specific cause, so you can see what stopped the work. Approval and sign-in checks still apply when you ask again.
 
 If the service reports an oversized tokens-per-minute request, the error keeps its requested and allowed token counts and suggests shortening the conversation or choosing a model with a higher limit. If a daily quota error includes a retry delay, Nod gives you an approximate wait time. For an account or workspace usage cap, wait for the limit to reset or check its settings; a workspace admin may need to raise it. Nod's next turn knows what went wrong.
 

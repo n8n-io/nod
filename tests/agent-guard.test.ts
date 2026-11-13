@@ -21,6 +21,7 @@ import type {
   RuntimeContext,
 } from '../src/ports/agent.ts';
 import { createSkillLibrary } from '../src/providers/pi/skills.ts';
+import { createDocumentation } from '../src/server/documentation.ts';
 import { coreSkills } from '../src/runtime/prompt.ts';
 import { localResultTimes } from '../src/runtime/time-context.ts';
 import { personalActions, toolDefinitions } from '../src/runtime/tools.ts';
@@ -1242,6 +1243,93 @@ test('skill reads cannot escape the trusted library or load workspace instructio
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('documentation search ranks sections, bounds reads and cannot read files outside its index', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-documentation-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const root = join(directory, 'docs');
+  await mkdir(join(root, 'trust'), { recursive: true });
+  await writeFile(join(directory, 'private.md'), 'OutsideSecretMarker');
+  await symlink(join(directory, 'private.md'), join(root, 'private.md'));
+  await symlink(directory, join(root, 'outside'));
+  await writeFile(join(root, 'index.md'), '---\ntitle: What is Nod\n---\nFixture documentation.');
+  await writeFile(join(root, 'noisy.md'), '---\ntitle: Nod apps\n---\nNod. New status.');
+  for (let index = 0; index < 9; index++)
+    await writeFile(
+      join(root, `fixture-${index}.md`),
+      `---\ntitle: Retention fixture ${index}\n---\nSynthetic retention details.`,
+    );
+  const long = `## Long section\n\n${'Synthetic documentation. '.repeat(800)}`.trim();
+  await writeFile(
+    join(root, 'trust', 'privacy.mdx'),
+    `---\ntitle: Privacy\n---\nimport { Aside } from 'fixture';\nimport 'fixture.css';\n\nIntroductory fixture.\n\n## Zero Data Retention\n\nCovered fixture payloads are not saved. [Reference](https://example.com/urlonlymarker).\n\n\`\`\`md\n# This is a code sample\n\`\`\`\n\n\`\`\`ts\nimport { sample } from 'fixture';\n\`\`\`\n\n${long}\n\n## Long section\n\nAnother section.\n\n## Long section-1\n\nA third section.`,
+  );
+  const docs = createDocumentation(root);
+  assert.equal((await docs.search('What is Nod?'))[0].id, 'index');
+  const results = await docs.search('zero data retention');
+  assert.equal(results[0].id, 'trust/privacy#zero-data-retention');
+  assert.equal(results[0].url, 'https://nod.n8n.io/docs/trust/privacy/#zero-data-retention');
+  assert.equal(results.length, 5);
+  assert.ok(results.every(({ excerpt }) => excerpt.length <= 400));
+  assert.deepEqual(await docs.search('news'), []);
+  assert.deepEqual(await docs.search('statu'), []);
+  assert.equal((await docs.search('status'))[0].id, 'noisy');
+  assert.deepEqual(await docs.search('urlonlymarker'), []);
+  assert.deepEqual(await docs.search('OutsideSecretMarker'), []);
+  const retained = await docs.read(results[0].id);
+  assert.match(retained.content, /# This is a code sample/);
+  assert.match(retained.content, /import \{ sample \} from 'fixture';/);
+  assert.doesNotMatch(retained.content, /Aside|Long section/);
+  assert.doesNotMatch((await docs.read('trust/privacy')).content, /import|Aside/);
+  for (const id of [
+    '../private.md',
+    'https://example.com',
+    'private',
+    'trust/privacy#this-is-a-code-sample',
+  ])
+    await assert.rejects(docs.read(id), /section was not found/);
+  for (const offset of [-1, 0.5, Number.MAX_SAFE_INTEGER])
+    await assert.rejects(docs.read(results[0].id, offset), /offset is outside/);
+  await rm(root, { recursive: true });
+  let content = '';
+  let offset = 0;
+  do {
+    const part = await docs.read('trust/privacy#long-section', offset);
+    assert.ok(part.content.length <= 8000);
+    content += part.content;
+    offset = part.nextOffset ?? 0;
+  } while (offset);
+  assert.equal(content, long);
+  assert.match(JSON.stringify(await docs.read('trust/privacy#long-section-1')), /Another section/);
+  assert.match(
+    JSON.stringify(await docs.read('trust/privacy#long-section-1-1')),
+    /A third section/,
+  );
+  let calls = 0;
+  await fixture(
+    async (tools) => {
+      const read = tools.get('nod_docs')!;
+      assert.ok(read.parallel);
+      const output = await read.execute({ action: 'read', id: results[0].id });
+      assert.match(JSON.stringify(output), /untrusted_tool_result/);
+      await assert.rejects(
+        read.execute({ action: 'read', id: '../private.md' }),
+        /section was not found/,
+      );
+      await assert.rejects(
+        read.execute({ action: 'read', id: results[0].id, offset: -1 }),
+        /Invalid nod_docs/,
+      );
+    },
+    {
+      integration: async () => {
+        calls++;
+      },
+    },
+    { documentation: docs },
+  );
+  assert.equal(calls, 0);
 });
 
 test('text chat uses an untrusted image description, keeps owner text and counts initial and steered image spend', async (t) => {
@@ -2877,6 +2965,73 @@ test(
   },
 );
 
+test('memory planning bounds pasted requests and recent owner messages', async () => {
+  const longText = (start: string, middle: string, end: string) =>
+    `${start}${'a'.repeat(16_000)}${middle}${'b'.repeat(16_000)}${end}`;
+  const request = longText('Current question: ', 'MIDDLE_CURRENT', ' Current closing question.');
+  const previous = longText('Earlier request: ', 'MIDDLE_PREVIOUS', ' Earlier closing request.');
+  const audio = longText('Audio caption: ', 'MIDDLE_AUDIO', ' Audio closing transcript.');
+  const pool = { query: async () => ({ rows: [] }) } as unknown as Pool;
+  const memory = createMemoryService({
+    pool,
+    ownerId: 'synthetic-owner',
+    store: memoryObjectStore(),
+  });
+  const path = await memory.add({ area: 'preferences', text: 'Prefers synthetic amber light.' });
+  const inputs: object[] = [];
+  const recall = createMemoryRecall({
+    pool,
+    ownerId: 'synthetic-owner',
+    memory,
+    curator: {
+      id: 'fixture',
+      configured: true,
+      async curate({ input }) {
+        inputs.push(input);
+        return 'mode' in input
+          ? { paths: [path], messages: [] }
+          : { mode: 'recall', paths: [path], queries: [] };
+      },
+    },
+  });
+  const brief = await recall.prepare({
+    prompt: request,
+    history: [
+      { role: 'user', text: previous },
+      { role: 'user', text: previous.replace('PREVIOUS', 'ANOTHER') },
+      { role: 'user', text: audio, audioCaption: audio.slice(0, 2_000) },
+    ],
+    signal: new AbortController().signal,
+  } as Parameters<typeof recall.prepare>[0]);
+  assert.equal(brief?.facts[0]?.path, path);
+  assert.equal(inputs.length, 2);
+  const input = inputs[0] as { request: string; recent: Array<{ text: string }> };
+  const ranking = inputs[1] as { request: string; mode: string; notes: Array<{ path: string }> };
+  assert.ok(input.request.length <= 4_000);
+  assert.equal(input.recent.length, 3);
+  assert.ok(input.recent.every(({ text }) => text.length <= 1_200));
+  assert.ok(input.recent.every((message) => !('audioCaption' in message)));
+  assert.ok(input.request.startsWith('Current question: '));
+  assert.ok(input.request.endsWith(' Current closing question.'));
+  assert.ok(input.request.includes('\n[Middle of message omitted]\n'));
+  for (const message of input.recent) {
+    assert.ok(message.text.includes('\n[Middle of message omitted]\n'));
+  }
+  for (const message of input.recent.slice(0, 2)) {
+    assert.ok(message.text.startsWith('Earlier request: '));
+    assert.ok(message.text.endsWith(' Earlier closing request.'));
+  }
+  assert.ok(input.recent[2].text.startsWith('Audio caption: '));
+  assert.ok(input.recent[2].text.endsWith(' Audio closing transcript.'));
+  assert.ok(!JSON.stringify(input).includes('MIDDLE_'));
+  assert.equal(ranking.request, input.request);
+  assert.equal(ranking.mode, 'recall');
+  assert.deepEqual(
+    ranking.notes.map(({ path: notePath }) => notePath),
+    [path],
+  );
+});
+
 test('memory selection spend reaches the session check-in before the agent opens', async () => {
   let opened = false;
   await assert.rejects(
@@ -2910,4 +3065,82 @@ test('memory selection spend reaches the session check-in before the agent opens
     /check-in/,
   );
   assert.equal(opened, false);
+});
+
+test('repeated input, sign-in and action review failures stop while source text cannot stop the run', async () => {
+  for (const [name, reason] of [
+    ['read_source', 'Invalid read_source arguments at /ids: Expected array.'],
+    ['sign_in', 'This connected account changed.'],
+    ['apps', 'The selected account changed.'],
+    [
+      'sign_in',
+      'Nod could not confirm it was still on the page and control it checked, so nothing was done.',
+    ],
+    [
+      'manage_personal_context',
+      'The action review model is unavailable. Synthetic provider failure.',
+    ],
+    ['apps', 'Nod could not write an accurate confirmation for this action, so it did not run.'],
+  ]) {
+    let calls = 0;
+    await assert.rejects(
+      fixture(async (_tools, _emit, options) => {
+        assert.equal(options.shouldStop([{ name, error: reason }]), false);
+        assert.equal(options.shouldStop([{ name, error: reason }]), false);
+        assert.equal(options.shouldStop([{ name }]), false);
+        for (let i = 0; i < 5; i++) {
+          calls++;
+          if (options.shouldStop([{ name, error: reason }])) break;
+        }
+      }),
+      /failed five times/,
+    );
+    assert.equal(calls, 5);
+  }
+  const result = await fixture(async (_tools, emit, options) => {
+    assert.equal(
+      options.shouldStop([
+        ...Array.from({ length: 5 }, () => ({
+          name: 'task',
+          error: 'Invalid task input: missing doneWhen.',
+        })),
+        { name: 'task' },
+      ]),
+      false,
+    );
+    for (let i = 0; i < 8; i++) {
+      assert.equal(options.shouldStop([{ name: 'apps' }]), false);
+      assert.equal(
+        options.shouldStop([{ name: 'read', error: 'Synthetic file is missing.' }]),
+        false,
+      );
+    }
+    emit({ type: 'final', text: 'Synthetic source text was read.' });
+  });
+  assert.equal(result.result.status, 'succeeded');
+});
+
+test('delegated tool failure limits do not stop the parent or carry into another child', async () => {
+  let children = 0;
+  const result = await fixture(async (tools, emit, options) => {
+    if (options.parentRunId) {
+      children++;
+      for (let i = 0; i < 5; i++)
+        if (options.shouldStop([{ name: 'task', error: 'Invalid task input: missing doneWhen.' }]))
+          break;
+      return;
+    }
+    for (let i = 0; i < 2; i++)
+      await assert.rejects(
+        call(tools, 'delegate', {
+          title: 'Synthetic child',
+          instruction: 'Read the synthetic source.',
+        }),
+        /failed five times/,
+      );
+    assert.equal(options.shouldStop(), false);
+    emit({ type: 'final', text: 'The child could not complete its synthetic request.' });
+  });
+  assert.equal(children, 2);
+  assert.equal(result.result.status, 'succeeded');
 });

@@ -58,6 +58,8 @@ If a model request stops your task, the failure message links to **Settings > Mo
 
 After Google reports a daily or zero quota, Nod pauses automatic requests for that model on that connection. This includes background checks, background helpers, and cache warming. The pause survives a restart. Other connections stay available. You can still ask again, replace the key, or select another model. Helpers required by your new request can also run. A successful request you start clears the pause. A provider retry delay permits another automatic attempt after that delay; it does not promise a quota reset. Without a delay, automatic work stays paused until recovery. Reloading the model list does not prove that quota is available.
 
+If Google explicitly reports depleted prepayment credits, Nod pauses automatic requests for every model on that connection. You can still start a request yourself. A successful request you start clears this credit pause. An ordinary rate limit does not establish a credit problem.
+
 To change to an available model, you can also tell Nod which model and service to use. This works in Nod, Telegram, and WhatsApp. Nod changes the saved selection for the next turn. Connecting a new service or signing in again still needs the private flow in the app.
 
 <Tabs syncKey="model-service">
@@ -246,7 +248,7 @@ The same server checks still decide app actions, sign-ins and payments. A smalle
 
 ## Decision checks
 
-Nod can use a decision model to check action permission, read confirmation replies, and check emails that give account access. Your selected model writes and checks confirmation questions. Nod selects each checker before its request. A failed check never switches models.
+Nod can use a decision model to check action permission, read confirmation replies, and check emails that give account access. The server formats confirmation questions from the frozen proposed action and arguments with fixed English framing; you can answer in any language. Nod selects each checker before its request. A failed check never switches models.
 
 ### Select the action checker
 
@@ -276,7 +278,7 @@ These keys can come from a connection other than your chat model. ChatGPT subscr
 NOD_TRUST_MODEL=decision
 ```
 
-There is no separate decision-model setting. Nod selects the model. Your selected chat model still writes and checks confirmation questions. This writing step is separate from action classification.
+There is no separate decision-model setting. Nod selects the model. The server formats confirmation questions from the frozen proposed action. The action and reply classifiers still use the selected trust mode.
 
 The gate receives the complete action, owner messages and rules. It receives no tool results or page text. It must preserve exact targets and terms. The server obtains a permission quote from the selected owner source and checks it against the original words. Choosing a source cannot authorize an action by itself.
 

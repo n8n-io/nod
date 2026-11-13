@@ -1,21 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   CalendarClock,
+  ChevronRight,
+  Download,
   LoaderCircle,
   MessageCircle,
   ScanSearch,
   Undo2,
   Zap,
 } from '../components/icons';
-import type {
-  TrustEntry,
-  TrustModel,
-  TrustOutside,
-  TrustPage,
-  TrustSource,
-  TrustView,
+import {
+  becauseText,
+  type TrustEntry,
+  type TrustOutside,
+  type TrustPage,
+  type TrustSource,
+  type TrustStep,
+  type TrustView,
+  trustStepPage as stepPage,
 } from '../../shared/trust';
-import { modelProviderNames, modelSource, type ModelsResponse } from '../../shared/models';
+import { modelSource, type ModelsResponse } from '../../shared/models';
 import type {
   VaultActivity,
   VaultActivityEntry,
@@ -30,15 +34,14 @@ import {
   formatDayLabel,
   formatNumber,
   formatTime,
+  useBrowserDateFormat,
   useDateFormat,
   type DateFormat,
 } from '../lib/date-format';
 import { PageTitle } from '../components/page-title';
 import { StatementValue } from '../components/statement-value';
-import { Tooltip } from '../components/tooltip';
 import { Button, Input, Loading, Notice } from '../components/ui';
 import { VaultUse } from '../components/vault-activity';
-import { becauseText } from '../lib/trust-because';
 import { money } from '../lib/money';
 import { vaultItems } from './vault';
 
@@ -368,87 +371,218 @@ function UsageSummary({
   );
 }
 
-function billingSource(model: TrustModel) {
-  if (model.billing === 'plan') return 'ChatGPT plan';
-  const provider = model.provider
-    ? modelProviderNames[model.provider as keyof typeof modelProviderNames]
-    : undefined;
-  return provider ? `${provider} API` : 'API usage';
-}
+type StepPage = { steps: TrustStep[]; total: number };
+const stepHeight = 26;
+const stepOverscan = 30;
 
-function TrustRow({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean }) {
-  const format = useDateFormat();
-  const models = entry.models ?? [];
-  const { icon: Icon, label } = sources[entry.source];
-  const did = [...new Set(entry.actions.map((action) => action.label))].join(', ');
-  const explained = entry.actions.filter((action) => action.because);
-  const reasons = [
-    ...new Set(
-      explained.map((action) =>
-        new Set(explained.map((item) => item.label)).size > 1
-          ? `${action.label} · ${becauseText(action.because!)}`
-          : becauseText(action.because!),
-      ),
-    ),
-  ];
-  const content = (
+function StepLine({
+  step,
+  showCosts,
+  format,
+}: {
+  step: TrustStep;
+  showCosts: boolean;
+  format: DateFormat;
+}) {
+  const text = [step.title, step.detail, step.because && becauseText(step.because)]
+    .filter(Boolean)
+    .join(' · ');
+  return (
     <>
-      <span className="vault-glyph" aria-hidden="true">
-        <Icon size={14} />
+      <time dateTime={step.at}>{formatTime(step.at, format, { seconds: true })}</time>
+      <span className="usage-log-text" title={text}>
+        <b>{step.title}</b>
+        {step.detail && <span> · {step.detail}</span>}
+        {step.because && <small> · {becauseText(step.because)}</small>}
       </span>
-      <span className="vault-use-text">
-        <b>{entry.title}</b>
-        <span className={entry.error ? 'is-error' : undefined}>
-          {[formatTime(entry.at, format), label].filter(Boolean).join(' · ')}
-          {entry.error ? ` · ${entry.error}` : did ? ` · ${did}` : ''}
-        </span>
-        {models.length > 0 && (
-          <span className="usage-models" aria-label="Models used">
-            {models.map((model) => (
-              <span key={`${model.provider}:${model.model}:${model.billing}`}>
-                {model.model ?? 'Model not recorded'}
-                <span className="usage-model-source"> · {billingSource(model)}</span>
-              </span>
-            ))}
-          </span>
-        )}
-        {reasons.map((reason) => (
-          <Tooltip key={reason} content={reason}>
-            <small className="usage-because">{reason}</small>
-          </Tooltip>
-        ))}
-      </span>
-      {showCosts && entry.costUsd !== null ? (
-        <span className="usage-row-cost">
-          {money(entry.costUsd)}
-          {models.some((model) => model.billing === 'plan') && <small>API</small>}
-        </span>
-      ) : (
-        entry.pricing && (
-          <span className="usage-row-cost is-label">
-            {entry.pricing === 'plan' ? 'ChatGPT plan' : 'No price'}
-          </span>
-        )
+      {showCosts && step.costUsd !== undefined && (
+        <span className="usage-log-cost">{money(step.costUsd)}</span>
       )}
     </>
   );
-  return entry.messageId ? (
-    <Tooltip content="Show in chat">
+}
+
+function TrustLog({
+  entry,
+  showCosts,
+  format,
+}: {
+  entry: TrustEntry;
+  showCosts: boolean;
+  format: DateFormat;
+}) {
+  const path = `/api/trust/entries/${entry.id}/steps`;
+  const first = usePageData<StepPage>(path);
+  const total = first.data?.total ?? 0;
+  const [pages, setPages] = useState<Map<number, TrustStep[]>>(() => new Map());
+  const [range, setRange] = useState<[number, number]>([0, stepOverscan * 2]);
+  const [error, setError] = useState('');
+  const loading = useRef(new Set<number>());
+  const list = useRef<HTMLOListElement>(null);
+  useEffect(() => {
+    setPages((current) => (current.size ? new Map() : current));
+  }, [total]);
+  useEffect(() => {
+    const target = list.current;
+    if (!target || !total) return;
+    const scroller = target.closest<HTMLElement>('.main-workspace');
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const box = target.getBoundingClientRect();
+      const view = scroller?.getBoundingClientRect() ?? { top: 0, bottom: window.innerHeight };
+      const start = Math.min(
+        total,
+        Math.max(0, Math.floor((view.top - box.top) / stepHeight) - stepOverscan),
+      );
+      const end = Math.min(total, Math.ceil((view.bottom - box.top) / stepHeight) + stepOverscan);
+      setRange((current) =>
+        current[0] === start && current[1] === end ? current : [start, Math.max(start, end)],
+      );
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(measure);
+    };
+    measure();
+    const source = scroller ?? window;
+    source.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    return () => {
+      cancelAnimationFrame(frame);
+      source.removeEventListener('scroll', schedule);
+      window.removeEventListener('resize', schedule);
+    };
+  }, [total]);
+  useEffect(() => {
+    if (!total || error) return;
+    const from = Math.floor(range[0] / stepPage);
+    const to = Math.floor(Math.max(range[1] - 1, 0) / stepPage);
+    for (let page = Math.max(from, 1); page <= to; page++) {
+      if (pages.has(page) || loading.current.has(page)) continue;
+      loading.current.add(page);
+      api<StepPage>(`${path}?offset=${page * stepPage}`)
+        .then(
+          (result) => setPages((current) => new Map(current).set(page, result.steps)),
+          (cause) => setError(errorMessage(cause)),
+        )
+        .finally(() => loading.current.delete(page));
+    }
+  }, [error, pages, path, range, total]);
+  const stepAt = (index: number) =>
+    index < stepPage
+      ? first.data?.steps[index]
+      : pages.get(Math.floor(index / stepPage))?.[index % stepPage];
+  return (
+    <div className="usage-log" id={`usage-log-${entry.id}`}>
+      {first.error ? (
+        <Notice>{first.error}</Notice>
+      ) : !first.data ? (
+        <Loading label="Opening the log…" />
+      ) : !total ? (
+        <p className="statement-empty">No steps were recorded for this request.</p>
+      ) : (
+        <ol ref={list} className="usage-log-rows" style={{ height: total * stepHeight }}>
+          {Array.from(
+            { length: Math.max(0, Math.min(range[1], total) - range[0]) },
+            (_, offset) => {
+              const index = range[0] + offset;
+              const step = stepAt(index);
+              return (
+                <li
+                  key={index}
+                  aria-setsize={total}
+                  aria-posinset={index + 1}
+                  style={{ transform: `translateY(${index * stepHeight}px)` }}
+                  data-kind={step?.kind}
+                  data-helper={step?.helper ? 'true' : undefined}
+                  className={step?.failed ? 'is-failed' : undefined}
+                >
+                  {step ? (
+                    <StepLine step={step} showCosts={showCosts} format={format} />
+                  ) : (
+                    <span className="usage-log-pending" aria-label="Loading" />
+                  )}
+                </li>
+              );
+            },
+          )}
+        </ol>
+      )}
+      {error && (
+        <Notice>
+          {error}{' '}
+          <button type="button" onClick={() => setError('')}>
+            Try again
+          </button>
+        </Notice>
+      )}
+      {entry.messageId && (
+        <button
+          type="button"
+          className="usage-log-link"
+          onClick={() =>
+            window.dispatchEvent(
+              new CustomEvent('nod:focus-message', { detail: { messageId: entry.messageId } }),
+            )
+          }
+        >
+          Show in chat
+        </button>
+      )}
+    </div>
+  );
+}
+
+function TrustRow({
+  entry,
+  showCosts,
+  format,
+}: {
+  entry: TrustEntry;
+  showCosts: boolean;
+  format: DateFormat;
+}) {
+  const [open, setOpen] = useState(false);
+  const { icon: Icon, label } = sources[entry.source];
+  const changes = [
+    ...new Set(entry.actions.filter((action) => !action.read).map((action) => action.label)),
+  ];
+  return (
+    <>
       <button
         type="button"
-        className="vault-use"
-        aria-label={`Open ${entry.title} in chat`}
-        onClick={() =>
-          window.dispatchEvent(
-            new CustomEvent('nod:focus-message', { detail: { messageId: entry.messageId } }),
-          )
-        }
+        className="vault-use usage-row"
+        aria-expanded={open}
+        aria-controls={`usage-log-${entry.id}`}
+        onClick={() => setOpen(!open)}
       >
-        {content}
+        <span className="vault-glyph" aria-hidden="true">
+          <Icon size={14} />
+        </span>
+        <span className="vault-use-text">
+          <b>{entry.title}</b>
+          <span className={entry.error ? 'is-error' : undefined}>
+            {[formatTime(entry.at, format), label, entry.error ?? changes.join(', ')]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
+        </span>
+        {showCosts && entry.costUsd !== null ? (
+          <span className="usage-row-cost">
+            {money(entry.costUsd)}
+            {entry.models?.some((model) => model.billing === 'plan') && <small>API</small>}
+          </span>
+        ) : entry.pricing ? (
+          <span className="usage-row-cost is-label">
+            {entry.pricing === 'plan' ? 'ChatGPT plan' : 'No price'}
+          </span>
+        ) : (
+          <span />
+        )}
+        <ChevronRight size={16} className="usage-chevron" aria-hidden="true" />
       </button>
-    </Tooltip>
-  ) : (
-    <div className="vault-use">{content}</div>
+      {open && <TrustLog entry={entry} showCosts={showCosts} format={format} />}
+    </>
   );
 }
 
@@ -494,7 +628,7 @@ function Statement({
   showCosts: boolean;
   hidden: boolean;
 }) {
-  const format = useDateFormat();
+  const format = useBrowserDateFormat();
   const [trust, setTrust] = useState<Stream<TrustEntry>>(view);
   const [uses, setUses] = useState<Stream<VaultActivityEntry>>({
     entries: vault.entries,
@@ -591,9 +725,9 @@ function Statement({
             {items.map((row) => (
               <li key={row.key}>
                 {row.use ? (
-                  <VaultUse entry={row.use} open={opener(row.use)} />
+                  <VaultUse entry={row.use} open={opener(row.use)} format={format} />
                 ) : (
-                  <TrustRow entry={row.trust!} showCosts={showCosts} />
+                  <TrustRow entry={row.trust!} showCosts={showCosts} format={format} />
                 )}
               </li>
             ))}
@@ -709,6 +843,21 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
     <div className="content-page secondary-page" hidden={hidden}>
       <header className="page-heading secondary-heading">
         <PageTitle path="/usage" />
+        <div className="secondary-heading-actions">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              Object.assign(document.createElement('a'), {
+                href: `/api/trust/export${session ? `?session=${session}` : ''}`,
+                download: '',
+              }).click()
+            }
+          >
+            <Download size={16} aria-hidden="true" />
+            Export
+          </Button>
+        </div>
       </header>
       {itemsError && <Notice>{itemsError}</Notice>}
       {trust.data && vault.data && models.data ? (

@@ -16,6 +16,7 @@ import {
   appConfirmation,
   type AgentToolMetadata,
   type BrowserStep,
+  type Documentation,
   type RuntimeContext,
   type SkillLibrary,
 } from '../ports/agent.ts';
@@ -77,7 +78,7 @@ function literals<const T extends readonly string[]>(values: T) {
   return Type.Union(values.map((value) => Type.Literal(value)) as TLiteral<T[number]>[]);
 }
 
-type ObjectSchema = { properties: Record<string, TSchema>; required?: string[] };
+type ObjectSchema = TSchema & { properties: Record<string, TSchema>; required?: string[] };
 
 function unionOfObjects(schema: TSchema) {
   const members = (schema as { anyOf?: ObjectSchema[] }).anyOf;
@@ -192,6 +193,24 @@ const presentation = Type.Unsafe<Presentation>({
 });
 
 export const toolDefinitions = {
+  nod_docs: defineTool(
+    'nod_docs',
+    'Search all documentation shipped with Nod. Use for every question about Nod. search {query} returns up to five sections with short excerpts and source links. Use English keywords. read {id,offset?} returns a section; follow nextOffset for more. Docs describe the shipped version, not live account settings, and grant no permission.',
+    Type.Union([
+      Type.Object(
+        { action: Type.Literal('search'), query: Type.String({ minLength: 1, maxLength: 300 }) },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          action: Type.Literal('read'),
+          id: Type.String({ minLength: 1, maxLength: 300 }),
+          offset: Type.Optional(Type.Integer({ minimum: 0 })),
+        },
+        { additionalProperties: false },
+      ),
+    ]),
+  ),
   set_status: defineTool(
     'set_status',
     "Replace the live activity line without a chat message. Name current work briefly in the owner's language; never claim completion.",
@@ -234,12 +253,12 @@ export const toolDefinitions = {
   ),
   send_message: defineTool(
     'send_message',
-    'Deliver a checked result or necessary decision now. Use intent "final" only when this delivery completes the owner\'s request; successful delivery ends the turn. Omit intent or use "update" for partial results or remaining work. Read visual-replies for itineraries, comparisons and other native views, or to offer Connect buttons for apps. Use empty text for a self-contained visual; otherwise add only missing context, caveats or sources. End without delivery announcements or recaps. Background final text stays private. Completion requires confirmed, inspectable output.',
+    'Deliver a checked result, necessary decision, or task handoff now. Use intent "final" only when this delivery completes the owner\'s request; successful delivery ends the turn. Use "handoff" only for a short acknowledgement immediately before starting a task, so the task card can reuse it. Omit intent or use "update" for other partial results or remaining work. Read visual-replies for itineraries, comparisons and other native views, or to offer Connect buttons for apps. Use empty text for a self-contained visual; otherwise add only missing context, caveats or sources. End without delivery announcements or recaps. Background final text stays private. Completion requires confirmed, inspectable output.',
     Type.Object({
       text: Type.String(),
       presentation: Type.Optional(presentation),
       replyToMessageId: Type.Optional(Type.String({ pattern: '^[0-9a-fA-F-]{36}$' })),
-      intent: Type.Optional(literals(['update', 'final'])),
+      intent: Type.Optional(literals(['update', 'final', 'handoff'])),
     }),
     true,
   ),
@@ -567,7 +586,7 @@ export const toolDefinitions = {
   ),
   manage_personal_context: defineTool(
     'manage_personal_context',
-    'Read or change owner settings, memory, schedules and history. Read current values before a change. Change only the requested fields.\nprepared_list {id?|query?} reads complete prepared work and sources; {} lists it. Read before acting and show its draft when asked. prepared_update {id,action,minutes?} records an owner request to snooze, handle, dismiss, or give useful/not_useful feedback.\nnotification_preferences_get {} reads settings. notification_preferences_update partially changes notificationRule, rules, speechReply (auto,voice,always,never), timeZone (IANA or null), locale (tag or null), hourCycle (auto,h12,h23), quietHoursEnabled, quietStart/quietEnd (HH:MM), or proactivePaused. Device permissions need Settings on that device.\nmodels_get {} lists model IDs and efforts; model_select {connectionId,modelId,effort} selects one for the next turn. Model connections need private Settings sign-in.\nmemory_find {query,area?} and memory_read {path} read saved facts (areas: about,preferences,people,routines,lessons). Check memory and history for earlier facts or advice; collect all relevant mentions for totals, and use the latest statement when facts change. Do not guess missing facts. memory_learn {messages?} asks the memory model to learn from owner messages, never your own text. Use it for lasting facts or explicit requests, never tasks, guesses, secrets or outside content. Pass older owner message IDs when needed. Sensitive facts require sensitiveTopics enabled or an explicit save request. Corrections archive old notes. memory_forget {path} removes a requested note. memory_control {enabled?,clear?,quote} needs the complete current owner message; clear keeps chat history.\nhistory_search {query?,from?,to?,before?,cursor?,order?,around?} searches earlier messages. Dates are YYYY-MM-DD in owner time. Page with cursor=nextCursor, keeping the same query, dates and order (relevance or newest). complete covers search matches only. Dates and before filter message times, not event dates. around reads a result in context. Read source messages before claims about earlier work.\nschedule_list {} reads current schedules; use it before saying none is active or will act on a file. schedule_create {title,prompt,timeZone,kind:once|recurring,cron?,runAt?,baselineObservation?,watch?}: recurring needs a five-field cron, once a future runAt with offset; baselineObservation is {status:verified,sourceUrl,value,summary}; watch lists manage_apps connectionIds whose changes alone make a run useful. schedule_update {id,...changed fields,enabled?,watch?|null}. schedule_pause {id} disables a schedule without deleting it. After pausing a schedule that was active, Scheduled labels it Paused and it can be resumed; a completed one-time schedule retains its last-run status. schedule_record_observation {status,sourceUrl,value,summary} records a scheduled check; value is null when unavailable.\nusage_get {} reads spend and activity; planUsd is ChatGPT plan usage at API prices, not charged; unpriced usage has no price in Nod and is not counted. limits_update {monthlyUsd?,taskUsd?} changes requested limits; values are at least 1 USD, or null to remove.',
+    'Read or change owner settings, memory, schedules and history. Read current values before a change. Change only the requested fields.\nprepared_list {id?|query?} reads complete prepared work and sources; {} lists it. Read before acting and show its draft when asked. prepared_update {id,action,minutes?} records an owner request to snooze, handle, dismiss, or give useful/not_useful feedback.\nnotification_preferences_get {} reads settings. notification_preferences_update partially changes notificationRule, rules, speechReply (auto,voice,always,never), timeZone (IANA or null), locale (tag or null), hourCycle (auto,h12,h23), quietHoursEnabled, quietStart/quietEnd (HH:MM), or proactivePaused. Device permissions need Settings on that device.\nmodels_get {} lists model IDs and efforts; model_select {connectionId,modelId,effort} selects one for the next turn. Model connections need private Settings sign-in.\nmemory_find {query,area?} and memory_read {path} read saved facts (areas: about,preferences,people,routines,lessons). Check memory and history for earlier facts or advice; collect all relevant mentions for totals, and use the latest statement when facts change. Do not guess missing facts. memory_learn {messages?} asks the memory model to learn from owner messages, never your own text. Use it for lasting facts or explicit requests, never tasks, guesses, secrets or outside content. Pass older owner message IDs when needed. Sensitive facts require sensitiveTopics enabled or an explicit save request. Corrections archive old notes. memory_forget {path} removes a requested note. memory_control {enabled?,clear?,quote} needs the complete current owner message; clear keeps chat history.\nhistory_search {query?,from?,to?,before?,cursor?,order?,around?} searches earlier messages. Dates are YYYY-MM-DD in owner time. Page with cursor=nextCursor, keeping the same query, dates and order (relevance or newest). complete covers search matches only. Dates and before filter message times, not event dates. around reads a result in context. Read source messages before claims about earlier work.\nschedule_list {} reads current schedules; use it before saying none is active or will act on a file. schedule_create {title,prompt,timeZone,kind:once|recurring,cron?,runAt?,baselineObservation?,watch?}: recurring needs a five-field cron, once a future runAt with offset; baselineObservation is {status:verified,sourceUrl,value,summary}; watch lists manage_apps connectionIds whose changes alone make a run useful. schedule_update {id,...changed fields,enabled?,watch?|null}. schedule_pause {id} disables a schedule without deleting it. After pausing a schedule that was active, Scheduled labels it Paused and it can be resumed; a completed one-time schedule retains its last-run status. schedule_record_observation {status,sourceUrl,value,summary} records a scheduled check; value is null when unavailable.\nusage_get {} reads spend and recent activity; planUsd is ChatGPT plan usage at API prices, not charged; unpriced usage has no price in Nod and is not counted. usage_get {from,to?} (YYYY-MM-DD, owner time, to defaults to from) lists what Nod did on those days: each request or run with its actions in apps, websites, local files and Nod settings, the owner words that allowed each, and sign-ins and card submissions. Answer what you did only from this list; complete false means it was cut, so narrow the days. limits_update {monthlyUsd?,taskUsd?} changes requested limits; values are at least 1 USD, or null to remove.',
     Type.Object({
       action: literals(personalActions),
       args: Type.Record(Type.String(), Type.Unknown()),
@@ -667,8 +686,24 @@ function bind<P extends TSchema>(
     ...tool,
     execute: forms
       ? async (params: Static<P>) => {
-          if (!Value.Check(strict, params))
-            throw new Error(`Invalid ${tool.name} input. Valid forms: ${forms}.`);
+          const members = unionOfObjects(strict);
+          const selected =
+            ['action', 'kind']
+              .map((key) =>
+                members?.filter(
+                  (member) =>
+                    member.properties[key] &&
+                    Value.Check(member.properties[key], (params as Record<string, unknown>)[key]),
+                ),
+              )
+              .find((matches) => matches?.length === 1)?.[0] ?? strict;
+          if (!Value.Check(selected, params)) {
+            const errors = [...Value.Errors(selected, params)]
+              .slice(0, 8)
+              .map((error) => `${error.path || '/'}: ${error.message}`)
+              .join('; ');
+            throw new Error(`Invalid ${tool.name} input: ${errors}. Valid forms: ${forms}.`);
+          }
           return execute(params);
         }
       : execute,
@@ -752,7 +787,11 @@ export function connectedTools(
   });
 }
 
-export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
+export function nodTools(
+  turn: Turn,
+  skills?: SkillLibrary,
+  documentation?: Documentation,
+): NodTool[] {
   const { context, computer, pause, confirm } = turn;
   const { browserId } = turn.execution;
   const { signal } = context;
@@ -802,6 +841,7 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
     | {
         binding: { expectOrigin?: string; expectUrl?: string; expectTarget?: string };
         choice?: string;
+        record?: () => Promise<void>;
       }
     | { output: unknown }
   > => {
@@ -825,8 +865,9 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
       subagent: Boolean(turn.execution.parentRunId),
     });
     signal.throwIfAborted();
-    if (verdict === 'run')
+    if (verdict === 'run' || (typeof verdict === 'object' && 'record' in verdict))
       return {
+        ...(verdict === 'run' ? {} : { record: verdict.record }),
         binding: {
           expectOrigin: page.origin,
           expectUrl: page.url,
@@ -848,6 +889,15 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
     return { output: verdict.result };
   };
   return [
+    ...(documentation
+      ? [
+          bind(toolDefinitions.nod_docs, (p) =>
+            p.action === 'search'
+              ? documentation.search(p.query)
+              : documentation.read(p.id, p.offset),
+          ),
+        ]
+      : []),
     ...(turn.setStatus ? [bind(toolDefinitions.set_status, (p) => turn.setStatus!(p.text))] : []),
     ...(context.proactivity
       ? [
@@ -898,7 +948,10 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
       const visual =
         p.presentation === undefined ? undefined : presentationInputSchema.parse(p.presentation);
       if (!p.text.trim() && !visual) throw new Error('A text answer or visual is required.');
-      const delivery = await turn.reply(p.text, undefined, p.replyToMessageId, visual);
+      const delivery =
+        p.intent === 'handoff'
+          ? await turn.reply(p.text, undefined, p.replyToMessageId, visual, true)
+          : await turn.reply(p.text, undefined, p.replyToMessageId, visual);
       const outcome = {
         none: 'The text answer is already visible to the owner.',
         original: 'The visual and accompanying text are already visible to the owner.',
@@ -987,6 +1040,7 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
             { selector: rest.selector, name, ...checked.binding },
             signal,
           );
+          await checked.record?.();
         }
         signal.throwIfAborted();
         if (!file.bytes.length || file.bytes.length > fileBytes)
@@ -999,14 +1053,13 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
         const bytes = await context.readWorkspaceFile(rest.path, fileBytes);
         const checked = await check({ action, selector: rest.selector, path: rest.path });
         if ('output' in checked) return checked.output;
-        return observed(
-          { action },
-          await computer.upload(
-            browserId,
-            { selector: rest.selector, name: basename(rest.path), bytes, ...checked.binding },
-            signal,
-          ),
+        const page = await computer.upload(
+          browserId,
+          { selector: rest.selector, name: basename(rest.path), bytes, ...checked.binding },
+          signal,
         );
+        await checked.record?.();
+        return observed({ action }, page);
       }
       const step = { action, ...rest } as BrowserAction;
       if (action === 'evaluate' && context.browserStep)
@@ -1018,11 +1071,9 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
         }
       const checked = commits(step) ? await check(step) : { binding: {} };
       if ('output' in checked) return checked.output;
-      return observed(
-        step,
-        await computer.act(browserId, { ...step, ...checked.binding }, signal),
-        checked.choice,
-      );
+      const page = await computer.act(browserId, { ...step, ...checked.binding }, signal);
+      if ('record' in checked) await checked.record?.();
+      return observed(step, page, checked.choice);
     }),
     bind(toolDefinitions.sign_in, async ({ message, action, ...request }) => {
       const result = await context.requestCredential(request);
@@ -1153,7 +1204,7 @@ export function nodTools(turn: Turn, skills?: SkillLibrary): NodTool[] {
         ? {
             ...(result as object),
             message:
-              'The task now does this work in its own session and reports its result. Do not do any of it here; end the turn unless another request still needs an answer.',
+              'The task has started and its start message is already visible. Do not add another acknowledgement. The task now does this work in its own session and reports its result. End the turn unless another request still needs an answer.',
           }
         : result;
     }),

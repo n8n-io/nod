@@ -377,7 +377,11 @@ export function createModelService(options: {
       read: () => read(row.id),
       async prepareRequest(modelId, automatic) {
         const credentialTag = tag(await read(row.id));
-        const pause = rows.find((item) => item.id === row.id)?.requestPauses?.[modelId];
+        const pauses = rows.find((item) => item.id === row.id)?.requestPauses;
+        const pause =
+          Object.values(pauses ?? {}).find(
+            (item) => item.kind === 'credits_depleted' && item.credentialTag === credentialTag,
+          ) ?? pauses?.[modelId];
         if (
           automatic &&
           pause &&
@@ -385,13 +389,12 @@ export function createModelService(options: {
           (pause.retryAt === null || pause.retryAt > Date.now())
         )
           throw new ConnectionError(
-            `${row.provider} reported ${pause.kind === 'zero_quota' ? 'zero quota' : 'a daily quota limit'} for ${modelId}. Automatic requests are paused. Check this connection in Settings > Models or ask again to make a new request.`,
+            `${row.provider} reported ${pause.kind === 'credits_depleted' ? 'depleted prepayment credits' : pause.kind === 'zero_quota' ? 'zero quota' : 'a daily quota limit'} for ${modelId}. Automatic requests are paused. Check this connection in Settings > Models or ask again to make a new request.`,
           );
         return async (error) => {
           if (!credentialTag || closed || (!error && automatic)) return;
           const failure = error ? modelQuotaFailure(error) : undefined;
           if (error && !failure) return;
-          if (!failure && !pause) return;
           try {
             await store.change((state) => {
               const saved = state.connections.find((item) => item.id === row.id);
@@ -406,7 +409,12 @@ export function createModelService(options: {
                       ? Date.now() + failure.retryAfterMs
                       : null,
                 };
-              else delete saved.requestPauses[modelId];
+              else {
+                delete saved.requestPauses[modelId];
+                for (const [id, item] of Object.entries(saved.requestPauses))
+                  if (item.kind === 'credits_depleted' && item.credentialTag === credentialTag)
+                    delete saved.requestPauses[id];
+              }
             });
             await reload();
           } catch (error) {

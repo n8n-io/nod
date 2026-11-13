@@ -60,6 +60,72 @@ export function approvalTitle(action: string) {
   return { title, app, slug: action.split('_')[0]!.toLowerCase() };
 }
 
+export function gmailMessageTarget(result: unknown, expectedId: string) {
+  const object = (value: unknown): Record<string, unknown> | undefined =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+  const outer = object(result);
+  if (!outer || outer.successful === false) return;
+  const data = object(outer.data) ?? outer;
+  const message = object(data.message) ?? data;
+  const id = message.id ?? message.messageId ?? message.emailId ?? message.message_id;
+  if (id !== expectedId) return;
+  const payload = object(message.payload);
+  const headers = Array.isArray(payload?.headers)
+    ? payload.headers
+    : Array.isArray(message.headers)
+      ? message.headers
+      : [];
+  const header = (name: string) =>
+    headers
+      .map(object)
+      .find((item) => typeof item?.name === 'string' && item.name.toLowerCase() === name)?.value;
+  const field = (limit: number, ...values: unknown[]) => {
+    const text = (
+      values.find((value) => typeof value === 'string' && value.trim()) as string | undefined
+    )?.trim();
+    if (!text) return;
+    const marker = ' [truncated]';
+    if (text.length <= limit) return text;
+    const prefix = text.slice(0, limit - marker.length).replace(/[\uD800-\uDBFF]$/, '');
+    return `${prefix}${marker}`;
+  };
+  const subject = field(300, message.subject, header('subject'));
+  const from = field(320, message.from, message.sender, header('from'));
+  const to = field(320, message.to, message.recipient, header('to'));
+  const cc = field(320, message.cc, header('cc'));
+  const bcc = field(320, message.bcc, header('bcc'));
+  if (!subject && !from && !to && !cc && !bcc) return;
+  return {
+    messageId: expectedId,
+    ...(subject ? { subject } : {}),
+    ...(from ? { from } : {}),
+    ...(to ? { to } : {}),
+    ...(cc ? { cc } : {}),
+    ...(bcc ? { bcc } : {}),
+  };
+}
+
+export function gmailDraftTarget(result: unknown, expectedId: string) {
+  const object = (value: unknown): Record<string, unknown> | undefined =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+  const outer = object(result);
+  if (!outer || outer.successful === false) return;
+  const data = object(outer.data) ?? outer;
+  const draft = object(data.draft) ?? data;
+  if (draft.id !== expectedId) return;
+  const message = object(draft.message);
+  const messageId = message?.id ?? message?.messageId;
+  if (typeof messageId !== 'string' || !messageId.trim()) return;
+  const target = gmailMessageTarget(message, messageId);
+  return target && (target.subject || target.to || target.cc || target.bcc)
+    ? { draftId: expectedId, ...target }
+    : undefined;
+}
+
 const fieldKeys: Array<[string, string[]]> = [
   ['To', ['recipient_email', 'to', 'extra_recipients']],
   ['Cc', ['cc']],
@@ -175,6 +241,7 @@ const tools: Record<string, string> = {
   'fetch content': 'Read a web page',
   'get search content': 'Read search results',
   'source check': 'Checked a source',
+  'read source': 'Read a source',
   browser: 'Used the browser',
   'sign in': 'Signed in',
   pay: 'Entered a card',
@@ -195,6 +262,109 @@ const tools: Record<string, string> = {
 };
 
 export function toolTitle(summary: string) {
+  if (tools[summary]) return tools[summary];
+  const browser = /^browser ([a-z_]+)$/.exec(summary)?.[1];
+  if (browser) return `Browser: ${browser.replaceAll('_', ' ')}`;
   const server = /^mcp {2}(.+?) {2}.+$/.exec(summary)?.[1];
   return server ? `Used ${server}` : (tools[summary] ?? summary);
+}
+
+const browserVerbs: Record<string, string> = {
+  accept_dialog: 'accept a dialog',
+  evaluate: 'run a page script',
+  type: 'type and press Enter',
+};
+
+const settingNames: Record<string, string> = {
+  notificationRule: 'notifications',
+  rules: 'your rules',
+  speechReply: 'voice replies',
+  speechVoice: 'voice',
+  timeZone: 'time zone',
+  locale: 'region',
+  hourCycle: 'clock',
+  quietHoursEnabled: 'quiet hours',
+  quietStart: 'quiet hours',
+  quietEnd: 'quiet hours',
+  proactivePaused: 'preparation',
+};
+
+const host = (origin: unknown) => {
+  try {
+    return new URL(String(origin)).host.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+};
+
+const quoted = (text: string) => `“${text.length > 80 ? `${text.slice(0, 79)}…` : text}”`;
+
+const dollarsOrNone = (value: unknown, label: string) =>
+  value === null ? `no ${label}` : `${label} $${String(value)}`;
+
+export function recordedTitle(action: string) {
+  if (action === 'NOD_browser') return 'Browser';
+  if (action === 'NOD_notification_preferences_update') return 'Change settings';
+  if (action.startsWith('NOD_') && action !== 'NOD_read_source') return approvalTitle(action).title;
+  const { app, label } = actionTitle(action);
+  return app ? `${app}: ${label}` : label;
+}
+
+export function recordedAction(action: string, target?: string | null) {
+  if (action === 'NOD_browser' && target) return { label: `Browser: ${target}` };
+  return { label: recordedTitle(action), ...(target ? { target } : {}) };
+}
+
+export function actionTarget(
+  action: string,
+  args: Record<string, unknown>,
+  details?: Record<string, unknown>,
+) {
+  const target = (() => {
+    if (action === 'NOD_browser') {
+      const step = String(args.step ?? '');
+      const control = Array.isArray(args.control)
+        ? (args.control as Array<{ name?: unknown }>).find(
+            (item) => typeof item.name === 'string' && item.name.trim(),
+          )?.name
+        : undefined;
+      const what =
+        step === 'upload'
+          ? String(args.file ?? '')
+          : step === 'accept_dialog' && typeof args.dialog === 'string' && args.dialog.trim()
+            ? quoted(args.dialog.trim())
+            : typeof control === 'string'
+              ? quoted(control.trim())
+              : '';
+      const site = host(args.website);
+      return [browserVerbs[step] ?? step, what, site && `on ${site}`].filter(Boolean).join(' ');
+    }
+    if (action.startsWith('NOD_schedule_'))
+      return words(args.title ?? (details?.schedule as { title?: unknown } | undefined)?.title)[0];
+    if (action === 'NOD_model_select')
+      return words((details?.targetModel as { model?: unknown } | undefined)?.model)[0];
+    if (action === 'NOD_limits_update')
+      return [
+        'monthlyUsd' in args && dollarsOrNone(args.monthlyUsd, 'monthly limit'),
+        'taskUsd' in args && dollarsOrNone(args.taskUsd, 'task check-in'),
+      ]
+        .filter(Boolean)
+        .join(', ');
+    if (action === 'NOD_notification_preferences_update')
+      return [...new Set(Object.keys(args).map((key) => settingNames[key] ?? key))].join(', ');
+    if (action.startsWith('LOCAL_FILES_'))
+      return listed([
+        ...words(args.path),
+        ...words(args.paths),
+        ...(Array.isArray(args.moves)
+          ? (args.moves as Array<{ from?: unknown; to?: unknown }>).map(
+              (move) => `${String(move.from)} → ${String(move.to)}`,
+            )
+          : []),
+      ]);
+    return approvalContent(action, args)
+      .fields?.map((field) => field.value)
+      .join(' · ');
+  })()?.trim();
+  return target ? target.slice(0, 300) : undefined;
 }

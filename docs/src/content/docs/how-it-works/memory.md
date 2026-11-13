@@ -66,6 +66,8 @@ flowchart TD
 
 The memory model selects existing notes. It can connect an indirect question to a preference or possession. It expands search terms with related concepts and source names, then ranks the returned messages. The server accepts only note paths and message IDs from the supplied records. Model-written facts do not enter this evidence packet or memory.
 
+For this selection, Nod sends at most 4,000 characters of the current request and 1,200 characters from each of up to six recent owner messages to the memory model. Long messages keep their beginning and end with an omission marker between them. Full messages remain available through conversation search when the task needs their contents.
+
 The full note index stays available. The selected evidence appears next to the current request, with sources and dates. A note marked **Mentioned once** can still have an exact source. That label records repetition; it does not prove the note is false.
 
 For totals and comparisons, Nod can select up to 100 facts. Other requests use up to 12 selected facts. Automatic retrieval follows up to five pages per search. It uses up to five searches and keeps at most 100 messages. A history excerpt has at most 1,200 characters. A saved support quote has at most 400 characters. Each model input is bounded at 256,000 characters. The packet marks omitted records when retrieval reaches its limit. A shortened message remains marked so Pi can read the full source. Ranking can select fewer records. Pi receives a smaller packet when its model has a small context window. A shortened packet keeps source references and requires further reads for complete evidence.
@@ -191,7 +193,7 @@ Learned skills are procedures Nod writes for itself after a task, as [Hermes Age
 The owner sees, edits and forgets learned skills under **Skills** in **Settings → Memory**, and **Export** includes them. Clearing memory clears them too. The code is in [`src/server/learned-skills.ts`](https://github.com/n8n-io/nod/blob/main/src/server/learned-skills.ts).
 
 :::caution[Skills come from what Nod read]
-Nod writes a skill from what it did and read, so a web page or an email can shape one. A skill is guidance, never permission. It never counts as the owner's words: the trust check, the confirmation writer and the fact check never see it. Saving a note still needs the owner's own messages, quoted, and forgetting a note, turning memory off or clearing it, and changes to schedules, notification rules and limits still go through the check.
+Nod writes a skill from what it did and read, so a web page or an email can shape one. A skill is guidance, never permission. It never counts as the owner's words: the trust check does not see it, and server-formatted approval questions do not use it. Saving a note still needs the owner's own messages, quoted, and forgetting a note, turning memory off or clearing it, and changes to schedules, notification rules and limits still go through the check.
 :::
 
 ## Related resources
