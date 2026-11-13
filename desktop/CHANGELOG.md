@@ -2,6 +2,44 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.7.5 - 2026-11-13
+
+### Features
+
+- **analytics:** Separate execution results from model failures. [#852](https://github.com/n8n-io/nod/pull/852) (66b5420)
+- **docs:** Add an About n8n labs box to the landing page. [#844](https://github.com/n8n-io/nod/pull/844) (770a7d4)
+- **desktop:** Use Nod's own title bar on Windows. [commit](https://github.com/n8n-io/nod/commit/a521e8a6e67df7b03999dd2a896eff30f8726f96) (a521e8a)
+
+### Fixes
+
+- **pi:** Recover context overflows across models. [#843](https://github.com/n8n-io/nod/pull/843) (8c86251)
+- Configure e2e approval curators (LAB-899). [#791](https://github.com/n8n-io/nod/pull/791) (593b2b6)
+- **models:** Rewrite another model's tool call ids for OpenAI-compatible servers. [commit](https://github.com/n8n-io/nod/commit/847e3bbd1db93b1739feb71cdf8feae6419876db) (847e3bb)
+- **usage:** Show activity in computer time zone. [#801](https://github.com/n8n-io/nod/pull/801) (9346ce1)
+- **gmail:** Identify draft in cleanup approval (LAB-762). [#810](https://github.com/n8n-io/nod/pull/810) (02b2483)
+- **docs:** Add site security headers and disclosure file. [commit](https://github.com/n8n-io/nod/commit/d6207ed48d8b9f6dc4e7ab46297d1700ff59e2db) (d6207ed)
+
+### Performance
+
+- **memory:** Bound recall selection input. [#800](https://github.com/n8n-io/nod/pull/800) (5448656)
+
+<details>
+<summary>Maintenance (1 changes)</summary>
+
+- Add a feature video skill for pull requests and releases. [#853](https://github.com/n8n-io/nod/pull/853) (f193a06)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.7.4...3d4a3588fad454ed01ad620274f3a744ed8eb06b)
+
+<details>
+<summary>Build details</summary>
+
+Source: `3d4a3588fad454ed01ad620274f3a744ed8eb06b`
+Previous release: `nod-v0.7.4`
+
+</details>
+
 ## 0.7.4 - 2026-11-13
 
 ### Features
