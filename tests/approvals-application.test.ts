@@ -865,6 +865,17 @@ test(
               { target: 'click “Authorize payment” on bank.example.test', kind: 'message' },
             ],
           );
+          const log = JSON.stringify(
+            results.get(
+              await propose(
+                'usage_get',
+                { from: '2000-01-01', to: '2099-12-31' },
+                'manage_personal_context',
+              ),
+            ),
+          );
+          assert.match(log, /untrusted_tool_result source=\\"usage\\"/);
+          assert.ok(log.includes('Browser · click “Authorize payment” on bank.example.test'));
           const moved = await propose('click', { selector: '@e7' }, 'browser');
           const [stale] = await approvalsFor(moved);
           browserUrl = 'https://bank.example.test/payees/remove';

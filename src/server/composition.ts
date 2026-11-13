@@ -2123,7 +2123,12 @@ async function initializeApplication(
           );
         }
         if (action === 'usage_get')
-          return Object.keys(args).length ? activityLog.read(args, 200) : ledger.read();
+          return untrustedBlock(
+            'usage',
+            JSON.stringify(
+              Object.keys(args).length ? await activityLog.read(args, 200) : await ledger.read(),
+            ),
+          );
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },
       requestPayment: async (turn, input, show) => {
