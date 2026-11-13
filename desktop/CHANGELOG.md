@@ -2,6 +2,47 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.7.4 - 2026-11-13
+
+### Features
+
+- **usage:** Record everything Nod did, export it as CSV and answer from it. [#840](https://github.com/n8n-io/nod/pull/840) (1dcec5f)
+- **agent:** Answer any Nod question from bundled docs. [#839](https://github.com/n8n-io/nod/pull/839) (094f67a)
+- **schedules:** Add Run now. [#838](https://github.com/n8n-io/nod/pull/838) (440d204)
+
+### Fixes
+
+- **vault:** Clarify unknown sign-in recovery. [#804](https://github.com/n8n-io/nod/pull/804) (6f1cd18)
+- **trust:** Bind approval questions to exact actions. [#799](https://github.com/n8n-io/nod/pull/799) (9c87975)
+- **sign-in:** Surface expired form status to next turn. [#788](https://github.com/n8n-io/nod/pull/788) (95231b7)
+- **chat:** Explain overlong pasted messages. [#789](https://github.com/n8n-io/nod/pull/789) (af89389)
+- **tasks:** Avoid duplicate acknowledgements. [#790](https://github.com/n8n-io/nod/pull/790) (73007ed)
+- Cache stable scheduled request prefixes. [#786](https://github.com/n8n-io/nod/pull/786) (bc121f3)
+- **channels:** Clarify desktop WhatsApp availability. [#785](https://github.com/n8n-io/nod/pull/785) (fd63563)
+- **runtime:** Stop repeated failures and keep recovery causes. [#836](https://github.com/n8n-io/nod/pull/836) (a0c029d)
+- **channels:** Recover Telegram and WhatsApp connections. [commit](https://github.com/n8n-io/nod/commit/956ebb1a60374dc4f2041d13759a06fd13e2450d) (956ebb1)
+- **desktop:** Quote the Windows uninstall command correctly. [#834](https://github.com/n8n-io/nod/pull/834) (52947da)
+- **web:** Remove fixed from onboarding data sharing text. [#835](https://github.com/n8n-io/nod/pull/835) (6afb888)
+- **models:** Recover from request, access and quota failures. [#811](https://github.com/n8n-io/nod/pull/811) (65132ee)
+- **models:** Let local models answer after Pi's 5-minute request timeout. [#808](https://github.com/n8n-io/nod/pull/808) (e9d5813)
+- **chat:** Show what Nod is doing instead of filler words. [#802](https://github.com/n8n-io/nod/pull/802) (ecbb6cc)
+
+### Documentation
+
+- Say the computer restarted in the Keep Nod running table. [commit](https://github.com/n8n-io/nod/commit/78b299a51ce76c92d38cc8cbc483d2889950831e) (78b299a)
+- **setup:** List the Docker Buildx plugin as a source-install requirement. [#812](https://github.com/n8n-io/nod/pull/812) (915e4f1)
+- Explain that schedules wait for sign-in after a restart. [commit](https://github.com/n8n-io/nod/commit/0dd6f1c004ccadfc39694dcf33fceabf0d01df2e) (0dd6f1c)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.7.3...6f1cd18a14128e296b9982da2eccdf69e40cf6f0)
+
+<details>
+<summary>Build details</summary>
+
+Source: `6f1cd18a14128e296b9982da2eccdf69e40cf6f0`
+Previous release: `nod-v0.7.3`
+
+</details>
+
 ## 0.7.3 - 2026-11-12
 
 ### Features

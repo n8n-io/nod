@@ -94,13 +94,36 @@ export function gmailMessageTarget(result: unknown, expectedId: string) {
   const subject = field(300, message.subject, header('subject'));
   const from = field(320, message.from, message.sender, header('from'));
   const to = field(320, message.to, message.recipient, header('to'));
-  if (!subject && !from && !to) return;
+  const cc = field(320, message.cc, header('cc'));
+  const bcc = field(320, message.bcc, header('bcc'));
+  if (!subject && !from && !to && !cc && !bcc) return;
   return {
     messageId: expectedId,
     ...(subject ? { subject } : {}),
     ...(from ? { from } : {}),
     ...(to ? { to } : {}),
+    ...(cc ? { cc } : {}),
+    ...(bcc ? { bcc } : {}),
   };
+}
+
+export function gmailDraftTarget(result: unknown, expectedId: string) {
+  const object = (value: unknown): Record<string, unknown> | undefined =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+  const outer = object(result);
+  if (!outer || outer.successful === false) return;
+  const data = object(outer.data) ?? outer;
+  const draft = object(data.draft) ?? data;
+  if (draft.id !== expectedId) return;
+  const message = object(draft.message);
+  const messageId = message?.id ?? message?.messageId;
+  if (typeof messageId !== 'string' || !messageId.trim()) return;
+  const target = gmailMessageTarget(message, messageId);
+  return target && (target.subject || target.to || target.cc || target.bcc)
+    ? { draftId: expectedId, ...target }
+    : undefined;
 }
 
 const fieldKeys: Array<[string, string[]]> = [

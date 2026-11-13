@@ -34,6 +34,7 @@ import {
   formatDayLabel,
   formatNumber,
   formatTime,
+  useBrowserDateFormat,
   useDateFormat,
   type DateFormat,
 } from '../lib/date-format';
@@ -374,8 +375,15 @@ type StepPage = { steps: TrustStep[]; total: number };
 const stepHeight = 26;
 const stepOverscan = 30;
 
-function StepLine({ step, showCosts }: { step: TrustStep; showCosts: boolean }) {
-  const format = useDateFormat();
+function StepLine({
+  step,
+  showCosts,
+  format,
+}: {
+  step: TrustStep;
+  showCosts: boolean;
+  format: DateFormat;
+}) {
   const text = [step.title, step.detail, step.because && becauseText(step.because)]
     .filter(Boolean)
     .join(' · ');
@@ -394,7 +402,15 @@ function StepLine({ step, showCosts }: { step: TrustStep; showCosts: boolean }) 
   );
 }
 
-function TrustLog({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean }) {
+function TrustLog({
+  entry,
+  showCosts,
+  format,
+}: {
+  entry: TrustEntry;
+  showCosts: boolean;
+  format: DateFormat;
+}) {
   const path = `/api/trust/entries/${entry.id}/steps`;
   const first = usePageData<StepPage>(path);
   const total = first.data?.total ?? 0;
@@ -482,7 +498,7 @@ function TrustLog({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean 
                   className={step?.failed ? 'is-failed' : undefined}
                 >
                   {step ? (
-                    <StepLine step={step} showCosts={showCosts} />
+                    <StepLine step={step} showCosts={showCosts} format={format} />
                   ) : (
                     <span className="usage-log-pending" aria-label="Loading" />
                   )}
@@ -517,8 +533,15 @@ function TrustLog({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean 
   );
 }
 
-function TrustRow({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean }) {
-  const format = useDateFormat();
+function TrustRow({
+  entry,
+  showCosts,
+  format,
+}: {
+  entry: TrustEntry;
+  showCosts: boolean;
+  format: DateFormat;
+}) {
   const [open, setOpen] = useState(false);
   const { icon: Icon, label } = sources[entry.source];
   const changes = [
@@ -558,7 +581,7 @@ function TrustRow({ entry, showCosts }: { entry: TrustEntry; showCosts: boolean 
         )}
         <ChevronRight size={16} className="usage-chevron" aria-hidden="true" />
       </button>
-      {open && <TrustLog entry={entry} showCosts={showCosts} />}
+      {open && <TrustLog entry={entry} showCosts={showCosts} format={format} />}
     </>
   );
 }
@@ -605,7 +628,7 @@ function Statement({
   showCosts: boolean;
   hidden: boolean;
 }) {
-  const format = useDateFormat();
+  const format = useBrowserDateFormat();
   const [trust, setTrust] = useState<Stream<TrustEntry>>(view);
   const [uses, setUses] = useState<Stream<VaultActivityEntry>>({
     entries: vault.entries,
@@ -702,9 +725,9 @@ function Statement({
             {items.map((row) => (
               <li key={row.key}>
                 {row.use ? (
-                  <VaultUse entry={row.use} open={opener(row.use)} />
+                  <VaultUse entry={row.use} open={opener(row.use)} format={format} />
                 ) : (
-                  <TrustRow entry={row.trust!} showCosts={showCosts} />
+                  <TrustRow entry={row.trust!} showCosts={showCosts} format={format} />
                 )}
               </li>
             ))}

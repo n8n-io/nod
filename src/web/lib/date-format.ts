@@ -86,6 +86,10 @@ let current: DateFormat = {
 };
 const listeners = new Set<() => void>();
 
+function browserTimeZone() {
+  return validTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone) ?? current.timeZone;
+}
+
 export function resolveBrowserRegion() {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   if (!browserRegions.has(timeZone)) browserRegions.set(timeZone, timeZoneRegion(timeZone));
@@ -100,6 +104,10 @@ export function dateFormatFrom(
     hourCycle: preferences.hourCycle ?? 'auto',
     timeZone: validTimeZone(preferences.timeZone) ?? current.timeZone,
   };
+}
+
+export function browserDateFormat(format: DateFormat, timeZone = browserTimeZone()): DateFormat {
+  return { ...format, timeZone: validTimeZone(timeZone) ?? format.timeZone };
 }
 
 export function setDateFormat(preferences: Pick<Preferences, 'locale' | 'hourCycle' | 'timeZone'>) {
@@ -127,6 +135,12 @@ export function useDateFormat() {
     () => current,
     () => current,
   );
+}
+
+export function useBrowserDateFormat() {
+  const format = useDateFormat();
+  const timeZone = useSyncExternalStore(subscribe, browserTimeZone, browserTimeZone);
+  return browserDateFormat(format, timeZone);
 }
 
 export function useBrowserRegion() {

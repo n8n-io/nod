@@ -50,7 +50,7 @@ jobs:
         run: pnpm --dir docs install --frozen-lockfile
       - name: Build the docs under /docs/ and validate every internal link
         run: pnpm --dir docs build
-      - name: Put the landing page, the 404 page, the favicon and robots.txt at the root
+      - name: Put the landing page, site settings and disclosure file at the root
         run: |
           mkdir site
           cp -R docs/dist site/docs
@@ -58,11 +58,15 @@ jobs:
           cp site/docs/404.html site/404.html
           cp site/docs/favicon.ico site/favicon.ico
           cp site/docs/robots.txt site/robots.txt
+          cp site/docs/_headers site/_headers
+          cp -R site/docs/.well-known site/.well-known
+          cp site/.well-known/security.txt site/security.txt
       - name: Upload the built site
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: nod-site
           path: site
+          include-hidden-files: true
           retention-days: 7
 
   deploy:
