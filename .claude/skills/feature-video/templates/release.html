@@ -1,0 +1,907 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Nod release</title>
+    <style>
+      @font-face {
+        font-family: 'Baumer';
+        src: url(https://n8n.io/assets/fonts/baumer/variable/n8n-baumer-variable.woff2)
+          format('woff2');
+        font-weight: 400 800;
+      }
+      @font-face {
+        font-family: 'BaumerMono';
+        src: url(https://n8n.io/assets/fonts/baumer/variable/n8n-baumer-mono-variable.woff2)
+          format('woff2');
+        font-weight: 400 800;
+      }
+      @font-face {
+        font-family: 'Geist';
+        src: url(assets/Geist-Variable.woff2) format('woff2');
+        font-weight: 100 900;
+      }
+      @font-face {
+        font-family: 'GeistMono';
+        src: url(assets/GeistMono-Variable.woff2) format('woff2');
+        font-weight: 100 900;
+      }
+      :root {
+        --ink: #191919;
+        --ink2: #464646;
+        --muted: #676767;
+        --border: #e0e0e0;
+        --pink: #ff91ac;
+        --pink10: #ffe8ec;
+        --pink20: #ffd0d9;
+        --pink70: #87003c;
+        --g15: #f1f1f1;
+        --g20: #eaeaea;
+        --bg: #fafafa;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      html,
+      body {
+        background: var(--bg);
+        overflow: hidden;
+      }
+      #stage {
+        position: relative;
+        width: 540px;
+        height: 540px;
+        overflow: hidden;
+        background: var(--bg);
+        font-family: 'Baumer', sans-serif;
+        color: var(--ink);
+        -webkit-font-smoothing: antialiased;
+        font-feature-settings: 'liga' 1;
+        font-synthesis: none;
+      }
+      .scene {
+        position: absolute;
+        inset: 0;
+        display: none;
+        background: var(--bg);
+      }
+      .abs {
+        position: absolute;
+      }
+      .dotframe {
+        position: absolute;
+        background: url(assets/dot-grid.svg) 0 0/10px 10px round;
+        opacity: 0.9;
+      }
+      .eyebrow {
+        position: absolute;
+        left: 0;
+        right: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 10px;
+        font-family: 'BaumerMono', monospace;
+        font-size: 13px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--ink2);
+        white-space: nowrap;
+      }
+      .eyebrow::before,
+      .eyebrow::after {
+        content: '';
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--pink);
+      }
+      .head {
+        position: absolute;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-weight: 500;
+        letter-spacing: -0.025em;
+        line-height: 1.04;
+      }
+      .ln {
+        display: block;
+        overflow: hidden;
+        padding: 0.04em 0 0.1em;
+      }
+      .w {
+        display: inline-block;
+      }
+      .pinkword {
+        color: var(--pink);
+      }
+      .glyph {
+        display: inline-block;
+        width: 0.6em;
+        height: 0.6em;
+        margin: 0 -0.042em 0 0.03em;
+        overflow: visible;
+        vertical-align: baseline;
+      }
+      .glyph svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+      }
+      .gdot {
+        transform-box: view-box;
+        transform-origin: 9px 12px;
+      }
+      .fchip {
+        position: absolute;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        height: 44px;
+        padding: 0 16px 0 12px;
+        background: #fff;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow: 0 8px 24px rgba(25, 25, 25, 0.08);
+        font-size: 16px;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .fchip .em {
+        font-family: 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
+        font-size: 18px;
+      }
+      .photo {
+        position: absolute;
+        left: 24px;
+        top: 190px;
+        width: 492px;
+        height: 326px;
+        border-radius: 24px;
+        overflow: hidden;
+      }
+      .photo img {
+        position: absolute;
+        left: -40px;
+        top: -120px;
+        width: 600px;
+        height: 600px;
+      }
+      .photo .shade {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.18);
+      }
+      .panel {
+        position: absolute;
+        left: 18px;
+        top: 18px;
+        right: 18px;
+        bottom: 18px;
+        border-radius: 18px;
+        background: var(--g15);
+        overflow: hidden;
+        box-shadow:
+          inset -6px -6px 10px 0 #fff,
+          inset 6px 6px 10px 0 #eaeaea;
+      }
+      .inner {
+        position: absolute;
+        inset: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .msg {
+        display: flex;
+      }
+      .msg.you {
+        justify-content: flex-end;
+      }
+      .bubble {
+        max-width: 360px;
+        padding: 9px 15px;
+        border-radius: 21px;
+        background: #fff;
+        font-size: 14.5px;
+        line-height: 1.5;
+      }
+      .you .bubble {
+        background: var(--pink20);
+      }
+      .slot {
+        position: relative;
+        min-height: 40px;
+      }
+      .live {
+        position: absolute;
+        left: 2px;
+        top: 0;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        height: 38px;
+      }
+      .live svg {
+        width: 24px;
+        height: 24px;
+        overflow: visible;
+      }
+      .livetext {
+        font-size: 14.5px;
+        white-space: nowrap;
+        background: linear-gradient(100deg, var(--muted) 20%, var(--ink) 45%, var(--muted) 70%) 120%
+          0/240% 100%;
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+      .reply .bubble {
+        max-width: 410px;
+        padding: 9px;
+      }
+      .reply p {
+        padding: 0 6px 6px;
+      }
+      .embed {
+        background: var(--g15);
+        border-radius: 13px;
+        padding: 6px 12px;
+        font-size: 12.5px;
+        line-height: 1.75;
+      }
+      .row {
+        white-space: nowrap;
+      }
+      .term {
+        position: absolute;
+        inset: 0;
+        background: #1e1e1e;
+        padding: 16px 18px;
+        font-family: 'GeistMono', monospace;
+        font-size: 12.5px;
+        line-height: 1.75;
+        color: #e6e6e6;
+        white-space: pre;
+      }
+      .term .p {
+        color: var(--pink);
+      }
+      .term .ok {
+        color: #8fd6a5;
+      }
+      .lrow {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        height: 52px;
+        padding: 0 16px;
+        background: #fff;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        font-size: 15.5px;
+      }
+      .lrow .ic {
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: var(--pink10);
+        color: var(--pink70);
+        flex: none;
+      }
+      .lrow .ic svg {
+        width: 15px;
+        height: 15px;
+      }
+      .ububble {
+        align-self: flex-end;
+        padding: 11px 18px;
+        border-radius: 24px;
+        background: var(--pink20);
+        font-size: 16.5px;
+        line-height: 1.4;
+        white-space: nowrap;
+        transform-origin: 100% 100%;
+      }
+      .shotwrap {
+        position: absolute;
+        inset: 0;
+        background: #fafafa;
+        overflow: hidden;
+      }
+      .shotinner {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        transform-origin: 0 0;
+      }
+      .shotinner img {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: auto;
+        display: block;
+      }
+      .shotmark {
+        position: absolute;
+        background: var(--pink);
+        opacity: 0;
+        border-radius: 5px;
+        mix-blend-mode: multiply;
+        transform-origin: 0 50%;
+      }
+      .pcursor {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 24px;
+        height: 24px;
+        opacity: 0;
+        z-index: 5;
+      }
+      .cta {
+        position: absolute;
+        left: 50%;
+        top: 388px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        padding: 0 22px;
+        background: var(--pink);
+        border-radius: 9px;
+        font-family: 'BaumerMono', monospace;
+        font-size: 16px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+      .cross {
+        position: absolute;
+        width: 9px;
+        height: 9px;
+      }
+      .cross::before,
+      .cross::after {
+        content: '';
+        position: absolute;
+        background: var(--ink);
+      }
+      .cross::before {
+        left: 4px;
+        top: 0;
+        width: 1px;
+        height: 9px;
+      }
+      .cross::after {
+        left: 0;
+        top: 4px;
+        width: 9px;
+        height: 1px;
+      }
+      .fine {
+        position: absolute;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-family: 'BaumerMono', monospace;
+        font-size: 11.5px;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <script src="shots/shots.js"></script>
+    <script>
+      const RELEASE = {
+        version: '0.7',
+        hook: { eyebrow: 'Release notes', caption: 'Here’s what’s new.' },
+        features: [
+          {
+            emoji: '📂',
+            label: 'Local files',
+            eyebrow: 'Local files',
+            title: ['Put Nod to work', 'on your <pink>files</pink>'],
+            kind: 'chat',
+            you: 'Rename the invoices in Downloads by date and vendor',
+            live: 'Reading 6 invoices',
+            reply: 'Renamed the 6 invoices in Downloads:',
+            rows: [
+              'invoice (7).pdf → 2026-10-02 Brightline Studio.pdf',
+              'scan0003.pdf → 2026-10-09 Fernway Hosting.pdf',
+              'and 4 more',
+            ],
+          },
+          {
+            emoji: '🐧',
+            label: 'Linux preview',
+            eyebrow: 'Linux x64 preview',
+            title: ['Nod now runs', 'on <pink>Linux</pink>'],
+            kind: 'terminal',
+            lines: [
+              '$ flatpak install --user ./nod-linux-x64.flatpak',
+              '<ok>Installation complete.</ok>',
+              '$ flatpak run io.n8n.Nod',
+            ],
+          },
+          {
+            emoji: '💡',
+            label: 'Ideas',
+            eyebrow: 'Ideas without the homework',
+            title: ['Ask what Nod', 'can <pink>do for you</pink>'],
+            kind: 'chat',
+            you: 'What can you do for me?',
+            live: 'Looking at your apps',
+            reply: 'Three things I can start now:',
+            rows: [
+              '★ Prep your 11:00 call · you get a one-page brief',
+              'Chase the two overdue invoices',
+              'Sum up this week’s client threads',
+            ],
+          },
+          {
+            emoji: '🛟',
+            label: 'Spending limits',
+            eyebrow: 'Spending limits',
+            title: ['$200 a month,', 'by <pink>default</pink>'],
+            kind: 'list',
+            rows: [
+              'New setups start with a $200 monthly limit',
+              'Change it in Usage, or just ask in chat',
+              'Existing settings stay unchanged',
+            ],
+          },
+        ],
+        end: {
+          tag: 'Nod 0.7 is out.',
+          cta: 'nod.n8n.io',
+          fine: 'Mac · Windows · Linux preview · Open source',
+        },
+      };
+
+      const HOOK = 4,
+        END_LEN = 3.5;
+      const n = RELEASE.features.length;
+      const LEN = RELEASE.features.map((f) => f.len || (f.kind === 'app' ? 6 : 4));
+      const T0 = (i) => HOOK + LEN.slice(0, i).reduce((a, b) => a + b, 0);
+      const END_AT = T0(n);
+      const DURATION = END_AT + END_LEN;
+
+      const $ = (id) => document.getElementById(id);
+      const C = (x, a = 0, b = 1) => (x < a ? a : x > b ? b : x);
+      const P = (t, s, d) => C((t - s) / d);
+      const L = (a, b, x) => a + (b - a) * x;
+      const E = {
+        out: (x) => 1 - (1 - x) ** 3,
+        out5: (x) => 1 - (1 - x) ** 5,
+        in3: (x) => x * x * x,
+        inOut: (x) => (x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2),
+        back: (x) => {
+          const c1 = 1.9,
+            c3 = c1 + 1;
+          return 1 + c3 * (x - 1) ** 3 + c1 * (x - 1) ** 2;
+        },
+        spring: (x) => (x >= 1 ? 1 : 1 - Math.exp(-7 * x) * Math.cos(11 * x)),
+      };
+      function tf(el, { x = 0, y = 0, s = 1, r = 0, o } = {}) {
+        el.style.transform = `translate(${x}px,${y}px) scale(${s}) rotate(${r}deg)`;
+        if (o !== undefined) el.style.opacity = o;
+      }
+      function words(el, t, start, step, dur = 0.5) {
+        el.querySelectorAll('.w').forEach((w, i) => {
+          const p = E.out5(P(t, start + i * step, dur));
+          w.style.transform = `translateY(${(1 - p) * 110}%)`;
+        });
+      }
+      const nodAngle = (t, s, d = 0.6) => Math.sin(Math.PI * E.inOut(P(t, s, d))) * 46;
+      const glyphSvg = (id) =>
+        `<svg viewBox="0 0 21 21"><circle cx="9" cy="12" r="7.375" fill="none" stroke="#191919" stroke-width="3.25"/><g class="gdot" id="${id}"><circle cx="17" cy="4" r="3.45" fill="#ff91ac"/></g></svg>`;
+      const fmt = (s) =>
+        s
+          .split(/(<pink>.*?<\/pink>)/)
+          .filter(Boolean)
+          .map((part) => {
+            const pink = part.startsWith('<pink>');
+            const txt = pink ? part.slice(6, -7) : part;
+            return txt
+              .split(' ')
+              .filter(Boolean)
+              .map((w) => `<span class="w${pink ? ' pinkword' : ''}">${w}</span>`)
+              .join(' ');
+          })
+          .join(' ');
+      const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      const check =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+      const stage = $('stage');
+      const cursorSvg = (id) =>
+        `<svg class="pcursor" id="${id}" viewBox="0 0 24 24"><path d="M5 2.5v17l4.4-4.1 2.9 6.3 2.7-1.2-2.9-6.2 6-.3z" fill="#111" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+      const SHOTS = window.SHOTS || {};
+      const keyed = (keys, t, val) => {
+        let v = val(keys[0]);
+        for (let k = 1; k < keys.length; k++) {
+          const d = keys[k].dur || 0.6;
+          v = L(v, val(keys[k]), E.inOut(P(t, keys[k].at - d, d)));
+        }
+        return v;
+      };
+      stage.insertAdjacentHTML(
+        'beforeend',
+        `<div class="scene" id="H">
+  <div class="dotframe" id="H_dots" style="left:20px;top:122px;width:500px;height:170px"></div>
+  <p class="eyebrow" id="H_eye" style="top:96px">${RELEASE.hook.eyebrow}</p>
+  ${RELEASE.hook.title ? `<h1 class="head" id="H_word" style="top:150px;font-size:54px">${RELEASE.hook.title.map((l) => `<span class="ln">${fmt(l)}</span>`).join('')}</h1><span id="H_hdot" hidden></span>` : `<h1 class="head" id="H_word" style="top:136px;font-size:108px;line-height:1"><span class="ln" style="padding:.06em 0 .12em"><span class="w">N<span class="glyph">${glyphSvg('H_hdot')}</span>d</span> <span class="w">${RELEASE.version}</span></span></h1>`}
+  <div id="H_chips"></div>
+  <p class="abs" id="H_cap" style="left:0;right:0;top:350px;text-align:center;font-size:26px;font-weight:500;letter-spacing:-.015em;opacity:0">${RELEASE.hook.caption}</p>
+  <div class="abs" id="H_glyph" style="left:223px;top:207px;width:110px;height:110px;transform-origin:47.14px 62.86px;opacity:0"><svg viewBox="0 0 21 21" style="display:block;width:100%;height:100%;overflow:visible"><circle cx="9" cy="12" r="7.375" fill="none" stroke="#191919" stroke-width="3.25"/><g class="gdot" id="H_gdot"><circle cx="17" cy="4" r="3.45" fill="#ff91ac"/></g></svg></div>
+</div>`,
+      );
+      const chipPos = RELEASE.features.map((f, i) => {
+        const col = i % 2,
+          row = Math.floor(i / 2),
+          cols = Math.min(2, n - row * 2);
+        return [cols === 1 ? 270 : col ? 390 : 150, 340 + row * 60];
+      });
+      const chipEls = RELEASE.features.map((f, i) => {
+        const d = document.createElement('div');
+        d.className = 'fchip';
+        d.innerHTML = `<span class="em">${f.emoji}</span>${f.label}`;
+        $('H_chips').appendChild(d);
+        return d;
+      });
+
+      RELEASE.features.forEach((f, i) => {
+        let ui = '';
+        if (f.kind === 'chat')
+          ui = `<div class="inner"><div class="msg you" id="F${i}_you"><div class="bubble">${esc(f.you)}</div></div><div class="slot"><div class="live" id="F${i}_live"><svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="10" stroke="#191919" stroke-width="4"/><g id="F${i}_orbit" style="transform-box:view-box;transform-origin:16px 16px"><circle cx="25" cy="6" r="4" fill="#ff91ac"/></g></svg><span class="livetext" id="F${i}_lt">${esc(f.live)}</span></div><div class="msg reply" id="F${i}_reply"><div class="bubble"><p>${esc(f.reply)}</p>${f.rows?.length ? `<div class="embed">${f.rows.map((r, k) => `<div class="row" id="F${i}_r${k}">${esc(r)}</div>`).join('')}</div>` : ''}</div></div></div></div>`;
+        else if (f.kind === 'terminal')
+          ui = `<div class="term">${f.lines.map((l, k) => `<div id="F${i}_t${k}"><span class="tx"></span></div>`).join('')}</div>`;
+        else if (f.kind === 'list')
+          ui = `<div class="inner" style="justify-content:center">${f.rows.map((r, k) => `<div class="lrow" id="F${i}_r${k}"><span class="ic">${check}</span>${esc(r)}</div>`).join('')}</div>`;
+        else if (f.kind === 'app')
+          ui = `<div class="shotwrap"><div class="shotinner" id="F${i}_in">${f.states.map((s, k) => `<img id="F${i}_s${k}" src="${f.dir || 'shots'}/${s.shot}.png">`).join('')}${(f.marks || []).map((m, k) => `<i class="shotmark" id="F${i}_m${k}"></i>`).join('')}${cursorSvg(`F${i}_cur`)}</div></div>`;
+        else if (f.kind === 'prompts')
+          ui = `<div class="inner" style="justify-content:center">${f.rows.map((r, k) => `<div class="ububble" id="F${i}_r${k}">${esc(r)}</div>`).join('')}</div>`;
+        stage.insertAdjacentHTML(
+          'beforeend',
+          `<div class="scene" id="F${i}">
+    <div class="dotframe" style="left:20px;top:58px;width:500px;height:118px"></div>
+    <p class="eyebrow" id="F${i}_eye" style="top:30px">${String(i + 1).padStart(2, '0')} · ${f.eyebrow}</p>
+    <h2 class="head" id="F${i}_head" style="top:62px;font-size:46px">${f.title.map((l) => `<span class="ln">${fmt(l)}</span>`).join('')}</h2>
+    <div class="photo" id="F${i}_photo"><img src="assets/collage.png" style="transform:translate(${-i * 30}px,${(i % 2) * -60}px)"><div class="shade"></div><div class="panel">${ui}</div></div>
+  </div>`,
+        );
+      });
+
+      stage.insertAdjacentHTML(
+        'beforeend',
+        `<div class="scene" id="Z">
+  <div class="dotframe" id="Z_dots" style="left:20px;top:104px;width:500px;height:186px"></div>
+  <h1 class="head" id="Z_word" style="top:128px;font-size:132px;line-height:1"><span class="ln" style="padding:.06em 0 .12em"><span class="w">N</span><span class="w glyph">${glyphSvg('Z_gdot')}</span><span class="w">d</span></span></h1>
+  <p class="abs" id="Z_tag" style="left:0;right:0;top:312px;text-align:center;font-size:23px;font-weight:500;letter-spacing:-.01em">${RELEASE.end.tag}</p>
+  <div class="cta" id="Z_cta">${RELEASE.end.cta}<i class="cross" style="left:-5px;top:-5px"></i><i class="cross" style="right:-5px;top:-5px"></i><i class="cross" style="left:-5px;bottom:-5px"></i><i class="cross" style="right:-5px;bottom:-5px"></i></div>
+  <p class="fine" id="Z_fine" style="top:458px">${RELEASE.end.fine}</p>
+</div>`,
+      );
+
+      let chipSize = [];
+      function show(id, t, a, b) {
+        $(id).style.display = t >= a && t < b ? 'block' : 'none';
+      }
+
+      function renderHook(t) {
+        show('H', t, 0, 4.01);
+        if (t >= 4.01) return;
+        words($('H_word'), t, -1, 0);
+        $('H_hdot').style.transform = `rotate(${nodAngle(t, 0.4, 0.7)}deg)`;
+        const out = P(t, 2.42, 0.25);
+        ['H_word', 'H_eye', 'H_dots'].forEach((id) => {
+          $(id).style.opacity = 1 - out;
+        });
+        $('H_word').style.filter = out > 0 ? `blur(${out * 8}px)` : 'none';
+        chipEls.forEach((el, i) => {
+          const [cx, cy] = chipPos[i],
+            w = chipSize[i]?.[0] || 160,
+            h = 44;
+          const fl = Math.sin(t * 2.2 + i * 1.7) * 2;
+          const k = E.in3(P(t, 2.45 + i * 0.04, 0.42));
+          tf(el, {
+            x: L(cx, 270, k) - w / 2,
+            y: L(cy + fl, 262, k) - h / 2,
+            s: L(1, 0.1, k),
+            o: 1 - C((k - 0.7) * 3.3),
+          });
+        });
+        const g = $('H_glyph'),
+          gp = P(t, 2.86, 0.5),
+          zoom = P(t, 3.55, 0.45);
+        g.style.opacity = C(gp * 4);
+        g.style.transform = `scale(${E.back(gp) * (1 + E.in3(zoom) * 24)})`;
+        $('H_gdot').style.transform = `rotate(${nodAngle(t, 3.05, 0.5)}deg)`;
+        const cp = E.out(P(t, 3.0, 0.35)),
+          co = P(t, 3.5, 0.12);
+        tf($('H_cap'), { y: (1 - cp) * 12, o: cp * (1 - co) });
+      }
+
+      function renderFeature(i, t) {
+        const f = RELEASE.features[i],
+          t0 = T0(i),
+          BEAT_LEN = LEN[i],
+          el = $(`F${i}`);
+        const first = i === 0,
+          start = first ? 3.55 : t0 - 0.38;
+        show(`F${i}`, t, start, t0 + BEAT_LEN);
+        if (t < start || t >= t0 + BEAT_LEN) return;
+        const tau = t - t0;
+        if (first) {
+          const zoom = P(t, 3.55, 0.45);
+          el.style.clipPath =
+            t < 4
+              ? `circle(${5.75 * (110 / 21) * (1 + E.in3(zoom) * 24)}px at 270px 270px)`
+              : 'none';
+          el.style.transform = `scale(${t < 4 ? L(1.2, 1.04, E.out(zoom)) : L(1.04, 1, E.out(P(tau, 0, 0.5)))})`;
+        } else el.style.transform = `translateX(${(1 - E.inOut(P(tau, -0.38, 0.38))) * 540}px)`;
+        if (i < n - 1 && tau > BEAT_LEN - 0.38)
+          el.style.transform = `translateX(${-E.inOut(P(tau, BEAT_LEN - 0.38, 0.38)) * 540}px)`;
+        const u = tau + (first ? 0.45 : 0.38);
+        const ep = E.out(P(u, 0.0, 0.4));
+        tf($(`F${i}_eye`), { y: (1 - ep) * 8, o: ep });
+        words($(`F${i}_head`), u, 0.05, 0.06, 0.5);
+        const pp = E.out5(P(u, 0.15, 0.55));
+        tf($(`F${i}_photo`), { y: (1 - pp) * 40, s: L(0.94, 1, pp), o: C(pp * 2) });
+        if (f.kind === 'chat') {
+          const yp = E.out5(P(tau, 0.65, 0.45));
+          $(`F${i}_you`).style.transformOrigin = '100% 100%';
+          tf($(`F${i}_you`), { y: (1 - yp) * 20, s: L(0.96, 1, yp), o: C(yp * 3) });
+          $(`F${i}_live`).style.opacity =
+            E.out(P(tau, 1.05, 0.25)) * (1 - E.out(P(tau, 1.9, 0.15)));
+          $(`F${i}_orbit`).style.transform = `rotate(${t * 360}deg)`;
+          $(`F${i}_lt`).style.backgroundPosition = `${120 - ((t * 0.9) % 1.6) * 150}% 0`;
+          const rp = E.out5(P(tau, 1.95, 0.45));
+          tf($(`F${i}_reply`), { y: (1 - rp) * 16, o: C(rp * 2.5) });
+          (f.rows || []).forEach((_, k) => {
+            const p = E.out(P(tau, 2.2 + k * 0.14, 0.35));
+            tf($(`F${i}_r${k}`), { x: (1 - p) * -10, o: p });
+          });
+        } else if (f.kind === 'app') {
+          const PW = 456,
+            PH = 290,
+            meta = (s) => {
+              const m = SHOTS[s];
+              if (!m) throw new Error('no capture named ' + s);
+              return m;
+            };
+          const k = PW / meta(f.states[0].shot).width;
+          const rect = (q) => {
+            const r = meta(q.shot).rects[q.rect];
+            if (!r) throw new Error(`no rect ${q.rect} in ${q.shot}`);
+            return r;
+          };
+          f.states.forEach((s, j) => {
+            $(`F${i}_s${j}`).style.opacity = j === 0 ? 1 : P(tau, s.at, 0.22);
+          });
+          const cur = f.states.reduce((a, s) => (tau >= s.at + 0.11 ? s : a), f.states[0]);
+          const maxPan = Math.max(0, meta(cur.shot).height * k - PH);
+          const panOf = (q) => {
+            if (q.top !== undefined) return q.top * k;
+            const r = rect(q);
+            return q.align === 'center' ? (r.y + r.h / 2) * k - PH / 2 : r.y * k - (q.pad ?? 14);
+          };
+          const pan = C(
+            keyed(f.pan || [{ at: 0, top: 0 }], tau, panOf),
+            0,
+            Math.max(maxPan, ...(f.pan || []).map((q) => 0)),
+          );
+          $(`F${i}_in`).style.transform = `translateY(${-pan}px)`;
+          (f.marks || []).forEach((m, j) => {
+            const r = rect(m),
+              el = $(`F${i}_m${j}`);
+            el.style.cssText = `left:${r.x * k - 3}px;top:${r.y * k - 1}px;width:${r.w * k + 6}px;height:${r.h * k + 2}px;opacity:${tau >= m.at ? 0.42 : 0};transform:scaleX(${E.inOut(P(tau, m.at, 0.45))})`;
+          });
+          if (f.cursor?.length) {
+            const pt = (q) => {
+              const r = rect(q);
+              return [
+                (r.x + r.w * (q.fx ?? 0.5)) * k + (q.dx || 0),
+                (r.y + r.h * (q.fy ?? 0.55)) * k + (q.dy || 0),
+              ];
+            };
+            const x = keyed(f.cursor, tau, (q) => pt(q)[0]),
+              y = keyed(f.cursor, tau, (q) => pt(q)[1]);
+            const press = f.cursor
+              .filter((q) => q.click)
+              .reduce((s, q) => Math.max(s, Math.sin(Math.PI * P(tau, q.at, 0.22))), 0);
+            const c = $(`F${i}_cur`);
+            c.style.opacity =
+              C(P(tau, f.cursor[0].at, 0.2)) * (1 - P(tau, f.cursor.at(-1).at + 0.8, 0.25));
+            c.style.transform = `translate(${x - 5}px,${y - 2.5}px) scale(${1 - press * 0.14})`;
+          }
+        } else if (f.kind === 'terminal') {
+          f.lines.forEach((l, k) => {
+            const at = 0.65 + k * 0.6,
+              line = $(`F${i}_t${k}`),
+              typed = l.startsWith('$ ');
+            line.style.display = tau >= at ? 'block' : 'none';
+            const body = typed ? l.slice(2) : l;
+            const shown = typed
+              ? body.slice(0, Math.round(C((tau - at) / 0.4) * body.length))
+              : body;
+            line.querySelector('.tx').innerHTML =
+              (typed ? '<span class="p">$</span> ' : '') +
+              (typed ? esc(shown) : shown.replace(/<ok>(.*?)<\/ok>/, '<span class="ok">$1</span>'));
+          });
+        } else {
+          (f.rows || []).forEach((_, k) => {
+            const p = E.spring(P(tau, 0.7 + k * 0.32, 0.6));
+            tf($(`F${i}_r${k}`), {
+              y: (1 - C(p)) * 24,
+              s: L(0.8, 1, p),
+              o: C(P(tau, 0.7 + k * 0.32, 0.12)),
+            });
+          });
+        }
+      }
+
+      function renderEnd(t) {
+        show('Z', t, END_AT - 0.06, 99);
+        if (t < END_AT - 0.06) return;
+        const tau = t - END_AT;
+        $('Z').style.opacity = C(P(tau, -0.06, 0.08));
+        $('Z_word')
+          .querySelectorAll('.w')
+          .forEach((el, i) => {
+            const p = E.out5(P(tau, i * 0.07, 0.6));
+            el.style.transform = `translateY(${(1 - p) * 110}%)`;
+          });
+        $('Z_dots').style.opacity = 0.9 * E.out(P(tau, 0, 0.5));
+        $('Z_gdot').style.transform =
+          `rotate(${nodAngle(tau, 0.75, 0.95) + nodAngle(tau, 2.05, 0.95)}deg)`;
+        const tp = E.out(P(tau, 0.3, 0.5));
+        tf($('Z_tag'), { y: (1 - tp) * 14, o: tp });
+        const cp = E.back(P(tau, 0.55, 0.5));
+        $('Z_cta').style.opacity = C(P(tau, 0.55, 0.12));
+        $('Z_cta').style.transform = `translateX(-50%) scale(${L(0.7, 1, cp)})`;
+        const fp = E.out(P(tau, 0.8, 0.5));
+        tf($('Z_fine'), { y: (1 - fp) * 8, o: fp });
+        $('Z_word').style.transform = `scale(${1 + P(tau, 0, 3.5) * 0.035})`;
+      }
+
+      function render(t) {
+        renderHook(t);
+        for (let i = 0; i < n; i++) renderFeature(i, t);
+        renderEnd(t);
+      }
+
+      function sound() {
+        const sfx = [
+          { type: 'impact' },
+          { type: 'whoosh', t: 2.45, dur: 0.55, gain: 0.22 },
+          { type: 'pop', t: 2.9, freq: 520, len: 0.3, gain: 0.3, verb: 0.15 },
+          { type: 'pop', t: 3.12, freq: 1046, len: 0.18, gain: 0.12 },
+        ].filter((e) => e.type !== 'impact');
+        const penta = [880, 987.8, 1174.7, 1318.5, 1568, 1760];
+        RELEASE.features.forEach((f, i) => {
+          const t0 = T0(i),
+            BEAT_LEN = LEN[i];
+          if (i > 0) sfx.push({ type: 'whoosh', t: t0 - 0.38, dur: 0.4 });
+          if (f.kind === 'chat') {
+            sfx.push({ type: 'pop', t: t0 + 0.65, freq: 700, gain: 0.22 });
+            sfx.push({ type: 'chime', t: t0 + 1.95, gain: 0.11, verb: 0.06 });
+            sfx.push({
+              type: 'ticks',
+              times: (f.rows || []).map((_, k) => t0 + 2.2 + k * 0.14),
+              freqs: [2400, 2550, 2700, 2850],
+              gain: 0.05,
+            });
+          } else if (f.kind === 'terminal') {
+            f.lines.forEach((l, k) => {
+              const at = t0 + 0.65 + k * 0.6;
+              if (l.startsWith('$ '))
+                sfx.push({ type: 'type', text: l.slice(2), from: at, to: at + 0.4, gain: 0.06 });
+              else sfx.push({ type: 'pop', t: at, freq: penta[k % 6], len: 0.16, gain: 0.14 });
+            });
+          } else if (f.kind === 'app') {
+            sfx.push({ type: 'pop', t: t0 + 0.55, freq: 700, gain: 0.16 });
+            (f.cursor || [])
+              .filter((q) => q.click)
+              .forEach((q) => sfx.push({ type: 'click', t: t0 + q.at }));
+            f.states
+              .slice(1)
+              .forEach((s, j) =>
+                sfx.push(
+                  s.chime
+                    ? { type: 'chime', t: t0 + s.at, gain: 0.11, verb: 0.06 }
+                    : { type: 'tick', t: t0 + s.at + 0.05, freq: 2400 + j * 200 },
+                ),
+              );
+            (f.marks || []).forEach((m) =>
+              sfx.push({ type: 'pop', t: t0 + m.at, freq: 880, len: 0.18, gain: 0.12 }),
+            );
+          } else
+            sfx.push({
+              type: 'pops',
+              times: (f.rows || []).map((_, k) => t0 + 0.7 + k * 0.32),
+              freqs: [698.5, 784, 880, 1046.5],
+              gain: 0.2,
+              pan: 0.2,
+            });
+        });
+        sfx.push({
+          type: 'pops',
+          times: [END_AT + 0.75, END_AT + 2.05],
+          freqs: [1046.5],
+          gain: 0.12,
+        });
+        return {
+          duration: DURATION,
+          chords: {
+            F: { notes: [53, 57, 60, 64], bass: 41 },
+            Am: { notes: [55, 57, 60, 64], bass: 45 },
+            Dm: { notes: [53, 57, 60, 62], bass: 38 },
+            Bb: { notes: [53, 57, 58, 62], bass: 46 },
+          },
+          progression: ['F', 'Am', 'Dm', 'Bb'],
+          dropAt: 4,
+          overrides: { [END_AT]: 'Bb' },
+          kicks: [
+            [0, 3, 0.85],
+            [4, END_AT + 2],
+          ],
+          groove: [[4, END_AT + 2]],
+          introHats: [[0, 3]],
+          silence: [[3.75, 4]],
+          rolls: [
+            [2, 3.75],
+            [END_AT - 1, END_AT - 0.1, 0.36],
+          ],
+          risers: [
+            [2.55, 1.45, 0.34],
+            [END_AT - 1.4, 1.4, 0.26],
+          ],
+          impacts: [
+            [0, 0.3],
+            [4, 0.75],
+            [END_AT, 0.7],
+          ],
+          final: { time: END_AT + 2, chord: [53, 57, 60, 64, 67, 72], bass: 41 },
+          sfx,
+        };
+      }
+      window.SOUND = sound();
+      window.DURATION = DURATION;
+      window.render = render;
+      window.ready = Promise.all(
+        ['Baumer', 'BaumerMono', 'Geist', 'GeistMono'].flatMap((f) =>
+          ['400', '500', '600', '700'].map((w) => document.fonts.load(`${w} 16px ${f}`)),
+        ),
+      )
+        .then(() => document.fonts.ready)
+        .then(() => Promise.all([...document.images].map((i) => i.decode().catch(() => {}))))
+        .then(() => {
+          render(0);
+          chipSize = chipEls.map((el) => [el.offsetWidth, el.offsetHeight]);
+          for (let r = 0; r * 2 < n; r++) {
+            const idx = [r * 2, r * 2 + 1].filter((i) => i < n);
+            const total = idx.reduce((a, i) => a + chipSize[i][0], 0) + 14 * (idx.length - 1);
+            let x = 270 - total / 2;
+            idx.forEach((i) => {
+              chipPos[i] = [x + chipSize[i][0] / 2, 340 + r * 60];
+              x += chipSize[i][0] + 14;
+            });
+          }
+          render(0);
+          return true;
+        });
+    </script>
+  </body>
+</html>

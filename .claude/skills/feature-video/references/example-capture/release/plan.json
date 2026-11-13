@@ -1,0 +1,255 @@
+{
+  "viewport": {
+    "width": 456,
+    "height": 900
+  },
+  "time": {
+    "now": "2026-11-13T13:06:00Z",
+    "zone": "Europe/Berlin"
+  },
+  "steps": [
+    {
+      "goto": "/usage",
+      "wait": 5000
+    },
+    {
+      "shot": "usage-list",
+      "rects": {
+        "row": {
+          "selector": ".usage-row"
+        },
+        "export": {
+          "text": "Export"
+        }
+      },
+      "clip": {
+        "text": "Export",
+        "pad": 12,
+        "toBottom": true,
+        "height": 480
+      }
+    },
+    {
+      "click": {
+        "selector": ".usage-row"
+      },
+      "wait": 1200
+    },
+    {
+      "shot": "usage-open",
+      "rects": {
+        "row": {
+          "selector": ".usage-row"
+        },
+        "log": {
+          "selector": ".usage-log"
+        },
+        "export": {
+          "text": "Export"
+        }
+      },
+      "clip": {
+        "text": "Export",
+        "pad": 12,
+        "toBottom": true,
+        "height": 480
+      }
+    },
+    {
+      "goto": "/tasks",
+      "wait": 4000
+    },
+    {
+      "shot": "sched-idle",
+      "rects": {
+        "run": {
+          "text": "Run now"
+        },
+        "card": {
+          "selector": ".saved-plan"
+        },
+        "next": {
+          "selector": ".saved-plan-meta span",
+          "index": 1
+        }
+      },
+      "clip": {
+        "selector": ".saved-plan",
+        "pad": 14,
+        "toBottom": true,
+        "height": 400
+      }
+    },
+    {
+      "fixtures": {
+        "POST /api/schedules/s1/run": {
+          "$respond": {
+            "turnId": "t1",
+            "activeRun": {
+              "turnId": "t1",
+              "status": "running"
+            }
+          },
+          "$then": {
+            "/api/schedules": [
+              {
+                "id": "s1",
+                "title": "Weekly invoice check",
+                "prompt": "Check my inbox for overdue invoices.",
+                "kind": "recurring",
+                "cron": "0 9 * * 1",
+                "runAt": null,
+                "timeZone": "Europe/Berlin",
+                "enabled": true,
+                "revision": 3,
+                "nextRun": "2026-11-16T08:00:00Z",
+                "lastRun": null,
+                "activeRun": {
+                  "turnId": "t1",
+                  "status": "running"
+                },
+                "baselineObservation": null,
+                "watch": null,
+                "monthlyUsd": null
+              }
+            ],
+            "/api/schedule-runs": {
+              "runs": [
+                {
+                  "id": "r1",
+                  "scheduleId": "s1",
+                  "title": "Weekly invoice check",
+                  "turnId": "t1",
+                  "scheduledFor": "2026-11-13T13:05:00Z",
+                  "timeZone": "Europe/Berlin",
+                  "createdAt": "2026-11-13T13:05:00Z",
+                  "status": "running",
+                  "error": null,
+                  "observation": null,
+                  "messageId": null,
+                  "messagePreview": null,
+                  "messageText": null,
+                  "costUsd": 0.01
+                }
+              ],
+              "nextCursor": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "click": {
+        "text": "Run now"
+      },
+      "wait": 2500
+    },
+    {
+      "shot": "sched-working",
+      "rects": {
+        "card": {
+          "selector": ".saved-plan"
+        },
+        "runs": {
+          "selector": ".schedule-runs"
+        }
+      },
+      "clip": {
+        "selector": ".saved-plan",
+        "pad": 14,
+        "toBottom": true,
+        "height": 400
+      }
+    },
+    {
+      "fixtures": {
+        "/api/schedules": [
+          {
+            "id": "s1",
+            "title": "Weekly invoice check",
+            "prompt": "Check my inbox for overdue invoices.",
+            "kind": "recurring",
+            "cron": "0 9 * * 1",
+            "runAt": null,
+            "timeZone": "Europe/Berlin",
+            "enabled": true,
+            "revision": 3,
+            "nextRun": "2026-11-16T08:00:00Z",
+            "lastRun": {
+              "id": "r1",
+              "scheduleId": "s1",
+              "title": "Weekly invoice check",
+              "turnId": "t1",
+              "scheduledFor": "2026-11-13T13:05:00Z",
+              "timeZone": "Europe/Berlin",
+              "createdAt": "2026-11-13T13:05:00Z",
+              "status": "succeeded",
+              "error": null,
+              "observation": null,
+              "messageId": null,
+              "messagePreview": null,
+              "messageText": null,
+              "costUsd": null
+            },
+            "activeRun": null,
+            "baselineObservation": null,
+            "watch": null,
+            "monthlyUsd": null
+          }
+        ],
+        "/api/schedule-runs": {
+          "runs": [
+            {
+              "id": "r1",
+              "scheduleId": "s1",
+              "title": "Weekly invoice check",
+              "turnId": "t1",
+              "scheduledFor": "2026-11-13T13:05:00Z",
+              "timeZone": "Europe/Berlin",
+              "createdAt": "2026-11-13T13:05:00Z",
+              "status": "succeeded",
+              "error": null,
+              "observation": null,
+              "messageId": "m9",
+              "messagePreview": "2 overdue: Northwind Office and Metro Taxi.",
+              "messageText": "2 overdue: Northwind Office and Metro Taxi.",
+              "costUsd": 0.09
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "goto": "/tasks",
+      "wait": 4000
+    },
+    {
+      "click": {
+        "text": "See details"
+      },
+      "wait": 1500
+    },
+    {
+      "shot": "sched-done",
+      "rects": {
+        "card": {
+          "selector": ".saved-plan"
+        },
+        "runs": {
+          "selector": ".schedule-runs"
+        },
+        "next": {
+          "selector": ".saved-plan-meta span",
+          "index": 1
+        }
+      },
+      "clip": {
+        "selector": ".saved-plan",
+        "pad": 14,
+        "toBottom": true,
+        "height": 400
+      }
+    }
+  ]
+}

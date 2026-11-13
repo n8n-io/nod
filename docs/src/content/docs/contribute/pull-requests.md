@@ -37,7 +37,7 @@ The title matters beyond the check. Desktop release notes group merged changes b
 ## Prepare the pull request
 
 - **Keep it focused** on one change, and fill in the template.
-- **Explain why** the change is needed and how you tested it. Add screenshots or a short video for UI changes.
+- **Explain why** the change is needed and how you tested it. Add screenshots or a short video for UI changes. For a new feature, make a [feature video](/contribute/feature-videos/).
 - **Call out safety-sensitive changes.** Changes to approvals, the trust check, Vault, sign-in, the sandbox or owner isolation get a closer review and need tests.
 - **Keep secrets out.** No keys, credentials, real accounts or private content in code, tests, logs or screenshots.
 - **Follow the existing style.** Nod's code has no comments or JSDoc, and its docs use short, plain sentences.

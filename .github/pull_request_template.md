@@ -1,6 +1,6 @@
 ## Summary
 
-<!-- What changes and why. Add screenshots or a short video for UI changes. -->
+<!-- What changes and why. Add screenshots or a short video for UI changes. For a feature a user can see, add a feature video: https://nod.n8n.io/docs/contribute/feature-videos/ -->
 
 ## How to test
 

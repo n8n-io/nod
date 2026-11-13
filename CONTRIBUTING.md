@@ -27,6 +27,7 @@ For application changes, start with focused tests. Run broader checks only when 
 
 - Use a [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) title, such as `fix(backend): handle a missing session`.
 - Keep each pull request to one change, fill in the template, and explain why and how you tested it.
+- For a feature a user can see, add a short [feature video](docs/src/content/docs/contribute/feature-videos.md).
 - Call out changes to approvals, the trust check, Vault, sign-in, the sandbox or owner isolation.
 - Keep keys, credentials and private content out of code, tests, logs and screenshots.
 - Update the docs in [`docs/`](docs/README.md) when setup or behaviour changes.

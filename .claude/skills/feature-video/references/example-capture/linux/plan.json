@@ -1,0 +1,162 @@
+{
+  "viewport": {
+    "width": 448,
+    "height": 404
+  },
+  "time": {
+    "now": "2026-11-13T13:06:00Z",
+    "zone": "Europe/Berlin"
+  },
+  "steps": [
+    {
+      "eval": "0"
+    },
+    {
+      "goto": "/",
+      "wait": 5000
+    },
+    {
+      "eval": "window.scrollTo(0,0);document.documentElement.style.height=\"auto\"",
+      "wait": 200
+    },
+    {
+      "shot": "welcome-top"
+    },
+    {
+      "eval": "(()=>{const b=[...document.querySelectorAll(\"button\")].find(e=>e.textContent.includes(\"Get started\"));b.scrollIntoView({block:\"end\"});for(const el of document.querySelectorAll(\"*\")){if(el.scrollHeight>el.clientHeight+20&&getComputedStyle(el).overflowY!==\"visible\")el.scrollTop=el.scrollHeight}})()",
+      "wait": 500
+    },
+    {
+      "shot": "welcome-bottom",
+      "rects": {
+        "start": {
+          "text": "Get started"
+        }
+      }
+    },
+    {
+      "fixtures": {
+        "/api/session": {
+          "user": {
+            "id": "owner",
+            "name": "Alex",
+            "email": null,
+            "avatarUrl": null
+          },
+          "settings": {
+            "theme": "light",
+            "onboardingCompleted": true,
+            "usageData": false,
+            "usageDataRevision": 0,
+            "traces": false
+          },
+          "capabilities": {
+            "developer": false,
+            "traces": false,
+            "updatesEmail": false
+          }
+        },
+        "/api/state": {
+          "threadId": "th1",
+          "tasks": [],
+          "messages": [
+            {
+              "id": "m1",
+              "role": "user",
+              "text": "Every weekday at 8, prep me for today’s calls",
+              "turnId": "t1",
+              "createdAt": "2026-11-13T13:05:30Z",
+              "attachments": []
+            }
+          ],
+          "turns": [
+            {
+              "id": "t1",
+              "status": "running",
+              "source": "user",
+              "createdAt": "2026-11-13T13:05:30Z"
+            }
+          ],
+          "activity": [
+            {
+              "turnId": "t1",
+              "taskId": null,
+              "title": null,
+              "step": "Reading today’s calendar",
+              "site": null,
+              "since": "2026-11-13T13:05:40Z",
+              "doing": "tool",
+              "quietSince": "2026-11-13T13:05:58Z"
+            }
+          ],
+          "configuration": {
+            "provider": "anthropic",
+            "model": "claude-sonnet-5-5",
+            "llmReady": true,
+            "modelReconnect": false,
+            "integrationsReady": true,
+            "conversationResetEnabled": false
+          }
+        }
+      }
+    },
+    {
+      "goto": "/",
+      "wait": 5000
+    },
+    {
+      "shot": "chat-working"
+    },
+    {
+      "fixtures": {
+        "/api/state": {
+          "threadId": "th1",
+          "tasks": [],
+          "messages": [
+            {
+              "id": "m1",
+              "role": "user",
+              "text": "Every weekday at 8, prep me for today’s calls",
+              "turnId": "t1",
+              "createdAt": "2026-11-13T13:05:30Z",
+              "attachments": []
+            },
+            {
+              "id": "m2",
+              "role": "assistant",
+              "text": "Done. Every weekday at 8:00 you’ll get a brief for each call.",
+              "turnId": "t1",
+              "createdAt": "2026-11-13T13:06:20Z",
+              "attachments": []
+            }
+          ],
+          "turns": [
+            {
+              "id": "t1",
+              "status": "succeeded",
+              "source": "user",
+              "createdAt": "2026-11-13T13:05:30Z",
+              "finishedAt": "2026-11-13T13:06:20Z"
+            }
+          ],
+          "activity": [],
+          "configuration": {
+            "provider": "anthropic",
+            "model": "claude-sonnet-5-5",
+            "llmReady": true,
+            "modelReconnect": false,
+            "integrationsReady": true,
+            "conversationResetEnabled": false
+          }
+        }
+      }
+    },
+    {
+      "goto": "/",
+      "wait": 5000
+    },
+    {
+      "shot": "chat-done"
+    }
+  ]
+}

@@ -1,0 +1,1557 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Nod on Linux</title>
+    <style>
+      @font-face {
+        font-family: 'Baumer';
+        src: url(https://n8n.io/assets/fonts/baumer/variable/n8n-baumer-variable.woff2)
+          format('woff2');
+        font-weight: 400 800;
+      }
+      @font-face {
+        font-family: 'BaumerMono';
+        src: url(https://n8n.io/assets/fonts/baumer/variable/n8n-baumer-mono-variable.woff2)
+          format('woff2');
+        font-weight: 400 800;
+      }
+      @font-face {
+        font-family: 'Geist';
+        src: url(assets/Geist-Variable.woff2) format('woff2');
+        font-weight: 100 900;
+      }
+      @font-face {
+        font-family: 'GeistMono';
+        src: url(assets/GeistMono-Variable.woff2) format('woff2');
+        font-weight: 100 900;
+      }
+      :root {
+        --ink: #191919;
+        --ink2: #464646;
+        --muted: #676767;
+        --border: #e0e0e0;
+        --pink: #ff91ac;
+        --pink10: #ffe8ec;
+        --pink20: #ffd0d9;
+        --pink70: #87003c;
+        --g15: #f1f1f1;
+        --g20: #eaeaea;
+        --bg: #fafafa;
+        --sys: 'Cantarell', 'Geist', -apple-system, sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      html,
+      body {
+        background: var(--bg);
+        overflow: hidden;
+      }
+      #stage {
+        position: relative;
+        width: 540px;
+        height: 540px;
+        overflow: hidden;
+        background: var(--bg);
+        font-family: 'Baumer', sans-serif;
+        color: var(--ink);
+        -webkit-font-smoothing: antialiased;
+        font-feature-settings: 'liga' 1;
+        font-synthesis: none;
+      }
+      .scene {
+        position: absolute;
+        inset: 0;
+        display: none;
+      }
+      .abs {
+        position: absolute;
+      }
+      .dotframe {
+        position: absolute;
+        background: url(assets/dot-grid.svg) 0 0/10px 10px round;
+        opacity: 0.9;
+      }
+      .eyebrow {
+        position: absolute;
+        left: 0;
+        right: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 10px;
+        font-family: 'BaumerMono', monospace;
+        font-size: 13px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--ink2);
+        white-space: nowrap;
+      }
+      .eyebrow::before,
+      .eyebrow::after {
+        content: '';
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--pink);
+      }
+      .head {
+        position: absolute;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-weight: 500;
+        letter-spacing: -0.025em;
+        line-height: 1.04;
+      }
+      .ln {
+        display: block;
+        overflow: hidden;
+        padding: 0.04em 0 0.1em;
+      }
+      .w {
+        display: inline-block;
+        will-change: transform;
+      }
+      .pinkword {
+        color: var(--pink);
+      }
+      .glyph {
+        display: inline-block;
+        width: 0.6em;
+        height: 0.6em;
+        margin: 0 -0.042em 0 0.03em;
+        overflow: visible;
+        vertical-align: baseline;
+      }
+      .glyph svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+      }
+      .gdot {
+        transform-box: view-box;
+        transform-origin: 9px 12px;
+      }
+
+      .hookterm {
+        position: absolute;
+        left: 46px;
+        top: 206px;
+        width: 448px;
+        height: 112px;
+        border-radius: 20px;
+        background: #191919;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.18);
+        padding: 0 28px;
+        display: flex;
+        align-items: center;
+        font-family: 'GeistMono', monospace;
+        font-size: 23px;
+        color: #f1f1f1;
+        white-space: nowrap;
+      }
+      .hookterm .pr {
+        color: var(--pink);
+        margin-right: 14px;
+      }
+      .caret {
+        display: inline-block;
+        width: 2px;
+        height: 1.1em;
+        margin-left: 2px;
+        vertical-align: -0.18em;
+        background: currentColor;
+      }
+      .blk {
+        display: inline-block;
+        width: 0.6em;
+        height: 1.15em;
+        vertical-align: -0.2em;
+        background: #f1f1f1;
+        margin-left: 1px;
+      }
+
+      #BG {
+        position: absolute;
+        inset: 0;
+        display: none;
+        overflow: hidden;
+      }
+      #BG img {
+        position: absolute;
+        left: -27px;
+        top: -27px;
+        width: 594px;
+        height: 594px;
+      }
+      #BG .shade {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.22);
+      }
+      .topbar {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 0;
+        height: 22px;
+        background: rgba(10, 10, 10, 0.92);
+        color: #f2f2f2;
+        font-family: var(--sys);
+        font-size: 10.5px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 10px;
+      }
+      .topbar .clock {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+      }
+      .topbar .ind {
+        display: flex;
+        gap: 7px;
+        align-items: center;
+      }
+      .topbar .ind svg {
+        width: 11px;
+        height: 11px;
+      }
+
+      .steppill {
+        position: absolute;
+        z-index: 5;
+        top: 34px;
+        left: 50%;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 30px;
+        padding: 0 14px 0 5px;
+        background: #fff;
+        border-radius: 999px;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16);
+        font-family: 'BaumerMono', monospace;
+        font-size: 12.5px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+      .steppill .num {
+        display: grid;
+        place-items: center;
+        width: 21px;
+        height: 21px;
+        border-radius: 50%;
+        background: var(--pink);
+        font-size: 12px;
+        letter-spacing: 0;
+      }
+
+      .term {
+        position: absolute;
+        left: 22px;
+        top: 78px;
+        width: 496px;
+        height: 444px;
+        border-radius: 14px;
+        background: #1e1e1e;
+        overflow: hidden;
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.06),
+          0 28px 70px rgba(0, 0, 0, 0.4);
+      }
+      .hbar {
+        position: relative;
+        height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--sys);
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .term .hbar {
+        background: #2b2b2b;
+        color: #e8e8e8;
+      }
+      .xbtn {
+        position: absolute;
+        right: 9px;
+        top: 50%;
+        width: 20px;
+        height: 20px;
+        margin-top: -10px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+      }
+      .term .xbtn {
+        background: #3d3d3d;
+        color: #e8e8e8;
+      }
+      .xbtn svg {
+        width: 8px;
+        height: 8px;
+      }
+      .tbody {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 36px;
+        bottom: 0;
+        padding: 12px 14px;
+        font-family: 'GeistMono', monospace;
+        font-size: 11px;
+        line-height: 1.62;
+        color: #e6e6e6;
+        white-space: pre;
+      }
+      .tl {
+        display: block;
+        height: 17.8px;
+      }
+      .tl .p {
+        color: var(--pink);
+      }
+      .tl .ok {
+        color: #8fd6a5;
+      }
+      .tl .dim {
+        color: #9a9a9a;
+      }
+      .bar {
+        display: inline-block;
+        width: 150px;
+        height: 8px;
+        border-radius: 4px;
+        background: #3a3a3a;
+        vertical-align: 0;
+        margin: 0 8px;
+        overflow: hidden;
+      }
+      .bar i {
+        display: block;
+        height: 100%;
+        width: 0;
+        background: var(--pink);
+        border-radius: 4px;
+      }
+
+      .nodwin {
+        position: absolute;
+        left: 46px;
+        top: 74px;
+        width: 448px;
+        height: 440px;
+        border-radius: 14px;
+        background: var(--bg);
+        overflow: hidden;
+        box-shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.12),
+          0 30px 80px rgba(0, 0, 0, 0.42);
+        opacity: 0;
+        font-family: 'Geist', sans-serif;
+      }
+      .nodwin .hbar {
+        background: #ebebeb;
+        color: #2e2e2e;
+        border-bottom: 1px solid #dcdcdc;
+      }
+      .nodwin .xbtn {
+        background: #d9d9d9;
+        color: #2e2e2e;
+      }
+      .wbody {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 36px;
+        bottom: 0;
+      }
+      .welcome {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding-top: 30px;
+        text-align: center;
+      }
+      .wmark {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        font-size: 32px;
+        font-weight: 500;
+        letter-spacing: -1.4px;
+        line-height: 1;
+      }
+      .wmark svg {
+        width: 38px;
+        height: 38px;
+        overflow: visible;
+      }
+      .wcopy {
+        margin-top: 12px;
+        font-size: 16.5px;
+        letter-spacing: -0.3px;
+        line-height: 1.4;
+      }
+      .wpoints {
+        margin-top: 22px;
+        display: grid;
+        gap: 13px;
+        width: 330px;
+        text-align: left;
+      }
+      .wpoint {
+        display: flex;
+        gap: 10px;
+      }
+      .wpoint .ic {
+        width: 16px;
+        height: 18px;
+        flex: none;
+        color: var(--ink);
+        margin-top: 1px;
+      }
+      .wpoint .ic svg {
+        width: 16px;
+        height: 16px;
+      }
+      .wpoint b {
+        display: block;
+        font-size: 12.5px;
+        font-weight: 550;
+        color: var(--ink);
+      }
+      .wpoint span.t {
+        display: block;
+        font-size: 11.5px;
+        line-height: 1.4;
+        color: var(--muted);
+      }
+      .btn-primary {
+        margin-top: 22px;
+        height: 36px;
+        padding: 0 22px;
+        border-radius: 999px;
+        background: var(--pink);
+        color: var(--ink);
+        font-size: 13.5px;
+        font-weight: 500;
+        display: grid;
+        place-items: center;
+      }
+      .chatv {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+      }
+      .shot {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 448px;
+        height: auto;
+        display: block;
+      }
+      .welcome > *:not(.shot) {
+        visibility: hidden;
+      }
+      #D_start {
+        position: absolute;
+        margin: 0;
+        padding: 0;
+      }
+      .chatv .chat,
+      .chatv .composer {
+        display: none;
+      }
+      .chat {
+        position: absolute;
+        left: 14px;
+        right: 14px;
+        top: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .msg {
+        display: flex;
+      }
+      .msg.you {
+        justify-content: flex-end;
+      }
+      .bubble {
+        max-width: 360px;
+        padding: 9px 15px;
+        border-radius: 21px;
+        background: #fff;
+        font-size: 14.5px;
+        line-height: 1.5;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+      }
+      .you .bubble {
+        background: var(--pink20);
+      }
+      .slot {
+        position: relative;
+        min-height: 40px;
+      }
+      .live {
+        position: absolute;
+        left: 2px;
+        top: 0;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        height: 38px;
+      }
+      .live svg {
+        width: 24px;
+        height: 24px;
+        overflow: visible;
+      }
+      .livesteps {
+        display: inline-grid;
+        font-size: 14.5px;
+        white-space: nowrap;
+      }
+      .livesteps > span {
+        grid-area: 1/1;
+        background: linear-gradient(100deg, var(--muted) 20%, var(--ink) 45%, var(--muted) 70%) 120%
+          0/240% 100%;
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+      .reply .bubble {
+        padding: 9px 9px 9px;
+      }
+      .reply p {
+        padding: 0 6px 8px;
+      }
+      .embed {
+        background: var(--g15);
+        border-radius: 13px;
+        padding: 7px 12px;
+        font-size: 13px;
+        line-height: 1.8;
+      }
+      .frow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .att {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 300px;
+        margin: 2px 4px 2px;
+        padding: 9px 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #fff;
+      }
+      .att svg {
+        width: 22px;
+        height: 22px;
+        color: var(--muted);
+        flex: none;
+      }
+      .att .at {
+        display: grid;
+      }
+      .att b {
+        font-size: 13.5px;
+        font-weight: 500;
+      }
+      .att .at span {
+        font-size: 12.5px;
+        color: var(--muted);
+      }
+      .ububble {
+        position: absolute;
+        right: 40px;
+        padding: 12px 20px;
+        border-radius: 26px;
+        background: var(--pink20);
+        font-size: 18px;
+        line-height: 1.4;
+        white-space: nowrap;
+        transform-origin: 100% 100%;
+      }
+      .frow svg {
+        width: 15px;
+        height: 15px;
+        color: var(--ink2);
+        flex: none;
+      }
+      .frow .c {
+        color: var(--muted);
+      }
+      .composer {
+        position: absolute;
+        left: 12px;
+        right: 12px;
+        bottom: 12px;
+        height: 46px;
+        padding: 0 50px 0 18px;
+        display: flex;
+        align-items: center;
+        background: #fff;
+        border-radius: 23px;
+        box-shadow:
+          0 6px 24px rgba(25, 25, 25, 0.06),
+          0 1px 3px rgba(25, 25, 25, 0.04);
+        font-size: 14.5px;
+        color: var(--muted);
+      }
+      .send {
+        position: absolute;
+        right: 7px;
+        top: 7px;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: var(--g20);
+      }
+      .send svg {
+        width: 15px;
+        height: 15px;
+      }
+      .cursor {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 24px;
+        height: 24px;
+        opacity: 0;
+        z-index: 9;
+      }
+
+      .srow {
+        position: absolute;
+        left: 66px;
+        width: 408px;
+        height: 50px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 0 16px;
+        background: #fff;
+        border: 1px solid var(--border);
+        border-radius: 15px;
+        font-size: 16px;
+        box-shadow: 0 6px 18px rgba(25, 25, 25, 0.05);
+      }
+      .srow .ic {
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: var(--pink10);
+        color: var(--pink70);
+        flex: none;
+      }
+      .srow .ic svg {
+        width: 16px;
+        height: 16px;
+      }
+      .note {
+        position: absolute;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-family: 'BaumerMono', monospace;
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .cta {
+        position: absolute;
+        left: 50%;
+        top: 388px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        padding: 0 22px;
+        background: var(--pink);
+        border-radius: 9px;
+        font-family: 'BaumerMono', monospace;
+        font-size: 16px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+      .cross {
+        position: absolute;
+        width: 9px;
+        height: 9px;
+      }
+      .cross::before,
+      .cross::after {
+        content: '';
+        position: absolute;
+        background: var(--ink);
+      }
+      .cross::before {
+        left: 4px;
+        top: 0;
+        width: 1px;
+        height: 9px;
+      }
+      .cross::after {
+        left: 0;
+        top: 4px;
+        width: 9px;
+        height: 1px;
+      }
+      .fine {
+        position: absolute;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-family: 'BaumerMono', monospace;
+        font-size: 11.5px;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage">
+      <div class="scene" id="A">
+        <div
+          class="dotframe"
+          id="A_dots"
+          style="left: 20px; top: 84px; width: 500px; height: 150px"
+        ></div>
+        <h1 class="head" id="A_head" style="top: 92px; font-size: 58px">
+          <span class="ln"
+            ><span class="w"
+              >N<span class="glyph"
+                ><svg viewBox="0 0 21 21">
+                  <circle
+                    cx="9"
+                    cy="12"
+                    r="7.375"
+                    fill="none"
+                    stroke="#191919"
+                    stroke-width="3.25"
+                  />
+                  <g class="gdot" id="A_hdot">
+                    <circle cx="17" cy="4" r="3.45" fill="#ff91ac" />
+                  </g></svg></span
+              >d</span
+            >
+            <span class="w">now</span> <span class="w">runs</span></span
+          >
+          <span class="ln"><span class="w">on</span> <span class="w pinkword">Linux</span></span>
+        </h1>
+        <div class="hookterm" id="A_term" style="top: 292px">
+          <span class="pr">$</span><span id="A_typed"></span><span class="blk" id="A_caret"></span>
+        </div>
+        <p
+          class="abs"
+          id="A_cap"
+          style="
+            left: 0;
+            right: 0;
+            top: 350px;
+            text-align: center;
+            font-size: 26px;
+            font-weight: 500;
+            letter-spacing: -0.015em;
+            opacity: 0;
+          "
+        >
+          Hello, Linux.
+        </p>
+        <div
+          class="abs"
+          id="A_glyph"
+          style="
+            left: 223px;
+            top: 207px;
+            width: 110px;
+            height: 110px;
+            transform-origin: 47.14px 62.86px;
+            opacity: 0;
+          "
+        >
+          <svg
+            viewBox="0 0 21 21"
+            style="display: block; width: 100%; height: 100%; overflow: visible"
+          >
+            <circle cx="9" cy="12" r="7.375" fill="none" stroke="#191919" stroke-width="3.25" />
+            <g class="gdot" id="A_gdot"><circle cx="17" cy="4" r="3.45" fill="#ff91ac" /></g>
+          </svg>
+        </div>
+      </div>
+
+      <div class="scene" id="B">
+        <div
+          class="dotframe"
+          id="B_dots"
+          style="left: 20px; top: 168px; width: 500px; height: 176px"
+        ></div>
+        <p class="eyebrow" id="B_eye" style="top: 124px">Linux x64 preview</p>
+        <h1 class="head" id="B_head" style="top: 180px; font-size: 56px">
+          <span class="ln"><span class="w">One</span> <span class="w">Flatpak,</span></span>
+          <span class="ln"
+            ><span class="w">computer</span> <span class="w pinkword">included</span></span
+          >
+        </h1>
+        <p
+          class="abs"
+          id="B_sub"
+          style="
+            left: 0;
+            right: 0;
+            top: 384px;
+            text-align: center;
+            font-size: 19px;
+            color: var(--ink2);
+          "
+        >
+          Nod’s private computer ships inside the bundle.
+        </p>
+      </div>
+
+      <div id="BG">
+        <img src="assets/collage.png" id="BG_img" />
+        <div class="shade"></div>
+        <div class="topbar" id="BG_top">
+          <span>Activities</span><span class="clock">Fri 13 Nov 14:05</span
+          ><span class="ind">
+            <svg
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            >
+              <path d="M1.5 6a9.5 9.5 0 0 1 13 0M4 8.8a6 6 0 0 1 8 0M6.5 11.5a2.4 2.4 0 0 1 3 0" />
+            </svg>
+            <svg viewBox="0 0 16 16" fill="currentColor">
+              <path d="M2 6h3l4-3v10L5 10H2z" />
+              <path
+                d="M11 5.5a3.5 3.5 0 0 1 0 5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+              />
+            </svg>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="1.5" y="4.5" width="11.5" height="7" rx="1.5" />
+              <rect x="3" y="6" width="7" height="4" fill="currentColor" stroke="none" />
+              <path d="M14.5 7v2" />
+            </svg>
+          </span>
+        </div>
+      </div>
+
+      <div class="scene" id="C">
+        <div class="steppill" id="C_p1"><span class="num">1</span>Download the parts</div>
+        <div class="steppill" id="C_p2"><span class="num">2</span>Check and install</div>
+        <div class="steppill" id="C_p3"><span class="num">3</span>Open Nod</div>
+        <div class="steppill" id="C_p4"><span class="num">4</span>Hand it a job</div>
+        <div class="term" id="C_term">
+          <div class="hbar">
+            ~/Downloads/nod<span class="xbtn"
+              ><svg viewBox="0 0 8 8" stroke="currentColor" stroke-width="1.4">
+                <path d="M1 1l6 6M7 1 1 7" /></svg
+            ></span>
+          </div>
+          <div class="tbody" id="C_tb"></div>
+        </div>
+        <div class="nodwin" id="D_win">
+          <div class="hbar">
+            Nod<span class="xbtn"
+              ><svg viewBox="0 0 8 8" stroke="currentColor" stroke-width="1.4">
+                <path d="M1 1l6 6M7 1 1 7" /></svg
+            ></span>
+          </div>
+          <div class="wbody">
+            <div class="welcome" id="D_welcome">
+              <img class="shot" id="D_wt" src="shots/welcome-top.png" /><img
+                class="shot"
+                id="D_wb"
+                src="shots/welcome-bottom.png"
+              />
+              <div class="wmark">
+                <svg viewBox="0 0 32 32" fill="none">
+                  <circle cx="16" cy="16" r="10" stroke="#191919" stroke-width="4" />
+                  <g id="D_wdot" style="transform-box: view-box; transform-origin: 16px 16px">
+                    <circle cx="25" cy="6" r="4" fill="#ff91ac" />
+                  </g></svg
+                ><span>Nod</span>
+              </div>
+              <p class="wcopy">An assistant that takes work off your plate.</p>
+              <div class="wpoints">
+                <div class="wpoint" id="D_pt0">
+                  <span class="ic"
+                    ><svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M14 4.1 12 6" />
+                      <path d="m5.1 8-2.9-.8" />
+                      <path d="m6 12-1.9 2" />
+                      <path d="M7.2 2.2 8 5.1" />
+                      <path
+                        d="M9.037 9.69a.498.498 0 0 1 .653-.653l11 4.5a.5.5 0 0 1-.074.949l-4.349 1.041a1 1 0 0 0-.74.739l-1.04 4.35a.5.5 0 0 1-.95.074z"
+                      /></svg></span
+                  ><span
+                    ><b>Gets tasks done</b
+                    ><span class="t"
+                      >Nod uses your apps and its own browser to complete tasks.</span
+                    ></span
+                  >
+                </div>
+                <div class="wpoint" id="D_pt1">
+                  <span class="ic"
+                    ><svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path
+                        d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"
+                      /></svg></span
+                  ><span
+                    ><b>Works proactively</b
+                    ><span class="t">Nod checks the apps you connect in the background.</span></span
+                  >
+                </div>
+                <div class="wpoint" id="D_pt2">
+                  <span class="ic"
+                    ><svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="12" cy="16" r="1" />
+                      <rect x="3" y="10" width="18" height="12" rx="2" />
+                      <path d="M7 10V7a5 5 0 0 1 10 0v3" /></svg></span
+                  ><span
+                    ><b>Runs on your computer</b
+                    ><span class="t">Nod works in a private workspace.</span></span
+                  >
+                </div>
+                <div class="wpoint" id="D_pt3">
+                  <span class="ic"
+                    ><svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path
+                        d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+                      />
+                      <path d="m9 12 2 2 4-4" /></svg></span
+                  ><span
+                    ><b>Keeps you in control</b
+                    ><span class="t"
+                      >Nod asks you before taking potentially dangerous actions.</span
+                    ></span
+                  >
+                </div>
+              </div>
+              <div class="btn-primary" id="D_start">Get started</div>
+            </div>
+            <div class="chatv" id="D_chat">
+              <img class="shot" id="D_cw" src="shots/chat-working.png" /><img
+                class="shot"
+                id="D_cd"
+                src="shots/chat-done.png"
+              />
+              <div class="chat">
+                <div class="msg you" id="D_you">
+                  <div class="bubble">Every weekday at 8, prep me for today’s calls</div>
+                </div>
+                <div class="slot">
+                  <div class="live" id="D_live">
+                    <svg viewBox="0 0 32 32" fill="none">
+                      <circle cx="16" cy="16" r="10" stroke="#191919" stroke-width="4" />
+                      <g id="D_orbit" style="transform-box: view-box; transform-origin: 16px 16px">
+                        <circle cx="25" cy="6" r="4" fill="#ff91ac" />
+                      </g></svg
+                    ><span class="livesteps"
+                      ><span id="D_l1">Reading today’s calendar</span
+                      ><span id="D_l2">Writing the Brightline brief</span></span
+                    >
+                  </div>
+                  <div class="msg reply" id="D_reply">
+                    <div class="bubble">
+                      <p>Set for weekdays at 8:00. Here’s today’s:</p>
+                      <div class="att" id="D_f0">
+                        <svg viewBox="0 0 16 16" fill="currentColor">
+                          <path
+                            d="M14.75 15.25H1.25V.75h13.5zm-12-1.5h10.5V2.25H2.75zm8-3.25h-5.5V9h5.5zm0-3.5h-5.5V5.5h5.5z"
+                          /></svg
+                        ><span class="at"
+                          ><b>Brightline Studio – call brief.pdf</b
+                          ><span>PDF · 1 page · 40 KB</span></span
+                        >
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="composer">
+                Message Nod…
+                <div class="send">
+                  <svg
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="#191919"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <svg class="cursor" id="D_cursor" viewBox="0 0 24 24">
+          <path
+            d="M5 2.5v17l4.4-4.1 2.9 6.3 2.7-1.2-2.9-6.2 6-.3z"
+            fill="#111"
+            stroke="#fff"
+            stroke-width="1.5"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </div>
+
+      <div class="scene" id="J">
+        <div class="dotframe" style="left: 20px; top: 82px; width: 500px; height: 138px"></div>
+        <p class="eyebrow" id="J_eye" style="top: 52px">Same Nod, now on Linux</p>
+        <h2 class="head" id="J_head" style="top: 94px; font-size: 46px">
+          <span class="ln"
+            ><span class="w">Hand</span> <span class="w">it</span> <span class="w">the</span></span
+          ><span class="ln"
+            ><span class="w pinkword">hard</span> <span class="w pinkword">ones.</span></span
+          >
+        </h2>
+        <div class="ububble" id="J_b0" style="top: 262px">
+          Chase invoices more than 14 days overdue
+        </div>
+        <div class="ububble" id="J_b1" style="top: 330px">
+          On the 1st, file last month’s statements
+        </div>
+        <div class="ububble" id="J_b2" style="top: 398px">
+          Every Monday, my numbers and what changed
+        </div>
+      </div>
+
+      <div class="scene" id="E">
+        <div class="dotframe" style="left: 20px; top: 70px; width: 500px; height: 96px"></div>
+        <p class="eyebrow" id="E_eye" style="top: 44px">Linux x64 preview</p>
+        <h2 class="head" id="E_head" style="top: 86px; font-size: 46px">
+          <span class="ln"
+            ><span class="w">What</span> <span class="w">you</span>
+            <span class="w">need</span></span
+          >
+        </h2>
+        <div class="srow" id="E_r0" style="top: 186px">
+          <span class="ic"
+            ><svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="5" y="5" width="14" height="14" rx="2" />
+              <rect x="9" y="9" width="6" height="6" />
+              <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" /></svg></span
+          >A 64-bit Intel or AMD computer
+        </div>
+        <div class="srow" id="E_r1" style="top: 246px">
+          <span class="ic"
+            ><svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M21 8 12 3 3 8v8l9 5 9-5z" />
+              <path d="M3 8l9 5 9-5M12 13v8" /></svg></span
+          >Flatpak
+        </div>
+        <div class="srow" id="E_r2" style="top: 306px">
+          <span class="ic"
+            ><svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="3" y="4" width="18" height="12" rx="2" />
+              <path d="M8 20h8M12 16v4" /></svg></span
+          >KVM for a local assistant
+        </div>
+        <div class="srow" id="E_r3" style="top: 366px">
+          <span class="ic"
+            ><svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="7.5" cy="15.5" r="4.5" />
+              <path d="m10.7 12.3 9.8-9.8M17 6l3 3M14.5 8.5l2 2" /></svg></span
+          >GNOME Keyring or KWallet
+        </div>
+        <p class="note" id="E_note" style="top: 446px">Preview · updates are manual for now</p>
+      </div>
+
+      <div class="scene" id="G">
+        <div
+          class="dotframe"
+          id="G_dots"
+          style="left: 20px; top: 104px; width: 500px; height: 186px"
+        ></div>
+        <h1 class="head" id="G_word" style="top: 128px; font-size: 132px; line-height: 1">
+          <span class="ln" style="padding: 0.06em 0 0.12em"
+            ><span class="w" id="G_N">N</span
+            ><span class="w glyph" id="G_glyph"
+              ><svg viewBox="0 0 21 21">
+                <circle cx="9" cy="12" r="7.375" fill="none" stroke="#191919" stroke-width="3.25" />
+                <g class="gdot" id="G_gdot">
+                  <circle cx="17" cy="4" r="3.45" fill="#ff91ac" />
+                </g></svg></span
+            ><span class="w" id="G_d">d</span></span
+          >
+        </h1>
+        <p
+          class="abs"
+          id="G_tag"
+          style="
+            left: 0;
+            right: 0;
+            top: 312px;
+            text-align: center;
+            font-size: 23px;
+            font-weight: 500;
+            letter-spacing: -0.01em;
+          "
+        >
+          Now on Linux, Mac and Windows.
+        </p>
+        <div class="cta" id="G_cta">
+          nod.n8n.io<i class="cross" style="left: -5px; top: -5px"></i
+          ><i class="cross" style="right: -5px; top: -5px"></i
+          ><i class="cross" style="left: -5px; bottom: -5px"></i
+          ><i class="cross" style="right: -5px; bottom: -5px"></i>
+        </div>
+        <p class="fine" id="G_fine" style="top: 458px">Open source · Flatpak · x64</p>
+      </div>
+    </div>
+    <script src="shots/shots.js"></script>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const C = (x, a = 0, b = 1) => (x < a ? a : x > b ? b : x);
+      const P = (t, s, d) => C((t - s) / d);
+      const L = (a, b, x) => a + (b - a) * x;
+      const E = {
+        out: (x) => 1 - (1 - x) ** 3,
+        out5: (x) => 1 - (1 - x) ** 5,
+        in3: (x) => x * x * x,
+        inOut: (x) => (x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2),
+        back: (x) => {
+          const c1 = 1.9,
+            c3 = c1 + 1;
+          return 1 + c3 * (x - 1) ** 3 + c1 * (x - 1) ** 2;
+        },
+        spring: (x) => (x >= 1 ? 1 : 1 - Math.exp(-7 * x) * Math.cos(11 * x)),
+      };
+      function tf(el, { x = 0, y = 0, s = 1, r = 0, o } = {}) {
+        el.style.transform = `translate(${x}px,${y}px) scale(${s}) rotate(${r}deg)`;
+        if (o !== undefined) el.style.opacity = o;
+      }
+      function show(id, t, a, b) {
+        $(id).style.display = t >= a && t < b ? 'block' : 'none';
+      }
+      function words(container, t, start, step, dur = 0.5, dist = 1.1) {
+        container.querySelectorAll('.w').forEach((w, i) => {
+          const p = E.out5(P(t, start + i * step, dur));
+          w.style.transform = `translateY(${(1 - p) * dist * 100}%)`;
+        });
+      }
+      const nodAngle = (t, s, d = 0.6) => Math.sin(Math.PI * E.inOut(P(t, s, d))) * 46;
+      const typedAt = (text, t, a, b) =>
+        text.slice(0, Math.round(C((t - a) / (b - a)) * text.length));
+      function zoomAbout(el, s, fx, fy, extraY = 0) {
+        el.style.transformOrigin = '0 0';
+        el.style.transform = `translate(${fx * (1 - s)}px,${fy * (1 - s) + extraY}px) scale(${s})`;
+      }
+      function camAt(keys, t) {
+        if (t <= keys[0][0]) return keys[0].slice(1);
+        for (let i = 0; i < keys.length - 1; i++) {
+          const a = keys[i],
+            b = keys[i + 1];
+          if (t <= b[0]) {
+            const k = E.inOut((t - a[0]) / (b[0] - a[0]));
+            return [L(a[1], b[1], k), L(a[2], b[2], k), L(a[3], b[3], k)];
+          }
+        }
+        return keys[keys.length - 1].slice(1);
+      }
+
+      const hookCmd = 'flatpak run io.n8n.Nod';
+      function renderA(t) {
+        show('A', t, 0, 4.01);
+        if (t >= 4.01) return;
+        words($('A_head'), t, -1, 0, 0.5);
+        $('A_hdot').style.transform = `rotate(${nodAngle(t, 0.35, 0.6)}deg)`;
+        const typed = typedAt(hookCmd, t, 0.25, 1.6);
+        $('A_typed').textContent = ' ' + typed;
+        $('A_caret').style.opacity = (t > 0.2 && t < 1.7) || Math.floor(t * 2.4) % 2 === 0 ? 1 : 0;
+        const press = P(t, 1.93, 0.06) - P(t, 2.0, 0.15);
+        const out = E.in3(P(t, 2.12, 0.3));
+        const term = $('A_term');
+        term.style.transform = `scale(${(1 - press * 0.03) * (1 - out * 0.4)})`;
+        term.style.opacity = 1 - C(out * 1.3);
+        const head = $('A_head');
+        head.style.opacity = 1 - C(out * 1.3);
+        head.style.transform = `translateY(${-out * 30}px) scale(${1 - out * 0.2})`;
+        $('A_dots').style.opacity = 0.9 * (1 - P(t, 2.2, 0.3));
+        const g = $('A_glyph');
+        const gp = P(t, 2.36, 0.5),
+          zoom = P(t, 3.55, 0.45);
+        g.style.opacity = C(gp * 4);
+        g.style.transform = `scale(${E.back(gp) * (1 + E.in3(zoom) * 24)})`;
+        $('A_gdot').style.transform = `rotate(${nodAngle(t, 2.72, 0.6)}deg)`;
+        const cp = E.out(P(t, 2.6, 0.35)),
+          co = P(t, 3.5, 0.12);
+        tf($('A_cap'), { y: (1 - cp) * 12, o: cp * (1 - co) });
+      }
+
+      function renderB(t) {
+        show('B', t, 3.55, 6.25);
+        if (t < 3.55 || t >= 6.25) return;
+        const zoom = P(t, 3.55, 0.45);
+        const inner = 5.75 * (110 / 21) * (1 + E.in3(zoom) * 24);
+        $('B').style.clipPath = t < 4 ? `circle(${inner}px at 270px 270px)` : 'none';
+        const z = t < 4 ? L(1.25, 1.06, E.out(zoom)) : L(1.06, 1, E.out(P(t, 4, 0.6)));
+        const out = E.inOut(P(t, 5.72, 0.4));
+        $('B').style.transform = `translateY(${-out * 540}px) scale(${z})`;
+        words($('B_head'), t, 3.82, 0.07, 0.55);
+        const ep = E.out(P(t, 3.9, 0.5));
+        tf($('B_eye'), { y: (1 - ep) * 10, o: ep });
+        const sp = E.out(P(t, 4.45, 0.5));
+        tf($('B_sub'), { y: (1 - sp) * 14, o: sp });
+        $('B_dots').style.opacity = 0.9 * E.out(P(t, 3.9, 0.4));
+      }
+
+      function renderBG(t) {
+        const vis = t >= 5.72 && t < 18.45;
+        $('BG').style.display = vis ? 'block' : 'none';
+        if (!vis) return;
+        const inp = E.inOut(P(t, 5.72, 0.4)),
+          outp = E.inOut(P(t, 18.0, 0.4));
+        const kb = P(t, 5.7, 12.7);
+        $('BG').style.transform = `translate(${-outp * 540}px,${(1 - inp) * 540}px)`;
+        $('BG_img').style.transform =
+          `scale(${1.02 + kb * 0.08}) translate(${-kb * 8}px,${kb * 6}px)`;
+      }
+
+      const lines = [
+        { at: 6.3, prompt: 1, type: ['ls', 6.33, 6.5] },
+        { at: 6.7, html: 'nod-linux-x64.flatpak.part00  nod-linux-x64.flatpak.part01' },
+        { at: 6.78, html: 'SHA256SUMS-linux-x64' },
+        {
+          at: 7.55,
+          prompt: 1,
+          html: 'cat nod-linux-x64.flatpak.part[0-9][0-9] > nod-linux-x64.flatpak &&',
+        },
+        { at: 7.62, html: '  sha256sum --check SHA256SUMS-linux-x64 &&' },
+        { at: 7.69, html: '  flatpak install --user ./nod-linux-x64.flatpak' },
+        { at: 8.3, html: 'nod-linux-x64.flatpak.part00: <span class="ok">OK</span>' },
+        { at: 8.42, html: 'nod-linux-x64.flatpak.part01: <span class="ok">OK</span>' },
+        { at: 8.54, html: 'nod-linux-x64.flatpak: <span class="ok">OK</span>' },
+        {
+          at: 8.68,
+          html: '<span class="dim">Proceed with these changes to the user installation? [Y/n]:</span> <span id="C_y"></span>',
+        },
+        {
+          at: 8.92,
+          html: 'Installing… <span class="bar"><i id="C_bar"></i></span><span id="C_pct">0%</span>',
+        },
+        { at: 10.3, html: '<span class="ok">Installation complete.</span>' },
+        { at: 10.95, prompt: 1, type: ['flatpak run io.n8n.Nod', 11.1, 11.75] },
+      ];
+      const lineEls = lines.map((l) => {
+        const d = document.createElement('span');
+        d.className = 'tl';
+        d.innerHTML =
+          (l.prompt ? '<span class="p">$</span> ' : '') +
+          (l.type ? '<span class="ty"></span>' : l.html || '') +
+          (l.prompt ? '<span class="caret" style="display:none"></span>' : '');
+        $('C_tb').appendChild(d);
+        return d;
+      });
+      const termCam = [
+        [6.0, 1, 248, 200],
+        [8.15, 1, 248, 200],
+        [8.55, 1.16, 10, 290],
+        [10.55, 1.16, 10, 290],
+        [10.95, 1, 248, 200],
+      ];
+      const nodCam = [
+        [12.0, 1, 224, 220],
+        [16.3, 1, 224, 220],
+        [17.0, 1.16, 224, 150],
+        [18.4, 1.19, 224, 150],
+      ];
+      const pills = [
+        ['C_p1', 5.95, 7.45],
+        ['C_p2', 7.45, 10.95],
+        ['C_p3', 10.95, 14.35],
+        ['C_p4', 14.35, 99],
+      ];
+
+      function renderC(t) {
+        show('C', t, 5.72, 18.45);
+        if (t < 5.72 || t >= 18.45) return;
+        const inp = E.inOut(P(t, 5.72, 0.4)),
+          outp = E.inOut(P(t, 18.0, 0.4));
+        $('C').style.transform = `translate(${-outp * 540}px,${(1 - inp) * 540}px)`;
+        pills.forEach(([id, a, b]) => {
+          const i = E.back(P(t, a, 0.4)),
+            o = E.out(P(t, b, 0.25));
+          const el = $(id);
+          el.style.opacity = C(P(t, a, 0.15)) * (1 - o);
+          el.style.transform = `translate(-50%,${(1 - i) * -16 + o * -14}px) scale(${L(0.85, 1, i)})`;
+        });
+        const winIn = E.out5(P(t, 5.9, 0.6));
+        const [ts, tfx, tfy] = camAt(termCam, t);
+        const back = E.out(P(t, 12.05, 0.5));
+        const term = $('C_term');
+        zoomAbout(
+          term,
+          L(0.94, 1, winIn) * ts * (1 - back * 0.06),
+          tfx,
+          tfy,
+          (1 - winIn) * 40 - back * 10,
+        );
+        term.style.filter = back > 0 ? `brightness(${1 - back * 0.25})` : 'none';
+        let last = -1;
+        lines.forEach((l, i) => {
+          const el = lineEls[i];
+          const vis = t >= l.at;
+          el.style.display = vis ? 'block' : 'none';
+          if (vis) last = i;
+          if (l.type) {
+            el.querySelector('.ty').textContent = typedAt(l.type[0], t, l.type[1], l.type[2]);
+          }
+        });
+        lineEls.forEach((el, i) => {
+          const c = el.querySelector('.caret');
+          if (c) {
+            c.style.display = i === last ? 'inline-block' : 'none';
+            c.style.opacity =
+              Math.floor(t * 2.4) % 2 === 0 || (lines[i].type && t < lines[i].type[2] + 0.1)
+                ? 1
+                : 0;
+          }
+        });
+        const y = $('C_y');
+        if (y) y.textContent = t >= 8.78 ? 'y' : '';
+        const bp = E.inOut(P(t, 8.98, 1.25));
+        const bar = $('C_bar');
+        if (bar) {
+          bar.style.width = bp * 100 + '%';
+          $('C_pct').textContent = Math.round(bp * 100) + '%';
+        }
+        const tb = $('C_tb');
+        const overflow = Math.max(0, (last + 1) * 17.8 + 24 - (444 - 36));
+        tb.style.transform = `translateY(${-overflow}px)`;
+
+        const win = $('D_win');
+        const wi = E.spring(P(t, 12.05, 0.7));
+        const [ns, nfx, nfy] = camAt(nodCam, t);
+        win.style.opacity = C(P(t, 12.05, 0.12));
+        zoomAbout(win, L(0.6, 1, C(wi, 0, 1.2)) * ns, nfx, nfy);
+        $('D_wdot').style.transform = `rotate(${nodAngle(t, 12.55, 0.7)}deg)`;
+        ['D_pt0', 'D_pt1', 'D_pt2', 'D_pt3'].forEach((id, i) => {
+          const p = E.out(P(t, 12.35 + i * 0.09, 0.42));
+          tf($(id), { y: (1 - p) * 8, o: p });
+        });
+        const sr = window.SHOTS['welcome-bottom'].rects.start,
+          sb = $('D_start');
+        sb.style.left = sr.x + 'px';
+        sb.style.top = sr.y + 'px';
+        sb.style.width = sr.w + 'px';
+        sb.style.height = sr.h + 'px';
+        const sc = E.inOut(P(t, 12.95, 0.45));
+        $('D_wt').style.opacity = 1 - sc;
+        $('D_wt').style.transform = `translateY(${-sc * 120}px)`;
+        $('D_wb').style.opacity = sc;
+        $('D_wb').style.transform = `translateY(${(1 - sc) * 120}px)`;
+        $('D_cd').style.opacity = P(t, 16.05, 0.25);
+        const swap = E.inOut(P(t, 14.3, 0.35));
+        $('D_welcome').style.opacity = 1 - swap;
+        $('D_welcome').style.transform = `translateY(${-swap * 16}px)`;
+        $('D_chat').style.opacity = swap;
+        $('D_chat').style.transform = `translateY(${(1 - swap) * 16}px)`;
+        const cur = $('D_cursor');
+        let target = [300, 430];
+        const b = $('D_start').getBoundingClientRect(),
+          st = $('stage').getBoundingClientRect();
+        if (b.width) target = [b.left - st.left + b.width * 0.55, b.top - st.top + b.height * 0.5];
+        const cm = E.inOut(P(t, 13.45, 0.6));
+        const click = P(t, 14.12, 0.06) - P(t, 14.22, 0.1);
+        cur.style.opacity = C(P(t, 13.4, 0.1)) * (1 - C(P(t, 14.45, 0.2)));
+        cur.style.transform = `translate(${L(470, target[0] - 5, cm)}px,${L(545, target[1] - 2.5, cm)}px) scale(${1 - click * 0.18})`;
+        $('D_start').style.background = click > 0 ? '#ffbcca' : '#ff91ac';
+        const yp = E.out5(P(t, 14.55, 0.45));
+        $('D_you').style.transformOrigin = '100% 100%';
+        tf($('D_you'), { y: (1 - yp) * 22, s: L(0.96, 1, yp), o: C(yp * 3) });
+        const lp = E.out(P(t, 14.9, 0.3)),
+          lo = E.out(P(t, 16.05, 0.18));
+        $('D_live').style.opacity = lp * (1 - lo);
+        $('D_orbit').style.transform = `rotate(${t * 360}deg)`;
+        [
+          ['D_l1', 14.9, 15.42],
+          ['D_l2', 15.52, 99],
+        ].forEach(([id, a, bb], k) => {
+          const i = E.out(P(t, a, 0.22)),
+            o = E.out(P(t, bb, 0.12));
+          const el = $(id);
+          el.style.opacity = (k === 0 ? 1 : i) * (1 - o);
+          el.style.transform = `translateY(${(k === 0 ? 0 : (1 - i) * 10) - o * 10}px)`;
+          el.style.backgroundPosition = `${120 - ((t * 0.9) % 1.6) * 150}% 0`;
+        });
+        const rp = E.out5(P(t, 16.08, 0.5));
+        tf($('D_reply'), { y: (1 - rp) * 18, o: C(rp * 2.5) });
+        const ap = E.back(P(t, 16.35, 0.45));
+        tf($('D_f0'), { y: (1 - C(ap)) * 8, s: L(0.9, 1, ap), o: C(P(t, 16.35, 0.15)) });
+      }
+
+      function renderE(t) {
+        show('E', t, 20.8, 24.0);
+        if (t < 20.8 || t >= 24.0) return;
+        const inp = E.inOut(P(t, 20.8, 0.38));
+        const o = E.in3(P(t, 23.62, 0.3));
+        $('E').style.transform = `translateX(${(1 - inp) * 540}px) scale(${1 + o * 0.06})`;
+        $('E').style.opacity = 1 - o;
+        const ep = E.out(P(t, 21.0, 0.4));
+        tf($('E_eye'), { y: (1 - ep) * 8, o: ep });
+        words($('E_head'), t, 20.95, 0.07, 0.5);
+        ['E_r0', 'E_r1', 'E_r2', 'E_r3'].forEach((id, i) => {
+          const p = E.out5(P(t, 21.4 + i * 0.18, 0.5));
+          tf($(id), { x: (1 - p) * -60, o: C(p * 2) });
+        });
+        const np = E.out(P(t, 22.3, 0.4));
+        tf($('E_note'), { y: (1 - np) * 8, o: np });
+      }
+
+      function renderJ(t) {
+        show('J', t, 18.0, 21.2);
+        if (t < 18.0 || t >= 21.2) return;
+        const inp = E.inOut(P(t, 18.0, 0.4)),
+          push = E.inOut(P(t, 20.8, 0.38));
+        $('J').style.transform = `translateX(${(1 - inp) * 540 - push * 540}px)`;
+        const ep = E.out(P(t, 18.25, 0.4));
+        tf($('J_eye'), { y: (1 - ep) * 8, o: ep });
+        words($('J_head'), t, 18.2, 0.07, 0.5);
+        ['J_b0', 'J_b1', 'J_b2'].forEach((id, i) => {
+          const p = E.spring(P(t, 18.75 + i * 0.55, 0.6));
+          tf($(id), { y: (1 - C(p)) * 30, s: L(0.6, 1, p), o: C(P(t, 18.75 + i * 0.55, 0.12)) });
+        });
+      }
+
+      function renderG(t) {
+        show('G', t, 23.94, 99);
+        if (t < 23.94) return;
+        const st = 24;
+        [$('G_N'), $('G_glyph'), $('G_d')].forEach((el, i) => {
+          const p = E.out5(P(t, st + i * 0.07, 0.6));
+          el.style.transform = `translateY(${(1 - p) * 110}%)`;
+        });
+        $('G_dots').style.opacity = 0.9 * E.out(P(t, st, 0.5));
+        $('G').style.opacity = C(P(t, 23.94, 0.08));
+        $('G_gdot').style.transform =
+          `rotate(${nodAngle(t, 24.75, 0.95) + nodAngle(t, 26.05, 0.95)}deg)`;
+        const tp = E.out(P(t, 24.3, 0.5));
+        tf($('G_tag'), { y: (1 - tp) * 14, o: tp });
+        const cp = E.back(P(t, 24.55, 0.5));
+        $('G_cta').style.opacity = C(P(t, 24.55, 0.12));
+        $('G_cta').style.transform = `translateX(-50%) scale(${L(0.7, 1, cp)})`;
+        const fp = E.out(P(t, 24.8, 0.5));
+        tf($('G_fine'), { y: (1 - fp) * 8, o: fp });
+        $('G_word').style.transform = `scale(${1 + P(t, 24, 3.5) * 0.035})`;
+      }
+
+      function render(t) {
+        renderA(t);
+        renderB(t);
+        renderBG(t);
+        renderC(t);
+        renderJ(t);
+        renderE(t);
+        renderG(t);
+      }
+      window.render = render;
+      window.DURATION = 27.5;
+      window.ready = Promise.all(
+        ['Baumer', 'BaumerMono', 'Geist', 'GeistMono'].flatMap((f) =>
+          ['400', '500', '600', '700'].map((w) => document.fonts.load(`${w} 16px ${f}`)),
+        ),
+      )
+        .then(() => document.fonts.ready)
+        .then(() => Promise.all([...document.images].map((i) => i.decode().catch(() => {}))))
+        .then(() => {
+          render(0);
+          return true;
+        });
+      const q = new URLSearchParams(location.search);
+      if (q.has('t')) window.ready.then(() => render(+q.get('t')));
+    </script>
+  </body>
+</html>

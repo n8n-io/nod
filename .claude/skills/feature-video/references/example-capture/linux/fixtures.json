@@ -1,0 +1,182 @@
+{
+  "/api/session": {
+    "user": {
+      "id": "owner",
+      "name": "Alex",
+      "email": null,
+      "avatarUrl": null
+    },
+    "settings": {
+      "theme": "light",
+      "onboardingCompleted": false,
+      "usageData": false,
+      "usageDataRevision": 0,
+      "traces": false
+    },
+    "capabilities": {
+      "developer": false,
+      "traces": false,
+      "updatesEmail": false
+    }
+  },
+  "/api/preferences": {
+    "notificationRule": "",
+    "rules": "",
+    "timeZone": "Europe/Berlin",
+    "locale": "en-GB",
+    "hourCycle": "h23",
+    "quietHoursEnabled": false,
+    "quietStart": "22:00",
+    "quietEnd": "07:00",
+    "proactivePaused": false
+  },
+  "/api/vault/activity": {
+    "week": {
+      "signIns": 0,
+      "payments": 0,
+      "held": 0
+    },
+    "entries": []
+  },
+  "/api/vault": [],
+  "/api/vault/sessions": [],
+  "/api/tasks": [],
+  "/api/models": {
+    "connections": [],
+    "selection": null
+  },
+  "/api/trust": {
+    "entries": [
+      {
+        "id": "e1",
+        "messageId": "m1",
+        "at": "2026-11-13T13:02:00Z",
+        "title": "Send Sara the Q3 report",
+        "source": "chat",
+        "channel": "web",
+        "error": null,
+        "costUsd": 0.04,
+        "models": [
+          {
+            "provider": "anthropic",
+            "model": "claude-sonnet-5-5",
+            "billing": "api"
+          }
+        ],
+        "actions": [
+          {
+            "label": "Gmail: send email",
+            "target": "sara@brightline.example",
+            "because": {
+              "kind": "message",
+              "text": "Send Sara the Q3 report",
+              "whole": true
+            }
+          }
+        ]
+      },
+      {
+        "id": "e2",
+        "messageId": null,
+        "at": "2026-11-13T08:00:00Z",
+        "title": "Weekly invoice check",
+        "source": "schedule",
+        "channel": "web",
+        "error": null,
+        "costUsd": 0.11,
+        "models": [
+          {
+            "provider": "anthropic",
+            "model": "claude-sonnet-5-5",
+            "billing": "api"
+          }
+        ],
+        "actions": [
+          {
+            "label": "Gmail: search email",
+            "read": true
+          }
+        ]
+      }
+    ],
+    "next": null,
+    "week": {
+      "things": 9,
+      "actions": 14,
+      "spentUsd": 1.86,
+      "planUsd": 0
+    },
+    "month": {
+      "start": "2026-11-01T00:00:00Z",
+      "days": 30,
+      "elapsedDays": 13,
+      "spentUsd": 12.4,
+      "forecastUsd": 28.6,
+      "planUsd": 0,
+      "daily": [0.6, 1.1, 0.4, 0.9, 1.3, 0.2, 0.5, 1.4, 1.2, 0.8, 1.6, 1.2, 0.17],
+      "unpriced": false,
+      "planUsage": false,
+      "backgroundUsd": 2.1,
+      "outside": []
+    },
+    "limit": {
+      "monthlyUsd": 200,
+      "reached": false
+    },
+    "taskUsd": 5
+  },
+  "/api/trust/entries/e1/steps": {
+    "total": 3,
+    "steps": [
+      {
+        "at": "2026-11-13T13:02:07Z",
+        "kind": "model",
+        "title": "claude-sonnet-5-5",
+        "detail": "8.2k in · 140 out",
+        "costUsd": 0.03
+      },
+      {
+        "at": "2026-11-13T13:02:11Z",
+        "kind": "action",
+        "title": "Gmail: send email",
+        "because": {
+          "kind": "message",
+          "text": "Send Sara the Q3 report",
+          "whole": true
+        }
+      },
+      {
+        "at": "2026-11-13T13:02:15Z",
+        "kind": "reply",
+        "title": "Sent Sara the Q3 report."
+      }
+    ]
+  },
+  "/api/schedules": [
+    {
+      "id": "s1",
+      "title": "Weekly invoice check",
+      "prompt": "Check my inbox for overdue invoices.",
+      "kind": "recurring",
+      "cron": "0 9 * * 1",
+      "runAt": null,
+      "timeZone": "Europe/Berlin",
+      "enabled": true,
+      "revision": 3,
+      "nextRun": "2026-11-16T08:00:00Z",
+      "lastRun": null,
+      "activeRun": null,
+      "baselineObservation": null,
+      "watch": null,
+      "monthlyUsd": null
+    }
+  ],
+  "/api/schedule-runs": {
+    "runs": [],
+    "nextCursor": null
+  },
+  "/api/state": {},
+  "/api/apps": [],
+  "/api/apps/catalog": [],
+  "/api/memory": {}
+}
