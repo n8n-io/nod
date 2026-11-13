@@ -299,6 +299,19 @@ export interface SkillLibrary {
   core?: readonly string[];
   read(name: string, file?: string): { name: string; file: string; content: string };
 }
+export interface DocumentationSection {
+  id: string;
+  title: string;
+  heading: string;
+  url: string;
+}
+export interface Documentation {
+  search(query: string): Promise<Array<DocumentationSection & { excerpt: string }>>;
+  read(
+    id: string,
+    offset?: number,
+  ): Promise<DocumentationSection & { content: string; nextOffset?: number }>;
+}
 export type AgentEvent =
   | { type: 'provider_usage'; usage: ProviderUsageEvent }
   | { type: 'turn_start' }

@@ -14,6 +14,7 @@ import type {
   AgentTool,
   AgentToolOutcome,
   AgentToolResult,
+  Documentation,
   RuntimeContext,
   RuntimeObservation,
   RuntimeResult,
@@ -83,6 +84,7 @@ const parentTools = new Set([
   'task',
 ]);
 const parallelTools = new Set([
+  'nod_docs',
   'delegate',
   'share_file',
   'create_audio',
@@ -111,6 +113,7 @@ const reportingTaskActions = new Set(['finish', 'list', 'stop', 'update']);
 const limitActions = new Set(['usage_get', 'limits_update']);
 const dollars = (value: number) => `$${Number.isInteger(value) ? value : value.toFixed(2)}`;
 const delimitedTools = new Set([
+  'nod_docs',
   'read_source',
   'proactive_issue',
   'apps',
@@ -163,6 +166,7 @@ export function createAgentRuntime(dependencies: {
   computer: Computer;
   workspace: Workspace;
   skills?: SkillLibrary;
+  documentation?: Documentation;
   redactError?(text: string): string;
   observe?(turnId: string, event: RuntimeObservation): void;
   keepWarm?(threadId: string): Promise<boolean>;
@@ -648,7 +652,10 @@ export function createAgentRuntime(dependencies: {
         return { gate, settle: () => decide(gate.asked) };
       };
       const bind = (turn: Turn, take: () => Promise<unknown>): AgentTool[] =>
-        [...nodTools(turn, skills), ...(context.proactivity ? [] : connectedTools(turn))]
+        [
+          ...nodTools(turn, skills, dependencies.documentation),
+          ...(context.proactivity ? [] : connectedTools(turn)),
+        ]
           .filter(
             (tool) =>
               !context.proactivity ||
