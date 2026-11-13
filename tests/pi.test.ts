@@ -1420,6 +1420,7 @@ test('fresh scheduled sessions put their stable first request on a one-hour Anth
   for (const [index, body] of bodies.entries()) {
     const tail = blocks(body).at(-1);
     assert.match(tail.text, index ? /SECOND-RUN/ : /FIRST-RUN/);
+    assert.match(JSON.stringify(body), /Only pending means open/);
     const status = JSON.stringify(`"status":"${index ? 'expired' : 'pending'}"`).slice(1, -1);
     assert.ok(tail.text.includes(status));
     assert.deepEqual(tail.cache_control, { type: 'ephemeral' });

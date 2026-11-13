@@ -111,6 +111,8 @@ Normal sessions start with native workspace tools, common Nod tools, `codemode` 
 
 Below 65,536 tokens, each search loads one detailed tool and removes the previous selection. The search result names the loaded tool; its full schema appears in the next model call. Core guides are read through `skills` instead of being included in every request. Saved memory, task lists and older chat context are available through their tools. The first request keeps up to two recent complete exchanges within 4,000 characters. An exchange starts with an owner message and includes its assistant updates. The current instruction, rules and reply target stay complete. Every model gets a small connected MCP account index with guide names and revision hashes. Full server guides load through skills read when needed. A guide change updates the index, so a persistent session can read the new version.
 
+Sign-in form status guidance enters a request only when the session has an earlier form status to interpret.
+
 For `openrouter/free` and `openrouter/auto`, Nod uses an 8,192-token working window because the router can select a model with a smaller window than its catalog entry. It keeps the selected router ID. It does not select a replacement model or connection.
 
 If a restored session already uses more than half a small model's window, Nod adds a checkpoint without a model request. It keeps recent complete turns that fit in one eighth of the window. The checkpoint tells the model to retrieve older messages and files when needed. The full transcript stays on disk. This prevents an oversized old transcript from blocking its own summary request.
