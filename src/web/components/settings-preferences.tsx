@@ -169,7 +169,6 @@ function FontSizeControls() {
           </Button>
         </div>
       </div>
-      <p className="field-hint account-font-size-hint">Also changes the size of controls.</p>
       {error && <Notice>{error}</Notice>}
     </>
   );

@@ -5129,6 +5129,7 @@ app.whenReady().then(async () => {
       launchAtLogin: true,
       notifications: false,
       theme: 'system',
+      zoomFactor: 1,
       onboardingCompleted: true,
       onboardingPreferenceStep: 'complete',
     });

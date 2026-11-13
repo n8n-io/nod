@@ -296,7 +296,6 @@
   max-width: 620px;
 }
 .account-font-size {
-  max-width: 620px;
   margin-top: 16px;
 }
 .account-font-size-actions {
@@ -316,9 +315,6 @@
   text-align: center;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
-}
-.account-region .account-font-size-hint {
-  margin-top: -3px;
 }
 .account-theme-previews > button {
   min-width: 0;
@@ -618,8 +614,7 @@
 }
 @container account-settings (max-width: 400px) {
   .account-preference-row:has(.search-picker-trigger),
-  .account-preference-row:has(.settings-segmented),
-  .account-font-size {
+  .account-preference-row:has(.settings-segmented) {
     flex-wrap: wrap;
   }
   .account-settings-body .search-picker-trigger {
