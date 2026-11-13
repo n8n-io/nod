@@ -484,9 +484,9 @@ export function createProactivity(options: {
       signal.throwIfAborted();
     } catch (error) {
       if ((error as { refused?: boolean } | undefined)?.refused) throw error;
-      const status =
-        (error as { status?: number; statusCode?: number } | undefined)?.status ??
-        (error as { statusCode?: number } | undefined)?.statusCode;
+      const failure = error as
+        { upstreamStatus?: number; status?: number; statusCode?: number } | undefined;
+      const status = failure?.upstreamStatus ?? failure?.status ?? failure?.statusCode;
       if (status === 429 || (status !== undefined && status >= 500 && status <= 599)) {
         const failed = failedSources.get(turn.turnId) ?? new Map<string, string>();
         failed.set(

@@ -10502,6 +10502,21 @@ test(
     const prepared = await f.service.prepare(owner, 'GITHUB_LIST_REPOSITORIES', {
       connectionId: connected.connectionId,
     });
+    const execute = f.session.execute;
+    for (const status of [400, 429, 503]) {
+      f.session.execute = async () => {
+        throw Object.assign(new Error('Synthetic upstream failure.'), { status });
+      };
+      await assert.rejects(
+        f.service.executeApproved(owner, 'GITHUB_LIST_REPOSITORIES', prepared),
+        (error: Error & { statusCode?: number; upstreamStatus?: number }) => {
+          assert.equal(error.statusCode, 502);
+          assert.equal(error.upstreamStatus, status);
+          return true;
+        },
+      );
+    }
+    f.session.execute = execute;
     const executions = f.executed.length;
     await f.pool.query('UPDATE app_connections SET account_active=false WHERE id=$1', [
       connected.connectionId,

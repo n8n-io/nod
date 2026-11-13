@@ -6860,6 +6860,18 @@ test(
               'failed service reads wait for another check and allow recovery',
               async () => {
                 await reset();
+                sourceFailure = Object.assign(new Error('Synthetic invalid source arguments.'), {
+                  statusCode: 502,
+                  upstreamStatus: 400,
+                });
+                await assert.rejects(
+                  engine.read(ref, { sourceId }, new AbortController().signal),
+                  sourceFailure,
+                );
+                sourceFailure = undefined;
+                await engine.read(ref, { sourceId }, new AbortController().signal);
+                assert.equal(sourceReads, 2);
+                await reset();
                 sourceFailure = Object.assign(new Error('Synthetic service unavailable.'), {
                   status: 503,
                 });
