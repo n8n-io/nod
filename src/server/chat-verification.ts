@@ -40,6 +40,15 @@ function conflict(message: string) {
   return Object.assign(new Error(message), { statusCode: 409 });
 }
 
+function codeBearingPaymentReply(text: string) {
+  return (
+    /(?<![\p{L}\p{N}])\d{3,4}(?![\p{L}\p{N}])/u.test(text) &&
+    /(?<![\p{L}\p{N}])(?:code|c[oó]digo|pin|otp|passcode|verification|cvv|cvc)(?![\p{L}\p{N}])/iu.test(
+      text,
+    )
+  );
+}
+
 export async function createChatVerification(
   pool: Pool,
   options: {
@@ -137,7 +146,14 @@ export async function createChatVerification(
       otp: reply.kind === 'code' ? reply.code : undefined,
       payment: options.submitPayment ? securityCodeIn(text) : undefined,
     };
-    if (reply.kind === 'ordinary' && !codes.payment && !input.verificationRequestId) return;
+    const paymentCodeLike = options.submitPayment && codeBearingPaymentReply(text);
+    if (
+      reply.kind === 'ordinary' &&
+      !codes.payment &&
+      !paymentCodeLike &&
+      !input.verificationRequestId
+    )
+      return;
     if (!codes.otp && !codes.payment && input.verificationRequestId)
       throw conflict('Send the code by itself.');
     const incompatible = Boolean(input.attachmentIds?.length);
@@ -258,15 +274,18 @@ export async function createChatVerification(
                  'u',
                  `newer.created_at>u.created_at AND (NOT $7::boolean OR newer.created_at<now()-interval '10 minutes')`,
                )})
-               AND ((r.kind='payment' AND ($4::boolean OR ($5::boolean AND u.channel=$2))) OR (r.kind='otp' AND $5::boolean)) LIMIT 1`,
+               AND ((r.kind='payment' AND ($4::boolean OR ($8::boolean AND u.channel=$2))) OR (r.kind='otp' AND $5::boolean)) LIMIT 1`,
             [
               options.ownerId,
               channel,
               thread.id,
-              Boolean(codes.payment),
+              Boolean(codes.payment || paymentCodeLike),
               reply.kind !== 'ordinary',
               turnId ?? null,
-              reply.kind === 'code' || reply.kind === 'wrapped' || Boolean(codes.payment),
+              reply.kind === 'code' ||
+                reply.kind === 'wrapped' ||
+                Boolean(codes.payment || paymentCodeLike),
+              reply.kind === 'code',
             ],
           )
         ).rows[0];
@@ -288,6 +307,17 @@ export async function createChatVerification(
         );
       const request = requests.rows[0]!;
       const code = codes[request.kind];
+      if (
+        !code &&
+        request.kind === 'payment' &&
+        !requestId &&
+        reply.kind !== 'code' &&
+        !paymentCodeLike
+      ) {
+        await input.persistOrdinary?.(client);
+        await client.query('COMMIT');
+        return;
+      }
       if (!code && request.kind === 'otp' && reply.kind === 'ordinary') {
         await input.persistOrdinary?.(client);
         await client.query('COMMIT');

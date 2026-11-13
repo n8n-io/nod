@@ -8,7 +8,7 @@ import { Vault } from '../src/web/pages/vault.tsx';
 import { Credentials } from '../src/web/pages/credentials.tsx';
 import { SetupActions } from '../src/web/components/setup-link.tsx';
 import { messageSetupLinks } from '../src/web/lib/message-links.ts';
-import { actionLink } from '../src/runtime/communication.ts';
+import { paymentInvitation } from '../src/runtime/communication.ts';
 import { PrivateEntryWorkspace, usePrivateEntry } from '../src/web/components/private-entry.tsx';
 import { pageDataCache } from '../src/web/lib/page-data-cache.ts';
 import { Composio } from '@composio/core';
@@ -1807,6 +1807,7 @@ test(
       let failFill = false;
       let presentationFailure = false;
       let presentedText = 'Synthetic private payment step.';
+      let presentedAction = 'Approve payment';
       let duringPresentation = async () => {};
       const presentations: Array<{
         turn: { threadId: string; turnId: string };
@@ -1826,7 +1827,7 @@ test(
             presentations.push(structuredClone({ turn, input }));
             await duringPresentation();
             input.amount = '0.01';
-            return presentedText;
+            return { question: presentedText, action: presentedAction };
           },
           page: async () => ({ origin: new URL(url).origin, url }),
           destinations: async () => {
@@ -1903,6 +1904,9 @@ test(
       presentedText = '   ';
       await assert.rejects(payments.request(turn, order));
       presentedText = 'Synthetic private payment step.';
+      presentedAction = '   ';
+      await assert.rejects(payments.request(turn, order));
+      presentedAction = 'Approve payment';
       duringPresentation = async () => {
         await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [turn.turnId]);
       };
@@ -1937,10 +1941,14 @@ test(
         parallel.turnId,
       ]);
       assert.equal(first.question, 'Synthetic private payment step.');
+      assert.equal(first.action, 'Approve payment');
       assert.equal(first.url, `/payments/${(await latest()).id}`);
-      assert.deepEqual(
-        messageSetupLinks(actionLink(first.url, first.question), 'http://localhost:4310'),
-        [{ href: first.url, setup: 'vault', label: first.question }],
+      const invitation = paymentInvitation(first.url, first.question, first.action);
+      assert.deepEqual(messageSetupLinks(invitation, 'http://localhost:4310'), [
+        { href: first.url, setup: 'vault', label: first.action },
+      ]);
+      assert.throws(() =>
+        paymentInvitation(`https://shop.fixture.test${first.url}`, first.question, first.action),
       );
       assert.equal(presentations.at(-1)!.input.amount, '43.20');
       assert.equal(
@@ -1982,7 +1990,7 @@ test(
         'https://pay.fixture.test',
         shop,
       ]);
-      assert.equal(presentations.at(-1)!.input.requires, 'desktop_private_form');
+      assert.equal(presentations.at(-1)!.input.requires, 'private_form');
       assert.equal(await reply('737'), 'submitted');
       assert.equal(fills.at(-1)?.card.securityCode, '737');
       assert.equal(fills.at(-1)?.destinations.number, 'https://pay.fixture.test');
