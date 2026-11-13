@@ -45,9 +45,9 @@ const nodActions: Array<[string, string]> = [
 
 export function approvalTitle(action: string) {
   if (action === 'GMAIL_DELETE_MESSAGE')
-    return { title: 'Permanently delete an email', app: 'Gmail', slug: 'gmail' };
+    return { title: 'Delete an email permanently', app: 'Gmail', slug: 'gmail' };
   if (action === 'GMAIL_DELETE_DRAFT')
-    return { title: 'Permanently delete an unsent draft', app: 'Gmail', slug: 'gmail' };
+    return { title: 'Delete an unsent draft permanently', app: 'Gmail', slug: 'gmail' };
   const nod = nodActions.find(([prefix]) => action.startsWith(prefix));
   if (nod) return { title: nod[1], app: '', slug: '' };
   const mcp = action.startsWith('mcp__');

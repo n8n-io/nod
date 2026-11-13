@@ -14,7 +14,7 @@ Local models work in the [desktop app](/get-started/install-desktop/), [source i
 The model server must be reachable from Nod's server. On a remote install, `localhost` refers to that server; inside Docker, it refers to Nod's container.
 
 :::caution[Connect a Trust checker]
-By default, Nod's [trust check](/trust/approvals/) uses your local model at its lowest reasoning setting, and smaller models decide less reliably. You can choose a small model from another connection or a decision service as the [action checker](/connect/models/#select-the-action-checker) instead. Your selected text model writes confirmation questions and button labels. A separate request checks them against the saved action and arguments.
+By default, Nod's [trust check](/trust/approvals/) uses your local model at its lowest reasoning setting, and smaller models decide less reliably. You can choose a small model from another connection or a decision service as the [action checker](/connect/models/#select-the-action-checker) instead. Your selected text model writes most confirmation questions and button labels, then checks its own wording in a separate request. For permanent Gmail deletion, Nod writes a fixed English question and button label from verified target details, without a wording-model request. Both model requests receive the proposed action and arguments, available target details and task or schedule context, and page-visible text for browser confirmations. The action checker does not receive page text.
 :::
 
 ## Before you start
@@ -144,7 +144,7 @@ Nod lists every model such a service returns, including ones that can't chat. Pi
 | Decision checks     | Trust uses a separate small model or decision service. Email checks use the background model unless a decision service is available. See [Decision checks](/connect/models/#decision-checks).                                                                                                   |
 | Background work     | Memory upkeep and other background work use your selected model.                                                                                                                                                                                                                                |
 | Slow replies        | A slow first reply is normal. After a quiet minute, the chat shows **Waiting for** and your model's name, with how long it has been quiet. If the server sends nothing at all for 30 minutes, Nod sends the request again, up to three times, and then says it failed. **Stop** ends it sooner. |
-| Where requests go   | Chat requests go to the address you enter. Trust requests go to the checker connection. Web search, websites, apps and chat channels work as before. See [Your data and privacy](/trust/privacy/).                                                                                              |
+| Where requests go   | Chat and confirmation wording requests go to the address you enter. Trust requests go to the checker connection. Web search, websites, apps and chat channels work as before. See [Your data and privacy](/trust/privacy/).                                                                     |
 | Where your key goes | Keys saved in **Models** are encrypted. Keys from `.env` stay in server configuration and memory. The server adds the key to requests. See [Where your keys go](/connect/models/#where-your-keys-go).                                                                                           |
 
 ## Troubleshooting

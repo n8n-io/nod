@@ -118,7 +118,7 @@ export function approvalLanguageScenario(name: string) {
   if (!frozen) throw new Error(`Unknown approval language case ${name}.`);
   return scenario({
     id: `approval-language-${name}`,
-    title: `Classify a ${frozen.language} reply to an English approval question: ${frozen.answer}`,
+    title: `Classify a ${frozen.language} reply to an approval question: ${frozen.answer}`,
     linear: 'LAB-547',
     capabilities: ['apps', 'approvals'],
     tier: 'pr',

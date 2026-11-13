@@ -1,4 +1,4 @@
-import { approvalTitle } from '../src/server/action-presentation.ts';
+import { actionTarget, approvalTitle } from '../src/server/action-presentation.ts';
 import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
@@ -23,6 +23,67 @@ import { transaction } from '../src/server/transaction.ts';
 import { createChannels } from '../src/server/channels.ts';
 import type { AppState, Task } from '../src/shared/contracts.ts';
 import { mergeMessages } from '../src/web/lib/chat-messages.ts';
+
+function syntheticConfirmation(input: Record<string, unknown>) {
+  const data = input.data as {
+    action: string;
+    args: Record<string, unknown>;
+    details?: Record<string, unknown>;
+    work?: { title?: string; waitsForAnswer?: boolean };
+  };
+  const { action, args } = data;
+  const details = data.details ?? {};
+  const target =
+    details.target && typeof details.target === 'object' && !Array.isArray(details.target)
+      ? (details.target as Record<string, unknown>)
+      : {};
+  const value = (item: unknown) => (typeof item === 'string' ? item.trim() : '');
+  const accountDetails =
+    details.account && typeof details.account === 'object' && !Array.isArray(details.account)
+      ? (details.account as Record<string, unknown>)
+      : {};
+  const account = value(accountDetails.identity || accountDetails.name || details.account);
+  const subject = value(args.subject || target.subject);
+  const recipient = value(args.recipient_email || args.to);
+  const title = approvalTitle(action).title;
+  let text: string;
+  let label = title;
+  if (action === 'GMAIL_SEND_EMAIL') {
+    text = `Can I send a Gmail email to ${recipient || 'the selected recipient'}${subject ? ` with subject “${subject}”` : ''}${account ? ` from ${account}` : ''}?`;
+  } else if (action === 'GMAIL_CREATE_EMAIL_DRAFT') {
+    text = `Can I save a Gmail draft to ${recipient || 'the selected recipient'}${subject ? ` with subject “${subject}”` : ''}${account ? ` in ${account}` : ''}?`;
+    label = 'Save this draft';
+  } else if (action === 'GMAIL_DELETE_MESSAGE') {
+    const from = value(target.from);
+    text = `Can I permanently delete the Gmail email${subject ? ` “${subject}”` : ''}${from ? ` from ${from}` : ''}${account ? ` in ${account}` : ''}?`;
+  } else if (action === 'GMAIL_DELETE_DRAFT') {
+    const to = value(target.to);
+    text = `Can I permanently delete the unsent Gmail draft${subject ? ` “${subject}”` : ''}${to ? ` addressed to ${to}` : ''}${account ? ` in ${account}` : ''}?`;
+  } else if (action === 'NOD_browser') {
+    const control = Array.isArray(args.control)
+      ? value((args.control as Array<{ name?: unknown }>).find((item) => value(item.name))?.name)
+      : '';
+    text = `Can I ${actionTarget(action, args, details) || 'continue on the website'}?`;
+    if (args.step === 'click' && control) label = `Click “${control.slice(0, 45)}”`;
+  } else if (action === 'NOD_vault_allow') {
+    text = `Can I use the saved sign-in for ${account || 'this account'} at ${value(args.origin)}?`;
+  } else if (action === 'NOD_memory_forget') {
+    text = `Can I forget the memory note ${value(args.path)}?`;
+    label = 'Forget note';
+  } else if (action === 'NOD_memory_control') {
+    text = `Can I turn memory saving ${args.enabled === false ? 'off' : 'on'}?`;
+  } else {
+    const operation = `${title[0]?.toLowerCase() ?? ''}${title.slice(1)}`;
+    const destination = actionTarget(action, args, details);
+    text = `Can I ${operation}${destination ? ` for ${destination}` : ''}${account ? ` in ${account}` : ''}?`;
+  }
+  if (data.work?.title)
+    text = `For ${data.work.title}, ${text[0]?.toLowerCase() ?? ''}${text.slice(1)}`;
+  if (data.work?.waitsForAnswer) text += ' This schedule skips its runs until you answer.';
+  if (Array.isArray(input.withheld) && input.withheld.length)
+    text += ' Some details are hidden. This description is incomplete.';
+  return { text, action: label };
+}
 
 test(
   'personal approvals revalidate targets before execution',
@@ -140,17 +201,7 @@ test(
             ? { valid: true }
             : { valid: false, reason: 'Synthetic action mismatch.' };
         if ('purpose' in input && input.purpose === 'confirmation') {
-          const { action, ...data } = (
-            input as unknown as { data: { action: string; [key: string]: unknown } }
-          ).data;
-          const title = approvalTitle(action);
-          const text = JSON.stringify(data, (key, value) =>
-            ['draft_id', 'message_id', 'draftId', 'messageId'].includes(key) ? undefined : value,
-          );
-          return {
-            text: `${text.slice(0, 4000)}\n\n${title.title}${title.app ? ` in ${title.app}` : ''}?`,
-            action: action === 'GMAIL_CREATE_EMAIL_DRAFT' ? 'Save this draft' : title.title,
-          };
+          return syntheticConfirmation(input as Record<string, unknown>);
         }
         if (task === 'review' && !('purpose' in input) && !('reply' in input))
           fallbackChecks.push(input);
@@ -645,6 +696,10 @@ test(
           const [card] = cards;
           assert.equal(card.status, 'pending');
           assert.equal(card.args.recipient_email, 'collector@example.test');
+          const question = await confirmationFor(card);
+          assert.match(question, /collector@example\.test/);
+          assert.match(question, /Synthetic invoices/);
+          assert.doesNotMatch(question, /GMAIL_SEND_EMAIL|recipient_email|\{"args"/);
           assert.equal(sends(), 0);
           const declined = await request('POST', '/api/messages', {
             text: 'No',
@@ -868,6 +923,10 @@ test(
           assert.equal(card.action, 'NOD_browser');
           assert.equal(card.args.website, 'https://bank.example.test');
           assert.deepEqual(card.args.control, [{ role: 'button', name: 'Authorize payment' }]);
+          const question = await confirmationFor(card);
+          assert.match(question, /Authorize payment/);
+          assert.match(question, /bank\\?\.example\\?\.test/);
+          assert.doesNotMatch(question, /NOD_browser|@e7|"command"|\{"args"/);
           assert.deepEqual(
             (
               fallbackChecks as Array<{
@@ -1173,8 +1232,10 @@ test(
             .messages.find((message) => message.id === approval.confirmation_message_id);
           assert.equal(displayed?.approval?.title, approval.title);
           const question = await confirmationFor(approval);
-          assert.match(question, /Create email draft in Gmail\?/);
+          assert.match(question, /save a Gmail draft/i);
           assert.match(question, /blocked@example.test/);
+          assert.match(question, /Synthetic reviewed email/);
+          assert.doesNotMatch(question, /GMAIL_CREATE_EMAIL_DRAFT|recipient_email|\{"args"/);
           assert.doesNotMatch(question, /send.*email/i);
           assert.equal(integrationFixture.writes.length, writes);
           const declined = await request('POST', '/api/messages', {
@@ -1227,8 +1288,10 @@ test(
         assert.equal(approval.action, 'GMAIL_DELETE_MESSAGE');
         const question = await confirmationFor(approval);
         assert.doesNotMatch(question, /fixture-mail-1/);
+        assert.match(question, /permanently delete/i);
         assert.match(question, /Northstar review/);
         assert.match(question, /alex@example.test/);
+        assert.doesNotMatch(question, /GMAIL_DELETE_MESSAGE|message_id|\{"args"/);
         assert.equal(
           executedApps.filter((action) => action === 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID').length,
           reads + 1,
@@ -1302,8 +1365,10 @@ test(
           assert.equal(approval.action, 'GMAIL_DELETE_DRAFT');
           const question = await confirmationFor(approval);
           assert.equal(question.includes(created), false);
+          assert.match(question, /permanently delete.*unsent Gmail draft/i);
           assert.match(question, /Synthetic team summary/);
           assert.match(question, /cleanup@example.test/);
+          assert.doesNotMatch(question, /GMAIL_DELETE_DRAFT|draft_id|\{"args"/);
           assert.equal(
             executedApps.filter((action) => action === 'GMAIL_GET_DRAFT').length,
             reads + 1,
@@ -2020,7 +2085,9 @@ test(
             assert.equal(before.statusCode, 200, before.body);
             const beforeState = before.json<AppState>();
             const confirmation = await confirmationFor(approval);
-            assert.match(confirmation, /Pause a schedule\?/);
+            assert.match(confirmation, /pause a schedule/i);
+            assert.match(confirmation, /Synthetic cancellation reminder/);
+            assert.doesNotMatch(confirmation, /NOD_schedule_pause|\{"args"/);
             assert.equal(
               beforeState.messages.find(
                 (message) => message.id === approval.confirmation_message_id,
@@ -2781,8 +2848,9 @@ test(
           assert.equal(checked.length, 1);
           assert.equal(checked[0].action.arguments.body, body);
           const confirmation = await confirmationFor(pending);
-          assert.match(confirmation, /Send email in Gmail\?/);
+          assert.match(confirmation, /send a Gmail email/i);
           assert.match(confirmation, /decision@example.test/);
+          assert.doesNotMatch(confirmation, /GMAIL_SEND_EMAIL|recipient_email|\{"args"/);
           const replyId = randomUUID();
           const accepted = await request('POST', '/api/messages', {
             text: 'Yes',

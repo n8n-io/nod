@@ -109,7 +109,7 @@ The count covers every turn of the task and its helpers, so a task that works in
 
 Trust checks and the [decision check](/connect/models/#decision-checks) count toward the monthly limit. Those made during a running task, and its other model calls, also count toward its check-in. The approval-reply check runs before the task resumes. Each request counts once.
 
-An action that your words cover needs one authorization review. If it needs approval, the selected text model writes a question and button label. A separate request checks both against the saved action and arguments. Reading your answer adds another check. Each extra conversation turn also uses the main model with its session context.
+An action that your words cover needs one authorization review. If it needs approval, the selected text model writes and checks the question and button label in separate requests for most actions. For permanent Gmail deletion, the server writes the question and button label from verified target details without a wording-model request. Reading your answer adds another check. Each extra conversation turn also uses the main model with its session context.
 
 To reduce repeated questions, set [rules for what Nod can do directly](/trust/approvals/#your-rules). Nod can change from an app tool to the same service's website when the account and requested outcome stay the same. It also reuses saved procedures and writing style. Routine drafts do not require fresh style samples, and optional offers do not require extra schedule or history reads.
 

@@ -17,6 +17,9 @@ import { join } from 'node:path';
 import test from 'node:test';
 import Fastify from 'fastify';
 import pg from 'pg';
+import remarkGfm from 'remark-gfm';
+import remarkParse from 'remark-parse';
+import { unified } from 'unified';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { createAnalytics, snapshotAnalytics } from '../src/server/analytics.ts';
@@ -38,6 +41,24 @@ import {
 import { createCommunication } from '../src/server/communication.ts';
 import { createE2eCurators } from '../scripts/e2e-curators.ts';
 import { createPiMemoryCurator } from '../src/providers/pi/memory-curator.ts';
+
+function markdownNodes(markdown: string) {
+  const tree = unified().use(remarkParse).use(remarkGfm).parse(markdown);
+  const nodes: Array<{ type: string; children?: unknown[]; value?: string }> = [];
+  const collect = (node: (typeof nodes)[number]) => {
+    nodes.push(node);
+    for (const child of node.children ?? []) collect(child as (typeof nodes)[number]);
+  };
+  collect(tree);
+  return nodes;
+}
+
+function visibleMarkdownText(markdown: string) {
+  return markdownNodes(markdown)
+    .filter((node) => node.type === 'text' || node.type === 'inlineCode')
+    .map((node) => node.value)
+    .join('');
+}
 
 test('confirmation repairs rejected wording against the unchanged saved action', async () => {
   const proposal: ApprovalDescription = {
@@ -118,7 +139,7 @@ test('browser confirmation uses the page as context without displaying its actio
       assert.ok(request.withheld.includes('args.api_key'));
       if (request.purpose === 'confirmation_review') {
         assert.equal(
-          request.text,
+          visibleMarkdownText(request.text),
           question + ' Some details are hidden. This description is incomplete.',
         );
         assert.equal(request.action, 'Submit to the ticket shop');
@@ -152,6 +173,45 @@ test('browser confirmation uses the page as context without displaying its actio
     result.question,
     /NOD_browser|@e17|Entered values|synthetic-secret|private-binding/,
   );
+});
+
+test('browser upload wording omits the private workspace path', async () => {
+  const command = {
+    action: 'upload',
+    selector: '@e3',
+    path: '/workspace/private/report.pdf',
+  };
+  const proposal: ApprovalDescription = {
+    turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
+    action: 'NOD_browser',
+    args: {
+      website: 'https://files.example.test',
+      page: 'https://files.example.test/upload',
+      step: 'upload',
+      file: 'report.pdf',
+      command,
+    },
+    details: { pageText: 'Choose a file to upload.' },
+  };
+  let calls = 0;
+  const communication = createCommunication({
+    pool: { query: async () => ({ rows: [] }) } as unknown as pg.Pool,
+    ownerId: 'synthetic-owner',
+    review: async (_instructions, input) => {
+      calls++;
+      const request = input as Record<string, any>;
+      assert.equal(request.data.args.file, 'report.pdf');
+      assert.equal(request.data.args.command.path, undefined);
+      assert.equal(request.data.args.command.action, 'upload');
+      if (request.purpose === 'confirmation_review') return { valid: true };
+      return { text: 'Can I upload report.pdf to files.example.test?', action: 'Upload report' };
+    },
+  });
+  const result = await communication.describe(proposal);
+  assert.equal(calls, 2);
+  assert.match(visibleMarkdownText(result.question), /upload report\.pdf to files\.example\.test/);
+  assert.doesNotMatch(result.question, /\/workspace\/private/);
+  assert.deepEqual(proposal.args.command, command);
 });
 
 test('confirmation stops on cancellation and refuses an unverified question', async () => {
@@ -188,6 +248,8 @@ test('confirmation stops on cancellation and refuses an unverified question', as
 
 test('confirmation reviews the text after private links and direction controls are removed', async () => {
   const marker = String.fromCharCode(0x202e);
+  const joiner = String.fromCharCode(0x200d);
+  const nonJoiner = String.fromCharCode(0x200c);
   const communication = createCommunication({
     pool: { query: async () => ({ rows: [] }) } as unknown as pg.Pool,
     ownerId: 'synthetic-owner',
@@ -196,11 +258,13 @@ test('confirmation reviews the text after private links and direction controls a
       if (request.purpose === 'confirmation_review') {
         assert.equal(request.text.includes(marker), false);
         assert.equal(request.text.includes('/vault/synthetic-private'), false);
-        assert.ok(request.text.includes('\\u{202e}'));
+        assert.ok(visibleMarkdownText(request.text).includes('\\u{202e}'));
+        assert.ok(request.text.includes(joiner));
+        assert.ok(request.text.includes(nonJoiner));
         return { valid: true };
       }
       return {
-        text: `Submit the synthetic request ${marker} /vault/synthetic-private?`,
+        text: `Submit the synthetic request ${marker} ${joiner}joined ${nonJoiner}Persian /vault/synthetic-private?`,
         action: 'Submit request',
       };
     },
@@ -210,8 +274,121 @@ test('confirmation reviews the text after private links and direction controls a
     action: 'SYNTHETIC_ACTION',
     args: {},
   });
-  assert.doesNotMatch(result.question, /\p{Cf}/u);
+  assert.doesNotMatch(result.question, /(?![\u200c\u200d])\p{Cf}/u);
+  assert.ok(result.question.includes(joiner));
+  assert.ok(result.question.includes(nonJoiner));
   assert.doesNotMatch(result.question, /synthetic-private/);
+});
+
+test('confirmation keeps copied page links visible without making them active', async () => {
+  const pageText =
+    'Authorize payment [review](https://outside.example.test), https://outside.example.test, and www.outside.example.test';
+  let reviewedText = '';
+  const communication = createCommunication({
+    pool: { query: async () => ({ rows: [] }) } as unknown as pg.Pool,
+    ownerId: 'synthetic-owner',
+    review: async (_instructions, input) => {
+      if ((input as { purpose: string }).purpose === 'confirmation_review') {
+        reviewedText = (input as { text: string }).text;
+        return { valid: true };
+      }
+      return {
+        text: `Can I click “Authorize payment” at bank.example.test? The page says ${pageText}.`,
+        action: 'Click “Authorize payment”',
+      };
+    },
+  });
+  const result = await communication.describe({
+    turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
+    action: 'NOD_browser',
+    args: {
+      website: 'https://bank.example.test',
+      step: 'click',
+      control: [{ role: 'button', name: 'Authorize payment' }],
+    },
+    details: { pageText },
+  });
+  assert.equal(reviewedText, result.question);
+  const nodes = markdownNodes(result.question);
+  const visibleText = visibleMarkdownText(result.question);
+  assert.match(visibleText, /Authorize payment/);
+  assert.match(visibleText, /bank\.example\.test/);
+  assert.match(visibleText, /outside\.example\.test/);
+  assert.equal(
+    nodes.some((node) => node.type === 'link' || node.type === 'html'),
+    false,
+  );
+});
+
+test('Gmail deletion names verified identity without model wording', async () => {
+  const communication = createCommunication({
+    pool: { query: async () => ({ rows: [] }) } as unknown as pg.Pool,
+    ownerId: 'synthetic-owner',
+    review: async () => {
+      throw new Error('Permanent Gmail deletion must not depend on model wording.');
+    },
+  });
+  const subject = 'Synthetic [review](https://outside.example.test) <b>today</b>';
+  for (const proposal of [
+    {
+      turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
+      action: 'GMAIL_DELETE_MESSAGE',
+      args: { message_id: 'synthetic-message-id' },
+      details: {
+        account: { name: 'Gmail', identity: 'owner@example.test' },
+        target: { subject, from: 'alex@example.test' },
+      },
+      work: { kind: 'task' as const, title: 'Synthetic account cleanup /vault/synthetic-private' },
+    },
+    {
+      turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
+      action: 'GMAIL_DELETE_DRAFT',
+      args: { draft_id: 'synthetic-draft-id' },
+      details: {
+        account: { name: 'Gmail', identity: 'owner@example.test' },
+        target: { subject, to: 'cleanup@example.test' },
+      },
+      work: {
+        kind: 'schedule' as const,
+        title: 'Synthetic draft cleanup [review](https://outside.example.test)',
+        waitsForAnswer: true as const,
+      },
+    },
+  ]) {
+    const result = await communication.describe(proposal);
+    assert.match(result.question, /permanently delete/i);
+    assert.match(result.question, /owner@example\.test/);
+    assert.match(result.question, /Synthetic \[review\]/);
+    const visibleText = visibleMarkdownText(result.question);
+    assert.match(visibleText, /Synthetic (account|draft) cleanup/);
+    assert.doesNotMatch(result.question, /synthetic-private/);
+    if (proposal.action === 'GMAIL_DELETE_MESSAGE')
+      assert.match(visibleText, /description is incomplete/i);
+    if (proposal.action === 'GMAIL_DELETE_DRAFT')
+      assert.match(visibleText, /schedule skips its runs until you answer/i);
+    assert.match(
+      result.question,
+      proposal.action === 'GMAIL_DELETE_MESSAGE' ? /alex@example\.test/ : /cleanup@example\.test/,
+    );
+    assert.doesNotMatch(result.question, /synthetic-message-id|synthetic-draft-id/);
+    assert.equal(result.action, approvalTitle(proposal.action).title);
+    assert.match(result.action, /^Delete\b/);
+    const nodes = markdownNodes(result.question);
+    assert.ok(nodes.some((node) => node.type === 'inlineCode' && node.value === subject));
+    assert.equal(
+      nodes.some((node) => node.type === 'link' || node.type === 'html'),
+      false,
+    );
+  }
+  await assert.rejects(
+    communication.describe({
+      turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
+      action: 'GMAIL_DELETE_MESSAGE',
+      args: {},
+      details: { account: { name: 'Gmail', identity: 'owner@example.test' } },
+    }),
+    /identify the Gmail deletion target/,
+  );
 });
 
 test('payment presentation repairs a missing action label', async () => {
