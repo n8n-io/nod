@@ -1099,7 +1099,18 @@ export function createProactivity(options: {
       result: Omit<z.infer<typeof observation>, 'remainingReads'>;
     }> = [];
     if (!canContinue()) return false;
-    if (isQuietTime(await preferences.get())) return true;
+    if (isQuietTime(await preferences.get())) {
+      await withTurnLock({ turnId: turn.turnId, signal }, async (client) => {
+        await lockProactivity(client, ownerId);
+        await client.query(
+          `UPDATE proactive_sources SET claimed_turn=NULL,claimed_token=NULL,claimed_policy=NULL,
+            claimed_signal=inspected_signal,next_poll=clock_timestamp()
+            WHERE owner_id=$1 AND claimed_turn=$2`,
+          [ownerId, turn.turnId],
+        );
+      });
+      return true;
+    }
     const catalog = await sourceCatalog(signal);
     const toolSources = sourceIds.filter((id) =>
       catalog.some((source) => source.id === id && source.readable && source.tools),

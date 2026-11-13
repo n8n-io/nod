@@ -361,10 +361,11 @@ export function createLedger({
     };
   }
 
-  async function reserve(maximumUsd: number | null) {
+  async function reserve(maximum: number | null | (() => number | null)) {
     const scope = preparation.getStore();
     if (!scope) return async () => {};
     if (scope.closed) throw new Error('This automatic preparation has stopped.');
+    const maximumUsd = typeof maximum === 'function' ? maximum() : maximum;
     if (maximumUsd === null || !Number.isFinite(maximumUsd) || maximumUsd < 0)
       throw new Error('Automatic preparation stopped because this model has no cost estimate.');
     await flushUsage();

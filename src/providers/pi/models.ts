@@ -1370,19 +1370,19 @@ export async function createPiModelRuntime(
         const prepared = audio?.active
           ? await audio.payload(body, options?.signal ?? AbortSignal.timeout(120000))
           : body;
-        const prices = target.cost;
-        const maximumUsd =
-          prices &&
-          [prices.input, prices.output, prices.cacheRead, prices.cacheWrite].every(
-            (price) => Number.isFinite(price) && price >= 0,
-          ) &&
-          Math.max(prices.input, prices.output, prices.cacheRead, prices.cacheWrite) > 0
+        settleBudget = await access.reserve?.(() => {
+          const prices = target.cost;
+          return prices &&
+            [prices.input, prices.output, prices.cacheRead, prices.cacheWrite].every(
+              (price) => Number.isFinite(price) && price >= 0,
+            ) &&
+            Math.max(prices.input, prices.output, prices.cacheRead, prices.cacheWrite) > 0
             ? (Buffer.byteLength(JSON.stringify(prepared)) *
                 Math.max(prices.input * 2, prices.cacheWrite, prices.cacheRead) +
                 output * prices.output) /
-              1_000_000
+                1_000_000
             : null;
-        settleBudget = await access.reserve?.(maximumUsd);
+        });
         phase = 'payload';
         return prepared;
       },

@@ -9200,7 +9200,8 @@ test('preparation reserves model cost before dispatch and blocks a request witho
               },
         },
       },
-      reserve: async (maximum) => {
+      reserve: async (estimate) => {
+        const maximum = typeof estimate === 'function' ? estimate() : estimate;
         reservations++;
         assert.equal(calls, 0);
         if (!priced) {

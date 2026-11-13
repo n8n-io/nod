@@ -244,6 +244,36 @@ test('map evidence accepts split and detail maps but rejects duplicate, wrong or
     assert.equal(await score(groups.map((group) => [...group])), false, reason);
 });
 
+test('eval preparation enables preparation only when the source supports its preference', async () => {
+  const { prepare } = await import('../src/setup.ts');
+  for (const preferences of [
+    { notificationRule: '' },
+    { notificationRule: '', proactivePaused: true },
+  ]) {
+    const writes: unknown[] = [];
+    const stack = {
+      request: async (path: string, request?: RequestInit) => {
+        assert.equal(path, '/api/preferences');
+        if (request?.method === 'GET') return Response.json(preferences);
+        assert.equal(request?.method, 'PATCH');
+        const body = JSON.parse(String(request?.body));
+        if (!('proactivePaused' in preferences)) assert.ok(!('proactivePaused' in body));
+        writes.push(body);
+        return Response.json({});
+      },
+    };
+    await prepare(stack as Stack, {}, 'Europe/Madrid');
+    assert.deepEqual(writes, [
+      {
+        timeZone: 'Europe/Madrid',
+        quietHoursEnabled: false,
+        notificationRule: '',
+        ...('proactivePaused' in preferences ? { proactivePaused: false } : {}),
+      },
+    ]);
+  }
+});
+
 test('the onboarding eval reports API failures before continuing setup or starting a task', async () => {
   for (const [method, path, status] of [
     ['POST', '/api/account/prepare', 503],

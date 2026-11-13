@@ -8078,6 +8078,20 @@ test(
                 assert.equal(await check(), true);
                 sourceFailure = new Error('Synthetic source unavailable.');
                 assert.equal(await check(), true);
+                assert.equal(
+                  (await engine.view()).coverage.find((source) => source.sourceId === sourceId)
+                    ?.status,
+                  'unavailable',
+                );
+                assert.equal(
+                  (
+                    await db.pool.query(
+                      'SELECT inspected_signal<signal_version AS pending FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                      [ownerId, sourceId],
+                    )
+                  ).rows[0].pending,
+                  true,
+                );
                 sourceFailure = undefined;
                 await db.pool.query(
                   'UPDATE proactive_sources SET next_poll=clock_timestamp() WHERE owner_id=$1',
@@ -8109,6 +8123,20 @@ test(
                 );
                 assert.equal(
                   await (await other.context(checkTurn))!.screen!({}, new AbortController().signal),
+                  true,
+                );
+                assert.equal(
+                  (await other.view()).coverage.find((source) => source.sourceId === sourceId)
+                    ?.status,
+                  'partial',
+                );
+                assert.equal(
+                  (
+                    await db.pool.query(
+                      'SELECT inspected_signal<signal_version AS pending FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                      [ownerId, sourceId],
+                    )
+                  ).rows[0].pending,
                   true,
                 );
                 await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [
@@ -8354,13 +8382,24 @@ test(
                   db.pool,
                 );
                 await db.pool.query(
-                  'UPDATE proactive_sources SET claimed_turn=$3,claimed_signal=signal_version WHERE owner_id=$1 AND source_id=$2',
+                  "UPDATE proactive_sources SET claimed_turn=$3,claimed_signal=signal_version,next_poll=now()+interval '1 day' WHERE owner_id=$1 AND source_id=$2",
                   [ownerId, sourceId, turnId],
                 );
                 const context = (await held.context(ref))!;
                 assert.equal(await context.screen!({}, new AbortController().signal), true);
                 assert.equal(sourceReads, 0);
                 assert.equal(decisions, 0);
+                const deferred = (
+                  await db.pool.query(
+                    'SELECT claimed_turn,claimed_token,claimed_policy,claimed_signal,next_poll FROM proactive_sources WHERE owner_id=$1 AND source_id=$2',
+                    [ownerId, sourceId],
+                  )
+                ).rows[0];
+                assert.equal(deferred.claimed_turn, null);
+                assert.equal(deferred.claimed_token, null);
+                assert.equal(deferred.claimed_policy, null);
+                assert.equal(Number(deferred.claimed_signal), 0);
+                assert.ok(deferred.next_poll.getTime() <= Date.now());
                 await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turnId]);
                 for (let tick = 0; tick < 16; tick++) {
                   await transaction(
@@ -8588,7 +8627,12 @@ test(
                 );
                 try {
                   await ledger.withPreparation(first.turnId, async () => {
-                    const settled = await ledger.reserve(0.75);
+                    let estimates = 0;
+                    const settled = await ledger.reserve(() => {
+                      estimates++;
+                      return 0.75;
+                    });
+                    assert.equal(estimates, 1);
                     const parallel = await Promise.allSettled([
                       ledger.reserve(0.2),
                       ledger.reserve(0.2),
@@ -8633,7 +8677,9 @@ test(
                     await assert.rejects(ledger.reserve(0.95), /preparation allowance/);
                   });
                   assert.equal((await ledger.preparationLimit()).reached, true);
-                  await ledger.reserve(100);
+                  await ledger.reserve(() =>
+                    assert.fail('Owner work needs no preparation estimate.'),
+                  );
                   let releaseLate!: () => void;
                   const gate = new Promise<void>((resolve) => {
                     releaseLate = resolve;
@@ -8688,12 +8734,13 @@ test(
                   );
                   await preferences.update({ proactivePaused: false });
                   const admission = await db.pool.connect();
-                  await admission.query('BEGIN');
-                  await admission.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-                    `preparation-budget:${ownerId}`,
-                  ]);
                   let delayed!: Promise<unknown>;
+                  let committed = false;
                   try {
+                    await admission.query('BEGIN');
+                    await admission.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+                      `preparation-budget:${ownerId}`,
+                    ]);
                     await ledger.withPreparation(randomUUID(), async () => {
                       delayed = ledger.reserve(0.1).then(
                         () => undefined,
@@ -8701,9 +8748,12 @@ test(
                       );
                       await delay(5);
                     });
-                  } finally {
                     await admission.query('COMMIT');
-                    admission.release();
+                    committed = true;
+                  } finally {
+                    if (!committed) await admission.query('ROLLBACK').catch(() => {});
+                    admission.release(!committed);
+                    await delayed;
                   }
                   assert.match(String(await delayed), /has stopped/);
                   assert.equal((await ledger.preparationLimit()).reservedUsd, 0);

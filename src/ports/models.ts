@@ -52,7 +52,9 @@ export interface ModelAccess {
   effort: ModelEffort;
   textModel?: { definition: ModelDefinition; effort: ModelEffort };
   read(): Promise<ModelCredential | undefined>;
-  reserve?(maximumUsd: number | null): Promise<(spentUsd: number | null) => Promise<void>>;
+  reserve?(
+    maximumUsd: number | null | (() => number | null),
+  ): Promise<(spentUsd: number | null) => Promise<void>>;
   prepareRequest?(modelId: string, automatic: boolean): Promise<(error?: string) => Promise<void>>;
   needsReconnect?(credential?: ModelCredential): Promise<void>;
 }

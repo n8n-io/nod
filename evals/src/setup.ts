@@ -22,10 +22,11 @@ async function call(
 }
 
 export async function prepare(stack: Stack, world: World, timeZone: string) {
+  const preferences = await (await call(stack, 'GET', '/api/preferences')).json();
   await call(stack, 'PATCH', '/api/preferences', {
     timeZone,
     quietHoursEnabled: false,
-    proactivePaused: false,
+    ...('proactivePaused' in preferences ? { proactivePaused: false } : {}),
     notificationRule: world.notificationRule ?? '',
     ...(world.rules ? { rules: world.rules } : {}),
   });
