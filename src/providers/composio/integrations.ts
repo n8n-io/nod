@@ -8,6 +8,8 @@ import type { createComposioProxy } from './proxy.ts';
 import { readInboxSnippets, readInboxThreads, readSentEmails } from './sent-email.ts';
 import { readVerificationEmails } from './verification-email.ts';
 import {
+  connectionCode,
+  connectionReason,
   IntegrationCatalogAccessDenied,
   IntegrationCatalogFailure,
   IntegrationConnectionError,
@@ -203,26 +205,21 @@ function proxyRequestFailure(
       code?: unknown;
     }
   | undefined {
+  const refused =
+    error instanceof IntegrationConnectionError
+      ? error
+      : error instanceof Error && error.cause instanceof IntegrationConnectionError
+        ? error.cause
+        : undefined;
+  if (refused) return { reason: refused.reason, status: refused.status, code: refused.code };
   const status = error && typeof error === 'object' && 'status' in error ? error.status : undefined;
   const kind = error instanceof Error ? error.constructor.name : '';
-  const reason =
-    status === 401
-      ? 'authorization'
-      : status === 403
-        ? 'permission'
-        : status === 429
-          ? 'rate_limit'
-          : status === 408 ||
-              status === 504 ||
-              kind === 'APIConnectionTimeoutError' ||
-              (signal?.aborted && signal.reason?.name === 'TimeoutError')
-            ? 'timeout'
-            : (typeof status === 'number' && status >= 500 && status <= 599) ||
-                kind === 'APIConnectionError'
-              ? 'unavailable'
-              : typeof status === 'number' && status >= 400 && status <= 499
-                ? 'invalid_request'
-                : undefined;
+  const reason = connectionReason(
+    status,
+    kind === 'APIConnectionTimeoutError' ||
+      (signal?.aborted === true && signal.reason?.name === 'TimeoutError'),
+    kind === 'APIConnectionError',
+  );
   if (!reason) return;
   const body = error && typeof error === 'object' && 'error' in error ? error.error : undefined;
   const code = body && typeof body === 'object' && 'error' in body ? body.error : undefined;
@@ -236,22 +233,13 @@ function proxyRequestFailure(
 function connectionFailure(phase: IntegrationConnectionError['phase'], signal?: AbortSignal) {
   return (error: unknown): never => {
     const failure = proxyRequestFailure(error, signal);
-    if (failure) {
-      const code = z
-        .enum([
-          'installation_busy',
-          'public_budget_exceeded',
-          'service_unavailable',
-          'security_service_unavailable',
-        ])
-        .safeParse(failure.code);
+    if (failure)
       throw new IntegrationConnectionError(
         failure.reason,
         phase,
         failure.status,
-        code.success ? code.data : undefined,
+        connectionCode(failure.code),
       );
-    }
     throw error;
   };
 }

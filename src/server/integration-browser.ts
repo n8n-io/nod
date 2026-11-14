@@ -3,7 +3,10 @@ import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { createHostedIntegrationBrowser } from './integration-browser-hosted.ts';
-import type { IntegrationConnectionBrowser } from '../ports/integrations.ts';
+import {
+  IntegrationConnectionError,
+  type IntegrationConnectionBrowser,
+} from '../ports/integrations.ts';
 import { logFailure } from './failure-log.ts';
 
 const token = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
@@ -37,7 +40,7 @@ const valid=()=>{if(Date.now()>=expected.expiresAt)throw new Error();};
 const open=()=>new Promise((resolve,reject)=>{const request=indexedDB.open(slot,1);request.onupgradeneeded=()=>request.result.createObjectStore('keys');request.onsuccess=()=>resolve(request.result);request.onerror=request.onblocked=()=>reject(new Error());});
 const stored=(action,value)=>new Promise((resolve,reject)=>{const transaction=database.transaction('keys','readwrite',{durability:'strict'});const store=transaction.objectStore('keys');let result;const request=store.get('current');request.onsuccess=()=>{result=request.result;if(action==='put')store.put(value,'current');else store.delete('current');};transaction.oncomplete=()=>resolve(result);transaction.onerror=transaction.onabort=()=>reject(new Error());});
 const encoded=(bytes)=>btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replaceAll('=','');
-const request=async(body)=>{const response=await fetch('/start',{method:'POST',credentials:'same-origin',headers:{'X-Nod-Bridge':bridgeKey,'Content-Type':'application/json'},body:JSON.stringify(body)});if(!response.ok)throw new Error();return response.json();};
+const request=async(body)=>{const response=await fetch('/start',{method:'POST',credentials:'same-origin',headers:{'X-Nod-Bridge':bridgeKey,'Content-Type':'application/json'},body:JSON.stringify(body)});if(!response.ok){const reply=await response.json().catch(()=>({}));throw Object.assign(new Error(),{reply:typeof reply?.error==='string'?reply.error.slice(0,300):''});}return response.json();};
 (async()=>{try{
 database=await open();valid();
 if(expected.id){
@@ -65,9 +68,9 @@ if(!/^[A-Za-z0-9_-]{43}$/.test(attempt.id)||!Number.isSafeInteger(attempt.expire
 await stored('put',{...saved,id:attempt.id,expiresAt:Math.min(expected.expiresAt,attempt.expiresAt)});valid();
 location.replace(target.href);
 }
-}catch{
+}catch(error){
 try{sessionStorage.removeItem(slot);if(database)await stored('take');}catch{}
-content.hidden=false;document.body.classList.add('failed');document.title='Sign-in could not be completed · Nod';document.getElementById('heading').textContent='Sign-in could not be completed';document.getElementById('status').textContent='Return to Nod and try again.';
+content.hidden=false;document.body.classList.add('failed');document.title='Sign-in could not be completed · Nod';document.getElementById('heading').textContent='Sign-in could not be completed';document.getElementById('status').textContent=error?.reply||'Return to Nod and try again.';
 }finally{clearTimeout(waiting);database?.close();}})();
 </script></body></html>`;
 }
@@ -203,7 +206,10 @@ export function createIntegrationBrowser(options?: {
           if (response.destroyed) finish(id);
           else response.once('close', () => finish(id));
           send(400, {
-            error: 'The app connection could not be started. Return to Nod and try again.',
+            error:
+              error instanceof IntegrationConnectionError
+                ? error.message
+                : 'The app connection could not be started. Return to Nod and try again.',
           });
         }
       });
