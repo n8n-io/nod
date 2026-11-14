@@ -38,47 +38,61 @@ const batchLimit = 200;
 const statBatch = 100;
 const noFollow = constants.O_NOFOLLOW ?? 0;
 const noBlock = constants.O_NONBLOCK ?? 0;
-const absolute = z
-  .string()
-  .min(1)
-  .max(4096)
-  .refine(
-    (value) =>
-      nodePath.isAbsolute(value) && (process.platform !== 'win32' || !value.slice(2).includes(':')),
-    'Use an absolute path.',
+const homePrefix = process.platform === 'win32' ? /^~(?=$|[/\\])/ : /^~(?=$|\/)/;
+function absolutePath(home: string) {
+  return z.preprocess(
+    (value) => (typeof value === 'string' ? value.replace(homePrefix, () => home) : value),
+    z
+      .string()
+      .min(1)
+      .max(4096)
+      .refine(
+        (value) =>
+          nodePath.isAbsolute(value) &&
+          (process.platform !== 'win32' || !value.slice(2).includes(':')),
+        'Use an absolute path.',
+      ),
   );
-const onePath = z.object({ path: absolute }).strict();
-const schemas = {
-  LOCAL_FILES_LIST: onePath,
-  LOCAL_FILES_READ: onePath,
-  LOCAL_FILES_IMPORT: onePath,
-  LOCAL_FILES_CREATE_FOLDER: onePath,
-  LOCAL_FILES_MOVE: z
-    .object({
-      moves: z
-        .array(z.object({ from: absolute, to: absolute }).strict())
-        .min(1)
-        .max(batchLimit),
-    })
-    .strict(),
-  LOCAL_FILES_TRASH: z.object({ paths: z.array(absolute).min(1).max(batchLimit) }).strict(),
-  LOCAL_FILES_WRITE: z
-    .object({ path: absolute, text: z.string().max(writeBytes), overwrite: z.boolean().optional() })
-    .strict(),
-  LOCAL_FILES_EDIT: z
-    .object({
-      path: absolute,
-      edits: z
-        .array(z.object({ oldText: z.string().min(1), newText: z.string() }).strict())
-        .min(1)
-        .max(50),
-    })
-    .strict(),
-  LOCAL_FILES_EXPORT: z
-    .object({ file: workspaceFileReference, path: absolute, overwrite: z.boolean().optional() })
-    .strict(),
-};
-type Action = keyof typeof schemas;
+}
+function localFileSchemas(absolute: ReturnType<typeof absolutePath>) {
+  const onePath = z.object({ path: absolute }).strict();
+  return {
+    LOCAL_FILES_LIST: onePath,
+    LOCAL_FILES_READ: onePath,
+    LOCAL_FILES_IMPORT: onePath,
+    LOCAL_FILES_CREATE_FOLDER: onePath,
+    LOCAL_FILES_MOVE: z
+      .object({
+        moves: z
+          .array(z.object({ from: absolute, to: absolute }).strict())
+          .min(1)
+          .max(batchLimit),
+      })
+      .strict(),
+    LOCAL_FILES_TRASH: z.object({ paths: z.array(absolute).min(1).max(batchLimit) }).strict(),
+    LOCAL_FILES_WRITE: z
+      .object({
+        path: absolute,
+        text: z.string().max(writeBytes),
+        overwrite: z.boolean().optional(),
+      })
+      .strict(),
+    LOCAL_FILES_EDIT: z
+      .object({
+        path: absolute,
+        edits: z
+          .array(z.object({ oldText: z.string().min(1), newText: z.string() }).strict())
+          .min(1)
+          .max(50),
+      })
+      .strict(),
+    LOCAL_FILES_EXPORT: z
+      .object({ file: workspaceFileReference, path: absolute, overwrite: z.boolean().optional() })
+      .strict(),
+  };
+}
+type Action = keyof ReturnType<typeof localFileSchemas>;
+const actions = new Set(Object.keys(localFileSchemas(absolutePath(homedir()))));
 const reads = new Set<Action>(['LOCAL_FILES_LIST', 'LOCAL_FILES_READ', 'LOCAL_FILES_IMPORT']);
 const windowsHidden = new Set([
   'desktop.ini',
@@ -123,7 +137,7 @@ function permissionMessage(path: string) {
 }
 
 export function isLocalFilesAction(action: string): action is Action {
-  return Object.hasOwn(schemas, action);
+  return actions.has(action);
 }
 
 export function localFileRules(
@@ -195,6 +209,8 @@ export function createLocalFiles(
 ) {
   const available = options.available ?? true;
   const home = options.home ?? homedir();
+  const absolute = absolutePath(home);
+  const schemas = localFileSchemas(absolute);
   const rules = Promise.all([
     realpath(home).catch(() => home),
     realpath(options.dataRoot).catch(() => options.dataRoot),
@@ -257,7 +273,7 @@ export function createLocalFiles(
   async function keepOut(turn: Turn, path: string, database: Query) {
     if (!available) throw unavailable();
     await assertStartedByOwner(turn, database);
-    const input = z.string().trim().pipe(absolute).safeParse(path);
+    const input = absolute.safeParse(typeof path === 'string' ? path.trim() : path);
     if (!input.success) throw new IntegrationError('Name the absolute path to keep Nod out of.');
     const real = await resolvedAsFarAsItExists(nodePath.resolve(input.data));
     const current = await keptOut(database);
