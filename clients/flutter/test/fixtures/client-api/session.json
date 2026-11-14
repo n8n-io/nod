@@ -1,0 +1,18 @@
+{
+  "user": {
+    "id": "synthetic-owner",
+    "name": "Synthetic Owner",
+    "email": null,
+    "avatarUrl": null
+  },
+  "settings": {
+    "theme": "system",
+    "onboardingCompleted": true,
+    "usageData": false,
+    "traces": false
+  },
+  "capabilities": {
+    "developer": false,
+    "traces": false
+  }
+}

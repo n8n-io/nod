@@ -1,0 +1,33 @@
+[
+  {
+    "type": "refresh"
+  },
+  {
+    "type": "delta",
+    "threadId": "8a896c8a-0fb0-47ef-93c4-678f3facfc95",
+    "turnId": "cd109ed4-6be1-48f9-b8c3-c15d7c1d474b",
+    "text": "The synthetic project",
+    "streamId": "synthetic-stream-1"
+  },
+  {
+    "type": "delta",
+    "threadId": "8a896c8a-0fb0-47ef-93c4-678f3facfc95",
+    "turnId": "cd109ed4-6be1-48f9-b8c3-c15d7c1d474b",
+    "text": " is ready for review.",
+    "streamId": "synthetic-stream-1",
+    "done": true
+  },
+  {
+    "type": "activity",
+    "items": [
+      {
+        "turnId": "cd109ed4-6be1-48f9-b8c3-c15d7c1d474b",
+        "taskId": null,
+        "title": "Synthetic project update",
+        "step": "Preparing the summary",
+        "site": null,
+        "since": "2026-11-06T10:00:01.000Z"
+      }
+    ]
+  }
+]

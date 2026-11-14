@@ -1,0 +1,239 @@
+[
+  {
+    "version": 1,
+    "sources": [
+      {
+        "label": "Synthetic source",
+        "url": "https://example.com/evidence"
+      }
+    ],
+    "type": "chart",
+    "title": "Synthetic chart",
+    "chart": "bar",
+    "unit": "USD",
+    "xLabel": "Month",
+    "yLabel": "Amount",
+    "series": [
+      {
+        "id": "net",
+        "label": "Net",
+        "points": [
+          {
+            "label": "Jan",
+            "value": -12
+          },
+          {
+            "label": "Feb",
+            "value": 28
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "version": 1,
+    "sources": [
+      {
+        "label": "Synthetic source",
+        "url": "https://example.com/evidence"
+      }
+    ],
+    "type": "booking",
+    "title": "Synthetic stay",
+    "name": "Example Inn",
+    "status": "pending",
+    "facts": [
+      {
+        "label": "Check-in",
+        "value": "2026-12-01"
+      },
+      {
+        "label": "Total",
+        "value": "USD 128"
+      }
+    ],
+    "notes": [
+      "Not yet confirmed"
+    ],
+    "alternatives": [
+      {
+        "name": "Example Lodge",
+        "status": "option",
+        "facts": [
+          {
+            "label": "Total",
+            "value": "USD 148"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "version": 1,
+    "sources": [
+      {
+        "label": "Synthetic source",
+        "url": "https://example.com/evidence"
+      }
+    ],
+    "type": "flights",
+    "title": "Synthetic flight",
+    "options": [
+      {
+        "id": "candidate",
+        "status": "unknown",
+        "bookingReference": "SYNTHETIC",
+        "journeys": [
+          {
+            "id": "outbound",
+            "label": "Outbound",
+            "segments": [
+              {
+                "airline": "Example Air",
+                "flightNumber": "EX 100",
+                "operatedBy": "Example Regional",
+                "departure": {
+                  "airport": "AAA",
+                  "time": "09:00",
+                  "date": "2026-12-01",
+                  "timeZone": "UTC"
+                },
+                "arrival": {
+                  "airport": "BBB",
+                  "time": "11:00",
+                  "date": "2026-12-01",
+                  "timeZone": "UTC"
+                },
+                "technicalStops": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "version": 1,
+    "sources": [
+      {
+        "label": "Synthetic source",
+        "url": "https://example.com/evidence"
+      }
+    ],
+    "type": "map",
+    "title": "Synthetic places",
+    "places": [
+      {
+        "id": "place",
+        "name": "Example park",
+        "latitude": 51.5,
+        "longitude": -0.1,
+        "description": "Public garden"
+      }
+    ]
+  },
+  {
+    "version": 1,
+    "sources": [
+      {
+        "label": "Synthetic source",
+        "url": "https://example.com/evidence"
+      }
+    ],
+    "type": "seats",
+    "title": "Synthetic seats",
+    "coverage": {
+      "scope": "selection",
+      "description": "Only the supplied row"
+    },
+    "sections": [
+      {
+        "id": "cabin",
+        "name": "Economy",
+        "rows": [
+          {
+            "label": "12",
+            "groups": [
+              [
+                {
+                  "label": "12A",
+                  "status": "unknown",
+                  "note": "Availability not verified"
+                },
+                null
+              ],
+              [
+                {
+                  "label": "12D",
+                  "status": "available",
+                  "price": "USD 12"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    ],
+    "recommended": {
+      "sectionId": "cabin",
+      "seatLabel": "12D"
+    }
+  },
+  {
+    "version": 1,
+    "sources": [
+      {
+        "label": "Synthetic source",
+        "url": "https://example.com/evidence"
+      }
+    ],
+    "type": "diagram",
+    "title": "Synthetic process",
+    "nodes": [
+      {
+        "id": "a",
+        "label": "Read",
+        "detail": "Read source"
+      },
+      {
+        "id": "b",
+        "label": "Report"
+      }
+    ],
+    "edges": [
+      {
+        "from": "a",
+        "to": "b",
+        "label": "Then"
+      }
+    ]
+  },
+  {
+    "version": 1,
+    "sources": [
+      {
+        "label": "Synthetic source",
+        "url": "https://example.com/evidence"
+      }
+    ],
+    "type": "apps",
+    "title": "Synthetic apps",
+    "services": [
+      "gmail",
+      "slack"
+    ]
+  },
+  {
+    "version": 1,
+    "sources": [
+      {
+        "label": "Synthetic source",
+        "url": "https://example.com/evidence"
+      }
+    ],
+    "type": "image",
+    "title": "Synthetic image",
+    "artifactId": "c5ed5115-813d-4d3d-a6ce-94b6d36ce004",
+    "alt": "Synthetic illustration"
+  }
+]

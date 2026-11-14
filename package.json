@@ -10,6 +10,10 @@
   "scripts": {
     "dev": "node scripts/start.mjs",
     "dev:server": "tsx watch src/server/index.ts",
+    "mobile:setup": "node scripts/mobile.mjs setup",
+    "mobile:check": "node scripts/mobile.mjs check",
+    "mobile:run": "node scripts/mobile.mjs run",
+    "mobile:build:ios": "node scripts/mobile.mjs build:ios",
     "desktop:dev": "node desktop/scripts/build-ui.mjs && pnpm --dir desktop start",
     "desktop:prepare": "node desktop/scripts/prepare-runtime.mjs",
     "desktop:build": "pnpm --dir desktop run build",

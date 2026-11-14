@@ -1,0 +1,39 @@
+name: nod_client
+description: Shared native client for Nod.
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.7
+  flutter: 3.47.9
+
+dependencies:
+  app_links: 6.4.1
+  crypto: ^3.0.8
+  file_picker: ^13.3.2
+  flutter:
+    sdk: flutter
+  flutter_markdown_plus: ^1.0.12
+  flutter_riverpod: ^3.4.3
+  flutter_secure_storage: ^11.2.0
+  http: ^1.6.0
+  http_parser: ^4.1.2
+  image_picker: ^1.2.4
+  just_audio: ^0.10.6
+  mime: ^2.1.0
+  path_provider: ^2.1.6
+  qr_flutter: 4.1.0
+  record: ^7.1.2
+  rive: ^0.14.11
+  share_plus: ^13.3.1
+  url_launcher: ^6.3.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  integration_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

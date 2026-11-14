@@ -1884,6 +1884,36 @@ describe('account routes', () => {
     assert.equal(delivered.length, 3);
   });
 
+  test('native-shaped account writes retain origin fencing and persist privacy opt-out', async (t) => {
+    const traces: boolean[] = [];
+    const f = await fixture(undefined, (enabled) => traces.push(enabled));
+    t.after(() => f.app.close());
+    const headers = { authorization: 'Bearer synthetic-native-token', origin };
+    const update = (payload: object, requestHeaders: Record<string, string>) =>
+      f.app.inject({ method: 'PATCH', url: '/api/account', headers: requestHeaders, payload });
+    assert.equal((await update({ usageData: true, traces: true }, headers)).statusCode, 200);
+    assert.equal(f.record().usageData, true);
+    assert.equal(f.record().traces, true);
+    for (const rejected of [
+      { authorization: headers.authorization },
+      { ...headers, origin: 'https://foreign.example.test' },
+      { ...headers, origin: 'http://127.0.0.1:4399' },
+    ]) {
+      assert.equal((await update({ usageData: false, traces: false }, rejected)).statusCode, 403);
+      assert.equal(f.record().usageData, true);
+      assert.equal(f.record().traces, true);
+    }
+    assert.equal(
+      (await update({ usageData: false, traces: false, theme: 'dark' }, headers)).statusCode,
+      200,
+    );
+    assert.equal(f.record().usageData, false);
+    assert.equal(f.record().traces, false);
+    assert.equal(f.record().theme, 'dark');
+    assert.equal(traces.at(-1), false);
+    assert.equal(f.calls.writes, 2);
+  });
+
   test('account changes require the same origin and owner and never accept provider or owner input', async (t) => {
     const f = await fixture();
     t.after(() => f.app.close());

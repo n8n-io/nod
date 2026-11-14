@@ -1,0 +1,250 @@
+---
+title: Try the Flutter client
+description: Build the evaluation-only Flutter client and connect it to the matching Nod server on an iOS simulator.
+sidebar:
+  order: 9
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+Try Nod's native client from the `poc/flutter-mobile-evaluation` branch, using the server from the same checkout.
+
+:::caution[Evaluation only, do not merge]
+This branch is a POC for feedback, not a supported release or a replacement for the web and desktop apps. It has no signed beta, store distribution, or production mobile CI.
+:::
+
+## What you need
+
+- macOS with full Xcode, its command-line tools, an installed iOS simulator runtime, and CocoaPods. Check the iOS toolchain with `flutter doctor -v`.
+- Flutter **3.47.9**, as pinned in `clients/flutter/.flutter-version`, including Dart **3.13.7**. Install that exact SDK and put `flutter` on your `PATH`.
+- Node.js **24.21.0 or newer**, pnpm **10.34.5**, Git, and running Docker with Compose v2 for the server.
+- A fresh development checkout and disposable Nod data. Don't reuse a production profile, shared credentials, or customer data.
+
+The client keeps its own `pubspec.lock`. It doesn't change Nod's pnpm linker, web commands, or desktop build.
+
+Native feature repositories share the authenticated HTTP connection. Their JSON requests stay under the paired server's `/api/` path; they can't select another origin or pass the bearer token to feature widgets.
+
+During a reply, waves and a spinning Nod mark show that work is in progress, without a separate Working row. Reduce Motion keeps the mark still. Empty assistant messages stay hidden until text or an attachment arrives; attachment-only replies remain visible.
+
+## Start the matching server
+
+<Steps>
+
+1. Check out the evaluation branch in a fresh folder, then install Nod's dependencies.
+
+   ```sh title="Terminal"
+   git clone --branch poc/flutter-mobile-evaluation https://github.com/n8n-io/nod.git nod-mobile-evaluation
+   cd nod-mobile-evaluation
+   pnpm install --frozen-lockfile
+   ```
+
+   Until the branch is shared, use the local evaluation checkout instead of cloning. Don't pair the client with an arbitrary desktop release or `main` server.
+
+2. Prepare a private local configuration in this fresh checkout.
+
+   ```sh title="Terminal"
+   umask 077
+   cp .env.example .env
+   ```
+
+   Don't overwrite an existing `.env`. Follow [Install from source](/get-started/install-from-source/) for Docker and Vault setup.
+
+3. Generate your own server token into the clipboard, without printing it. Run this yourself in a private terminal, not through an agent or a recorded session.
+
+   ```sh title="Your private terminal"
+   node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))' | pbcopy
+   ```
+
+   Open `.env` in your editor and add `NOD_AUTH_TOKEN=` followed by the clipboard value. Keep `NOD_HOST=127.0.0.1` and set `NOD_PUBLIC_URL=http://127.0.0.1:4310` for the simulator path.
+
+   The normal local access link uses a cookie. The native client needs bearer authentication, which requires `NOD_AUTH_TOKEN`, even on loopback. Don't use the `access-key` file as a substitute.
+
+4. Start the server from this same branch. This creates the checkout's local data and Docker services.
+
+   ```sh title="Server terminal"
+   pnpm run dev
+   ```
+
+   You can pair the mobile client before completing setup in the web app. An unconfigured server opens [mobile onboarding](/contribute/mobile-onboarding/), including optional profile questions, private model configuration, and consent. A configured server opens chat. Model and connected-app requests can incur costs and change real accounts; only connect your own test services when you choose to try live behavior.
+
+</Steps>
+
+Keep the server terminal open. Pair with the exact origin configured in `NOD_PUBLIC_URL`, including scheme, hostname, and port. Native requests send that origin to satisfy the existing private-account guard. A hostname alias can connect for reads but is refused for account changes; don't bypass that refusal. If port 4310 is already used, choose a free `PORT`, update `NOD_PUBLIC_URL`, and use that port in the client too. Don't stop or reset another Nod installation to free the port.
+
+## Run on the iOS simulator
+
+Run these commands from the repo root.
+
+<Steps>
+
+1. Fetch Flutter dependencies. This checks the pinned SDK before running `flutter pub get` in `clients/flutter`.
+
+   ```sh title="Client terminal"
+   pnpm run mobile:setup
+   ```
+
+   If you keep several SDKs, prefix a command with `FLUTTER_BIN=/absolute/path/to/flutter/bin/flutter`.
+
+2. Open Simulator and list devices.
+
+   ```sh title="Client terminal"
+   open -a Simulator
+   flutter devices
+   ```
+
+3. Copy the simulator's ID and launch the app.
+
+   ```sh title="Client terminal"
+   pnpm run mobile:run -- -d <simulator-id>
+   ```
+
+   Arguments after `--` go to `flutter run`. Always select a device explicitly if several are available.
+
+4. Enter `http://127.0.0.1:4310` as the server address. Paste your `NOD_AUTH_TOKEN` into **Access token**, then select **Connect to Nod**.
+
+   If you cleared the clipboard, copy the value privately from your editor. Never put it in shell arguments, Dart defines, screenshots, reports, or a pull request. Clear the clipboard after use with `printf '' | pbcopy`.
+
+</Steps>
+
+Try chat and history, streamed replies, stop and reconnect, attachments, voice recording and playback, connected apps, schedules, and usage. The menu also opens **Tasks**, **Prepared**, **Private entry**, **Settings**, and **Vault**. Private entry and browser access also sit behind the info icon in the chat's top bar, not above the input. Send stays on the right of the composer; the input fills the remaining width, with attachment and microphone controls inside it. These use the same assistant and permissions as the web client.
+
+Voice-message bubbles load their audio into a temporary file when they appear, so the duration is available before you press **Play**. Loading doesn't start playback or interrupt another recording. Playback reuses the file, and leaving the bubble removes the temporary copy. If loading fails, press **Retry voice message** to try again.
+
+[Answer questions](/contribute/mobile-questions/) on their original messages, including questions from background tasks. **Tasks → Show in chat** opens the addressed message. [Task details](/contribute/mobile-tasks/) show results and let you stop, continue, rename, or schedule saved work. **Prepared** lists recent findings from the conversation, not every private draft.
+
+[Private entry](/contribute/mobile-private-entry/) sends sign-in values and payment approvals directly to the server's existing private routes. It also opens Nod's handed-off browser, with **Done** returning control to the waiting task. This isn't a separate mobile account. Never enter passwords, verification codes, or card details in chat.
+
+**Apps → Manage accounts and channels** opens [account management and channel setup](/contribute/mobile-connections/). It supports exact-account removal, custom connection setup, Telegram, and WhatsApp configuration without sending private setup values through chat.
+
+[Settings](/contribute/mobile-settings/) uses the paired server's existing model, voice, memory, rules, spending, and privacy controls. Appearance changes apply to this app after saving. Usage sharing and conversation traces require their own explicit consent; connecting the phone doesn't change them.
+
+[Vault](/contribute/mobile-vault/) manages the server's logins, cards, saved browser sessions, imports, and activity. Leaving the paired connection closes private routes. Mobile doesn't create a second Vault or phone-local password-manager integration.
+
+[Rich results and files](/contribute/mobile-results/) appear in chat. Replies can include files or voice and remain addressed to the original message. Active markup files show literal source, never an active page in Nod. Formats without an in-app viewer use the device share/open flow; this isn't full web preview parity.
+
+**Notifications** changes the existing pause, quiet hours, time zone, and notification rule on the server. It doesn't enable native remote push. APNs/FCM transport, credentials, and physical-device delivery remain separate owner decisions and validation gates.
+
+## Build and check separately
+
+```sh title="Terminal"
+pnpm run mobile:build:ios
+pnpm run mobile:check
+```
+
+`mobile:build:ios` builds a debug iOS simulator app without device signing. It does not launch the app. Output is under `clients/flutter/build/ios/iphonesimulator/`.
+
+`mobile:check` checks Dart formatting in `lib/`, `test/`, `integration_test/`, and `tool/`, then runs analysis and the Flutter unit/widget suite. It does not run native integration tests, start Nod, or call a live model. Dart owns Flutter formatting; root Prettier skips the client directory.
+
+:::caution[Known desktop golden failures]
+`mobile:check` currently fails `matches the desktop light shell` and `matches the desktop dark shell` in `test/design_system/nod_shell_golden_test.dart`, each with about 0.78% pixel difference; the original goldens have not been rebaselined or skipped. Mobile shell and feature tests pass, but the full suite is not all-green.
+:::
+
+A successful build proves compilation, not server compatibility, audio-device behavior, or an end-to-end conversation. Keep fixture checks, native runtime checks, and live-provider checks separate when reporting results.
+
+### Launcher artwork
+
+The Flutter launchers use Nod's existing pink-ring and white-dot artwork from `desktop/assets/nod-macos.svg` and its PNG. iOS uses an opaque, full-bleed charcoal background, leaving corner masking to the system; macOS retains the desktop inset. Android includes legacy density images and a separate adaptive foreground within the safe area. Windows includes a multi-resolution icon. These assets don't imply runtime validation of those additional platforms.
+
+## Run synthetic recovery checks
+
+From the repo root, install both dependency sets and run the host-side recovery harness. Use the pinned Flutter SDK's `dart` on your `PATH`.
+
+```sh title="Terminal"
+pnpm install --frozen-lockfile
+pnpm run mobile:setup
+results="$(mktemp -d /tmp/nod-mobile-evaluation.XXXXXX)"
+printf 'Recovery report: %s/recovery.json\n' "$results"
+(
+  cd clients/flutter &&
+    dart run tool/validation_harness.dart --output="$results/recovery.json"
+)
+```
+
+This starts its own loopback Node/tsx fixture server using the installed root dependencies. It needs no running Nod server, Docker, database, access token, or model connection. The harness creates disposable credentials and state, stops its fixture, removes that state, and keeps the JSON report outside the repo.
+
+The seven checks cover two bearer clients, concurrent sends, message-ID deduplication, SSE interruption and history recovery, Host/Origin/cross-site rejection, and token rotation. They use Nod's real access guard with synthetic conversation routes, not the full registered application or a live provider. See [Checks and tests](/contribute/checks-and-tests/) for the separate Docker-backed Nod integration suite.
+
+## Run native audio integration
+
+After `mobile:setup`, boot an iOS simulator and replace `<simulator-id>` with its ID from `flutter devices`. Run from the repo root; this builds and runs native code, so don't overlap it with another native build or a heavy container run.
+
+```sh title="Terminal"
+results="$(mktemp -d /tmp/nod-mobile-native.XXXXXX)"
+printf 'Native audio log: %s/native-audio.log\n' "$results"
+(
+  cd clients/flutter &&
+    flutter test integration_test/audio_playback_test.dart \
+      -d <simulator-id> --reporter expanded > "$results/native-audio.log" 2>&1
+)
+```
+
+This requires the iOS toolchain and simulator described above. It creates a synthetic WAV in the app's temporary folder and checks that the voice bubble shows its duration before playback. It then tests muted native playback, pause, and seek, disposes the players, and deletes the files. It doesn't need Nod, a model, or an account, and it doesn't prove microphone recording, server audio delivery, or live voice conversations.
+
+## Run native synthetic recovery
+
+The separate `integration_test/native_recovery_test.dart` uses real native plugins and the HTTP repository against a host-started fixture. Install the root dependencies and run `mobile:setup` first. Use an iOS simulator, not a physical phone or Android emulator.
+
+In **Terminal A**, from the repo root, start a fresh loopback fixture on a free port. The subshell removes only its new temporary directory when the server stops.
+
+```sh title="Terminal A: host fixture"
+(
+  fixture_dir="$(mktemp -d /tmp/nod-native-fixture.XXXXXX)" || exit 1
+  trap 'rm -rf "$fixture_dir"' EXIT
+  NOD_VALIDATION_PORT=18765 \
+  NOD_VALIDATION_TOKEN=synthetic-native-token \
+  NOD_VALIDATION_CONTROL_TOKEN=synthetic-native-control \
+  NOD_VALIDATION_DATA="$fixture_dir/state.json" \
+    node node_modules/tsx/dist/cli.mjs clients/flutter/tool/validation_server.ts
+)
+```
+
+Wait for `{"ready":true}` and keep Terminal A open. This fixture binds only to `127.0.0.1`. It uses fixed **public test tokens**, synthetic state, and no model, account, Docker, or database.
+
+In **Terminal B**, from the repo root, run the native test. Replace `<simulator-id>` with the ID from `flutter devices`. Removing `SDKROOT` affects only this command and avoids a stale CommandLineTools SDK override.
+
+```sh title="Terminal B: iOS simulator"
+results="$(mktemp -d /tmp/nod-native-recovery.XXXXXX)"
+printf 'Native recovery log: %s/native-recovery.log\n' "$results"
+(
+  cd clients/flutter &&
+    env -u SDKROOT flutter test integration_test/native_recovery_test.dart \
+      -d <simulator-id> --reporter expanded \
+      --dart-define=NOD_SYNTHETIC_ONLY=true \
+      --dart-define=NOD_SYNTHETIC_URL=http://127.0.0.1:18765 \
+      --dart-define=NOD_SYNTHETIC_TOKEN=synthetic-native-token \
+      --dart-define=NOD_SYNTHETIC_CONTROL_TOKEN=synthetic-native-control \
+      > "$results/native-recovery.log" 2>&1
+)
+```
+
+**Never put a real owner token in Dart defines.** The test accepts only the exact public tokens above, an explicit loopback URL, and the fixture's synthetic marker. Credentials stay in memory rather than the device keychain.
+
+QA passed this synthetic runtime scenario on an iPhone 18 Pro simulator with iOS 27.2, real native plugins, and a clean evaluator copy. It verified connection, accepted send, SSE streaming, Stop, interruption/history recovery and deduplication, the Scheduled empty state, the Usage report, and return to chat. This doesn't prove live models, real schedules, connected accounts, or physical-device behavior.
+
+When the test finishes, press Ctrl-C in Terminal A to stop the fixture and remove its state. Start Terminal A again with a new directory before every rerun; retained history would invalidate duplicate-message assertions. If you change port 18765, update both terminals. Reports and logs remain under the printed `/tmp/` paths; remove those directories when you no longer need the evidence.
+
+The older `integration_test/recovery_validation_test.dart` remains host-only. It starts a Node subprocess from the source tree; run it with `flutter test integration_test/recovery_validation_test.dart -d flutter-tester --reporter expanded` from `clients/flutter`, not on a phone or as native recovery proof.
+
+## Other devices and limits
+
+- **macOS:** the scaffold supports `pnpm run mobile:run -- -d macos`. Treat it as a secondary evaluation target; a simulator build is not macOS runtime validation.
+- **Physical iPhone:** `localhost` means the phone, not your Mac. Use a reachable HTTPS server built from this branch, with `NOD_AUTH_TOKEN` and a trusted certificate. Follow [Host your own server](/deploy/self-host/). Device signing and provisioning are separate from the unsigned simulator path.
+- **Android:** the scaffold is included, but this guide doesn't claim an Android build or runtime check. Android needs its own SDK and emulator or device. Plain HTTP to a LAN address or `10.0.2.2` is rejected by the client's origin policy; use HTTPS rather than weakening it.
+- **Voice and apps:** microphone permission, platform audio plugins, browser callbacks, and provider availability need runtime checks on each target. Fixture responses don't prove live account access or model behavior.
+
+## Troubleshooting
+
+| You see                             | Do this                                                                                                                                                                                       |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Wrong Flutter version               | Install the pinned SDK or set `FLUTTER_BIN`. The wrapper refuses a different version.                                                                                                         |
+| iOS toolchain or SDK errors         | Run `flutter doctor -v`. Select full Xcode and install the simulator runtime. If your shell exports a stale `SDKROOT` or `DEVELOPER_DIR`, retry from a normal terminal without that override. |
+| Unauthorized or incompatible server | Use this branch's server, set `NOD_AUTH_TOKEN`, restart it, and paste the same token into the client. A normal cookie-only local server isn't sufficient.                                     |
+| Can't reach the server              | Keep `pnpm run dev` running and match the address and port. Only the simulator and Mac can use the Mac's loopback address.                                                                    |
+| HTTPS address rejected              | Use an origin only, without a path, query, fragment, or embedded credentials. Don't bypass certificate checks.                                                                                |
+
+## Related resources
+
+- [Contribute to Nod](/contribute/)
+- [Install from source](/get-started/install-from-source/)
+- [Checks and tests](/contribute/checks-and-tests/)
+- [Host your own server](/deploy/self-host/)

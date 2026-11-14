@@ -1,0 +1,21 @@
+{
+  "messages": [
+    {
+      "id": "ce7e547b-b5ea-47b6-8725-e91fc6f72961",
+      "role": "user",
+      "text": "Record a synthetic checkpoint.",
+      "turnId": "2d7c9131-962b-41d4-8260-c64305a3733d",
+      "createdAt": "2026-11-05T09:00:00.000Z",
+      "attachments": []
+    },
+    {
+      "id": "c5515dfb-0b18-4a8f-a6a0-a08ab96c66ee",
+      "role": "assistant",
+      "text": "The synthetic checkpoint was recorded.",
+      "turnId": "2d7c9131-962b-41d4-8260-c64305a3733d",
+      "createdAt": "2026-11-05T09:00:01.000Z",
+      "attachments": []
+    }
+  ],
+  "hasMore": false
+}

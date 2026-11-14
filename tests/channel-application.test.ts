@@ -1261,6 +1261,29 @@ test(
         throw new Error(`Synthetic app render failed ${authToken} for example.person@example.com`);
       });
       await application.app.ready();
+      await t.test('native bearer discovery and bootstrap match the Flutter contract', async () => {
+        const {
+          clientCapabilitiesSchema,
+          clientSessionSchema,
+          clientStateSchema,
+          clientHistorySchema,
+        } = await import('../src/shared/client-api.ts');
+        const nativeHeaders = { host: headers.host, authorization: `Bearer ${authToken}` };
+        for (const [url, schema] of [
+          ['/api/client/capabilities', clientCapabilitiesSchema],
+          ['/api/session', clientSessionSchema],
+          ['/api/state', clientStateSchema],
+          ['/api/messages', clientHistorySchema],
+        ] as const) {
+          const response = await application.app.inject({ url, headers: nativeHeaders });
+          assert.equal(response.statusCode, 200, response.body);
+          schema.parse(response.json());
+        }
+        assert.equal(
+          (await application.app.inject({ url: '/api/client/capabilities', headers })).statusCode,
+          401,
+        );
+      });
       const failedRequest = await application.app.inject({
         url: '/api/diagnostics-check/synthetic-private-record?email=other.person@example.com',
         headers,

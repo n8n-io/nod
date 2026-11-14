@@ -1,0 +1,45 @@
+{
+  "threadId": "8a896c8a-0fb0-47ef-93c4-678f3facfc95",
+  "hasEarlierMessages": false,
+  "pendingAnswerChoiceMessageIds": [],
+  "verificationRequests": [],
+  "planningTasks": false,
+  "messages": [
+    {
+      "id": "14a75db5-8e9a-45f4-b2ae-81f738beef37",
+      "role": "user",
+      "text": "Summarize the synthetic project update.",
+      "turnId": "cd109ed4-6be1-48f9-b8c3-c15d7c1d474b",
+      "createdAt": "2026-11-06T10:00:00.000Z",
+      "attachments": []
+    },
+    {
+      "id": "bd6324f3-54a3-40ae-96b3-6001b73d58dd",
+      "role": "assistant",
+      "text": "The synthetic project is ready for review.",
+      "turnId": "cd109ed4-6be1-48f9-b8c3-c15d7c1d474b",
+      "createdAt": "2026-11-06T10:00:02.000Z",
+      "attachments": [],
+      "streamId": "synthetic-stream-1"
+    }
+  ],
+  "turns": [
+    {
+      "id": "cd109ed4-6be1-48f9-b8c3-c15d7c1d474b",
+      "status": "succeeded",
+      "source": "user",
+      "createdAt": "2026-11-06T10:00:00.000Z",
+      "finishedAt": "2026-11-06T10:00:02.000Z",
+      "error": null
+    }
+  ],
+  "activity": [],
+  "configuration": {
+    "provider": "synthetic",
+    "model": "Synthetic Model",
+    "llmReady": true,
+    "modelReconnect": false,
+    "integrationsReady": true,
+    "conversationResetEnabled": false
+  }
+}
