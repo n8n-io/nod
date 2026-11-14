@@ -897,6 +897,16 @@ test('local files stay in home, skip secrets and kept-out folders, and never ove
       await files.prepare('LOCAL_FILES_READ', { path: `${shared}/sorted/../a.txt` }),
       { path: join(shared, 'a.txt') },
     );
+    assert.deepEqual(await files.prepare('LOCAL_FILES_READ', { path: '~/Downloads/a.txt' }), {
+      path: join(shared, 'a.txt'),
+    });
+    assert.deepEqual(
+      await files.prepare('LOCAL_FILES_MOVE', {
+        moves: [{ from: '~/Downloads/a.txt', to: '~/Downloads/b.txt' }],
+      }),
+      { moves: [{ from: join(shared, 'a.txt'), to: join(shared, 'b.txt') }] },
+    );
+    await assert.rejects(files.prepare('LOCAL_FILES_READ', { path: '~root/a.txt' }), /absolute/);
     for (const path of [outside, join(shared, '..', '..', 'outside'), join(shared, 'escape')])
       await assert.rejects(files.execute('LOCAL_FILES_LIST', { path }), /outside your home/);
     await assert.rejects(
@@ -1090,7 +1100,7 @@ test('local files stay in home, skip secrets and kept-out folders, and never ove
         /secret/,
       );
     const sorted = join(shared, 'sorted');
-    await files.keepOut(turn, `${sorted}/`, pool);
+    await files.keepOut(turn, ' ~/Downloads/sorted/ ', pool);
     assert.deepEqual(keep, [sorted]);
     const shown = (await files.execute('LOCAL_FILES_LIST', { path: shared })) as {
       entries: Array<{ name: string }>;
