@@ -7,7 +7,7 @@ sidebar:
 
 Nod keeps one private memory document per owner. This page explains how it's stored, how the model reads and writes it, and what the hourly maintenance job does. To see and edit memory in the app, read [Memory](/use/memory/).
 
-The short version: memory notes hold only what the owner said in their messages or wrote in Settings → Memory, what they choose to import from another assistant, and one style note learned from their own sent email. When the owner asks Nod to remember something, a separate memory model writes the notes from the owner's own messages only, and an hourly job archives entries instead of deleting them. Next to the notes, memory keeps [learned skills](#learned-skills): procedures Nod writes itself after a task, without personal data.
+The short version: memory notes hold only what the owner said in their messages or wrote in Settings → Memory, what they choose to import from another assistant or from their own notes, and one style note learned from their own sent email. When the owner asks Nod to remember something, a separate memory model writes the notes from the owner's own messages only, and an hourly job archives entries instead of deleting them. Next to the notes, memory keeps [learned skills](#learned-skills): procedures Nod writes itself after a task, without personal data.
 
 ## Where memory lives
 
@@ -172,6 +172,68 @@ Sensitive topics are health, religion, politics, sexuality, gender identity, eth
 **Import** splits a pasted answer from another assistant into notes in the page, without a model: each `- ` line, or each line when the answer has no bullets, becomes a note in the area named by the heading above it (`## About you`, `## Preferences`, `## People`, `## Routines` or `## Lessons`), or `about` otherwise. The owner removes what they don't want, and `POST /api/memory/import` saves the rest as stated notes, word for word. It skips notes already saved, lines over 4,000 characters and text that looks like a secret.
 
 Page changes post nothing to chat and work while saving is off. Rewriting a note archives the previous version and makes the note stated. On Telegram or WhatsApp, `/memory` or `/context` sends a short digest without an agent turn. The selected model writes the summary, and that call counts toward usage.
+
+### Import records with their source
+
+A record import brings in notes or meeting summaries the owner selected in another tool, such as a notes app. Each note it saves keeps where it came from. The original stays the source of truth. Nod never writes back to it. The memory service (`importManifest` in [`src/server/memory.ts`](https://github.com/n8n-io/nod/blob/main/src/server/memory.ts)) validates and applies a manifest. There is no Settings screen or route for it yet.
+
+A manifest lists up to 200 records:
+
+```json title="manifest.json"
+{
+  "version": 1,
+  "records": [
+    {
+      "id": "meetings/2026-10-01-planning",
+      "uri": "obsidian://open?vault=Work&file=meetings%2F2026-10-01-planning",
+      "revision": "3f9c2a",
+      "at": "2026-10-01T09:00:00Z",
+      "class": "decisions",
+      "area": "routines",
+      "text": "Budget reviews move to Mondays."
+    }
+  ]
+}
+```
+
+| Field      | Holds                                                                                                                                                         |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`       | The record's stable ID in its source, up to 200 characters. Each ID appears once per manifest.                                                                |
+| `uri`      | Where the original lives, up to 2,000 characters. `javascript:`, `data:`, `vbscript:` and `blob:` addresses and ones with a username or password are refused. |
+| `revision` | The source's version of the record, such as a hash or edit counter, up to 200 characters.                                                                     |
+| `at`       | When the source last changed the record, as an ISO date and time with an offset.                                                                              |
+| `class`    | `note`, `summary`, `decisions`, `links`, `transcript` or `audio`.                                                                                             |
+| `area`     | The memory area for the note. Optional; `about` by default.                                                                                                   |
+| `text`     | The summary or excerpt the owner chose, up to 4,000 characters. Nod saves it word for word, trimming spaces at either end.                                    |
+| `locked`   | Optional. `true` keeps the saved note as it is for this import. Nod doesn't remember it, so a later manifest repeats it.                                      |
+
+An optional top-level `"include": ["transcript"]` lets transcript records in. Without it, only notes, summaries, decisions and links are imported. Audio records are never imported. A manifest with an unknown field or class, a duplicate ID or a field out of range is refused as a whole, and the error names the record and field.
+
+Nod checks each record against what memory already holds. A saved note matches a record when both have the same ID and their addresses have the same scheme and host, so `obsidian://open` records never match `https://notes.example.com` ones:
+
+```mermaid
+flowchart TD
+  record[Record]:::accent --> kind{Class included?}
+  kind -- no --> excluded[Excluded]:::stop
+  kind -- yes --> secret{Looks like a secret?}
+  secret -- yes --> skipped[Skipped]:::stop
+  secret -- no --> saved{Note with this source and ID?}
+  saved -- same revision --> same[Unchanged]:::muted
+  saved -- new revision --> lock{Locked?}
+  lock -- yes --> locked[Unchanged]:::muted
+  lock -- no --> proposal[Proposal for review]:::accent
+  saved -- let go --> archived[Unchanged]:::muted
+  saved -- none --> added[Saved as a confirmed note]:::go
+```
+
+- **Same ID and revision.** Nothing changes, so importing the same manifest twice writes nothing.
+- **New revision.** Nod returns a proposal with the note's current text and the new text. It never changes the note itself, so an edit the owner made in Settings stays. When only the revision changed and the text matches, Nod records the new revision.
+- **Locked.** A record marked `locked` gets no proposal and leaves the saved note and its recorded revision as they are. The next manifest without `locked` gets a proposal again.
+- **Let go.** When the owner archived the imported note, a later import leaves it in **Let go**. **Bring back** restores it. After **Forget note**, the next import adds it again.
+- **Secrets.** A text, ID, revision or address that looks like a password, key, card number or login link is skipped. Nothing from that record is saved.
+- **Same text.** A record whose text matches a note already in its area is not saved twice, and that note gets no source fields.
+
+A new record becomes a confirmed note, like a note the owner adds, because the owner chose it. Its source fields stay with the note and its archived versions, and an edit keeps them. They don't reach Pi, the memory model or the export.
 
 ## Writing style from Gmail
 

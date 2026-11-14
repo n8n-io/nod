@@ -6,6 +6,7 @@ import { ObjectStoreConflict, type PrivateObjectStore } from '../ports/object-st
 import { snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
 import { captureSettingChanges } from './analytics-settings.ts';
 import { activeThreadSql } from './history.ts';
+import { applyManifest, parseManifest } from './memory-import.ts';
 import {
   archive,
   area,
@@ -269,6 +270,11 @@ export function createMemoryService(options: {
     return adopt(importInput.parse(raw).notes);
   }
 
+  async function importManifest(raw: unknown) {
+    const input = parseManifest(raw);
+    return owned((tree, now) => applyManifest(tree, input, now));
+  }
+
   async function restate(raw: unknown) {
     const notes = restateInput.parse(raw);
     notes.forEach((note) => safe(note.text));
@@ -278,7 +284,14 @@ export function createMemoryService(options: {
         if (current?.origin === 'stated' && current.text === note.text) continue;
         if (current) archive(tree, current, 'superseded', now);
         if (areaEntries(tree, note.area).some((entry) => same(entry.text, note.text))) continue;
-        tree.entries.push({ ...note, origin: 'stated', updated: now, edited: now, sources: [] });
+        tree.entries.push({
+          ...note,
+          ...(current?.imported ? { imported: current.imported } : {}),
+          origin: 'stated',
+          updated: now,
+          edited: now,
+          sources: [],
+        });
       }
     });
   }
@@ -327,6 +340,7 @@ export function createMemoryService(options: {
           ...(!rewritten && entry.abstract ? { abstract: entry.abstract } : {}),
           ...(!rewritten && entry.fact ? { fact: entry.fact } : {}),
           ...(!rewritten && entry.quote ? { quote: entry.quote } : {}),
+          ...(entry.imported ? { imported: entry.imported } : {}),
           origin: rewritten || input.confirm ? 'stated' : entry.origin,
           updated: now,
           edited: now,
@@ -366,6 +380,7 @@ export function createMemoryService(options: {
         ...(item.abstract ? { abstract: item.abstract } : {}),
         ...(item.fact ? { fact: item.fact } : {}),
         ...(item.quote ? { quote: item.quote } : {}),
+        ...(item.imported ? { imported: item.imported } : {}),
         origin: 'stated',
         updated: now,
         edited: now,
@@ -471,6 +486,7 @@ export function createMemoryService(options: {
     add,
     adopt,
     importNotes,
+    importManifest,
     restate,
     style,
     change,

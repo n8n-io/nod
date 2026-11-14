@@ -75,6 +75,23 @@ const skillSchema = z.object({
   turn: z.uuid().optional(),
 });
 
+const contentClasses = ['note', 'summary', 'decisions', 'links', 'transcript', 'audio'] as const;
+export const importedSchema = z
+  .object({
+    id: line(200),
+    uri: z
+      .url({ protocol: /^(?!(?:javascript|data|vbscript|blob)$)[a-z][a-z0-9+.-]*$/ })
+      .max(2000)
+      .refine((value) => {
+        const parsed = new URL(value);
+        return !parsed.username && !parsed.password;
+      }, 'The address must not contain a username or password.'),
+    revision: line(200),
+    at: timestamp,
+    class: z.enum(contentClasses),
+  })
+  .strict();
+
 export const factSchema = z
   .object({
     kind: z.enum(['fact', 'preference', 'plan', 'event', 'possession']),
@@ -98,6 +115,7 @@ const entryFields = z.object({
   expires: z.iso.date().optional(),
   fact: factSchema.optional().catch(undefined),
   quote: line(400).optional().catch(undefined),
+  imported: importedSchema.optional().catch(undefined),
 });
 const evidenced = (entry: z.infer<typeof entryFields>) =>
   entry.sources.length > 0 || !!entry.edited || entry.origin === 'email';
@@ -214,7 +232,15 @@ export function parse(bytes?: Uint8Array): Tree {
   const seen = new Set<string>();
   const keep = (entry: Entry) => {
     if (
-      unsafe(entry.text, entry.abstract, entry.quote, ...(entry.fact?.entities ?? [])) ||
+      unsafe(
+        entry.text,
+        entry.abstract,
+        entry.quote,
+        entry.imported?.id,
+        entry.imported?.uri,
+        entry.imported?.revision,
+        ...(entry.fact?.entities ?? []),
+      ) ||
       seen.has(pathOf(entry))
     )
       return;
@@ -251,6 +277,9 @@ export function parse(bytes?: Uint8Array): Tree {
         entry.data.text,
         entry.data.abstract,
         entry.data.quote,
+        entry.data.imported?.id,
+        entry.data.imported?.uri,
+        entry.data.imported?.revision,
         ...(entry.data.fact?.entities ?? []),
       )
     )

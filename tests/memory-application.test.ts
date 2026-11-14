@@ -736,6 +736,205 @@ test('memory refuses card numbers and login links but keeps links with long nume
     assert.equal(unsafe(text), false, text);
 });
 
+test('a record import adds selected summaries once, offers changed revisions and keeps owner edits', async () => {
+  const store = memoryObjectStore();
+  const memory = createMemoryService({ pool: {} as pg.Pool, ownerId: 'records-owner', store });
+  const version = async () => (await store.read('memory/MEMORY.md', 1_000_000))?.version;
+  const record = (id: string, overrides: Record<string, unknown> = {}) => ({
+    id,
+    uri: `obsidian://open?vault=Synthetic&file=${id}`,
+    revision: 'r1',
+    at: '2026-10-01T09:00:00Z',
+    class: 'summary',
+    text: `Synthetic summary for ${id}.`,
+    ...overrides,
+  });
+  const decisions = (result: Array<{ id: string; decision: string }>) =>
+    Object.fromEntries(result.map((item) => [item.id, item.decision]));
+  const first = {
+    version: 1,
+    records: [
+      record('planning'),
+      record('decisions', {
+        class: 'decisions',
+        area: 'routines',
+        text: 'Reviews budgets on Mondays.',
+      }),
+      record('call-transcript', { class: 'transcript', text: 'Speaker 1: synthetic words.' }),
+      record('call-audio', { class: 'audio', text: 'call.m4a' }),
+      record('card', { text: 'Pays with card 4111 1111 1111 1111.' }),
+    ],
+  };
+
+  assert.deepEqual(decisions(await memory.importManifest(first)), {
+    planning: 'added',
+    decisions: 'added',
+    'call-transcript': 'excluded',
+    'call-audio': 'excluded',
+    card: 'secret',
+  });
+  const saved = await memory.load();
+  assert.deepEqual(
+    saved.entries.map((item) => [item.area, item.text, item.origin, item.imported?.id]),
+    [
+      ['about', 'Synthetic summary for planning.', 'stated', 'planning'],
+      ['routines', 'Reviews budgets on Mondays.', 'stated', 'decisions'],
+    ],
+  );
+  const bytes = new TextDecoder().decode((await store.read('memory/MEMORY.md', 1_000_000))!.bytes);
+  for (const text of ['4111', 'example-pass', 'Speaker 1', 'call.m4a'])
+    assert.ok(!bytes.includes(text), text);
+
+  const settled = await version();
+  assert.ok(
+    (await memory.importManifest(first)).every((item) =>
+      ['same', 'excluded', 'secret'].includes(item.decision),
+    ),
+  );
+  assert.equal(await version(), settled);
+
+  await assert.rejects(
+    memory.importManifest({
+      version: 1,
+      records: [record('twice'), record('twice', { revision: 'r2' })],
+    }),
+    { statusCode: 400, message: /Record ID twice appears more than once/ },
+  );
+  await assert.rejects(
+    memory.importManifest({ version: 1, records: [record('x', { uri: 'javascript:alert(1)' })] }),
+    {
+      statusCode: 400,
+    },
+  );
+  for (const uri of ['ftp://owner:example-pass@example.com/x', 'https://owner@example.com/notes'])
+    await assert.rejects(memory.importManifest({ version: 1, records: [record('x', { uri })] }), {
+      statusCode: 400,
+      message: /username or password/,
+    });
+  await assert.rejects(
+    memory.importManifest({ version: 1, records: [record('x', { class: 'video' })] }),
+    {
+      statusCode: 400,
+    },
+  );
+  assert.equal(await version(), settled);
+
+  const sameText = record('decisions', {
+    class: 'decisions',
+    area: 'routines',
+    revision: 'r1b',
+    text: 'Reviews budgets on Mondays.',
+  });
+  assert.deepEqual(decisions(await memory.importManifest({ version: 1, records: [sameText] })), {
+    decisions: 'same',
+  });
+  assert.equal(
+    (await memory.load()).entries.find((item) => item.imported?.id === 'decisions')?.imported
+      ?.revision,
+    'r1b',
+  );
+
+  const planning = saved.entries.find((item) => item.imported?.id === 'planning')!;
+  const path = `${planning.area}/${planning.slug}`;
+  await memory.change(path, { text: 'Owner rewrite of the planning summary.' });
+  const edited = await memory.load();
+  assert.equal(
+    edited.entries.find((item) => item.imported?.id === 'planning')?.text,
+    'Owner rewrite of the planning summary.',
+  );
+  assert.equal(edited.archive.at(-1)?.text, 'Synthetic summary for planning.');
+
+  const changed = await memory.importManifest({
+    version: 1,
+    records: [
+      record('planning', { revision: 'r2', text: 'Synthetic summary, second revision.' }),
+      record('decisions', {
+        class: 'decisions',
+        area: 'routines',
+        revision: 'r2',
+        text: 'Reviews budgets on Tuesdays.',
+        locked: true,
+      }),
+    ],
+  });
+  assert.deepEqual(changed, [
+    {
+      id: 'planning',
+      decision: 'proposal',
+      path,
+      current: 'Owner rewrite of the planning summary.',
+      text: 'Synthetic summary, second revision.',
+      revision: 'r2',
+    },
+    { id: 'decisions', decision: 'locked', path: 'routines/reviews-budgets-on-mondays' },
+  ]);
+  const after = await memory.load();
+  assert.deepEqual(
+    after.entries.map((item) => [item.text, item.imported?.revision]),
+    [
+      ['Owner rewrite of the planning summary.', 'r1'],
+      ['Reviews budgets on Mondays.', 'r1b'],
+    ],
+  );
+
+  await memory.archiveNote('routines/reviews-budgets-on-mondays');
+  assert.deepEqual(
+    decisions(
+      await memory.importManifest({
+        version: 1,
+        include: ['transcript'],
+        records: [
+          record('decisions', {
+            class: 'decisions',
+            area: 'routines',
+            revision: 'r3',
+            text: 'Reviews budgets on Fridays.',
+          }),
+          record('call-transcript', { class: 'transcript', text: 'Speaker 1: synthetic words.' }),
+          record('call-audio', { class: 'audio', text: 'call.m4a' }),
+        ],
+      }),
+    ),
+    { decisions: 'archived', 'call-transcript': 'added', 'call-audio': 'excluded' },
+  );
+  const final = await memory.load();
+  assert.ok(!final.entries.some((item) => item.imported?.id === 'decisions'));
+  const transcript = final.entries.find((item) => item.imported?.id === 'call-transcript')!;
+  assert.equal(transcript.imported?.class, 'transcript');
+
+  assert.deepEqual(
+    decisions(
+      await memory.importManifest({
+        version: 1,
+        records: [
+          record('planning', {
+            uri: 'https://notes.example.com/planning',
+            text: 'Planning summary from another tool.',
+          }),
+        ],
+      }),
+    ),
+    { planning: 'added' },
+  );
+  assert.deepEqual(
+    (await memory.load()).entries
+      .filter((item) => item.imported?.id === 'planning')
+      .map((item) => [item.text, item.imported?.uri]),
+    [
+      ['Planning summary from another tool.', 'https://notes.example.com/planning'],
+      ['Owner rewrite of the planning summary.', 'obsidian://open?vault=Synthetic&file=planning'],
+    ],
+  );
+
+  await memory.restate([
+    { area: transcript.area, slug: transcript.slug, text: 'Owner words for the call.' },
+  ]);
+  assert.equal(
+    (await memory.load()).entries.find((item) => item.slug === transcript.slug)?.imported?.id,
+    'call-transcript',
+  );
+});
+
 test('repair archives expired, stale and duplicate entries, keeps distinct numbers and never deletes', () => {
   const now = new Date('2026-06-01T00:00:00.000Z');
   const tree = treeOf(
