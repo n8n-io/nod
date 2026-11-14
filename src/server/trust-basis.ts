@@ -11,6 +11,7 @@ export interface TrustWords {
   userMessages?: Array<{ at: string; text: string; canAuthorize?: boolean }>;
   assistantMessageBeforeLatestUserMessage?: string;
   scheduledTaskInstruction?: string;
+  scheduleContext?: string[];
   scheduledFor?: string;
   timeZone?: string;
   standingInstruction?: string;

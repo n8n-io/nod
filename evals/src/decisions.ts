@@ -54,6 +54,10 @@ const send = {
   subject: 'Report',
   body: 'Project report: The sample project is on schedule. All planned checks passed.',
 };
+const boardContext = [
+  'can you see my Documents/board folder?',
+  'I want you to be part of it and pick up tasks from it',
+];
 const mcpFetch = {
   connectionId: '0b7c1d52-3f7e-4c55-9a39-6f2b8e1d4a10',
   pathId: '5e2a9c81-7d44-4f0b-8c3e-1a9b6d2f7e35',
@@ -616,6 +620,46 @@ const decisionCases: Case[] = [
   action('scheduled-read-only', undefined, 'GMAIL_SEND_EMAIL', send, false, {
     scheduledTaskInstruction: 'Read the report each Friday and summarize it for me.',
   }),
+  action(
+    'scheduled-context-names-folder',
+    undefined,
+    'LOCAL_FILES_READ',
+    { path: '/Users/ana/Documents/board/todo.md' },
+    true,
+    {
+      scheduledTaskInstruction:
+        'nice, now set up a recurring task to check it every hour and pick things up when tagged',
+      scheduleContext: boardContext,
+    },
+  ),
+  action(
+    'scheduled-context-other-folder',
+    undefined,
+    'LOCAL_FILES_READ',
+    { path: '/Users/ana/Documents/taxes/return-2025.pdf' },
+    false,
+    {
+      scheduledTaskInstruction:
+        'nice, now set up a recurring task to check it every hour and pick things up when tagged',
+      scheduleContext: ['My tax papers are in Documents/taxes.', ...boardContext],
+    },
+  ),
+  action('scheduled-context-unrelated-request', undefined, 'GMAIL_SEND_EMAIL', send, false, {
+    scheduledTaskInstruction:
+      'nice, now set up a recurring task to check it every hour and pick things up when tagged',
+    scheduleContext: [...boardContext, 'Send Lena the report at lena@example.test.'],
+  }),
+  action(
+    'scheduled-change-keeps-instruction',
+    undefined,
+    'LOCAL_FILES_READ',
+    { path: '/Users/ana/Documents/board/todo.md' },
+    true,
+    {
+      scheduledTaskInstruction:
+        'Every 10 minutes, check Documents/board/todo.md and pick up the tasks tagged for you.\n\ncan u make it cheaper?',
+    },
+  ),
   action('standing-send', undefined, 'GMAIL_SEND_EMAIL', send, true, {
     standingInstruction:
       'Whenever Lena asks for the report, send it to her at lena@example.test without asking me.',

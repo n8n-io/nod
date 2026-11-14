@@ -920,6 +920,23 @@ test('trust decisions select only owner evidence and keep reply evidence separat
     const gate = trustDecision(input);
     assert.equal(trustBasis(gate.result({ trust: source }), input, [])?.kind, kind);
   }
+  const scheduled = {
+    scheduledTaskInstruction: 'Check it every morning.\n\nMake it cheaper.',
+    scheduleContext: ['Look at the budget folder.', 'Send Lena the report.'],
+  };
+  for (const [because, kind] of [
+    ['Check it every morning', 'schedule'],
+    ['Make it cheaper', 'schedule'],
+    ['Send Lena the report', undefined],
+    ['Look at the budget folder', undefined],
+  ] as const)
+    assert.equal(trustBasis({ run: true, because }, scheduled, [])?.kind, kind);
+  assert.equal(
+    trustDecision(scheduled).question.choices.some(({ value }) =>
+      String(value).startsWith('message:'),
+    ),
+    false,
+  );
   let output: unknown = { readOnly: true };
   let currentRules: string | undefined = words.userRules;
   let holdReview = false;
