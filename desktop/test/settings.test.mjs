@@ -537,6 +537,8 @@ async function runningDesktop(
   const appEvents = new EventEmitter();
   const externalURLs = [];
   const trashed = [];
+  const blockers = new Map();
+  let blockerId = 0;
   const updateMenu = {};
   const restartMenu = {};
   const ipc = Object.assign(new EventEmitter(), {
@@ -733,6 +735,15 @@ async function runningDesktop(
         this.closed = true;
         this.emit('close');
       }
+    },
+    powerSaveBlocker: {
+      start: (type) => {
+        blockers.set(++blockerId, type);
+        return blockerId;
+      },
+      stop: (id) => {
+        assert.ok(blockers.delete(id), 'Only an active blocker can stop.');
+      },
     },
     MessageChannelMain: class {
       port1 = { end: 'engine' };
@@ -972,6 +983,7 @@ async function runningDesktop(
     notifications,
     externalURLs,
     trashed,
+    awake: () => [...blockers.values()],
     rendererReady,
     updateMenu,
     restartMenu,
@@ -4276,6 +4288,51 @@ test('the engine moves only absolute paths to the system Trash and hears the res
     { type: 'nod-trash-result', id: 'a' },
     { type: 'nod-trash-result', id: 'c', error: 'The item could not be moved to the Trash.' },
   ]);
+});
+
+test('the computer stays awake only while the local engine reports running work', async (t) => {
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), { allowStart: true });
+  f.crash();
+  assert.equal((await f.prepare()).phase, 'ready');
+  const [engine] = f.children;
+  engine.emit('message', { type: 'nod-working', working: 'yes' });
+  assert.deepEqual(f.awake(), []);
+  engine.emit('message', { type: 'nod-working', working: true });
+  engine.emit('message', { type: 'nod-working', working: true });
+  assert.deepEqual(f.awake(), ['prevent-app-suspension']);
+  engine.emit('message', { type: 'nod-working', working: false });
+  assert.deepEqual(f.awake(), []);
+  engine.emit('message', { type: 'nod-working', working: true });
+  engine.emit('exit', 1);
+  assert.deepEqual(f.awake(), []);
+  engine.emit('message', { type: 'nod-working', working: true });
+  assert.deepEqual(f.awake(), []);
+});
+
+test('a malformed working message does not release the computer', async (t) => {
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), { allowStart: true });
+  f.crash();
+  assert.equal((await f.prepare()).phase, 'ready');
+  const [engine] = f.children;
+  engine.emit('message', { type: 'nod-working', working: true });
+  for (const working of ['yes', 0, null, undefined])
+    engine.emit('message', { type: 'nod-working', working });
+  assert.deepEqual(f.awake(), ['prevent-app-suspension']);
+});
+
+test('quitting releases the computer at once and a late working message cannot take it back', async (t) => {
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), { allowStart: true });
+  f.crash();
+  assert.equal((await f.prepare()).phase, 'ready');
+  const [engine] = f.children;
+  engine.emit('message', { type: 'nod-working', working: true });
+  assert.deepEqual(f.awake(), ['prevent-app-suspension']);
+  const quitting = f.quit(async () => {});
+  assert.deepEqual(f.awake(), []);
+  engine.emit('message', { type: 'nod-working', working: true });
+  assert.deepEqual(f.awake(), []);
+  f.crash();
+  await quitting;
 });
 
 test('a stale engine cannot open a 1Password helper', async (t) => {

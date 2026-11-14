@@ -12459,3 +12459,80 @@ test(
     }
   },
 );
+
+test(
+  'the desktop is told the owner has work running for any running turn, and rechecks until it ends',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async () => {
+    const schema = `test_working_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const url = new URL(process.env.TEST_DATABASE_URL!);
+    url.searchParams.set('options', `-c search_path=${schema}`);
+    const pool = new pg.Pool({ connectionString: url.href });
+    const { createActivity } = await import('../src/server/activity.ts');
+    const { refresh } = await import('../src/server/events.ts');
+    const owner = 'working-fixture-owner';
+    const seen: boolean[] = [];
+    const activity = createActivity({
+      pool,
+      ownerId: owner,
+      keepAwake: { set: (working) => seen.push(working) },
+      recheckMs: 50,
+    });
+    const until = async (count: number) => {
+      for (let attempt = 0; attempt < 200 && seen.length < count; attempt++) await delay(10);
+    };
+    try {
+      await pool.query(`CREATE TABLE threads(id uuid PRIMARY KEY, owner_id text NOT NULL, archived_at timestamptz);
+        CREATE TABLE turns(id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid, session_id uuid, source text,
+          status text, channel text DEFAULT 'web', message_id uuid, created_at timestamptz DEFAULT now(), started_at timestamptz);
+        CREATE TABLE tasks(id uuid PRIMARY KEY, owner_id text NOT NULL, session_id uuid, title text, now_text text,
+          message_id uuid, created_at timestamptz DEFAULT now());
+        CREATE TABLE turn_events(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), turn_id uuid, type text, summary text DEFAULT '',
+          site text, call_id uuid, created_at timestamptz DEFAULT now());
+        CREATE TABLE messages(id uuid PRIMARY KEY, owner_id text, turn_id uuid, role text, created_at timestamptz DEFAULT now())`);
+      const threadId = randomUUID();
+      const scheduled = randomUUID();
+      await pool.query('INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,now())', [
+        threadId,
+        owner,
+      ]);
+      await pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,session_id,source,status) VALUES($1,'another-owner',$1,$1,'user','running'),($2,$3,$4,$2,'user','queued')",
+        [randomUUID(), randomUUID(), owner, threadId],
+      );
+      activity.start();
+      refresh();
+      await delay(400);
+      assert.deepEqual(seen, []);
+      await pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,session_id,source,status,started_at) VALUES($1,$2,$3,$1,'schedule','running',now())",
+        [scheduled, owner, threadId],
+      );
+      assert.deepEqual(await activity.read(), []);
+      refresh();
+      await until(1);
+      assert.deepEqual(seen, [true]);
+      await pool.query('ALTER TABLE turns RENAME TO turns_unavailable');
+      await until(2);
+      assert.deepEqual(seen, [true, false]);
+      await pool.query('ALTER TABLE turns_unavailable RENAME TO turns');
+      await until(3);
+      assert.deepEqual(seen, [true, false, true]);
+      await pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [scheduled]);
+      await until(4);
+      assert.deepEqual(seen, [true, false, true, false]);
+      activity.close();
+      await pool.query("UPDATE turns SET status='running' WHERE id=$1", [scheduled]);
+      refresh();
+      await delay(400);
+      assert.deepEqual(seen, [true, false, true, false]);
+    } finally {
+      activity.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);

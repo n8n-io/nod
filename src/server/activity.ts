@@ -3,6 +3,7 @@ import type { Activity } from '../shared/contracts.ts';
 import { events, type ServerEvent } from './events.ts';
 import { logFailure } from './failure-log.ts';
 import { ownerStarted } from './thread.ts';
+import type { KeepAwake } from '../ports/keep-awake.ts';
 
 export type LiveWork = Activity & {
   channel: string;
@@ -61,14 +62,52 @@ export function createActivity({
   pool,
   ownerId,
   model,
+  keepAwake,
+  recheckMs = 60_000,
 }: {
   pool: Pool;
   ownerId: string;
   model?: () => string | undefined;
+  keepAwake?: KeepAwake;
+  recheckMs?: number;
 }) {
   let last = '[]';
   let timer: ReturnType<typeof setTimeout> | undefined;
   let publishing = Promise.resolve();
+  let statusChanged = false;
+  let working = false;
+  let recheck: ReturnType<typeof setInterval> | undefined;
+  let closed = false;
+
+  async function checkWorking() {
+    if (!keepAwake) return;
+    let next = false;
+    let failed = false;
+    try {
+      const { rows } = await pool.query(
+        "SELECT EXISTS(SELECT 1 FROM turns WHERE owner_id=$1 AND status='running') AS working",
+        [ownerId],
+      );
+      next = rows[0].working;
+    } catch (cause) {
+      failed = true;
+      logFailure('working_read_failed', cause);
+    }
+    if (closed) return;
+    if ((next || failed) !== (recheck !== undefined)) {
+      clearInterval(recheck);
+      recheck =
+        next || failed
+          ? setInterval(() => {
+              publishing = publishing.then(checkWorking);
+            }, recheckMs)
+          : undefined;
+      recheck?.unref?.();
+    }
+    if (next === working) return;
+    working = next;
+    keepAwake.set(working);
+  }
 
   async function read(): Promise<LiveWork[]> {
     const { rows } = await pool.query(query, [ownerId]);
@@ -107,6 +146,8 @@ export function createActivity({
     );
 
   function publish() {
+    const changed = statusChanged;
+    statusChanged = false;
     publishing = publishing
       .then(async () => {
         const items = visible(await read());
@@ -116,10 +157,13 @@ export function createActivity({
         events.emit('event', { type: 'activity', ownerId, items });
       })
       .catch((cause) => logFailure('activity_read_failed', cause));
+    if (changed) publishing = publishing.then(checkWorking);
   }
 
   const listen = (event: ServerEvent) => {
-    if ((event.type !== 'refresh' && event.type !== 'working') || timer) return;
+    if (event.type !== 'refresh' && event.type !== 'working') return;
+    if (event.type === 'refresh') statusChanged = true;
+    if (timer) return;
     timer = setTimeout(() => {
       timer = undefined;
       publish();
@@ -132,10 +176,13 @@ export function createActivity({
     current: async () => visible(await read()),
     start() {
       events.on('event', listen);
+      publishing = publishing.then(checkWorking);
     },
     close() {
       events.off('event', listen);
       clearTimeout(timer);
+      closed = true;
+      clearInterval(recheck);
     },
   };
 }

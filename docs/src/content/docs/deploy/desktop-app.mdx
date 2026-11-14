@@ -224,7 +224,7 @@ Inside Nod's distribution, drive mounts and Windows process access are turned of
 ## Current limits
 
 - Release builds cover Mac with Apple silicon or Intel, Windows 11 x64, and Linux x64 as a [Flatpak preview](/get-started/install-desktop/#linux). Linux ARM and Windows ARM builds are not published.
-- Local tasks run only while Nod is open and the computer is awake. Server tasks run while the server runs.
+- Local tasks run only while Nod is open and the computer is awake. While a chat reply, task, scheduled run or background check is in progress, Nod stops the computer from going to sleep when it's left idle; closing a laptop's lid or choosing Sleep still puts it to sleep. Server tasks run while the server runs.
 - Meta's WhatsApp Cloud API needs a public HTTPS callback. The QR connection works without one. The app doesn't relay webhooks to your computer.
 - Separate local installations start with their own profiles and do not sync or migrate data from a source install. To use the same assistant from several devices, connect them to one server.
 

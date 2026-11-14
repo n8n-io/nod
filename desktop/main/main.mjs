@@ -11,6 +11,7 @@ import {
   net,
   Notification,
   powerMonitor,
+  powerSaveBlocker,
   protocol,
   safeStorage,
   screen,
@@ -179,6 +180,7 @@ let engineOrigin = '';
 let engineBound = false;
 let authToken = '';
 let remoteConnection;
+let awakeBlocker;
 let connectionSettingsOpen = false;
 let onboardingSetupOpen = false;
 let connectionReturnsToOnboarding = false;
@@ -1594,7 +1596,17 @@ async function saveConnection(input) {
   });
 }
 
+function stayAwake(working) {
+  if (working && awakeBlocker === undefined)
+    awakeBlocker = powerSaveBlocker.start('prevent-app-suspension');
+  if (!working && awakeBlocker !== undefined) {
+    powerSaveBlocker.stop(awakeBlocker);
+    awakeBlocker = undefined;
+  }
+}
+
 async function stopEngine() {
+  stayAwake(false);
   enginePreferencesReady = false;
   engineRuntimeReady = false;
   stopNotifications?.();
@@ -2026,6 +2038,7 @@ async function installUpdate() {
 
 async function quit(complete, failure = 'Nod could not finish shutting down.') {
   quitting = true;
+  stayAwake(false);
   await persistCurrentZoomFactor().catch(
     (error) => void writeDiagnostic(error.message).catch(() => {}),
   );
@@ -2182,6 +2195,14 @@ async function startEngine({ runtime, signal, pending = false }) {
     }
     if (engine === child && message?.type === 'nod-1password-open') openOnePassword(child);
     if (engine === child && message?.type === 'nod-trash') void moveToTrash(child, message);
+    if (
+      engine === child &&
+      !closingEngine &&
+      !quitting &&
+      message?.type === 'nod-working' &&
+      typeof message.working === 'boolean'
+    )
+      stayAwake(message.working);
   });
   child.stdout?.resume();
   let diagnostics = '';
@@ -2202,6 +2223,7 @@ async function startEngine({ runtime, signal, pending = false }) {
   });
   child.on('exit', (code) => {
     if (engine !== child) return;
+    stayAwake(false);
     if (!closingEngine)
       failure =
         (status.phase === 'error' && status.error) ||

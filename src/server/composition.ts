@@ -48,6 +48,8 @@ import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { PasswordManager } from '../ports/password-manager.ts';
 import type { Trash } from '../ports/trash.ts';
 import { desktopTrash } from '../providers/trash.ts';
+import type { KeepAwake } from '../ports/keep-awake.ts';
+import { desktopKeepAwake } from '../providers/keep-awake.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { DecisionModel, ModelReview } from '../ports/decisions.ts';
 import { createDecisionModel, createOpenRouterDecisionCatalog } from '../providers/decisions.ts';
@@ -218,6 +220,7 @@ export interface ApplicationAdapters {
   keyStore: CredentialKeyStore;
   passwordManager?: PasswordManager;
   trash?: Trash;
+  keepAwake?: KeepAwake;
   localFilesHome?: string;
   memoryCurator?: MemoryCurator;
   classificationCurator?: MemoryCurator;
@@ -485,6 +488,7 @@ export function createDefaultAdapters(
       open: desktopMode ? desktopOnePassword() : forkedOnePassword(env.NOD_APP_VERSION || 'source'),
     }),
     trash: desktopMode ? desktopTrash() : undefined,
+    keepAwake: desktopMode ? desktopKeepAwake() : undefined,
     workspace: createDockerWorkspace({
       container: env.WORKSPACE_CONTAINER || 'nod-workspace',
       workspaceRoot: join(dataRoot, 'workspaces'),
@@ -1035,6 +1039,7 @@ async function initializeApplication(
     pool,
     ownerId,
     model: () => adapters.models?.current.label,
+    keepAwake: adapters.keepAwake,
   });
   const observedSource = (catalog: ObservationSource[], id: string) =>
     catalog.find((source) => source.id === id) ??
