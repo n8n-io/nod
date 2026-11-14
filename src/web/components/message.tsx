@@ -6,7 +6,8 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { splitQuestion } from '../../shared/answer-choices';
-import type { Message } from '../../shared/contracts';
+import type { Activity, Message } from '../../shared/contracts';
+import { LiveLine } from './live-line';
 import { reactionEmoji } from '../../shared/emoji';
 import {
   presentationImages,
@@ -284,6 +285,43 @@ type MessagePanel =
   | { kind: 'menu'; point?: { x: number; y: number }; compact: boolean }
   | { kind: 'reactions'; expanded: boolean; fromMenu?: boolean; point?: { x: number; y: number } };
 
+export interface MessageWork {
+  title: string;
+  status: 'needs_you' | 'working' | 'idle';
+  live?: Activity;
+  onOpen?(): void;
+}
+
+function WorkLabel({ work }: { work: MessageWork }) {
+  const content = (
+    <>
+      {work.status !== 'idle' && <span className="message-work-dot" aria-hidden="true" />}
+      <span className="message-work-title">{work.title}</span>
+      {work.status === 'working' && (
+        <span className="message-work-step" role="status">
+          <LiveLine item={work.live} />
+        </span>
+      )}
+    </>
+  );
+  return work.onOpen ? (
+    <Tooltip content="Go to task">
+      <button
+        type="button"
+        className="message-work"
+        data-status={work.status}
+        onClick={work.onOpen}
+      >
+        {content}
+      </button>
+    </Tooltip>
+  ) : (
+    <div className="message-work" data-status={work.status}>
+      {content}
+    </div>
+  );
+}
+
 export function MessageBubble({
   message,
   pendingAudio,
@@ -298,8 +336,10 @@ export function MessageBubble({
   codeRequest,
   handoff,
   handoffPaused,
+  work,
 }: {
   message: Message;
+  work?: MessageWork;
   pendingAudio?: ImagePreview;
   connectedAppIds?: ReadonlySet<string>;
   grouped?: boolean;
@@ -649,6 +689,7 @@ export function MessageBubble({
       tabIndex={-1}
     >
       <div className="message-content">
+        {work && <WorkLabel work={work} />}
         <div className="message-row">
           <div className={`message-bubble${!streaming && shownReaction ? ' has-reaction' : ''}`}>
             <div

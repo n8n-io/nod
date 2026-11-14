@@ -575,6 +575,61 @@
 .task-pip[data-status='needs_you']:is(:hover, :focus-visible)::before {
   scale: 1.2;
 }
+.message-work {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0 0 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+}
+button.message-work {
+  cursor: pointer;
+}
+button.message-work:is(:hover, :focus-visible) {
+  color: var(--foreground);
+}
+.message-work-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+.message-work[data-status='working'] .message-work-dot {
+  background: var(--info);
+  animation: task-pip-pulse 2s ease-out infinite;
+}
+.message-work-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.message-work-step {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.message-work-step::before {
+  content: '· ';
+}
+@media (prefers-reduced-motion: reduce) {
+  .message-work-dot {
+    animation: none;
+  }
+}
 @keyframes task-pip-pulse {
   0% {
     box-shadow: 0 0 0 0 color-mix(in srgb, var(--info) 50%, transparent);

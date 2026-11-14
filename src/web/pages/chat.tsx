@@ -22,7 +22,7 @@ import { ChatTools } from '../components/chat-tools';
 import { ServiceLogo } from '../components/service-logo';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
 import { TaskCard } from './tasks';
-import { MessageBubble } from '../components/message';
+import { MessageBubble, type MessageWork } from '../components/message';
 import { conversationFiles } from '../components/attachment-card';
 import { ArtifactWorkspace } from '../components/artifact-drawer';
 import { PrivateEntryWorkspace } from '../components/private-entry';
@@ -695,7 +695,43 @@ export function Chat({
   ];
   const live = state.activity ?? [];
   const working = live.some((item) => !item.background);
-  const chatWork = connected ? live.find((item) => !item.background && !item.taskId) : undefined;
+  const chatWork = connected
+    ? live.find((item) => !item.background && !item.taskId && !item.runId)
+    : undefined;
+  const workOf = (message: Message): MessageWork | undefined => {
+    const work = message.work;
+    if (!work) return undefined;
+    const item = live.find((entry) =>
+      work.kind === 'task' ? entry.taskId === work.id : entry.runId === work.id,
+    );
+    const task =
+      work.kind === 'task' ? state.tasks?.find((entry) => entry.id === work.id) : undefined;
+    return {
+      title: work.title,
+      status:
+        message.approval?.state === 'pending' || message.answerChoicesPending
+          ? 'needs_you'
+          : item
+            ? 'working'
+            : 'idle',
+      live: item,
+      ...(task?.messageId
+        ? {
+            onOpen: () => {
+              const opened = !window.dispatchEvent(
+                new CustomEvent('nod:open-task', { detail: { taskId: task.id }, cancelable: true }),
+              );
+              if (!opened)
+                window.dispatchEvent(
+                  new CustomEvent('nod:focus-message', {
+                    detail: { messageId: task.messageId, taskId: task.id },
+                  }),
+                );
+            },
+          }
+        : {}),
+    };
+  };
   const lastChatWork = useRef<{ threadId: string; item: Activity } | null>(null);
   if (chatWork) lastChatWork.current = { threadId, item: chatWork };
   const finishing = lastChatWork.current?.threadId === threadId ? lastChatWork.current.item : null;
@@ -2209,6 +2245,7 @@ export function Chat({
                   ) : (
                     <MessageBubble
                       message={message}
+                      work={workOf(message)}
                       answersDisabled={sending || !state.configuration.llmReady || welcoming}
                       onAnswer={async (value, answer) => {
                         if (replyTo?.id === message.id && composer.current?.hasDraft()) {
