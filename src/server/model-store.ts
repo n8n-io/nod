@@ -1,7 +1,12 @@
 import type { Pool, PoolClient } from 'pg';
 import type { ModelCredential, ModelDefinition } from '../ports/models.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
-import type { ModelMethod, ModelProvider, ModelSelection } from '../shared/models.ts';
+import type {
+  InferenceRoutes,
+  ModelMethod,
+  ModelProvider,
+  ModelSelection,
+} from '../shared/models.ts';
 import { createAppGrantVault } from './vault-app-grants.ts';
 import { lockKey, locksTable } from './locks.ts';
 import { transaction } from './transaction.ts';
@@ -29,6 +34,7 @@ export interface ModelState {
   connections: ModelRecord[];
   selection: ModelSelection | null;
   selectionSet: boolean;
+  routes: InferenceRoutes | null;
   hostId: string;
 }
 
@@ -67,13 +73,17 @@ export function createDatabaseModelStore(options: {
       await client.query<{
         selection: ModelSelection | null;
         selection_set: boolean;
+        routes: InferenceRoutes | null;
         host_id: string;
-      }>('SELECT selection,selection_set,host_id FROM model_settings WHERE owner_id=$1', [ownerId])
+      }>('SELECT selection,selection_set,routes,host_id FROM model_settings WHERE owner_id=$1', [
+        ownerId,
+      ])
     ).rows[0];
     return {
       connections,
       selection: settings?.selection ?? null,
       selectionSet: settings?.selection_set ?? false,
+      routes: settings?.routes ?? null,
       hostId: settings.host_id,
     };
   }
@@ -87,7 +97,8 @@ export function createDatabaseModelStore(options: {
         ); CREATE INDEX IF NOT EXISTS model_connections_owner ON model_connections(owner_id);
         ALTER TABLE model_connections ADD COLUMN IF NOT EXISTS request_pauses jsonb NOT NULL DEFAULT '{}';
         CREATE TABLE IF NOT EXISTS model_settings(owner_id text PRIMARY KEY,selection jsonb,selection_set boolean NOT NULL DEFAULT false);
-        ALTER TABLE model_settings ADD COLUMN IF NOT EXISTS host_id uuid NOT NULL DEFAULT gen_random_uuid();`);
+        ALTER TABLE model_settings ADD COLUMN IF NOT EXISTS host_id uuid NOT NULL DEFAULT gen_random_uuid();
+        ALTER TABLE model_settings ADD COLUMN IF NOT EXISTS routes jsonb;`);
       await database.query(
         'INSERT INTO model_settings(owner_id) VALUES($1) ON CONFLICT DO NOTHING',
         [ownerId],
@@ -102,6 +113,13 @@ export function createDatabaseModelStore(options: {
         const previous = structuredClone(state);
         const result = await run(state);
         signal?.throwIfAborted();
+        if (state.routes)
+          state.routes.routes = Object.fromEntries(
+            Object.entries(state.routes.routes).map(([dataClass, ids]) => [
+              dataClass,
+              ids.filter((id) => state.connections.some((row) => row.id === id)),
+            ]),
+          );
         for (const row of previous.connections) {
           if (state.connections.some((next) => next.id === row.id)) continue;
           await client.query('DELETE FROM model_connections WHERE id=$1 AND owner_id=$2', [
@@ -145,6 +163,11 @@ export function createDatabaseModelStore(options: {
             'UPDATE model_settings SET selection=$2,selection_set=$3 WHERE owner_id=$1',
             [ownerId, JSON.stringify(state.selection), state.selectionSet],
           );
+        if (JSON.stringify(state.routes) !== JSON.stringify(previous.routes))
+          await client.query('UPDATE model_settings SET routes=$2 WHERE owner_id=$1', [
+            ownerId,
+            state.routes && JSON.stringify(state.routes),
+          ]);
         signal?.throwIfAborted();
         return result;
       }, database);

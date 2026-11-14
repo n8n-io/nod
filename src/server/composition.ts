@@ -333,6 +333,7 @@ export function createDefaultAdapters(
     bootstrap,
     changed: refresh,
   });
+  const typesafeKey = () => (models.routes ? undefined : env.TYPESAFE_API_KEY?.trim() || undefined);
   const localSpeech = createLocalSpeechProvider({ cacheDir: join(dataRoot, 'speech') });
   const voicePreferences = createPreferencesStore(pool, ownerId);
   const openAISpeech = createOpenAISpeechProvider({
@@ -396,7 +397,7 @@ export function createDefaultAdapters(
   const decisions = createDecisionModel({
     reserve: (maximumUsd) => models.reserve(maximumUsd),
     configured: () => {
-      if (env.TYPESAFE_API_KEY?.trim()) return true;
+      if (typesafeKey()) return true;
       if (!models.configured) return false;
       const { connections, selection } = models.view();
       const connection = connections.find((entry) => entry.id === selection?.connectionId);
@@ -407,8 +408,8 @@ export function createDefaultAdapters(
       );
     },
     resolve: async () => {
-      if (env.TYPESAFE_API_KEY?.trim())
-        return { provider: 'typesafe', key: env.TYPESAFE_API_KEY.trim() };
+      const typesafe = typesafeKey();
+      if (typesafe) return { provider: 'typesafe', key: typesafe };
       if (!models.configured) return;
       const access = await models.resolve();
       if (
@@ -428,12 +429,10 @@ export function createDefaultAdapters(
   const trustDecisions = createDecisionModel({
     reserve: (maximumUsd) => models.reserve(maximumUsd),
     configured: () =>
-      Boolean(env.TYPESAFE_API_KEY?.trim()) ||
-      models.hasApiKey('openrouter') ||
-      models.hasApiKey('openai'),
+      Boolean(typesafeKey()) || models.hasApiKey('openrouter') || models.hasApiKey('openai'),
     resolve: async (signal) => {
-      if (env.TYPESAFE_API_KEY?.trim())
-        return { provider: 'typesafe', key: env.TYPESAFE_API_KEY.trim(), model: 'jev-1.14.0' };
+      const typesafe = typesafeKey();
+      if (typesafe) return { provider: 'typesafe', key: typesafe, model: 'jev-1.14.0' };
       let routerKey: string | undefined;
       let available: Set<string> | undefined;
       if (models.hasApiKey('openrouter')) {

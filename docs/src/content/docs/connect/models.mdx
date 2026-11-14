@@ -316,13 +316,41 @@ Pick a capable checker if Nod acts for you. See the [trust check](/trust/approva
 
 These calls are billed through the connection that runs them. GPT Decisions is paid API use, separate from a ChatGPT subscription. OpenRouter sends the checks to TypeSafe, even when you selected a chat model from another provider. See [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions) and [Jev on OpenRouter](https://openrouter.ai/blog/insights/what-is-jev/).
 
-In a source install or self-hosted server, set `TYPESAFE_API_KEY` in `.env` to use Jev directly (`jev-1.13.0`) for these checks. The key selects TypeSafe regardless of your chat connection. Remove it to use the connection rules above, then [apply the configuration change](/deploy/configuration/#how-settings-work). The key stays on the server and is not added to **Models**.
+In a source install or self-hosted server, set `TYPESAFE_API_KEY` in `.env` to use Jev directly (`jev-1.13.0`) for these checks. The key selects TypeSafe regardless of your chat connection, unless you set [inference routes](#limit-where-requests-go). Remove it to use the connection rules above, then [apply the configuration change](/deploy/configuration/#how-settings-work). The key stays on the server and is not added to **Models**.
 
 A failed decision request does not switch providers or approve anything: a failed account-access email check hides that email's content. See [Approvals and the trust check](/trust/approvals/).
 
 :::note[Voice without another account]
 Open **Settings → Voice & audio**. Open **Voice** to compare samples, or choose **Automatic** to match voices to the conversation language. Provider connections and free voice downloads are in the same chooser. Use [free local voices, OpenRouter sign-in, or an ElevenLabs or OpenAI API key](/use/chat/#send-an-audio-message) without changing your connected chat model. OpenAI speech requires API access, separate from a ChatGPT plan.
 :::
+
+## Limit where requests go
+
+Inference routes name the model connections that may receive each kind of data. When routes are set, the server checks every model request just before it sends it, including background work and checks. A request that no route allows fails, and Nod sends nothing to any provider.
+
+Routes are off until you set them. There's no Settings control yet. Read them with `GET /api/models/routes` and replace them with `PUT /api/models/routes`, using the connection IDs from `GET /api/models`. These requests need the same owner access as the app. See [Client access](/trust/security-model/#client-access).
+
+```json title="PUT /api/models/routes"
+{
+  "routes": {
+    "personal": ["<personal-connection-id>"],
+    "work": ["<work-connection-id>"],
+    "unknown": ["<local-connection-id>"]
+  },
+  "fallback": false
+}
+```
+
+- The data classes are `public`, `personal`, `work`, and `unknown`. Each one lists the connections allowed for that data. A class you leave out allows no connection.
+- Removing a connection also removes it from every route. A class whose only connection you remove allows no connection until you add another.
+- A request that mixes classes runs only on a connection that every one of its classes allows.
+- Nod doesn't label its inputs yet, so it treats every request as `unknown`. For now, only the `unknown` route decides where requests go. Without one, every model request fails.
+- With `fallback: false`, every request stays on your selected connection. Image reading, action checks and voice services that would use another connection don't run instead. With `fallback: true`, they can use another connection that the routes allow.
+- Nod never retries a failed request on another connection, with or without routes. A timeout or outage fails the request.
+- While routes are set, Nod doesn't use `TYPESAFE_API_KEY`, because it isn't a model connection. Free local voices still work.
+- Send `null` to turn routes off.
+
+Routes cover model requests only. [Conversation traces](/trust/conversation-traces/) have their own switch, and web searches go to their own service. Each provider's terms still decide what it keeps.
 
 ## Set connections in server settings
 
@@ -428,4 +456,4 @@ flowchart LR
 
 ## Images with a text model
 
-If your selected model cannot read images, Nod looks for an image model in your connected services. It checks your selected connection first, then your other connected services. When one is available, it receives your current request and the images. Your selected chat model receives its description and stays selected. This image request uses that service's credentials and counts toward your spending limits. If no image model is available, the files stay in the workspace. See [Files and voice messages](/use/channels/#files-and-voice-messages).
+If your selected model cannot read images, Nod looks for an image model in your connected services. It checks your selected connection first, then your other connected services that your [inference routes](#limit-where-requests-go) allow. When one is available, it receives your current request and the images. Your selected chat model receives its description and stays selected. This image request uses that service's credentials and counts toward your spending limits. If no image model is available, the files stay in the workspace. See [Files and voice messages](/use/channels/#files-and-voice-messages).

@@ -2561,6 +2561,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       ownerId: string,
       selectedBackend = backend,
       bootstrap?: Parameters<typeof createModelService>[0]['bootstrap'],
+      dataClasses?: Parameters<typeof createModelService>[0]['dataClasses'],
     ) => {
       const service = createModelService({
         database,
@@ -2569,6 +2570,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
         backend: selectedBackend,
         origin: 'http://127.0.0.1:4310',
         bootstrap,
+        dataClasses,
       });
       await service.initialize();
       services.push(service);
@@ -3204,6 +3206,128 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(await service.automaticRequestsAllowed(), false);
     await ownerCompleted();
     assert.equal(await service.automaticRequestsAllowed(), true);
+  });
+
+  test('inference routes send requests only to connections allowed for every input and never switch after a failure', async (t) => {
+    const f = await fixture(t);
+    const { createPiMemoryCurator } = await import('../src/providers/pi/memory-curator.ts');
+    const { createPiModelRuntime } = await import('../src/providers/pi/models.ts');
+    const definition = (await f.backend.catalog('google', 'api_key')).find(
+      (item) => item.choice.id === 'gemini-3.8-flash',
+    )!;
+    const backend = {
+      ...f.backend,
+      catalog: async (
+        _provider: import('../src/shared/models.ts').ModelProvider,
+        _method: import('../src/shared/models.ts').ModelMethod,
+        credential?: import('../src/ports/models.ts').ModelCredential,
+      ) => {
+        const host = credential?.type === 'api_key' && credential.key.endsWith('-b') ? 'b' : 'a';
+        return [
+          {
+            choice: { ...definition.choice, images: host === 'b' },
+            spec: {
+              ...definition.spec,
+              api: 'openai-completions',
+              baseUrl: `https://${host}.example/v1`,
+            },
+          },
+        ];
+      },
+    };
+    const inputs: import('../src/shared/models.ts').DataClass[] = [];
+    const service = await f.create('fixture-route-owner', backend, undefined, () => inputs);
+    service.setRequestBudget(async () => async () => {});
+    const a = await service.addKey('google', 'fixture-route-key-a');
+    const b = await service.addKey('google', 'fixture-route-key-b');
+    const selection = service.view().selection!;
+    assert.equal(selection.connectionId, a);
+    assert.equal((await service.resolveImage()).definition.spec.baseUrl, 'https://b.example/v1');
+    const original = globalThis.fetch;
+    t.after(() => {
+      globalThis.fetch = original;
+    });
+    const calls: string[] = [];
+    let timedOut = false;
+    globalThis.fetch = async (input) => {
+      calls.push(new URL(String(input)).host);
+      if (timedOut)
+        throw Object.assign(new Error('The synthetic request timed out.'), { code: 'ETIMEDOUT' });
+      return new Response(
+        'data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"{\\"ready\\":true}"}}]}\n\ndata: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        { headers: { 'content-type': 'text/event-stream' } },
+      );
+    };
+    const curator = createPiMemoryCurator({ provider: 'google', resolve: () => service.resolve() });
+    const request = {
+      task: 'classify' as const,
+      instructions: 'Classify the synthetic request.',
+      input: {},
+    };
+    await service.setRoutes({ routes: { personal: [a, b, a], work: [b] }, fallback: true });
+    assert.deepEqual(service.routes, { routes: { personal: [a, b], work: [b] }, fallback: true });
+    await assert.rejects(curator.curate(request), /don't allow unknown data/);
+    assert.equal(await service.automaticRequestsAllowed(), false);
+    assert.deepEqual(calls, []);
+    inputs.push('personal');
+    assert.deepEqual(await curator.curate(request), { ready: true });
+    assert.deepEqual(calls, ['a.example']);
+    const stale = await service.resolve();
+    inputs.push('unknown');
+    await assert.rejects(curator.curate(request), /don't allow personal and unknown data/);
+    await assert.rejects(service.resolveImage(), /accepts images/);
+    inputs.splice(0, inputs.length, 'personal', 'work');
+    const { runtime, model } = await createPiModelRuntime(stale);
+    const refused = await runtime.completeSimple(model, {
+      messages: [{ role: 'user', content: 'Synthetic mixed input.', timestamp: 1 }],
+    });
+    assert.equal(refused.stopReason, 'error');
+    assert.match(refused.errorMessage ?? '', /don't allow personal and work data/);
+    await assert.rejects(curator.curate(request), /don't allow personal and work data/);
+    assert.deepEqual(calls, ['a.example']);
+    await service.select({ ...selection, connectionId: b });
+    assert.deepEqual(await curator.curate(request), { ready: true });
+    assert.deepEqual(calls, ['a.example', 'b.example']);
+
+    await service.select(selection);
+    await service.setRoutes({ routes: { unknown: [a, b] }, fallback: false });
+    inputs.splice(0, inputs.length);
+    calls.length = 0;
+    timedOut = true;
+    await assert.rejects(curator.curate(request), /ETIMEDOUT|timed out/);
+    await assert.rejects(curator.curate(request), /ETIMEDOUT|timed out/);
+    assert.ok(calls.length > 0);
+    assert.ok(calls.every((host) => host === 'a.example'));
+    await assert.rejects(service.resolveImage(), /accepts images/);
+    assert.equal(
+      (await service.resolveClassification(true))?.definition.spec.baseUrl,
+      'https://a.example/v1',
+    );
+    await assert.rejects(
+      service.setRoutes({ routes: { unknown: [randomUUID()] }, fallback: false }),
+      /doesn't exist/,
+    );
+    await assert.rejects(
+      service.setRoutes({ routes: { secret: [a] }, fallback: false }),
+      /routes are invalid/,
+    );
+    const restarted = await f.create('fixture-route-owner', backend);
+    assert.deepEqual(restarted.routes, { routes: { unknown: [a, b] }, fallback: false });
+    await service.setRoutes({ routes: { unknown: [b] }, fallback: true });
+    assert.equal(
+      (await service.resolveClassification(true))?.definition.spec.baseUrl,
+      'https://b.example/v1',
+    );
+    const access = await service.resolveClassification(true);
+    await service.setRoutes({ routes: { unknown: [a] }, fallback: true });
+    await assert.rejects(access!.read(), /don't allow unknown data/);
+    assert.equal(await service.apiKey('google'), 'fixture-route-key-a');
+    await service.setRoutes(null);
+    assert.equal((await service.resolveImage()).definition.spec.baseUrl, 'https://b.example/v1');
+    await service.setRoutes({ routes: { unknown: [a, b] }, fallback: true });
+    await service.remove(b);
+    assert.deepEqual(service.routes, { routes: { unknown: [a] }, fallback: true });
+    await service.setRoutes(service.routes);
   });
 
   test('model setup chooses capable defaults, preserves explicit choices and requires valid cloud accounts', async (t) => {

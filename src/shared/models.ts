@@ -83,6 +83,14 @@ export interface ModelSelection {
   effort: ModelEffort;
 }
 
+export const dataClasses = ['public', 'personal', 'work', 'unknown'] as const;
+export type DataClass = (typeof dataClasses)[number];
+
+export interface InferenceRoutes {
+  routes: Partial<Record<DataClass, string[]>>;
+  fallback: boolean;
+}
+
 export interface ModelConnection {
   id: string;
   provider: ModelProvider;
