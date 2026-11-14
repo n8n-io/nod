@@ -33,6 +33,7 @@ test(
     const { createTasks } = await import('../src/server/tasks.ts');
     const thread = await import('../src/server/thread.ts');
     const { createChannels } = await import('../src/server/channels.ts');
+    const { turnOrigin } = await import('../src/server/approvals.ts');
     const ownerId = 'local-development';
     let clock = new Date('2035-10-26T12:00:00.000Z');
     type Data = { scheduleId: string; revision: number; scheduledFor: string };
@@ -1153,6 +1154,69 @@ test(
             createRouted({ turnId: foreign, sourceMessageId: null }),
             /unavailable/,
           );
+        },
+      );
+      await t.test(
+        'a schedule keeps its first instruction, later changes and earlier messages',
+        async () => {
+          const withdrawn = await receive('Withdrawn synthetic request.');
+          await db.pool.query('UPDATE turns SET withdrawn=true WHERE id=$1', [withdrawn.turnId]);
+          await receive('Look at the synthetic budget folder.');
+          const asked = await receive('Check it every morning.');
+          const schedule = await createRouted(asked, {
+            title: 'Synthetic budget check',
+            prompt: 'Check the synthetic budget folder.',
+          });
+          const authority = async () =>
+            (
+              await db.pool.query(
+                'SELECT authority_instruction,authority_source_message_id,authority_context FROM schedules WHERE id=$1',
+                [schedule.id],
+              )
+            ).rows[0];
+          const first = await authority();
+          assert.equal(first.authority_instruction, 'Check it every morning.');
+          assert.equal(
+            first.authority_context.earlier.at(-1),
+            'Look at the synthetic budget folder.',
+          );
+          assert.ok(first.authority_context.earlier.length <= 5);
+          assert.ok(!first.authority_context.earlier.includes('Withdrawn synthetic request.'));
+          assert.ok(!first.authority_context.earlier.includes('Check it every morning.'));
+          const change = await receive('Make it cheaper.');
+          for (const prompt of ['Check the folder cheaply.', 'Check the folder more cheaply.'])
+            await personal.manage('schedule_update', { id: schedule.id, prompt }, change);
+          const changed = await authority();
+          assert.deepEqual(changed, {
+            ...first,
+            authority_context: { ...first.authority_context, changes: ['Make it cheaper.'] },
+          });
+          const manual = await runNow(await saved(schedule.id));
+          assert.equal(manual.statusCode, 200, manual.body);
+          assert.deepEqual(
+            (
+              await db.pool.query(
+                'SELECT authority_instruction,authority_context FROM schedule_runs WHERE turn_id=$1',
+                [manual.json().turnId],
+              )
+            ).rows[0],
+            {
+              authority_instruction: changed.authority_instruction,
+              authority_context: changed.authority_context,
+            },
+          );
+          const origin = await turnOrigin(manual.json().turnId);
+          assert.equal(origin?.scheduleInstruction, 'Check it every morning.\n\nMake it cheaper.');
+          assert.deepEqual(origin?.scheduleContext, first.authority_context.earlier);
+          const edited = await request('PATCH', `/api/schedules/${schedule.id}`, {
+            prompt: 'Owner-written synthetic prompt.',
+          });
+          assert.equal(edited.statusCode, 200, edited.body);
+          assert.deepEqual(await authority(), {
+            authority_instruction: 'Owner-written synthetic prompt.',
+            authority_source_message_id: null,
+            authority_context: null,
+          });
         },
       );
       await t.test('scheduled cache retention follows the actual recurring cadence', async () => {

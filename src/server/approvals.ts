@@ -158,21 +158,32 @@ async function scheduleAuthority(client: PoolClient, turnId: string) {
     !(await client.query("SELECT to_regclass('schedule_runs') AS table_name")).rows[0]?.table_name
   )
     return undefined;
-  return (
+  const run = (
     await client.query<{
       authority_instruction: string | null;
       authority_source_message_id: string | null;
+      authority_context: { earlier?: string[]; changes?: string[] } | null;
       scheduled_for: Date;
       time_zone: string;
       title: string;
       kind: string | null;
     }>(
-      `SELECT r.authority_instruction,r.authority_source_message_id,r.scheduled_for,r.time_zone,r.title,s.kind
+      `SELECT r.authority_instruction,r.authority_source_message_id,to_jsonb(r)->'authority_context' AS authority_context,
+         r.scheduled_for,r.time_zone,r.title,s.kind
        FROM schedule_runs r LEFT JOIN schedules s ON s.id=r.schedule_id AND s.owner_id=r.owner_id
        WHERE r.turn_id=$1 AND r.owner_id=$2`,
       [turnId, ownerId],
     )
   ).rows[0];
+  return (
+    run && {
+      ...run,
+      authority_instruction:
+        run.authority_instruction &&
+        [run.authority_instruction, ...(run.authority_context?.changes ?? [])].join('\n\n'),
+      earlier: run.authority_instruction ? (run.authority_context?.earlier ?? []) : [],
+    }
+  );
 }
 
 async function workOf(
@@ -237,6 +248,7 @@ export async function turnOrigin(turnId: string) {
       messageIds: said,
       channel: current.channel,
       scheduleInstruction: run?.authority_instruction ?? undefined,
+      scheduleContext: run?.earlier.length ? run.earlier : undefined,
       ...(run
         ? {
             scheduledFor: localTimestamp(run.time_zone, run.scheduled_for),
