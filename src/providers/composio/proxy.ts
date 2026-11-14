@@ -229,7 +229,10 @@ export function createComposioProxy(options: {
       }
       const refusal = await read(response, signal)
         .then((text) => JSON.parse(text) as unknown)
-        .catch(() => undefined);
+        .catch((error: unknown) => {
+          if (options.signal?.aborted) throw error;
+          return undefined;
+        });
       throw new IntegrationConnectionError(
         connectionReason(response.status, false, false) ?? 'unavailable',
         'link',
