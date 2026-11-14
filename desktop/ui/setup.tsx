@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { SetupProgress } from '../../src/web/components/setup-progress';
 import { PasswordInput } from '../../src/web/components/password-input';
-import { Welcome } from '../../src/web/pages/onboarding/steps/welcome';
+import { Welcome, WelcomeNote } from '../../src/web/pages/onboarding/steps/welcome';
 import { OnboardingFrame } from '../../src/web/pages/onboarding/frame';
 import { startupMessage, type StartupStage } from '../../src/shared/desktop-startup';
 import { initializeFocusVisibility } from '../../src/web/lib/focus';
@@ -416,18 +416,22 @@ function Startup() {
         <OnboardingFrame
           step={welcomeStep}
           footer={
-            <button
-              className="server-entry"
-              type="button"
-              onClick={() => void desktop?.openConnectionSettings()}
-            >
-              Connect to a server
-            </button>
+            <>
+              <button
+                className="server-entry"
+                type="button"
+                onClick={() => void desktop?.openConnectionSettings()}
+              >
+                Connect to a server
+              </button>
+              <WelcomeNote />
+            </>
           }
         >
           <div className="ob-screen" inert={busy && !handingOff} aria-busy={busy || handingOff}>
             <Welcome
               local
+              note={false}
               usageShared={welcome.usageData}
               traces={{ enabled: false, onChange: () => Promise.resolve() }}
               arrived="forward"

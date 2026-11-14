@@ -55,6 +55,10 @@
   line-height: 1.5;
   text-align: center;
 }
+.ob .ob-welcome-note a.ob-link,
+.ob .ob-welcome-note a.ob-link:hover {
+  color: inherit;
+}
 
 @media (max-width: 600px) {
   .ob-welcome {

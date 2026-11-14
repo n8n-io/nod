@@ -74,8 +74,12 @@ button:focus-visible {
   border: 0;
   background: transparent;
   color: var(--foreground);
+  font-size: var(--text-control);
   text-decoration: underline;
   text-underline-offset: 4px;
+}
+.ob-frame-footer .ob-welcome-note {
+  margin: 8px auto 0;
 }
 
 .setup-entry-actions {
