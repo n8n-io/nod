@@ -114,7 +114,7 @@ The message box stays open while Nod works, so you can send another message at a
 
 The line describes the work instead of showing internal tool names. When Nod hasn't named a step, it names the app, website or kind of work that's active, or the model Nod is waiting for. It never counts seconds or guesses when Nod will finish. When Nod answers, the answer takes its place. It clears when Nod asks you something or stops, and hides while the app reconnects. A failed send clears the line and shows an error. Steps come from Nod's own short descriptions, which appear as soon as Nod starts the tool they describe, and, when your model shares a summary of its reasoning, from that summary's heading, such as "Researching Málaga travel ideas".
 
-The line follows only the work on your messages. A task shows its progress on its own card, so a step never appears twice. While anything works, the message box says **Send another message to Nod…**. While a task works, a small dot pulses just above the top-right corner of the message box. A task that needs your answer shows a slightly larger pink dot with a question mark. Hover over a dot or focus it to see which task it is. Select it to open the task's card with a soft highlight: if the card is already on screen, the chat stays where it is; otherwise the chat scrolls to it.
+The line follows only the work on your messages. A task shows its progress on its own card, and a question from a task or schedule shows it on the small line above that question. While anything works, the message box says **Send another message to Nod…**. While a task works, a small dot pulses just above the top-right corner of the message box. A task that needs your answer shows a slightly larger pink dot with a question mark. Hover over a dot or focus it to see which task it is. Select it to open the task's card with a soft highlight: if the card is already on screen, the chat stays where it is; otherwise the chat scrolls to it.
 
 ### Send more while Nod works
 
@@ -165,7 +165,7 @@ macOS controls whether badges appear. In **System Settings > Notifications > Nod
 
 ## Answer Nod's questions
 
-When a task needs a decision, an approval or your help in its browser, it asks and waits. Reply to its question to continue the session that asked. Other tasks can keep working. For actions that need a yes or no, see [Approvals](/trust/approvals/).
+When a task needs a decision, an approval or your help in its browser, it asks and waits. Reply to its question to continue the session that asked. Other tasks can keep working. A question from a task or a scheduled run has a small line above it with the name of that work: a pink dot while it waits for you, then a pulsing dot and the current step while the work continues after your answer. For a task, select the line to go to its card. For actions that need a yes or no, see [Approvals](/trust/approvals/).
 
 For a question with a few useful answers, Nod shows the question as a card with its choices, each marked A, B, C, one line each. Select a choice to send it as a reply to that question, even when a newer question appears below it. When Nod says you can pick one or more, select every choice that fits, add your own in **Type your own answer** if you like, then select **Done** or press Enter.
 

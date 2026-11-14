@@ -72,6 +72,11 @@ const messageFields = `m.id,m.role,m.text,CASE WHEN m.role='user' THEN m.display
  CASE WHEN m.role='assistant' THEN (SELECT json_build_object('id',a.id,'status',a.status,'action',a.action,'title',a.title,'args',a.args,'active',u.status IN ('running','waiting'),'executionActive',e.status IN ('queued','running','waiting')) FROM approvals a
    JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id LEFT JOIN turns e ON e.id=a.execution_turn_id AND e.owner_id=a.owner_id
    WHERE a.confirmation_message_id=m.id AND a.owner_id=m.owner_id LIMIT 1) END AS "approval",
+ CASE WHEN m.role='assistant' AND (m.answer_choices IS NOT NULL OR EXISTS (SELECT 1 FROM approvals a WHERE a.confirmation_message_id=m.id AND a.owner_id=m.owner_id))
+   THEN (SELECT COALESCE(
+     (SELECT json_build_object('kind','task','id',k.id,'title',k.title) FROM tasks k WHERE k.owner_id=m.owner_id AND k.session_id=w.session_id ORDER BY k.created_at DESC LIMIT 1),
+     (SELECT json_build_object('kind','schedule','id',r.id,'title',r.title) FROM schedule_runs r WHERE r.owner_id=m.owner_id AND r.turn_id=w.session_id LIMIT 1))
+     FROM turns w WHERE w.id=m.turn_id AND w.owner_id=m.owner_id) END AS "work",
  CASE WHEN target.id IS NULL OR ${reactionReplySql('target')} THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',COALESCE(m.reply_quote,''),'isQuote',m.reply_quote IS NOT NULL) END AS "replyTo"`;
 const chatMessageSql = `NOT ${reactionReplySql('m')}`;
 const textMessageOptions = {
@@ -117,7 +122,8 @@ function choiceAnswerView(options: AnswerChoice[], row: ChoiceAnswerRow | null |
   return { choiceIds, ...(text ? { text } : {}) };
 }
 
-type MessageRow = Omit<Message, 'approval' | 'choiceAnswer' | 'cardAnswer'> & {
+type MessageRow = Omit<Message, 'approval' | 'choiceAnswer' | 'cardAnswer' | 'work'> & {
+  work?: Message['work'] | null;
   assistantReaction?: MessageReaction | null;
   approval?: ApprovalRow | null;
   choiceAnswer?: ChoiceAnswerRow | null;
@@ -135,6 +141,7 @@ function messageView(row: MessageRow): Message {
     approval,
     choiceAnswer,
     cardAnswer,
+    work,
     ...message
   } = row;
   const visual =
@@ -165,6 +172,7 @@ function messageView(row: MessageRow): Message {
         }
       : {}),
     ...(cardAnswer ? { cardAnswer: true as const } : {}),
+    ...(work ? { work } : {}),
     reactions: [
       ...(message.reaction ? [{ actor: 'user' as const, reaction: message.reaction }] : []),
       ...(assistantReaction ? [{ actor: 'assistant' as const, reaction: assistantReaction }] : []),

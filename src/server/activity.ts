@@ -10,7 +10,9 @@ export type LiveWork = Activity & {
   receivedMessageIds?: string[];
 };
 
-const query = `SELECT DISTINCT ON (u.session_id) u.id,u.channel,u.status,COALESCE(u.started_at,u.created_at) AS since,
+const query = (
+  runs: boolean,
+) => `SELECT DISTINCT ON (u.session_id) u.id,u.channel,u.status,COALESCE(u.started_at,u.created_at) AS since,
     ${ownerStarted()} AS owner_started,t.id AS task_id,t.title,o.site,o.calling,o.tool,
     GREATEST(COALESCE(u.started_at,u.created_at),w.last) AS quiet_since,
     COALESCE(t.message_id,(SELECT m.id FROM messages m WHERE m.turn_id=u.id AND m.owner_id=u.owner_id
@@ -19,7 +21,8 @@ const query = `SELECT DISTINCT ON (u.session_id) u.id,u.channel,u.status,COALESC
       WHEN s.type='retry' AND w.last>s.created_at THEN t.now_text ELSE COALESCE(s.summary,t.now_text) END AS step,
     CASE WHEN u.status='running' THEN ARRAY(SELECT q.message_id FROM turns q WHERE q.owner_id=u.owner_id
       AND q.session_id=u.session_id AND q.status='queued' AND q.source IN ('user','task') AND q.message_id IS NOT NULL
-      ORDER BY q.created_at,q.id) END AS received_message_ids
+      ORDER BY q.created_at,q.id) END AS received_message_ids,
+    ${runs ? '(SELECT r.id FROM schedule_runs r WHERE r.owner_id=u.owner_id AND r.turn_id=u.session_id LIMIT 1)' : 'NULL'} AS run_id
   FROM turns u
   JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id AND th.archived_at IS NULL
   LEFT JOIN LATERAL (SELECT id,title,now_text,message_id FROM tasks WHERE owner_id=u.owner_id AND session_id=u.session_id
@@ -71,7 +74,10 @@ export function createActivity({
   let publishing = Promise.resolve();
 
   async function read(): Promise<LiveWork[]> {
-    const { rows } = await pool.query(query, [ownerId]);
+    const runs = Boolean(
+      (await pool.query("SELECT to_regclass('schedule_runs') AS name")).rows[0]?.name,
+    );
+    const { rows } = await pool.query(query(runs), [ownerId]);
     const name = model?.();
     return rows
       .map((row) => ({
@@ -97,6 +103,7 @@ export function createActivity({
           ? { received: true as const, receivedMessageIds: row.received_message_ids }
           : {}),
         ...(row.owner_started ? {} : { background: true as const }),
+        ...(row.run_id ? { runId: row.run_id as string } : {}),
       }))
       .sort((a, b) => a.since.localeCompare(b.since));
   }

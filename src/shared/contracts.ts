@@ -39,6 +39,7 @@ export interface Message {
   choiceAnswer?: { choiceIds: string[]; text?: string };
   approval?: MessageApproval;
   cardAnswer?: true;
+  work?: { kind: 'task' | 'schedule'; id: string; title: string };
 }
 export type ApprovalState = 'pending' | 'working' | 'done' | 'declined' | 'expired' | 'uncertain';
 export interface MessageApproval {
@@ -87,6 +88,7 @@ export interface Activity {
   model?: string;
   received?: true;
   background?: true;
+  runId?: string;
 }
 export interface VaultLoginEntry {
   kind: 'login';
