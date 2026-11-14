@@ -52,13 +52,17 @@ When you say yes to an app action, the server runs that saved action once, and t
 
 After Nod restarts, any claim or confirmed action that was still running becomes uncertain. Nothing that was in progress runs again.
 
+## Check what ran
+
+**Export history** in **Usage** downloads each action Nod asked you about, with its outcome, and each app action that ran. An approved action that ran once appears as one effect. An uncertain one has no recorded effect, so check the app. The file holds no message text, arguments or error messages. See [Export your action history](/use/spending/#export-your-action-history).
+
 :::tip
 When Nod says a result is uncertain, ask it to check: "Did the order go through?" It reads the page or app without submitting again.
 :::
 
 ## Where this is enforced
 
-[`src/server/vault-use.ts`](https://github.com/n8n-io/nod/blob/main/src/server/vault-use.ts) (claims and states) · [`src/server/approvals.ts`](https://github.com/n8n-io/nod/blob/main/src/server/approvals.ts) (confirmed actions) · [`src/server/payments.ts`](https://github.com/n8n-io/nod/blob/main/src/server/payments.ts) (payment outcomes)
+[`src/server/vault-use.ts`](https://github.com/n8n-io/nod/blob/main/src/server/vault-use.ts) (claims and states) · [`src/server/approvals.ts`](https://github.com/n8n-io/nod/blob/main/src/server/approvals.ts) (confirmed actions) · [`src/server/payments.ts`](https://github.com/n8n-io/nod/blob/main/src/server/payments.ts) (payment outcomes) · [`src/server/action-history.ts`](https://github.com/n8n-io/nod/blob/main/src/server/action-history.ts) (history export)
 
 ## Related resources
 

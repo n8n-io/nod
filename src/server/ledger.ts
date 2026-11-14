@@ -26,6 +26,11 @@ import { recordedAction, toolTitle } from './action-presentation.ts';
 import { workspaceCommandsSql, workspaceCommand } from './workspace-commands.ts';
 import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
 import type { UsageReport } from './usage-report.ts';
+import {
+  actionHistoryEvent,
+  actionHistoryFileName,
+  type ActionHistoryRow,
+} from './action-history.ts';
 import { afterCommit, transaction } from './transaction.ts';
 import { analyticsModel, snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
 import { captureSettingChanges, type SettingActor } from './analytics-settings.ts';
@@ -311,6 +316,7 @@ export function createLedger({
       action text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
     );
     ALTER TABLE app_actions ADD COLUMN IF NOT EXISTS basis jsonb;
+    ALTER TABLE app_actions ADD COLUMN IF NOT EXISTS connection_id uuid;
     ALTER TABLE app_actions ADD COLUMN IF NOT EXISTS target text;
     ALTER TABLE app_actions ADD COLUMN IF NOT EXISTS parent_run_id uuid;
     CREATE INDEX IF NOT EXISTS app_actions_owner_time ON app_actions(owner_id,created_at);
@@ -637,10 +643,16 @@ export function createLedger({
     };
   }
 
-  function action(turnId: string, name: string, basis: TrustBasis, target?: string) {
+  function action(
+    turnId: string,
+    name: string,
+    basis: TrustBasis,
+    target?: string,
+    connectionId?: unknown,
+  ) {
     return save(
-      `INSERT INTO app_actions(owner_id,turn_id,action,basis,target,parent_run_id)
-       SELECT $1,id,$3,$4,$5,$6 FROM turns WHERE id=$2 AND owner_id=$1`,
+      `INSERT INTO app_actions(owner_id,turn_id,action,basis,target,parent_run_id,connection_id)
+       SELECT $1,id,$3,$4,$5,$6,$7 FROM turns WHERE id=$2 AND owner_id=$1`,
       [
         ownerId,
         turnId,
@@ -648,8 +660,29 @@ export function createLedger({
         JSON.stringify(basis),
         target?.slice(0, 300) ?? null,
         activeExecution.getStore()?.parentRunId ?? null,
+        z.uuid().safeParse(connectionId).success ? connectionId : null,
       ],
     );
+  }
+
+  async function history() {
+    const work = `u.source,u.proactive,(SELECT t.id FROM tasks t WHERE t.owner_id=$1 AND t.session_id=u.session_id LIMIT 1) AS task`;
+    const { rows } = await pool.query<ActionHistoryRow>(
+      `SELECT 'proposal' AS type,a.created_at AS at,a.action,a.args->>'connectionId' AS account,${work},
+         a.id AS approval,NULL::jsonb AS basis,a.status
+       FROM approvals a JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id
+       WHERE a.owner_id=$1
+       UNION ALL
+       SELECT 'ran',r.created_at,r.action,r.connection_id::text,${work},
+         (SELECT p.id FROM approvals p WHERE p.owner_id=$1 AND p.execution_turn_id=r.turn_id
+           AND p.action=r.action AND r.basis->>'kind'='approved' ORDER BY p.created_at LIMIT 1),
+         jsonb_build_object('kind',r.basis->>'kind'),NULL
+       FROM app_actions r JOIN turns u ON u.id=r.turn_id AND u.owner_id=r.owner_id
+       WHERE r.owner_id=$1
+       ORDER BY at,type`,
+      [ownerId],
+    );
+    return rows.map(actionHistoryEvent);
   }
 
   function speech(base: SpeechProvider): SpeechProvider {
@@ -1147,6 +1180,17 @@ export function createLedger({
         query.at && query.id ? { at: query.at, id: query.id } : undefined,
         query.session,
       );
+    });
+    app.get('/api/trust/history', async (_request, reply) => {
+      const exported = new Date();
+      return reply
+        .header('Content-Type', 'application/json; charset=utf-8')
+        .header('Cache-Control', 'private, no-store')
+        .header('X-Content-Type-Options', 'nosniff')
+        .header('Content-Disposition', `attachment; filename="${actionHistoryFileName(exported)}"`)
+        .send(
+          JSON.stringify({ exported: exported.toISOString(), events: await history() }, null, 2),
+        );
     });
     app.get<{ Params: { id: string } }>('/api/trust/entries/:id/steps', async (request) => {
       const id = z.uuid().parse(request.params.id);

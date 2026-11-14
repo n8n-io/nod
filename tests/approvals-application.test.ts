@@ -164,6 +164,7 @@ test(
     let toolSearch: Record<string, unknown> | undefined;
     const readOnlyActions = new Set<string>();
     let appOutage = false;
+    const historySecret = 'synthetic-history-secret-5b1e';
     let appResult: unknown;
     let changeRulesOnDraftRead = false;
     let changedRulesDuringDraftRead = 0;
@@ -468,7 +469,7 @@ test(
             session.execute = async (...input) => {
               executedApps.push(input[0]);
               if (input[0] === 'GMAIL_GET_DRAFT') draftReadArgs.push({ ...input[1] });
-              if (appOutage) throw new Error('Synthetic provider outage.');
+              if (appOutage) throw new Error(`Synthetic provider outage. token=${historySecret}`);
               if (appResult) return appResult;
               return execute(...input);
             };
@@ -776,7 +777,11 @@ test(
         async () => {
           const held = await propose(
             'GMAIL_SEND_EMAIL',
-            { recipient_email: 'outage@example.test', subject: 'Synthetic', body: 'Synthetic.' },
+            {
+              recipient_email: 'outage@example.test',
+              subject: 'Synthetic',
+              body: `Synthetic ${historySecret}.`,
+            },
             'apps',
           );
           const [card] = await approvalsFor(held);
@@ -832,6 +837,77 @@ test(
               ownerId,
             ])
           ).rows[0];
+          const exported = await request('GET', '/api/trust/history');
+          assert.equal(exported.statusCode, 200, exported.body);
+          assert.match(
+            String(exported.headers['content-disposition']),
+            /^attachment; filename="nod-action-history-\d{4}-\d{2}-\d{2}\.json"$/,
+          );
+          assert.doesNotMatch(
+            exported.body,
+            new RegExp(`${historySecret}|outage@example|repeat@example`),
+          );
+          const events = exported.json().events as Array<Record<string, unknown>>;
+          const proposal = (id: string) =>
+            events.filter((event) => event.type === 'proposal' && event.approval === id);
+          assert.deepEqual(
+            proposal(card.id).map(({ at: _, ...event }) => event),
+            [
+              {
+                type: 'proposal',
+                action: 'GMAIL_SEND_EMAIL',
+                kind: 'app',
+                app: 'Gmail',
+                account: connectionId,
+                work: 'chat',
+                task: null,
+                approval: card.id,
+                policy: 'asked',
+                outcome: 'uncertain',
+              },
+            ],
+          );
+          assert.equal(
+            events.some((event) => event.type === 'effect' && event.approval === card.id),
+            false,
+          );
+          assert.deepEqual(
+            proposal(onceCard.id).map((event) => event.outcome),
+            ['ran'],
+          );
+          assert.deepEqual(
+            events
+              .filter((event) => event.type === 'effect' && event.approval === onceCard.id)
+              .map(({ at: _, ...event }) => event),
+            [
+              {
+                type: 'effect',
+                action: 'GMAIL_CREATE_EMAIL_DRAFT',
+                kind: 'app',
+                app: 'Gmail',
+                account: connectionId,
+                work: 'resume',
+                task: null,
+                approval: onceCard.id,
+                policy: 'approved',
+                outcome: 'ran',
+              },
+            ],
+          );
+          for (const event of events)
+            assert.deepEqual(Object.keys(event).sort(), [
+              'account',
+              'action',
+              'app',
+              'approval',
+              'at',
+              'kind',
+              'outcome',
+              'policy',
+              'task',
+              'type',
+              'work',
+            ]);
           const text = `Synthetic wrapped send ${randomUUID()}`;
           const errors = batchErrors.length;
           batches.set(text, {

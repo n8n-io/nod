@@ -35,6 +35,30 @@ Chat messages don't include cost or action receipts. Review spending and app act
 
 With an API model selected, select this month's total to see a chart and a forecast, such as "On track for $12.40". It also says how much was background work: source checks, schedules and tasks Nod started, plus work that runs outside any of them, such as email checks, memory upkeep and writing style. Point to or select a day on the chart to see that day’s spend and the total so far. You can also focus the chart and use the arrow keys. Every app action is recorded, reads included.
 
+## Export your action history
+
+Select **Export history** at the top of **Usage** to download a JSON file of what Nod asked you about and what it ran. It covers every action Nod asked you to approve and every connected app action that finished, from all time.
+
+Each event has only these fields. Nothing else is copied into the file.
+
+| Field      | What it holds                                                                                                                                                                                |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `at`       | When it happened                                                                                                                                                                             |
+| `type`     | `proposal` for an action Nod asked you about, `read` for an action allowed as a read, `effect` for any other action that ran                                                                 |
+| `action`   | The tool's name, such as `GMAIL_SEND_EMAIL`                                                                                                                                                  |
+| `kind`     | `app`, `browser`, `sign_in`, `files`, `memory` or `settings`                                                                                                                                 |
+| `app`      | The app's name, when the action has one                                                                                                                                                      |
+| `account`  | The ID of the connected account it used or would use, when it has one                                                                                                                        |
+| `work`     | What started it: `chat`, `task`, `schedule`, `event` or `check`. `resume` marks the run that follows your approval, and `other` any other source                                             |
+| `task`     | The task's ID, for work in a task                                                                                                                                                            |
+| `approval` | The approval's ID. A proposal and the effect it led to share it                                                                                                                              |
+| `policy`   | `asked` for a proposal. For a read or effect, what allowed it: `read`, `owner_message`, `schedule`, `notification_rule`, `owner_rule` or `approved`, or `unknown` when no basis was recorded |
+| `outcome`  | For a proposal: `waiting`, `approved`, `running`, `ran`, `declined`, `not_run` or `uncertain`. Reads and effects are always `ran`                                                            |
+
+The file never includes message text, the words Nod quoted as your permission, action arguments, results, error messages, email addresses or account names. An approved action that ran once shows as one proposal and one effect, even if Nod tried it again later. A background action the check refused without asking isn't listed yet.
+
+The history is kept with your other usage records. **Remove all data** deletes it with everything else. See [Delete your data](/trust/privacy/#delete-your-data).
+
 ## How each model is priced
 
 How Nod counts usage depends on how you pay for the model.

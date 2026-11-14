@@ -1427,7 +1427,13 @@ async function initializeApplication(
                               );
                             });
                           await ledger
-                            .action(provenance.turnId, 'GMAIL_GET_DRAFT', readVerdict.basis)
+                            .action(
+                              provenance.turnId,
+                              'GMAIL_GET_DRAFT',
+                              readVerdict.basis,
+                              undefined,
+                              readArgs.connectionId,
+                            )
                             .catch((error: unknown) => {
                               throw Object.assign(
                                 new Error(
@@ -1479,6 +1485,7 @@ async function initializeApplication(
                         action,
                         provenance.basis ?? { kind: 'approved' },
                         actionTarget(action, args, provenance.details),
+                        ready.connectionId,
                       );
                       return privateEmailResult(
                         (
@@ -2440,7 +2447,7 @@ async function initializeApplication(
               `The Gmail ${deletingDraft ? 'draft' : 'metadata'} read failed: ${safeIntegrationFailure(error)} Nod did not ask for approval or delete the ${item}.`,
             );
           }
-          await ledger.action(turn.turnId, readAction, readVerdict.basis);
+          await ledger.action(turn.turnId, readAction, readVerdict.basis, undefined, connectionId);
           if (deletingDraft) {
             const draft = gmailDraftTarget(observed, itemId);
             if (draft) {
@@ -2473,6 +2480,7 @@ async function initializeApplication(
               action,
               verdict.confirm ? { kind: 'approved' } : verdict.basis,
               actionTarget(action, prepared),
+              prepared.connectionId,
             );
             return result;
           },

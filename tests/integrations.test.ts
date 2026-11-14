@@ -55,6 +55,7 @@ import { createIntegrations, initializeIntegrationSchema } from '../src/server/i
 import { cachedIcons } from '../src/server/link-previews.ts';
 import { createErrorRedactor } from '../src/server/redaction.ts';
 import { createLedger } from '../src/server/ledger.ts';
+import { actionHistoryEvent } from '../src/server/action-history.ts';
 import { createActivityLog } from '../src/server/activity-log.ts';
 import { createVaultAccess } from '../src/server/vault-access.ts';
 import { usagePdf } from '../src/server/usage-report.ts';
@@ -9394,6 +9395,37 @@ async function hostedDatabase(options: pg.PoolConfig = {}) {
   };
 }
 
+test('action history drops every value outside its allowlist', () => {
+  const secret = 'synthetic-history-secret-2a7f';
+  const approval = randomUUID();
+  const event = actionHistoryEvent({
+    type: 'ran',
+    at: new Date(0),
+    action: `GMAIL_SEND_EMAIL ${secret}`,
+    account: `token=${secret}`,
+    source: secret,
+    proactive: true,
+    task: secret,
+    approval,
+    basis: { kind: 'message', quote: secret },
+    status: secret,
+  });
+  assert.doesNotMatch(JSON.stringify(event), new RegExp(secret));
+  assert.deepEqual(event, {
+    at: '1970-01-01T00:00:00.000Z',
+    type: 'effect',
+    action: 'unknown',
+    kind: 'app',
+    app: null,
+    account: null,
+    work: 'other',
+    task: null,
+    approval,
+    policy: 'owner_message',
+    outcome: 'ran',
+  });
+});
+
 test(
   'the ledger keeps owned costs and actions, reports them and enforces the monthly limit',
   { skip: !process.env.TEST_DATABASE_URL },
@@ -9416,7 +9448,11 @@ test(
         CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz);
         CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,source text NOT NULL,source_id text,
           message_id uuid,prompt text NOT NULL,channel text NOT NULL DEFAULT 'web',status text NOT NULL DEFAULT 'succeeded',
-          error text,created_at timestamptz NOT NULL DEFAULT now(),thread_id uuid,session_id uuid,task_id uuid);
+          error text,created_at timestamptz NOT NULL DEFAULT now(),thread_id uuid,session_id uuid,task_id uuid,
+          proactive boolean NOT NULL DEFAULT false);
+        CREATE TABLE approvals(id uuid PRIMARY KEY,owner_id text NOT NULL,turn_id uuid,execution_turn_id uuid,
+          action text NOT NULL,args jsonb NOT NULL,status text NOT NULL,result jsonb,details jsonb,
+          created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE turn_events(id uuid DEFAULT gen_random_uuid(),turn_id uuid,type text,summary text DEFAULT '',site text,parent_run_id uuid,call_id uuid,command jsonb,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,thread_id uuid,created_at timestamptz DEFAULT now(),hidden_at timestamptz);
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);
@@ -9704,6 +9740,65 @@ test(
           .entries.map((entry: TrustEntry) => entry.id),
         [scheduled],
       );
+      const secret = 'synthetic-history-secret-9c4d';
+      const proposal = randomUUID();
+      const foreignProposal = randomUUID();
+      const account = randomUUID();
+      await pool.query(
+        `INSERT INTO approvals(id,owner_id,turn_id,execution_turn_id,action,args,status,result,details,created_at) VALUES
+          ($1,'other',$4,$3,'GMAIL_SEND_EMAIL','{"body":"Foreign body"}','completed',NULL,NULL,now()-interval '110 minutes'),
+          ($2,'owner',$3,$3,'GMAIL_SEND_EMAIL',$5,'completed',$6,$7,now()-interval '100 minutes')`,
+        [
+          foreignProposal,
+          proposal,
+          chat,
+          foreign,
+          { connectionId: account, body: `Synthetic body ${secret}` },
+          { error: `Synthetic failure token=${secret}` },
+          { reason: `Synthetic reason ${secret}`, account: { identity: 'sam@example.test' } },
+        ],
+      );
+      await pool.query(
+        "INSERT INTO app_actions(owner_id,turn_id,action,basis) VALUES('other',$1,'SLACK_SEND_MESSAGE',$2)",
+        [foreign, { kind: 'message', quote: 'Foreign words' }],
+      );
+      await ledger.action(
+        chat,
+        'NOTION_UPDATE_PAGE',
+        { kind: 'message', messageId: said, quote: `Update it with ${secret}` },
+        undefined,
+        `token=${secret}`,
+      );
+      await pool.query('UPDATE turns SET error=$2 WHERE id=$1', [
+        chat,
+        `Synthetic exception token=${secret}`,
+      ]);
+      const history = await app.inject('/api/trust/history');
+      assert.equal(history.statusCode, 200, history.body);
+      assert.match(String(history.headers['content-type']), /^application\/json/);
+      assert.doesNotMatch(
+        history.body,
+        new RegExp(`${secret}|Tell Sam|Foreign|sam@example|${foreign}|${foreignProposal}`),
+      );
+      assert.deepEqual(
+        history
+          .json()
+          .events.map(
+            (event: Record<string, unknown>) =>
+              `${event.type} ${event.action} ${event.work} ${event.policy} ${event.outcome} ${event.account} ${event.approval}`,
+          ),
+        [
+          `proposal GMAIL_SEND_EMAIL chat asked ran ${account} ${proposal}`,
+          'effect NOTION_UPDATE_PAGE schedule approved ran null null',
+          'read GMAIL_FETCH_EMAILS chat read ran null null',
+          `effect GMAIL_SEND_EMAIL chat approved ran null ${proposal}`,
+          'effect SLACK_SEND_MESSAGE chat owner_message ran null null',
+          'effect SLACK_SEND_MESSAGE chat owner_message ran null null',
+          'read GMAIL_FETCH_EMAILS schedule read ran null null',
+          'effect NOTION_UPDATE_PAGE chat owner_message ran null null',
+        ],
+      );
+      await pool.query('UPDATE turns SET error=NULL WHERE id=$1', [chat]);
       await pool.query(
         `INSERT INTO vault_activity(id,owner_id,action,origin,item_kind,task,reason,amount_minor,currency) VALUES
           ($1,'owner','card','https://shop.example.test','card','=HYPERLINK("https://attacker.example.test")','said_yes',1200,'EUR'),
@@ -9901,8 +9996,8 @@ test(
       assert.equal(new Set(listed).size, listed.length);
       assert.ok(tied.every((id) => listed.includes(id)));
       await pool.query(
-        "DELETE FROM app_actions WHERE action='SLACK_SEND_MESSAGE' OR (turn_id=$1 AND action='GMAIL_FETCH_EMAILS')",
-        [scheduled],
+        "DELETE FROM app_actions WHERE action='SLACK_SEND_MESSAGE' OR (turn_id=$1 AND action='GMAIL_FETCH_EMAILS') OR (turn_id=$2 AND action='NOTION_UPDATE_PAGE')",
+        [scheduled, chat],
       );
       await pool.query('DELETE FROM messages WHERE id=ANY($1::uuid[])', [[said, foreignSaid]]);
       assert.doesNotMatch(
