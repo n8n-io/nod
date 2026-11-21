@@ -813,6 +813,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         !active ||
         !ready ||
         !recorder.supported ||
+        callPhase !== 'idle' ||
         event.defaultPrevented ||
         event.isComposing ||
         event.keyCode === 229 ||
@@ -851,10 +852,25 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [active, ready, recorder.supported, recorder.phase, sendingAudio, canRecord, editor, mac]);
+  }, [
+    active,
+    ready,
+    recorder.supported,
+    recorder.phase,
+    sendingAudio,
+    canRecord,
+    editor,
+    mac,
+    callPhase,
+  ]);
   const recordingPending = recorder.phase === 'requesting' || recorder.phase === 'finishing';
   const microphoneDisabled =
-    !active || !ready || !recorder.supported || recordingPending || sendingAudio;
+    !active ||
+    !ready ||
+    !recorder.supported ||
+    recordingPending ||
+    sendingAudio ||
+    callPhase !== 'idle';
   const audioProgress =
     speech?.localInput?.progress === undefined
       ? undefined
@@ -905,7 +921,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       {(lengthError || error || audioSetupError) && (
         <Notice>{lengthError || error || audioSetupError}</Notice>
       )}
-      {callPhase !== 'idle' && !error && (
+      {callPhase !== 'idle' && (
         <Notice kind="info">
           {callPhase === 'connecting'
             ? 'Connecting the call…'

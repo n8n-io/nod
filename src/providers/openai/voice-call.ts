@@ -22,11 +22,9 @@ export function createOpenAIVoiceCallProvider(options: {
 }): VoiceCallProvider {
   const model = options.model || 'gpt-live-1.1';
   return {
-    id: 'openai',
     get configured() {
       return options.configured();
     },
-    voices: liveVoices,
     async start({ sdp, instructions, greeting, voice, signal }, report) {
       const connection = await options.connection();
       if (!connection?.key) throw new Error('Voice calls need an OpenAI API key.');
@@ -75,8 +73,11 @@ export function createOpenAIVoiceCallProvider(options: {
       const outbox: string[] = [];
       let seconds = 0;
       let done = false;
+      let failed = false;
+      const closers: Array<() => void> = [];
       const push = (event: VoiceCallEvent) => {
         if (done) return;
+        if (event.type === 'error') failed = true;
         if (event.type === 'closed') {
           done = true;
           const usage: ProviderUsageEvent = {
@@ -85,7 +86,7 @@ export function createOpenAIVoiceCallProvider(options: {
             category: 'agent',
             operation: 'voice_call',
             model,
-            status: 'succeeded',
+            status: failed ? 'failed' : 'succeeded',
             durationMs: Math.round(seconds * 1000) || Date.now() - started,
             costUsd: null,
             pricing: 'unavailable',
@@ -95,8 +96,9 @@ export function createOpenAIVoiceCallProvider(options: {
         const next = waiting.shift();
         if (next) next({ value: event, done: false });
         else queue.push(event);
-        if (done)
-          for (const resolve of waiting.splice(0)) resolve({ value: undefined, done: true });
+        if (!done) return;
+        for (const resolve of waiting.splice(0)) resolve({ value: undefined, done: true });
+        for (const resolve of closers.splice(0)) resolve();
       };
       const send = (event: Record<string, unknown>) => {
         const text = JSON.stringify({ event_id: randomUUID(), ...event });
@@ -168,7 +170,13 @@ export function createOpenAIVoiceCallProvider(options: {
         async close() {
           if (done) return;
           send({ type: 'session.close' });
-          setTimeout(() => socket.close(), 2000).unref();
+          await new Promise<void>((resolve) => {
+            closers.push(resolve);
+            setTimeout(() => {
+              socket.close();
+              resolve();
+            }, 2000).unref();
+          });
         },
       };
     },

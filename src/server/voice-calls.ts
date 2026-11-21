@@ -35,7 +35,9 @@ export function handoffRequest(heard: Heard[], atMs: number) {
 }
 
 export function spokenUpdate(message: { text: string; files: number; approval: boolean }) {
-  const text = message.text.replace(/https?:\/\/\S+/g, '[link in the app]').trim();
+  const text = message.text
+    .replace(/\b(?:[a-z][a-z\d+.-]*:\/\/|www\.|mailto:)\S+/gi, '[link in the app]')
+    .trim();
   const notes = [
     'Nod posted this in the conversation. Tell the owner in one or two sentences, or say nothing if it only repeats what you already told them.',
     message.approval &&
@@ -60,9 +62,10 @@ export function registerVoiceCalls(
   const { provider } = options;
   const submit: Submit = options.submit ?? submitUserMessage;
   const calls = new Map<string, () => Promise<void>>();
+  let admission = Promise.resolve();
 
-  async function run(call: VoiceCall, threadId: string, since: Date) {
-    const spoken = new Set<string>();
+  async function run(call: VoiceCall, threadId: string, since: string) {
+    let after = { at: since, id: '00000000-0000-0000-0000-000000000000' };
     let heard: Heard[] = [];
     let heardAt = 0;
     let lastHandoff: string | undefined;
@@ -73,22 +76,21 @@ export function registerVoiceCalls(
     async function speakNew() {
       const { rows } = await pool.query<{
         id: string;
+        at: string;
         text: string;
         files: number;
         approval: boolean;
       }>(
-        `SELECT m.id,m.text,jsonb_array_length(m.attachments) AS files,
+        `SELECT m.id,m.created_at::text AS at,m.text,jsonb_array_length(m.attachments) AS files,
            EXISTS(SELECT 1 FROM approvals a WHERE a.owner_id=m.owner_id AND a.confirmation_message_id=m.id AND a.status='pending') AS approval
          FROM messages m WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.role='assistant'
-           AND m.hidden_at IS NULL AND m.created_at>=$3
+           AND m.hidden_at IS NULL AND (m.created_at,m.id)>($3::timestamptz,$4::uuid)
          ORDER BY m.created_at,m.id LIMIT 50`,
-        [ownerId, threadId, since],
+        [ownerId, threadId, after.at, after.id],
       );
-      for (const message of rows) {
-        if (spoken.has(message.id)) continue;
-        spoken.add(message.id);
-        call.say(spokenUpdate(message), lastHandoff);
-      }
+      for (const message of rows) call.say(spokenUpdate(message), lastHandoff);
+      if (rows.length) after = rows.at(-1)!;
+      return rows.length === 50;
     }
     async function read() {
       if (reading) {
@@ -99,14 +101,17 @@ export function registerVoiceCalls(
       try {
         do {
           again = false;
-          await speakNew();
+          if (await speakNew()) again = true;
         } while (again);
       } finally {
         reading = false;
       }
     }
     const listen = (event: ServerEvent) => {
-      if (event.type === 'refresh') void read().catch(() => {});
+      if (event.type === 'refresh')
+        void read().catch((error) =>
+          app.log.warn({ err: error }, 'Voice call could not read Nod’s new messages'),
+        );
     };
 
     async function handoff(id: string, atMs: number) {
@@ -120,7 +125,10 @@ export function registerVoiceCalls(
           'Nod received no words from the owner for this request. Ask them to say it again.',
           id,
         );
-      if (classifyVerificationReply(text).kind === 'code' || securityCodeIn(text))
+      if (
+        ['code', 'wrapped'].includes(classifyVerificationReply(text).kind) ||
+        securityCodeIn(text)
+      )
         return call.say(
           'This sounded like a code. Codes are never taken by voice: ask the owner to enter it in the app.',
           id,
@@ -182,24 +190,32 @@ export function registerVoiceCalls(
       const thread = await activeThread(pool);
       if (thread.id !== input.threadId)
         throw failure('This conversation has been reset. Reload it before continuing.');
-      await Promise.all([...calls.values()].map((end) => end()));
-      const since = (await pool.query<{ now: Date }>('SELECT now()')).rows[0].now;
-      const voice = (await options.voice?.())?.replace(/^openai:/, '');
-      const call = await provider
-        .start({
-          sdp: input.sdp,
-          instructions: voiceCallInstructions,
-          greeting: `The call just connected. Greet the owner now in one short sentence${input.language ? `, in the language of the ${input.language} locale,` : ''} and ask what they need. Then listen, and answer in the language the owner speaks.`,
-          voice,
-          signal: AbortSignal.timeout(30_000),
-        })
-        .catch((error: unknown) => {
-          throw failure(
-            `The voice call could not start: ${error instanceof Error ? error.message : String(error)}`,
-            502,
-          );
-        });
-      calls.set(call.id, () => call.close());
+      const admitted = admission.then(async () => {
+        await Promise.all([...calls.values()].map((end) => end()));
+        const since = (await pool.query<{ now: string }>('SELECT now()::text')).rows[0].now;
+        const voice = (await options.voice?.())?.replace(/^openai:/, '');
+        const call = await provider
+          .start({
+            sdp: input.sdp,
+            instructions: voiceCallInstructions,
+            greeting: `The call just connected. Greet the owner now in one short sentence${input.language ? `, in the language of the ${input.language} locale,` : ''} and ask what they need. Then listen, and answer in the language the owner speaks.`,
+            voice,
+            signal: AbortSignal.timeout(30_000),
+          })
+          .catch((error: unknown) => {
+            throw failure(
+              `The voice call could not start: ${error instanceof Error ? error.message : String(error)}`,
+              502,
+            );
+          });
+        calls.set(call.id, () => call.close());
+        return { call, since };
+      });
+      admission = admitted.then(
+        () => {},
+        () => {},
+      );
+      const { call, since } = await admitted;
       void run(call, thread.id, since).catch((error) =>
         app.log.warn({ err: error }, 'Voice call ended with an error'),
       );

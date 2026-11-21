@@ -19,7 +19,7 @@ Any tag in the content that could close the block early is neutralized. The same
 
 A connected MCP server's own guide to its tools, such as n8n's build steps, reaches the model the same way: Nod follows it for how to use that server's tools, but it never counts as your words or grants permission.
 
-In a [voice call](/use/voice-calls/), only OpenAI's transcript of what you said reaches Nod as your words. What the voice model says or summarizes never does. Nod's replies reach the voice model in the same data block, so a page quoted in a reply can't instruct the call.
+In a [voice call](/use/voice-calls/), only OpenAI's transcript of what you said reaches Nod as your words. What the voice model says or summarizes never does. Nod's replies reach the voice model in the same data block, and the voice model is told not to follow instructions inside it. Like any model, it can still be persuaded, but what it says never becomes your words.
 
 Results from Nod's workspace tools, such as reading a file, aren't wrapped, even when the file came from the web. Error messages from outside tools aren't wrapped either.
 

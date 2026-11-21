@@ -30,12 +30,14 @@ export function VoiceCallButton({
 }) {
   const [phase, setPhase] = useState<CallPhase>('idle');
   const live = useRef<Live | null>(null);
+  const attempt = useRef(0);
   useEffect(() => onPhase(phase), [phase, onPhase]);
   useEffect(() => () => onPhase('idle'), [onPhase]);
 
   function end() {
     const current = live.current;
     live.current = null;
+    attempt.current++;
     setPhase('idle');
     if (!current) return;
     current.peer.close();
@@ -48,10 +50,15 @@ export function VoiceCallButton({
   async function start() {
     onError('');
     setPhase('connecting');
+    const mine = ++attempt.current;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: microphoneId ? { deviceId: { exact: microphoneId } } : true,
       });
+      if (attempt.current !== mine) {
+        for (const track of stream.getTracks()) track.stop();
+        return;
+      }
       const peer = new RTCPeerConnection();
       const audio = new Audio();
       audio.autoplay = true;
@@ -81,6 +88,7 @@ export function VoiceCallButton({
       await peer.setRemoteDescription({ type: 'answer', sdp: answer.sdp });
       setPhase('live');
     } catch (cause) {
+      if (attempt.current !== mine) return;
       end();
       onError(
         cause instanceof DOMException && cause.name === 'NotAllowedError'
@@ -97,7 +105,7 @@ export function VoiceCallButton({
       variant="ghost"
       size="icon"
       className={`call-button${calling ? ' is-calling' : ''}`}
-      aria-label={calling ? 'End voice call' : 'Start voice call'}
+      aria-label="Voice call"
       title={calling ? 'End voice call' : 'Talk with Nod in a live voice call'}
       aria-pressed={calling}
       disabled={disabled && !calling}

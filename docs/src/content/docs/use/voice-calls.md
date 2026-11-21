@@ -11,12 +11,12 @@ Select the phone button in the chat to talk with Nod live. A fast voice model an
 
 - **An OpenAI API key.** Calls use OpenAI GPT-Live, even when another provider runs Nod. Add a key in **Settings → Models**. A ChatGPT plan doesn't include GPT-Live. Without a key the phone button is hidden, and **Settings → Voice & audio** says what a call needs.
 - **The Nod app.** Calls work in the desktop and web app, not in Telegram or WhatsApp.
-- **Spending.** OpenAI bills each call by its length. **Usage** records each call's duration without a price. Once the monthly spending limit is reached, a new call doesn't start.
+- **Spending.** OpenAI bills each call by its length. **Usage** records each call's duration without a price. Because calls have no price in Nod, they don't count toward the monthly spending limit. Once that limit is reached by other spending, a new call doesn't start.
 
 ## Make a call
 
 1. Select the phone button beside the microphone and allow microphone access. The call uses the microphone you chose for audio messages.
-2. When the call connects, the chat shows that you're on a call and the voice says hello in your app's language.
+2. When the call connects, the chat shows that you're on a call and the voice says hello in your browser's or system's language.
 3. Talk. The voice answers in the language you speak. If you chose the OpenAI **Marin** or **Cedar** voice in **Settings → Voice & audio**, the call uses it; otherwise it uses Marin.
 4. Select the button again to hang up. Leaving the chat also ends the call.
 

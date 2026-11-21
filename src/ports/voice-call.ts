@@ -15,9 +15,7 @@ export interface VoiceCall {
 }
 
 export interface VoiceCallProvider {
-  id: string;
   configured: boolean;
-  voices: readonly string[];
   start(
     input: {
       sdp: string;

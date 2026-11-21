@@ -2155,9 +2155,7 @@ test(
           const voiceApp = Fastify();
           registerVoiceCalls(voiceApp, {
             provider: {
-              id: 'fixture',
               configured: true,
-              voices: [],
               start: async ({ sdp }) => ({
                 id: 'call-fixture',
                 sdp: `answer to ${sdp}`,
@@ -2245,8 +2243,21 @@ test(
                   entry.text.includes('untrusted_tool_result'),
               ),
             );
+            await db.pool.query(
+              `INSERT INTO messages(id,owner_id,thread_id,role,text)
+               SELECT gen_random_uuid(),$1,$2,'assistant','Voice update '||lpad(n::text,2,'0')
+               FROM generate_series(1,51) n`,
+              [ownerId, (await thread.activeThread()).id],
+            );
+            events.emit('event', { type: 'refresh' });
+            const updates = () => said.filter((entry) => entry.text.includes('Voice update '));
+            await waitFor(() => updates().length >= 51);
+            await delay(200);
+            assert.equal(updates().length, 51);
+            assert.equal(new Set(updates().map((entry) => entry.text)).size, 51);
           } finally {
             await voiceApp.close();
+            await db.pool.query("DELETE FROM messages WHERE text LIKE 'Voice update %'");
           }
         },
       );
