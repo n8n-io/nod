@@ -142,7 +142,27 @@ export function createOpenAIVoiceCallProvider(options: {
         else if (event.type === 'session.closed')
           push({ type: 'closed', reason: String(event.reason ?? 'closed').slice(0, 100) });
       });
-      socket.addEventListener('close', () => push({ type: 'closed', reason: 'disconnected' }));
+      socket.addEventListener('close', () => {
+        if (done) return;
+        void (options.fetch ?? fetch)(`${base}/live/sessions/${id}/hangup`, {
+          method: 'POST',
+          redirect: 'error',
+          headers: { Authorization: `Bearer ${connection.key}` },
+          signal: AbortSignal.timeout(10_000),
+        })
+          .then(async (response) => {
+            if (!response.ok) throw await openAIRequestError(response, connection.key);
+          })
+          .catch((error: unknown) =>
+            push({
+              type: 'error',
+              error: new Error(
+                `The OpenAI voice session lost its connection and could not be hung up: ${error instanceof Error ? error.message : String(error)}`,
+              ),
+            }),
+          )
+          .finally(() => push({ type: 'closed', reason: 'disconnected' }));
+      });
       socket.addEventListener('error', () =>
         push({ type: 'error', error: new Error('The OpenAI voice session connection failed.') }),
       );

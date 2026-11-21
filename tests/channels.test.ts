@@ -2405,16 +2405,21 @@ test('Telegram downloads stop at 20 MB whatever size the sender, Bot API or file
 });
 
 test('a GPT-Live call hears only the owner transcript and keeps the key on the server', async () => {
-  const listeners: Record<string, Array<(event: { data?: string }) => void>> = {};
+  let listeners: Record<string, Array<(event: { data?: string }) => void>> = {};
   const sent: string[] = [];
+  const hungUp: string[] = [];
   const usage: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
   let attached: { url: string; key: string } | undefined;
   const provider = createOpenAIVoiceCallProvider({
     connection: async () => ({ key: 'fixture-never-live', region: 'eu' }),
     configured: () => true,
     fetch: async (input, init) => {
-      assert.equal(String(input), 'https://eu.api.openai.com/v1/live/sessions');
       assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer fixture-never-live');
+      if (String(input).endsWith('/hangup')) {
+        hungUp.push(String(input));
+        return new Response('{}');
+      }
+      assert.equal(String(input), 'https://eu.api.openai.com/v1/live/sessions');
       const body = JSON.parse(String(init?.body));
       assert.deepEqual(body.transport, { type: 'webrtc', sdp: 'v=0 synthetic offer' });
       assert.equal(body.session.model, 'gpt-live-1.1');
@@ -2505,6 +2510,15 @@ test('a GPT-Live call hears only the owner transcript and keeps the key on the s
   assert.equal(usage.length, 1);
   assert.equal(usage[0].durationMs, 12_000);
   assert.equal(usage[0].operation, 'voice_call');
+  assert.deepEqual(hungUp, []);
+
+  listeners = {};
+  const dropped = await provider.start({ sdp: 'v=0 synthetic offer', instructions: 'Synthetic' });
+  listeners.close?.forEach((listener) => listener({}));
+  const afterDrop = [];
+  for await (const event of dropped.events) afterDrop.push(event);
+  assert.deepEqual(afterDrop, [{ type: 'closed', reason: 'disconnected' }]);
+  assert.deepEqual(hungUp, ['https://eu.api.openai.com/v1/live/sessions/live_fixture/hangup']);
 });
 
 test('speech uses a bounded transcription request and generates Ogg voice output without exposing credentials', async () => {

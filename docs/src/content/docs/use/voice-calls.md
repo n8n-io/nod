@@ -47,7 +47,7 @@ flowchart LR
   server -- updates as data --> live
 ```
 
-The app sends your audio straight to OpenAI. The Nod server starts each call with your OpenAI key and gives the app only what it needs to connect. The key never reaches the app.
+The app sends your audio straight to OpenAI. The Nod server starts each call with your OpenAI key and gives the app only what it needs to connect. The key never reaches the app. If the server loses its connection to the call, it hangs the call up, so the voice doesn't keep listening while Nod can't receive your requests.
 
 When the voice hands a request to Nod, the server takes OpenAI's transcript of what you said since the previous hand-off and posts it as your message in the app's conversation. It counts as typed: it steers work Nod is already doing, and the [trust check](/trust/approvals/) reads it as your words. Nothing the voice model says becomes your words.
 
