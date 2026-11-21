@@ -49,6 +49,7 @@ import { useArtifactDrawer } from './artifact-context';
 import { usePageData } from '../hooks/use-page-data';
 import { useVoiceRecorder } from '../hooks/use-voice-recorder';
 import { MicrophonePicker, VoiceRecorder, VoiceSetup } from './voice-recorder';
+import { VoiceCallButton } from './voice-call';
 import { MessageQuote } from './message';
 
 interface DraftAttachment {
@@ -76,6 +77,7 @@ export type ComposerSendResult =
 
 interface ComposerProps {
   active?: boolean;
+  threadId?: string;
   draftKey?: string;
   privateReply?: boolean;
   restoreReply?(reply: Message['replyTo']): void;
@@ -100,6 +102,7 @@ interface ComposerProps {
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
   {
     active = true,
+    threadId,
     ready,
     busy = false,
     text,
@@ -134,6 +137,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     refreshing: refreshingSpeech,
   } = usePageData<{
     transcription: boolean;
+    calls?: boolean;
     transcriptionFormat?: 'wav';
     local?: { state: 'not_downloaded' | 'downloading' | 'ready' | 'failed'; progress?: number };
     localInput?: {
@@ -1124,6 +1128,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               >
                 <Paperclip size={16} />
               </Button>
+            )}
+            {speech?.calls && threadId && !hasRecording && (
+              <VoiceCallButton
+                threadId={threadId}
+                microphoneId={recorder.microphoneId || undefined}
+                disabled={!active || !ready}
+                onError={setError}
+              />
             )}
             <MicrophonePicker
               recorder={recorder}

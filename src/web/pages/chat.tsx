@@ -2673,6 +2673,7 @@ export function Chat({
             <Composer
               key={`${ownerId}.${threadId}`}
               active={visible}
+              threadId={threadId}
               ref={composer}
               draftKey={`nod.chat-draft.${ownerId}.${threadId}`}
               privateReply={Boolean(state.verificationRequests?.length)}

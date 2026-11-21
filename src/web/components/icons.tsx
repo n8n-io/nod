@@ -17,6 +17,8 @@ import {
   Monitor as LucideMonitor,
   Moon as LucideMoon,
   Pause as LucidePause,
+  Phone as LucidePhone,
+  PhoneOff as LucidePhoneOff,
   Plane as LucidePlane,
   Presentation as LucidePresentation,
   Repeat as LucideRepeat,
@@ -183,6 +185,8 @@ export const FileSpreadsheet = lucide(LucideFileSpreadsheet);
 export const FileVideo = lucide(LucideFileVideo);
 export const Gamepad2 = lucide(LucideGamepad2);
 export const Hand = lucide(LucideHand);
+export const Phone = lucide(LucidePhone);
+export const PhoneOff = lucide(LucidePhoneOff);
 export const Heart = lucide(LucideHeart);
 export const Highlighter = lucide(LucideHighlighter);
 export const KeyRound = lucide(LucideKeyRound);
