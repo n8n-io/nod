@@ -1341,3 +1341,64 @@ test('charts accept signed finite data and reject ambiguous series or excessive 
   ])
     assert.equal(presentationSchema.safeParse(value).success, false);
 });
+
+test('the browser proxy refuses a WebSocket upgrade to a private destination', async () => {
+  let reached = 0;
+  const sockets = new Set<import('node:stream').Duplex>();
+  const server = createServer(() => {
+    reached++;
+  });
+  server.on('upgrade', (_request, socket) => {
+    reached++;
+    sockets.add(socket);
+    socket.write(
+      'HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n',
+    );
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const port = (server.address() as { port: number }).port;
+  const guarded = createBrowserProxy({
+    resolver: async () => [{ address: '192.168.1.10', family: 4 }],
+  });
+  const open = createBrowserProxy({ privateNetwork: true });
+  const upgrade = async (proxy: ReturnType<typeof createBrowserProxy>, target: string) => {
+    const { hostname, port: proxyPort } = new URL(await proxy.url());
+    const sent = request({
+      host: hostname,
+      port: proxyPort,
+      method: 'GET',
+      path: target,
+      headers: { host: new URL(target).host, connection: 'Upgrade', upgrade: 'websocket' },
+    });
+    const answer = Promise.race([
+      once(sent, 'upgrade').then(([, socket]) => {
+        (socket as import('node:net').Socket).destroy();
+        return 101;
+      }),
+      once(sent, 'response').then(([reply]) => {
+        (reply as import('node:http').IncomingMessage).resume();
+        return (reply as import('node:http').IncomingMessage).statusCode;
+      }),
+    ]);
+    sent.end();
+    return answer;
+  };
+  try {
+    for (const target of [
+      `http://127.0.0.1:${port}/ws`,
+      `http://localhost:${port}/ws`,
+      `http://rebind.example:${port}/ws`,
+    ])
+      assert.equal(await upgrade(guarded, target), 400, target);
+    assert.equal(reached, 0);
+    assert.equal(await upgrade(open, `http://127.0.0.1:${port}/ws`), 101);
+    assert.equal(reached, 1);
+  } finally {
+    await guarded.dispose();
+    await open.dispose();
+    for (const socket of sockets) socket.destroy();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
