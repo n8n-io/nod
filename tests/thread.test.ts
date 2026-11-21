@@ -2140,6 +2140,117 @@ test(
         },
       );
 
+      await t.test(
+        'a voice call posts only the owner’s words, never answers a confirmation and speaks the reply',
+        async () => {
+          const { registerVoiceCalls } = await import('../src/server/voice-calls.ts');
+          const pending: Array<import('../src/ports/voice-call.ts').VoiceCallEvent> = [];
+          let wake: (() => void) | undefined;
+          const said: Array<{ text: string; handoffId?: string }> = [];
+          const answers: unknown[] = [];
+          const emit = (event: (typeof pending)[number]) => {
+            pending.push(event);
+            wake?.();
+          };
+          const voiceApp = Fastify();
+          registerVoiceCalls(voiceApp, {
+            provider: {
+              id: 'fixture',
+              configured: true,
+              voices: [],
+              start: async ({ sdp }) => ({
+                id: 'call-fixture',
+                sdp: `answer to ${sdp}`,
+                events: {
+                  async *[Symbol.asyncIterator]() {
+                    while (true) {
+                      while (pending.length) {
+                        const event = pending.shift()!;
+                        if (event.type === 'closed') return;
+                        yield event;
+                      }
+                      await new Promise<void>((resolve) => (wake = resolve));
+                    }
+                  },
+                },
+                say: (text, handoffId) => said.push({ text, handoffId }),
+                close: async () => emit({ type: 'closed', reason: 'fixture' }),
+              }),
+            },
+            submit: thread.createUserMessageService({
+              confirmAction: {
+                close: async () => {},
+                answer: async (input) => {
+                  answers.push(input);
+                  return { approvalId: randomUUID(), approved: true };
+                },
+                accept: async (_client, input) => {
+                  answers.push(input.answer);
+                  return undefined;
+                },
+              },
+            }).submit,
+          });
+          const start = (threadId: string) =>
+            voiceApp.inject({
+              method: 'POST',
+              url: '/api/voice/calls',
+              payload: { sdp: 'v=0 synthetic', threadId },
+            });
+          try {
+            assert.equal((await start(randomUUID())).statusCode, 409);
+            const started = await start((await thread.activeThread()).id);
+            assert.deepEqual(started.json(), {
+              callId: 'call-fixture',
+              sdp: 'answer to v=0 synthetic',
+            });
+            emit({ type: 'heard', text: 'Yes, book a table ', startMs: 0, endMs: 900 });
+            emit({ type: 'heard', text: 'at Nora at eight.', startMs: 900, endMs: 1800 });
+            emit({ type: 'handoff', id: 'handoff-1', atMs: 2000 });
+            emit({ type: 'heard', text: ' And pay the deposit.', startMs: 2100, endMs: 2900 });
+            const sourceId = 'voice:call-fixture:handoff-1';
+            await waitFor(
+              async () =>
+                (
+                  await db.pool.query(
+                    "SELECT 1 FROM turns WHERE source_id=$1 AND status='succeeded'",
+                    [sourceId],
+                  )
+                ).rowCount === 1,
+            );
+            const posted = (
+              await db.pool.query(
+                'SELECT m.text,m.role,u.prompt,u.channel FROM turns u JOIN messages m ON m.id=u.message_id WHERE u.source_id=$1',
+                [sourceId],
+              )
+            ).rows;
+            assert.deepEqual(posted, [
+              {
+                text: 'Yes, book a table at Nora at eight.',
+                role: 'user',
+                prompt: 'Yes, book a table at Nora at eight.',
+                channel: 'web',
+              },
+            ]);
+            assert.deepEqual(answers, [undefined]);
+            assert.equal(
+              (await db.pool.query("SELECT 1 FROM messages WHERE text LIKE '%deposit%'")).rowCount,
+              0,
+            );
+            await waitFor(() =>
+              said.some(
+                (entry) =>
+                  entry.handoffId === 'handoff-1' &&
+                  entry.text.includes('done: Yes, book a table at Nora at eight.') &&
+                  entry.text.includes('untrusted_tool_result'),
+              ),
+            );
+          } finally {
+            await voiceApp.close();
+          }
+        },
+      );
+
       await t.test('web paste keeps model text separate from display Markdown', async () => {
         const text = [
           '  [',

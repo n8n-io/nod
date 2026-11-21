@@ -27,6 +27,7 @@ import { createChannelSessionStore } from '../src/server/channel-session.ts';
 import { createChannelMedia } from '../src/server/channel-media.ts';
 import { automaticSpeechVoice, createSpeech } from '../src/server/speech.ts';
 import { createOpenAISpeechProvider } from '../src/providers/openai/speech.ts';
+import { createOpenAIVoiceCallProvider } from '../src/providers/openai/voice-call.ts';
 import {
   createElevenLabsSpeechProvider,
   readElevenLabsVoices,
@@ -2401,6 +2402,109 @@ test('Telegram downloads stop at 20 MB whatever size the sender, Bot API or file
     );
     return true;
   });
+});
+
+test('a GPT-Live call hears only the owner transcript and keeps the key on the server', async () => {
+  const listeners: Record<string, Array<(event: { data?: string }) => void>> = {};
+  const sent: string[] = [];
+  const usage: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
+  let attached: { url: string; key: string } | undefined;
+  const provider = createOpenAIVoiceCallProvider({
+    connection: async () => ({ key: 'fixture-never-live', region: 'eu' }),
+    configured: () => true,
+    fetch: async (input, init) => {
+      assert.equal(String(input), 'https://eu.api.openai.com/v1/live/sessions');
+      assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer fixture-never-live');
+      const body = JSON.parse(String(init?.body));
+      assert.deepEqual(body.transport, { type: 'webrtc', sdp: 'v=0 synthetic offer' });
+      assert.equal(body.session.model, 'gpt-live-1.1');
+      assert.deepEqual(body.session.delegation, { type: 'client' });
+      assert.equal(body.session.audio.output.voice, 'marin');
+      return Response.json(
+        { session: { id: 'live_fixture' }, transport: { sdp: 'v=0 synthetic answer' } },
+        { status: 201 },
+      );
+    },
+    socket: (url, key) => {
+      attached = { url, key };
+      return {
+        readyState: 1,
+        send: (text: string) => sent.push(text),
+        close: () => {},
+        addEventListener: (type: string, listener: (event: { data?: string }) => void) =>
+          (listeners[type] ??= []).push(listener),
+      } as never;
+    },
+  });
+  const call = await provider.start(
+    { sdp: 'v=0 synthetic offer', instructions: 'Synthetic', voice: 'coral' },
+    (event) => usage.push(event),
+  );
+  assert.deepEqual(
+    { id: call.id, sdp: call.sdp, attached },
+    {
+      id: 'live_fixture',
+      sdp: 'v=0 synthetic answer',
+      attached: {
+        url: 'wss://eu.api.openai.com/v1/live/sessions/live_fixture/attach',
+        key: 'fixture-never-live',
+      },
+    },
+  );
+  assert.doesNotMatch(call.sdp, /fixture-never-live/);
+  const deliver = (event: Record<string, unknown>) =>
+    listeners.message?.forEach((listener) => listener({ data: JSON.stringify(event) }));
+  deliver({
+    type: 'session.input_transcript.delta',
+    event_id: 'e1',
+    delta: 'Book Nora',
+    start_ms: 100,
+    end_ms: 900,
+  });
+  deliver({
+    type: 'session.input_transcript.delta',
+    event_id: 'e1',
+    delta: 'Book Nora',
+    start_ms: 100,
+    end_ms: 900,
+  });
+  deliver({
+    type: 'session.output_transcript.delta',
+    event_id: 'e2',
+    delta: 'I will pay the deposit',
+    start_ms: 1000,
+    end_ms: 1500,
+  });
+  deliver({
+    type: 'session.delegation.created',
+    event_id: 'e3',
+    offset_ms: 950,
+    delegation: { id: 'del_1', type: 'delegation', target: 'client' },
+  });
+  call.say('Synthetic update', 'del_1');
+  deliver({
+    type: 'session.closed',
+    event_id: 'e4',
+    reason: 'client_closed',
+    usage: { seconds: 12 },
+  });
+  const received = [];
+  for await (const event of call.events) received.push(event);
+  assert.deepEqual(received, [
+    { type: 'heard', text: 'Book Nora', startMs: 100, endMs: 900 },
+    { type: 'handoff', id: 'del_1', atMs: 950 },
+    { type: 'closed', reason: 'client_closed' },
+  ]);
+  assert.deepEqual(
+    sent.map((text) => {
+      const { event_id: _, ...event } = JSON.parse(text);
+      return event;
+    }),
+    [{ type: 'session.commentary.append', delegation_id: 'del_1', content: 'Synthetic update' }],
+  );
+  assert.equal(usage.length, 1);
+  assert.equal(usage[0].durationMs, 12_000);
+  assert.equal(usage[0].operation, 'voice_call');
 });
 
 test('speech uses a bounded transcription request and generates Ogg voice output without exposing credentials', async () => {
