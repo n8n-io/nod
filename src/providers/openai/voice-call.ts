@@ -152,6 +152,7 @@ export function createOpenAIVoiceCallProvider(options: {
         })
           .then(async (response) => {
             if (!response.ok) throw await openAIRequestError(response, connection.key);
+            await response.body?.cancel().catch(() => {});
           })
           .catch((error: unknown) =>
             push({
