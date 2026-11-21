@@ -47,6 +47,7 @@ import {
 import { reactionReplySql } from './turn-chain.ts';
 import { isMessageReaction } from '../shared/emoji.ts';
 import { accessKey, registerLocalAccess } from './access.ts';
+import { registerClientApi } from './client-api.ts';
 import { logFailure, withFailureLog, type FailureLogSink } from './failure-log.ts';
 import { fileBytes } from '../shared/files.ts';
 import { BrowserActionError, type Computer } from '../ports/computer.ts';
@@ -291,6 +292,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
           bearer: authToken !== undefined,
         },
   );
+  registerClientApi(app, authToken !== undefined && !desktopAccess);
   if (desktopAccess && dependencies.admission) registerWorkAdmission(app, dependencies.admission);
   app.setErrorHandler((error, request, reply) => {
     const known =
