@@ -187,10 +187,10 @@ export function registerVoiceCalls(
         throw failure(
           `Voice calls need an OpenAI API key. Add one in ${appPages['/settings/models']}.`,
         );
-      const thread = await activeThread(pool);
-      if (thread.id !== input.threadId)
-        throw failure('This conversation has been reset. Reload it before continuing.');
       const admitted = admission.then(async () => {
+        const thread = await activeThread(pool);
+        if (thread.id !== input.threadId)
+          throw failure('This conversation has been reset. Reload it before continuing.');
         await Promise.all([...calls.values()].map((end) => end()));
         const since = (await pool.query<{ now: string }>('SELECT now()::text')).rows[0].now;
         const voice = (await options.voice?.())?.replace(/^openai:/, '');
@@ -209,14 +209,14 @@ export function registerVoiceCalls(
             );
           });
         calls.set(call.id, () => call.close());
-        return { call, since };
+        return { call, since, threadId: thread.id };
       });
       admission = admitted.then(
         () => {},
         () => {},
       );
-      const { call, since } = await admitted;
-      void run(call, thread.id, since).catch((error) =>
+      const { call, since, threadId } = await admitted;
+      void run(call, threadId, since).catch((error) =>
         app.log.warn({ err: error }, 'Voice call ended with an error'),
       );
       return { callId: call.id, sdp: call.sdp };
