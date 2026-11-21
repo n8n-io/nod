@@ -13,19 +13,25 @@ type Live = {
 const hangUp = (callId: string) =>
   api(`/api/voice/calls/${encodeURIComponent(callId)}`, { method: 'DELETE' }).catch(() => {});
 
+export type CallPhase = 'idle' | 'connecting' | 'live';
+
 export function VoiceCallButton({
   threadId,
   microphoneId,
   disabled,
   onError,
+  onPhase,
 }: {
   threadId: string;
   microphoneId?: string;
   disabled: boolean;
   onError(message: string): void;
+  onPhase(phase: CallPhase): void;
 }) {
-  const [phase, setPhase] = useState<'idle' | 'connecting' | 'live'>('idle');
+  const [phase, setPhase] = useState<CallPhase>('idle');
   const live = useRef<Live | null>(null);
+  useEffect(() => onPhase(phase), [phase, onPhase]);
+  useEffect(() => () => onPhase('idle'), [onPhase]);
 
   function end() {
     const current = live.current;
@@ -64,7 +70,11 @@ export function VoiceCallButton({
       await peer.setLocalDescription(await peer.createOffer());
       const answer = await api<{ callId: string; sdp: string }>('/api/voice/calls', {
         method: 'POST',
-        body: JSON.stringify({ sdp: peer.localDescription!.sdp, threadId }),
+        body: JSON.stringify({
+          sdp: peer.localDescription!.sdp,
+          threadId,
+          language: navigator.language,
+        }),
       });
       if (live.current !== current) return void hangUp(answer.callId);
       current.callId = answer.callId;

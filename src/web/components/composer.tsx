@@ -49,7 +49,7 @@ import { useArtifactDrawer } from './artifact-context';
 import { usePageData } from '../hooks/use-page-data';
 import { useVoiceRecorder } from '../hooks/use-voice-recorder';
 import { MicrophonePicker, VoiceRecorder, VoiceSetup } from './voice-recorder';
-import { VoiceCallButton } from './voice-call';
+import { VoiceCallButton, type CallPhase } from './voice-call';
 import { MessageQuote } from './message';
 
 interface DraftAttachment {
@@ -161,6 +161,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   } | null>(null);
   const audioSend = useRef(false);
   const [error, setError] = useState('');
+  const [callPhase, setCallPhase] = useState<CallPhase>('idle');
   const fileInput = useRef<HTMLInputElement>(null);
   const sendButton = useRef<HTMLButtonElement>(null);
   const form = useRef<HTMLFormElement>(null);
@@ -904,6 +905,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       {(lengthError || error || audioSetupError) && (
         <Notice>{lengthError || error || audioSetupError}</Notice>
       )}
+      {callPhase !== 'idle' && !error && (
+        <Notice kind="info">
+          {callPhase === 'connecting'
+            ? 'Connecting the call…'
+            : 'On a call with Nod. Talk any time, and select the phone button to hang up.'}
+        </Notice>
+      )}
       {replyTo && (
         <div className="reply-context composer-reply">
           <CornerUpLeft size={16} />
@@ -1135,6 +1143,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 microphoneId={recorder.microphoneId || undefined}
                 disabled={!active || !ready}
                 onError={setError}
+                onPhase={setCallPhase}
               />
             )}
             <MicrophonePicker

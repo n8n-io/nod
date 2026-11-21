@@ -16,13 +16,14 @@ Select the phone button in the chat to talk with Nod live. A fast voice model an
 ## Make a call
 
 1. Select the phone button beside the microphone and allow microphone access. The call uses the microphone you chose for audio messages.
-2. Talk. The voice answers in the language you speak. If you chose the OpenAI **Marin** or **Cedar** voice in **Settings → Voice & audio**, the call uses it; otherwise it uses Marin.
-3. Select the button again to hang up. Leaving the chat also ends the call.
+2. When the call connects, the chat shows that you're on a call and the voice says hello in your app's language.
+3. Talk. The voice answers in the language you speak. If you chose the OpenAI **Marin** or **Cedar** voice in **Settings → Voice & audio**, the call uses it; otherwise it uses Marin.
+4. Select the button again to hang up. Leaving the chat also ends the call.
 
 While you're on a call:
 
 - **Ask anything.** The voice keeps the conversation going and hands Nod anything that needs facts, your data, an app, the web or an action.
-- **Start a task and keep talking.** When Nod replies, or a task posts a question, update or result, the voice tells you in a sentence or two and says the details are in the app. It doesn't read out links, codes, files or long text.
+- **Start a task and keep talking.** When Nod replies, or a task posts a question, update or result, the voice tells you in a sentence or two and says the details are in the app. It skips a reply that only repeats what it already told you. It doesn't read out links, codes, files or long text.
 - **Interrupt the voice** by talking over it. That only stops what the voice is saying.
 - **Say "stop"** to stop Nod's work. Your words reach Nod as a message, and Nod stops its work as it does for a typed request. The **Stop** button keeps working during a call.
 

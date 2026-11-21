@@ -27,7 +27,7 @@ export function createOpenAIVoiceCallProvider(options: {
       return options.configured();
     },
     voices: liveVoices,
-    async start({ sdp, instructions, voice, signal }, report) {
+    async start({ sdp, instructions, greeting, voice, signal }, report) {
       const connection = await options.connection();
       if (!connection?.key) throw new Error('Voice calls need an OpenAI API key.');
       const base = openAIBaseUrl(connection.region);
@@ -42,6 +42,15 @@ export function createOpenAIVoiceCallProvider(options: {
             instructions,
             audio: { output: { voice: voice && liveVoices.includes(voice) ? voice : 'marin' } },
             delegation: { type: 'client' },
+            ...(greeting && {
+              input: [
+                {
+                  type: 'message',
+                  role: 'developer',
+                  content: [{ type: 'input_text', text: greeting }],
+                },
+              ],
+            }),
           },
           transport: { type: 'webrtc', sdp },
         }),

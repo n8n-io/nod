@@ -19,7 +19,13 @@ export interface VoiceCallProvider {
   configured: boolean;
   voices: readonly string[];
   start(
-    input: { sdp: string; instructions: string; voice?: string; signal?: AbortSignal },
+    input: {
+      sdp: string;
+      instructions: string;
+      greeting?: string;
+      voice?: string;
+      signal?: AbortSignal;
+    },
     report?: (usage: ProviderUsageEvent) => void,
   ): Promise<VoiceCall>;
 }
