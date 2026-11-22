@@ -54,6 +54,7 @@ export interface MessageApproval {
   fields?: Array<{ label: string; value: string }>;
   body?: string;
   bodyCut?: true;
+  cardQuestion?: string;
 }
 export interface SubmitMessageResponse {
   threadId: string;

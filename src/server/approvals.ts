@@ -60,6 +60,7 @@ export interface ApprovalDescription {
 
 export interface ApprovalPresentation {
   question: string;
+  cardQuestion?: string;
   action: string;
   decline?: string;
 }
@@ -653,6 +654,7 @@ export async function createApprovals(
     let question: string | undefined;
     let title: string | undefined;
     let decline: string | undefined;
+    let cardQuestion: string | undefined;
     {
       let existing = await withTurnLock(turn.turnId, (client) => inspect(client, true));
       if ('repeat' in existing && existing.repeat && classifyRepeat) {
@@ -743,6 +745,7 @@ export async function createApprovals(
         question = typeof presentation === 'string' ? presentation : presentation.question;
         title = typeof presentation === 'string' ? undefined : presentation.action;
         decline = typeof presentation === 'string' ? undefined : presentation.decline;
+        cardQuestion = typeof presentation === 'string' ? undefined : presentation.cardQuestion;
         options.signal?.throwIfAborted();
         if (typeof question !== 'string' || !question.trim())
           throw new Error('The confirmation formatter did not produce a valid question.');
@@ -788,7 +791,7 @@ export async function createApprovals(
       );
       const approval = (
         await client.query(
-          "INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,status,source_message_id,confirmation_message_id,expected_revision,details,title,instruction_change,decline) VALUES($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10::jsonb,$11,$12::jsonb,$13) RETURNING *",
+          "INSERT INTO approvals(id,owner_id,thread_id,turn_id,action,args,status,source_message_id,confirmation_message_id,expected_revision,details,title,instruction_change,decline,card_question) VALUES($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10::jsonb,$11,$12::jsonb,$13,$14) RETURNING *",
           [
             randomUUID(),
             ownerId,
@@ -803,6 +806,7 @@ export async function createApprovals(
             title ?? null,
             instructionChange ? JSON.stringify(instructionChange) : null,
             decline ?? null,
+            cardQuestion?.trim() || null,
           ],
         )
       ).rows[0];

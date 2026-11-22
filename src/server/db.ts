@@ -155,7 +155,8 @@ export async function initializeDatabase() {
       ADD COLUMN IF NOT EXISTS expected_revision integer,
       ADD COLUMN IF NOT EXISTS details jsonb,
       ADD COLUMN IF NOT EXISTS title text,
-      ADD COLUMN IF NOT EXISTS decline text;
+      ADD COLUMN IF NOT EXISTS decline text,
+      ADD COLUMN IF NOT EXISTS card_question text;
     CREATE INDEX IF NOT EXISTS approvals_turn ON approvals(turn_id);
     CREATE INDEX IF NOT EXISTS approvals_execution_turn ON approvals(execution_turn_id);
     CREATE INDEX IF NOT EXISTS approvals_confirmation_message ON approvals(confirmation_message_id);
