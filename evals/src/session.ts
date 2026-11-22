@@ -228,7 +228,7 @@ export function createSession(options: {
 
   function approves(action: string, args: unknown, shown?: unknown) {
     return typeof user.approve === 'function'
-      ? user.approve(action, args, shown ?? undefined)
+      ? user.approve(action, args, shown)
       : (user.approve ?? true);
   }
 
