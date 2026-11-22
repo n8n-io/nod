@@ -5,7 +5,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
-import { splitQuestion } from '../../shared/answer-choices';
+import { approvalQuestion, splitQuestion } from '../../shared/answer-choices';
 import type { Activity, Message } from '../../shared/contracts';
 import { LiveLine } from './live-line';
 import { reactionEmoji } from '../../shared/emoji';
@@ -385,6 +385,10 @@ export function MessageBubble({
               ? 'answered'
               : null;
   const cardText = card ? splitQuestion(visibleText) : null;
+  const shownText =
+    message.role === 'assistant' && !streaming && message.approval?.fields
+      ? approvalQuestion(visibleText)
+      : visibleText;
   const cardTitle = cardText && (
     <MessageText text={cardText.question} connectedAppIds={connectedAppIds} />
   );
@@ -795,9 +799,9 @@ export function MessageBubble({
                   title={cardTitle}
                 />
               ) : (
-                visibleText && (
+                shownText && (
                   <MessageText
-                    text={visibleText}
+                    text={shownText}
                     connectedAppIds={connectedAppIds}
                     handoff={!streaming && handoff}
                     handoffPaused={handoffPaused}

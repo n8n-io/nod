@@ -56,6 +56,14 @@ export function questionWithChoices(question: string, choices: AnswerChoices) {
   ].join('\n\n');
 }
 
+export function approvalQuestion(text: string) {
+  const paragraphs = text.trim().split(/\n[ \t]*\n/);
+  const question = paragraphs.findIndex((paragraph) =>
+    /[?？؟][*_"'”’)\]]*$/.test(paragraph.trim()),
+  );
+  return question < 0 ? text : paragraphs.slice(0, question + 1).join('\n\n');
+}
+
 export function splitQuestion(text: string) {
   const whole = text.trim();
   const question = whole

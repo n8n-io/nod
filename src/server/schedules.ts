@@ -382,7 +382,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     missed: Date[] = [],
   ) {
     const turnId = await enqueueTurn(
-      `Scheduled task: ${row.title}\n${row.prompt}\nDeliver what this schedule asks for in this run, even when an earlier message covered the same ground. When it asks for nothing to be sent, message the owner only about a useful result, a problem or a necessary question.${note}`,
+      `Scheduled task: ${row.title}\n${row.prompt}\nThis run is due now; the schedule decides its timing. Deliver what this schedule asks for in this run, even when an earlier message covered the same ground. When it asks for nothing to be sent, message the owner only about a useful result, a problem or a necessary question.${note}`,
       {
         sourceId: `schedule:${row.id}:${jobId}`,
         source: 'schedule',
