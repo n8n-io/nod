@@ -52,9 +52,10 @@ const actionResponse = z
       .refine((value) => !/[\r\n]/.test(value) && /[\p{L}\p{N}]/u.test(value)),
   })
   .strict();
+const cardQuestion = z.string().trim().min(1).max(1_000);
 const confirmationResponse = actionResponse
   .extend({
-    question: z.string().trim().min(1).max(1_000),
+    question: cardQuestion,
     decline: z
       .string()
       .trim()
@@ -350,7 +351,10 @@ export function createCommunication(options: {
         throw new Error('Nod could not write this message because no model is selected.');
       const drafted =
         purpose === 'confirmation'
-          ? confirmationResponse.partial({ decline: true, question: true }).safeParse(result)
+          ? confirmationResponse
+              .extend({ question: cardQuestion.optional().catch(undefined) })
+              .partial({ decline: true })
+              .safeParse(result)
           : purpose === 'payment'
             ? actionResponse.safeParse(result)
             : response.safeParse(result);
