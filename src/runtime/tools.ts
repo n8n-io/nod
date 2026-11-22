@@ -806,6 +806,9 @@ const mcpPart = (value: string) =>
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '') || 'app';
 
+const mcpGuide = (namespace: string, instructions?: string) =>
+  untrustedBlock(`${namespace} MCP server guide`, instructions || 'This server supplied no guide.');
+
 export function mcpNamespaces(servers: NonNullable<RuntimeContext['mcpServers']>) {
   const taken = new Set<string>();
   return servers.map((server) => {
@@ -840,10 +843,7 @@ export function connectedTools(
     const deferred = {
       namespace,
       description: `${server.name} (${server.accountName}), a connected MCP server`,
-      guide: untrustedBlock(
-        `${namespace} MCP server guide`,
-        server.instructions || 'This server supplied no guide.',
-      ),
+      guide: mcpGuide(namespace, server.instructions),
     };
     return tools.flatMap(({ tool, name }) => {
       return [
@@ -1114,10 +1114,7 @@ export function nodTools(
           );
           if (guide) {
             if (p.file) throw new Error('An MCP server guide has no reference files.');
-            return untrustedBlock(
-              `${guide.namespace} MCP server guide`,
-              guide.server.instructions || 'This server supplied no guide.',
-            );
+            return mcpGuide(guide.namespace, guide.server.instructions);
           }
           if (
             skills?.core?.includes(p.name) ||
