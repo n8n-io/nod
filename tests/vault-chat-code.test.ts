@@ -689,6 +689,8 @@ test(
           'my code is 7395',
           '482913 is the code',
           'https://example.test/verify?code=482913',
+          'https://example.test/otp/482913',
+          'https://example.test/?verification_code=482913',
         ]) {
           const response = await send(text);
           assert.equal(response.statusCode, 409, text);

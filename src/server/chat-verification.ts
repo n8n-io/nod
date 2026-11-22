@@ -151,7 +151,7 @@ export async function createChatVerification(
       reply.kind !== 'ordinary' &&
       classifyVerificationReply(
         text.replace(/\bhttps?:\/\/\S+/giu, (url) =>
-          /(?:[?&](?:code|otp|pin|token)=|\/(?:auth|login|magic(?:-link)?|signin|verification|verify)(?:[/?#]|$))/iu.test(
+          /(?:^|[./?&#=_-])(?:2fa|auth|authentication|code|login|magic(?:-link)?|mfa|one-time(?:-code|password)?|otp|passcode|pin|signin|token|verification|verify)(?:$|[./?&#=_-])/iu.test(
             url,
           )
             ? url
