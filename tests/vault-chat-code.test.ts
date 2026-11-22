@@ -684,7 +684,12 @@ test(
       await t.test('cancelled code requests still hold code-shaped replies', async () => {
         await reset();
         await seed({ status: 'cancelled', supersededLongAgo: true });
-        for (const text of ['7395', 'my code is 7395', '482913 is the code']) {
+        for (const text of [
+          '7395',
+          'my code is 7395',
+          '482913 is the code',
+          'https://example.test/verify?code=482913',
+        ]) {
           const response = await send(text);
           assert.equal(response.statusCode, 409, text);
           assert.ok(!response.body.includes(text));

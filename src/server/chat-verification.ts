@@ -149,7 +149,15 @@ export async function createChatVerification(
     const paymentCodeLike = options.submitPayment && codeBearingPaymentReply(text);
     const otpCodeLike =
       reply.kind !== 'ordinary' &&
-      classifyVerificationReply(text.replace(/\bhttps?:\/\/\S+/giu, '')).kind !== 'ordinary';
+      classifyVerificationReply(
+        text.replace(/\bhttps?:\/\/\S+/giu, (url) =>
+          /(?:[?&](?:code|otp|pin|token)=|\/(?:auth|login|magic(?:-link)?|signin|verification|verify)(?:[/?#]|$))/iu.test(
+            url,
+          )
+            ? url
+            : '',
+        ),
+      ).kind !== 'ordinary';
     if (
       reply.kind === 'ordinary' &&
       !codes.payment &&
