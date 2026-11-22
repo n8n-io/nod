@@ -707,11 +707,10 @@ export function createLedger({
   async function earlierActions(threadId: string, ids: string[]) {
     if (!ids.length) return [];
     const { rows } = await pool.query<{ action: string; target: string }>(
-      `SELECT DISTINCT ON (ref) a.action, a.target FROM app_actions a
-       JOIN turns t ON t.id=a.turn_id CROSS JOIN LATERAL unnest(a.refs) ref
-       WHERE a.owner_id=$1 AND t.thread_id=$2 AND ref = ANY($3::text[])
+      `SELECT a.action, a.target FROM app_actions a JOIN turns t ON t.id=a.turn_id
+       WHERE a.owner_id=$1 AND t.thread_id=$2 AND a.refs && $3::text[]
          AND a.target IS NOT NULL AND a.created_at > now() - interval '7 days'
-       ORDER BY ref, a.created_at DESC LIMIT 5`,
+       ORDER BY a.created_at DESC LIMIT 5`,
       [ownerId, threadId, ids],
     );
     return rows;
