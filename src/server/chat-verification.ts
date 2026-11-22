@@ -6,6 +6,7 @@ import { classifyVerificationReply, securityCodeIn } from '../shared/verificatio
 import { lockThread } from './thread.ts';
 import { transaction } from './transaction.ts';
 import { supersededSql, waitingTurnSql } from './turn-chain.ts';
+import { credentialOrigins } from './vault.ts';
 
 interface VerificationInput {
   clientMessageId: string;
@@ -160,7 +161,7 @@ export async function createChatVerification(
       ...new Set(
         [...text.matchAll(/\bhttps?:\/\/\S+/giu)].flatMap(([value]) => {
           const url = URL.parse(value);
-          return url ? [url.origin] : [];
+          return url ? credentialOrigins(url.origin) : [];
         }),
       ),
     ];

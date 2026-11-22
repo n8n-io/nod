@@ -691,16 +691,21 @@ test(
       });
       await t.test('cancelled code requests still hold code-shaped replies', async () => {
         await reset();
-        await seed({ status: 'cancelled', superseded: true });
+        await seed({
+          status: 'cancelled',
+          superseded: true,
+          origin: 'https://example.com',
+        });
         for (const text of [
           '7395',
           'my code is 7395',
           '482913 is the code',
-          'https://example.test/verify?code=482913',
-          'https://example.test/otp/482913',
-          'https://example.test/?verification_code=482913',
-          'OTP: https://example.test/482913',
-          'código: https://example.test/verificar/482913/continuar',
+          'https://example.com/verify?code=482913',
+          'https://example.com/otp/482913',
+          'https://example.com/?verification_code=482913',
+          'OTP: https://example.com/482913',
+          'código: https://example.com/verificar/482913/continuar',
+          'código: https://www.example.com/verificar/482913/continuar',
         ]) {
           const response = await send(text);
           assert.equal(response.statusCode, 409, text);
