@@ -150,13 +150,14 @@ export async function createChatVerification(
     };
     const paymentCodeLike = options.submitPayment && codeBearingPaymentReply(text);
     const withoutUrls = text.replace(/\bhttps?:\/\/\S+/giu, '');
+    const searchableText = text.normalize('NFKD').replace(/\p{M}/gu, '');
     const authenticationTerm =
-      /(?:^|[^\p{L}\p{N}])(?:2fa|auth\p{L}*|c[oó]dig\p{L}*|codic\p{L}*|code|login|magic(?:-link)?|mfa|one-time(?:-code|password)?|otp|passcode|pin|signin|token|verif\p{L}*)(?:$|[^\p{L}\p{N}])/iu;
+      /(?:^|[^\p{L}\p{N}])(?:2fa|auth(?:entication|enticator|orization|orize(?:d|s|ing)?)?|codig\p{L}*|codic\p{L}*|code|login|magic(?:-link)?|mfa|one-time(?:-code|password)?|otp|passcode|pin|signin|token|verif\p{L}*)(?:$|[^\p{L}\p{N}])/iu;
     const otpCodeLike =
       reply.kind === 'code' ||
       reply.kind === 'wrapped' ||
       (reply.kind === 'invalid' &&
-        (authenticationTerm.test(text) ||
+        (authenticationTerm.test(searchableText) ||
           classifyVerificationReply(withoutUrls).kind !== 'ordinary'));
     const messageSites = new Set(
       [...text.matchAll(/\bhttps?:\/\/\S+/giu)].flatMap(([value]) => {

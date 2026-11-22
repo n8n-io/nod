@@ -687,6 +687,8 @@ test(
           'Gift ideas: https://example.com/books/05382/some-book/',
           'See http://example.com',
           'Gift ideas: https://elsewhere.example.test/books/482913/some-book/',
+          'About the author: https://example.com/books/482913/some-book/',
+          'Read the authority report: https://example.com/reports/482913/',
         ];
         for (const text of messages) {
           const response = await send(text);
@@ -716,6 +718,7 @@ test(
           'código: https://www.example.com/verificar/482913/continuar',
           'código: https://cuenta.example.com/verificar/482913/continuar',
           'código: https://cuenta.identidad.es/verificar/482913/continuar',
+          'co\u0301digo: https://cuenta.identidad.es/verificar/482913/continuar',
         ]) {
           const response = await send(text);
           assert.equal(response.statusCode, 409, text);
