@@ -13,7 +13,7 @@ During onboarding, connect **Gmail** or **Outlook** so Nod can find emails that 
 
 After model selection, the app step lists the full catalog by category. Use **Manage** to add or remove accounts. While an app signs in, its card shows **Cancel**. You can continue without connecting any tools. A count shows connected tools, excluding email. You can also connect apps later from **Apps**.
 
-Nod uses [Composio](https://composio.dev) for these connections. By default, app requests and results pass through n8n's hosted connection service and Composio. Source installs can [select a trusted connection service](/deploy/configuration/#apps-and-composio). Notion, Linear and n8n connect through their own MCP servers. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
+Nod uses [Composio](https://composio.dev) for these connections. By default, app requests and results pass through n8n's hosted connection service and Composio. Source installs can [select a trusted connection service](/deploy/configuration/#apps-and-composio), and server installs and source installs other than ordinary desktop launches can [use their own OpenConnector](/deploy/configuration/#use-your-own-openconnector) instead, so app tokens and requests stay on infrastructure you run. Notion, Linear and n8n connect through their own MCP servers. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
 
 ```mermaid
 flowchart TD
@@ -58,8 +58,8 @@ These steps apply to apps connected through Composio, such as Gmail and Outlook.
 <Steps>
 
 1. Open **Apps**, find an app and select **Connect**.
-2. Read the data handling notice, then select **Continue to sign in**. No remote connection starts before this step.
-3. Sign in on the app's consent screen and choose what Nod can access. The screen may show Composio, the service that connects the app, instead of Nod.
+2. Read the data handling notice, then select **Continue to sign in**. No remote connection starts before this step. With your own OpenConnector, app data doesn't pass through Composio, so this notice is skipped.
+3. Sign in on the app's consent screen and choose what Nod can access. The screen may show Composio, the service that connects the app, instead of Nod. With your own OpenConnector, it shows the OAuth app your server operator registered.
 4. Return to Nod when the app is connected.
 
 </Steps>
@@ -92,7 +92,7 @@ When access is blocked, Nod is instructed to identify the account and unavailabl
 
 ## Automatic app updates
 
-Nod checks Gmail for new mail while it's running. The connection service doesn't receive app webhooks, so apps such as Calendar and Slack don't wake Nod automatically. You can still ask Nod to work with them.
+Nod checks Gmail for new mail while it's running, through Composio or your OpenConnector. The connection service doesn't receive app webhooks, so apps such as Calendar and Slack don't wake Nod automatically. You can still ask Nod to work with them.
 
 ## When the connection service is busy
 

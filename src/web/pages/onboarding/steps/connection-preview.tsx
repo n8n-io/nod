@@ -7,6 +7,8 @@ export const emailCopy = {
     'I’m here to take things off your plate. Connect your email and I’ll look through your recent messages to suggest a few tasks I can handle for you.',
   action: 'Connect via Composio',
   note: 'Google or Microsoft will ask you to allow Composio, the service Nod uses to connect your apps.',
+  ownConnectorNote:
+    'Google or Microsoft will ask you to allow the app your server operator set up in OpenConnector.',
 };
 
 export function ComposioMark({ src = '/logos/composio.svg' }: { src?: string }) {

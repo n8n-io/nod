@@ -267,6 +267,7 @@ export interface Configuration {
   modelIssue?: ModelIssue;
   modelAlternative?: ModelSelection & { label: string };
   integrationsReady: boolean;
+  appsProvider: string;
   conversationResetEnabled: boolean;
 }
 export interface AppState {

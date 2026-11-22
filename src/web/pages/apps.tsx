@@ -370,7 +370,10 @@ export function Apps({
       service: connection.slug,
       name: connection.name,
       logoUrl: connection.logoUrl,
-      broker: !connection.direct && !connection.accessPaths?.length,
+      broker:
+        configuration?.appsProvider === 'composio' &&
+        !connection.direct &&
+        !connection.accessPaths?.length,
       accountLabel: !addAccount && connection.connectionId ? accountLabel(connection) : undefined,
       connection,
       entry,

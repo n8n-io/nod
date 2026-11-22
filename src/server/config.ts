@@ -32,6 +32,7 @@ export function configuration(overrides: Partial<Configuration> = {}): Configura
     llmReady: false,
     modelReconnect: false,
     integrationsReady: false,
+    appsProvider: 'composio',
     conversationResetEnabled:
       runtimeEnvironment === 'development' && process.env.NODE_ENV !== 'production',
     ...overrides,

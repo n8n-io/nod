@@ -17,7 +17,7 @@ import { analyticsForCurrentSession } from '../../../lib/analytics';
 import { connectionGroups, connectionIssue, removeConnection } from '../../../lib/secondary-pages';
 import type { StepProps } from '..';
 import { Bubble, Footer, Messages, useReveal } from '../motion';
-import { ComposioMark, connectionSequence } from './connection-preview';
+import { ComposioMark, connectionSequence, emailCopy } from './connection-preview';
 
 type PersonalProvider =
   (typeof onboardingEmailProviders)[number] | (typeof onboardingCalendarProviders)[number];
@@ -58,6 +58,8 @@ export function PersonalConnection({
     enabled: arrived === 'forward' && !quiet,
   });
   const configuration = usePageData<Configuration>('/api/configuration');
+  const appsProvider = configuration.data?.appsProvider;
+  const composio = appsProvider === 'composio';
   const apps = usePageData<Connection[]>('/api/apps');
   const refreshApps = apps.refresh;
   const [reloading, setReloading] = useState(false);
@@ -264,7 +266,7 @@ export function PersonalConnection({
                     <Button
                       variant="secondary"
                       size="sm"
-                      aria-label={`${reconnect ? 'Reconnect' : 'Connect'} ${name}${reconnect ? '' : ' via Composio'}`}
+                      aria-label={`${reconnect ? 'Reconnect' : 'Connect'} ${name}${reconnect || !composio ? '' : ' via Composio'}`}
                       disabled={!canConnect(slug) || Boolean(pending)}
                       onClick={() => connect(slug)}
                     >
@@ -272,6 +274,8 @@ export function PersonalConnection({
                         'Try again'
                       ) : reconnect ? (
                         'Reconnect'
+                      ) : !composio ? (
+                        'Connect'
                       ) : (
                         <>
                           <ComposioMark />
@@ -302,7 +306,9 @@ export function PersonalConnection({
             );
           })}
         </div>
-        {!connected && <p className="ob-personal-muted">{note}</p>}
+        {!connected && appsProvider && (
+          <p className="ob-personal-muted">{composio ? note : emailCopy.ownConnectorNote}</p>
+        )}
         {unavailable && (
           <div className="ob-personal-retry">
             <p className="ob-personal-muted">{unavailable}</p>

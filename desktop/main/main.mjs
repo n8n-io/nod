@@ -1395,7 +1395,16 @@ function baseEnvironment() {
       'LOCALAPPDATA',
       'TEMP',
       'TMP',
-      ...(developmentDataRoot ? ['NOD_DESKTOP_USER_DATA', 'NOD_COMPOSIO_PROXY_URL'] : []),
+      ...(developmentDataRoot
+        ? [
+            'NOD_DESKTOP_USER_DATA',
+            'NOD_COMPOSIO_PROXY_URL',
+            'NOD_APPS_PROVIDER',
+            'NOD_OPENCONNECTOR_URL',
+            'NOD_OPENCONNECTOR_RUNTIME_TOKEN',
+            'NOD_OPENCONNECTOR_ADMIN_TOKEN',
+          ]
+        : []),
       'NOD_FEEDBACK_ENABLED',
       'NOD_FEEDBACK_URL',
       'NOD_FEEDBACK_TOKEN',

@@ -185,6 +185,8 @@ Model and app connections run on the server too. Use addresses the server can re
 
 Open **Apps** and select **Connect**. For apps connected through Composio, Nod opens a sign-in page at your configured `NOD_PUBLIC_URL`. Select **Continue to sign in** and finish authorization in the window it opens. Keep the first page open until the connection finishes. Allow popups for Nod if your browser blocks the sign-in window.
 
+To keep app tokens on your own infrastructure, [use your own OpenConnector](/deploy/configuration/#use-your-own-openconnector). Add its variables to the server's `.env`, then [apply the change](/deploy/configuration/#apply-configuration-changes). Nod then opens the app's own consent screen. After you allow access, the app returns to your OpenConnector, which sends your browser back to Nod at `NOD_PUBLIC_URL`. Nod saves the account only after OpenConnector confirms the sign-in. Your browser must reach OpenConnector's public address, and Nod's server must reach the address in `NOD_OPENCONNECTOR_URL`.
+
 The sign-in page and callback use Nod's normal address and port. The [SSH tunnel](#open-a-remote-server-without-a-domain) or [HTTPS proxy](#add-public-https) you use to open Nod also carries app sign-in. You don't need to forward another port. With HTTPS, set `NOD_PUBLIC_URL` to the exact address you open, such as `https://nod.example.com`.
 
 After changing that address or restarting the server, start a fresh connection from **Apps**. Old sign-in pages cannot resume it. These steps also apply when your desktop app connects to the server. A desktop app running its own local assistant keeps its local sign-in flow.

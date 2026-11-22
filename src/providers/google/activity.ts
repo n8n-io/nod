@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import type { Composio } from '@composio/core';
 import { z } from 'zod';
 import {
   ObservationCursorExpired,
@@ -7,18 +6,18 @@ import {
   type ObservationBatch,
 } from '../../ports/proactivity.ts';
 import type { ActivityReader } from '../../ports/integrations.ts';
-import { messageSchema, messageText } from './verification-email.ts';
+import { type GoogleProxy, messageSchema, messageText } from './verification-email.ts';
 
 const id = z.string().regex(/^[a-zA-Z0-9_-]{1,1024}$/);
 const page = z.string().min(1).max(2048);
 const version = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex');
-type Client = Pick<Composio['tools'], 'proxyExecute'>;
+type Client = GoogleProxy;
 type Query = Parameters<ActivityReader['read']>[1];
 const emailIdentity = (accountId: string, email: string | null) =>
   email && z.email().safeParse(email).success ? email.trim().toLowerCase() : accountId;
 
-export function composioActivity(client: Client): Record<string, ActivityReader> {
+export function googleActivity(client: Client): Record<string, ActivityReader> {
   return {
     gmail: {
       read: (accountId, input, signal) => readGmail(client, accountId, input, signal),

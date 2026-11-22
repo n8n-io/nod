@@ -18,7 +18,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import pg, { DatabaseError } from 'pg';
 import { BrowserActionError, type CredentialKind } from '../src/ports/computer.ts';
 import type { IntegrationProvider, VerificationEmail } from '../src/ports/integrations.ts';
-import { readVerificationEmails } from '../src/providers/composio/verification-email.ts';
+import { readVerificationEmails } from '../src/providers/google/verification-email.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
 import {
   normalizedEmail,

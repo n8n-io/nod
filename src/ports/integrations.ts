@@ -347,6 +347,7 @@ export interface IntegrationProvider {
     accountEmail?: string;
     authConfigId?: string;
   }>;
+  accountBoundReconnect?: boolean;
   deleteAccount(id: string, ownerId?: string): Promise<void>;
   verificationEmails?(
     accountId: string,

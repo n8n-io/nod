@@ -86,6 +86,7 @@ import {
 } from '../providers/onepassword/index.ts';
 import { createComposioProvider } from '../providers/composio/integrations.ts';
 import { createComposioProxy } from '../providers/composio/proxy.ts';
+import { createOpenConnectorProvider } from '../providers/openconnector/integrations.ts';
 import {
   createDiscoveredTransport,
   ownerAddress,
@@ -284,6 +285,27 @@ export interface ApplicationAdapters {
     reconnect?: boolean;
     issue?: ModelIssue;
   };
+}
+
+export function appsEnvironment(env: Record<string, string | undefined>, selectable: boolean) {
+  const provider = (selectable && env.NOD_APPS_PROVIDER?.trim()) || 'composio';
+  if (provider !== 'composio' && provider !== 'openconnector')
+    throw new Error(
+      `NOD_APPS_PROVIDER must be composio or openconnector, not ${JSON.stringify(provider.slice(0, 40))}.`,
+    );
+  if (provider === 'composio') return { provider } as const;
+  const url = env.NOD_OPENCONNECTOR_URL && endpointAddress(env.NOD_OPENCONNECTOR_URL);
+  if (!url)
+    throw new Error(
+      'NOD_APPS_PROVIDER=openconnector needs NOD_OPENCONNECTOR_URL, a plain http or https address such as http://localhost:3000.',
+    );
+  const runtimeToken = env.NOD_OPENCONNECTOR_RUNTIME_TOKEN?.trim();
+  const adminToken = env.NOD_OPENCONNECTOR_ADMIN_TOKEN?.trim();
+  if (!runtimeToken || !adminToken)
+    throw new Error(
+      'NOD_APPS_PROVIDER=openconnector needs NOD_OPENCONNECTOR_RUNTIME_TOKEN and NOD_OPENCONNECTOR_ADMIN_TOKEN.',
+    );
+  return { provider, url, runtimeToken, adminToken } as const;
 }
 
 export function modelEnvironment(
@@ -491,21 +513,29 @@ export function createDefaultAdapters(
   const integrationBrowser = createIntegrationBrowser(
     desktopMode ? undefined : { origin: publicOrigin },
   );
-  const integrationProxy = createComposioProxy({
-    dataRoot,
-    ownerId,
-    keyStore,
-    checkpoint: createIntegrationIdentityCheckpoint(pool, ownerId),
-    browser: integrationBrowser,
-    url: !desktopMode || env.NOD_DESKTOP_USER_DATA ? env.NOD_COMPOSIO_PROXY_URL : undefined,
-  });
-  const integrations = createComposioProvider({ proxy: integrationProxy });
+  const selectable = !desktopMode || Boolean(env.NOD_DESKTOP_USER_DATA);
+  const apps = appsEnvironment(env, selectable);
+  const integrationProxy =
+    apps.provider === 'composio'
+      ? createComposioProxy({
+          dataRoot,
+          ownerId,
+          keyStore,
+          checkpoint: createIntegrationIdentityCheckpoint(pool, ownerId),
+          browser: integrationBrowser,
+          url: selectable ? env.NOD_COMPOSIO_PROXY_URL : undefined,
+        })
+      : undefined;
+  const integrations =
+    apps.provider === 'openconnector'
+      ? createOpenConnectorProvider({ ...apps, ownerId })
+      : createComposioProvider({ proxy: integrationProxy! });
   return {
     ...(analyticsEnabled(env) ? { analytics: createPostHogAnalytics() } : {}),
     telemetry: createOtlpTelemetry(env.OTEL_EXPORTER_OTLP_ENDPOINT),
     initialize: async () => {
       await models.initialize();
-      await integrationProxy.initialize();
+      await integrationProxy?.initialize();
     },
     models,
     agent: createPiAgent({
@@ -3308,6 +3338,7 @@ async function initializeApplication(
         ...(adapters.model.issue ? { modelIssue: adapters.model.issue } : {}),
         ...(alternative ? { modelAlternative: alternative } : {}),
         integrationsReady: adapters.integrations.configured,
+        appsProvider: adapters.integrations.id,
       });
     },
   });

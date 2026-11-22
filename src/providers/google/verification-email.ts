@@ -1,8 +1,19 @@
-import type { Composio } from '@composio/core';
 import { parseFragment } from 'parse5';
 import { z } from 'zod';
 import { parse } from 'tldts';
 import type { VerificationEmail, VerificationEmailQuery } from '../../ports/integrations.ts';
+
+export interface GoogleProxy {
+  proxyExecute(
+    request: {
+      connectedAccountId: string;
+      endpoint: string;
+      method: 'GET';
+      parameters: Array<{ in: 'query'; name: string; value: string | number }>;
+    },
+    options: { signal: AbortSignal },
+  ): Promise<{ status: number; data?: unknown }>;
+}
 
 function withoutComments(value: string) {
   let plain = '';
@@ -113,7 +124,7 @@ export function messageText(payload: unknown) {
 }
 
 export async function readVerificationEmails(
-  client: Pick<Composio['tools'], 'proxyExecute'>,
+  client: GoogleProxy,
   accountId: string,
   query: VerificationEmailQuery,
   signal: AbortSignal,

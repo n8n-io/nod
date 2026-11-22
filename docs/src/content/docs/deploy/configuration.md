@@ -112,6 +112,33 @@ Use an HTTPS origin without a path, query, fragment or user credentials. HTTP is
 
 The service operator configures the Composio project and app authorization settings. Those credentials never enter Nod's client configuration. Notion, Linear and n8n connect through their own MCP servers. See [Apps](/connect/apps/).
 
+### Use your own OpenConnector
+
+A server or source install can use an [OpenConnector](https://github.com/oomol-lab/open-connector) instance you run instead of Composio. App sign-ins then use OAuth apps you register yourself, and access tokens stay in your OpenConnector. App requests go from Nod's server to your OpenConnector, then to the app, without passing through n8n or Composio.
+
+| Variable                          | What it does                                                                                                                                                          | Default    |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| `NOD_APPS_PROVIDER`               | `composio` or `openconnector`.                                                                                                                                        | `composio` |
+| `NOD_OPENCONNECTOR_URL`           | The address Nod's server uses to reach your OpenConnector, including its mount path if it has one.                                                                    | Empty      |
+| `NOD_OPENCONNECTOR_RUNTIME_TOKEN` | A runtime token. Nod uses it to search and run actions, to check which actions it allows, and to read Gmail and Google Calendar.                                      | Empty      |
+| `NOD_OPENCONNECTOR_ADMIN_TOKEN`   | Its `OOMOL_CONNECT_ADMIN_TOKEN`. Nod uses it to list configured OAuth clients, to start, confirm, check and remove connections, and to upload files into app actions. | Empty      |
+
+With `openconnector`, Nod refuses to start until the address and both tokens are set. Use a plain `http` or `https` address without user credentials, query or fragment; a path is kept as OpenConnector's mount prefix. Plain `http` is accepted only for `localhost`, `127.0.0.1` or `[::1]`; any other address, including another container such as `https://host.docker.internal:3000`, must use `https`. Packaged desktop apps and ordinary source desktop launches always use Composio; [isolated desktop development](/deploy/desktop-app/) can select OpenConnector.
+
+Set up OpenConnector first:
+
+1. Set an admin token and, for each app you want, an OAuth client with the scopes Nod needs. Register `<OpenConnector address>/oauth/callback` with the app's provider. Only apps with a local OAuth client appear in **Apps**; apps set to OpenConnector's hosted (SaaS) OAuth source are left out, because their tokens would leave your infrastructure.
+2. Create a runtime token for Nod. Give it the actions you allow; Nod offers Pi only actions the token allows. For Gmail, add `gmail` to `allowedProxies`; for Google Calendar, add `googlecalendar`. Nod uses the Gmail proxy only to read mail: new mail every 15 minutes, sign-in codes, your writing style from sent mail, first-task samples and [private preparation](/how-it-works/proactivity/). It uses the Calendar proxy only to read your primary calendar's events for private preparation. A proxy grant itself is wider: it lets the token call any request to that Google API that the account's OAuth scopes allow, beyond OpenConnector's actions, and action block rules don't apply to it. Leave `allowedConnections` empty: Nod needs every connection it creates, and a connection list on the token would refuse them.
+3. Run one OpenConnector per Nod server. OpenConnector has one administrator, so every connection it holds belongs to that server's owner.
+
+Then set the variables above and restart Nod. Accounts connected through Composio stay listed but need connecting again.
+
+Nod saves an account only after OpenConnector confirms the sign-in. **Reconnect** creates a new OpenConnector connection and keeps it only when OpenConnector reports the same provider account, and the same email when the account has one; otherwise Nod removes it and keeps the saved one. Disconnecting removes the connection from OpenConnector but does not revoke the grant at the app; revoke it in the app's settings if needed. When you abandon a sign-in, Nod removes the connection OpenConnector created for it, including one finished in OpenConnector after Nod gave up, as long as Nod keeps running for 16 minutes after you abandon it.
+
+Nod sends a workspace file you attach to an app action to OpenConnector's transit file storage with the admin token, passes the returned file ID to the action, and deletes the file once the action finishes. It uploads when the action is ready to run, after any approval. Files an action returns are downloaded from the address in `NOD_OPENCONNECTOR_URL`, never from the link in the result, and saved in the workspace. OpenConnector serves a transit file to anyone who has its ID, without a token, and keeps it for one day by default; a file returned by a hosted (SaaS) connection is not stored in your OpenConnector and can't be saved. Nod's server must reach `/v1`, `/mcp` and `/api` at that address; a reverse proxy that leaves out `/mcp` breaks app search, and one that leaves out `/api/files` blocks file transfers.
+
+Nod checks Gmail for new mail every 15 minutes by reading Gmail's history through the Gmail proxy; OpenConnector doesn't push events to Nod. Every app action still goes through the [trust check](/trust/approvals/).
+
 ## Vault
 
 | Variable        | What it does                                                                                                                                         | Default                   |

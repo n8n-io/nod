@@ -47,6 +47,8 @@ import {
   IntegrationCatalogAccessDenied,
   IntegrationCatalogFailure,
   IntegrationConnectionError,
+  IntegrationDownload,
+  IntegrationInboxCursorExpired,
   IntegrationInboxTransientError,
   IntegrationPermissionError,
   type IntegrationFile,
@@ -57,6 +59,13 @@ import {
 import { createComposioProvider } from '../src/providers/composio/integrations.ts';
 import { createComposioProxy } from '../src/providers/composio/proxy.ts';
 import { logFailure, withFailureLog } from '../src/server/failure-log.ts';
+import { createOpenConnectorProvider } from '../src/providers/openconnector/integrations.ts';
+import {
+  markTransitFileInputs,
+  transitFileInputSchema,
+} from '../src/providers/openconnector/files.ts';
+import { workspaceFileSchemas } from '../src/server/integration-files.ts';
+import { verifyIntegrationCompletion } from '../src/server/integration-connection.ts';
 import { serviceEnvironment } from '../src/providers/process.ts';
 import { createIntegrationIdentityCheckpoint } from '../src/server/integration-identity.ts';
 import { createIntegrationBrowser } from '../src/server/integration-browser.ts';
@@ -73,7 +82,7 @@ import { transaction } from '../src/server/transaction.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
 import { createIntegrations, initializeIntegrationSchema } from '../src/server/integrations.ts';
 import { cachedIcons } from '../src/server/link-previews.ts';
-import { createErrorRedactor } from '../src/server/redaction.ts';
+import { createErrorRedactor, environmentSecrets } from '../src/server/redaction.ts';
 import { createFeedbackRedactor } from '../src/server/feedback-redaction.ts';
 import { createLedger } from '../src/server/ledger.ts';
 import { createActivityLog } from '../src/server/activity-log.ts';
@@ -15465,7 +15474,7 @@ test(
 );
 
 test('proactive readers use fixed GET paths, preserve pages, and check exact source state', async () => {
-  const { composioActivity } = await import('../src/providers/composio/activity.ts');
+  const { googleActivity } = await import('../src/providers/google/activity.ts');
   const readActivity = async (
     client: Pick<Composio['tools'], 'proxyExecute'>,
     service: string,
@@ -15473,7 +15482,7 @@ test('proactive readers use fixed GET paths, preserve pages, and check exact sou
     input: { ids?: string[]; cursor?: string; asOf?: string },
     signal: AbortSignal,
   ) => {
-    const readers = composioActivity(client);
+    const readers = googleActivity(client);
     if (!Object.hasOwn(readers, service)) throw new Error('This source has no reader.');
     return readers[service].read(accountId, input, signal);
   };
@@ -15979,5 +15988,1089 @@ test(
     assert.equal(response.statusCode, 200, response.body);
     assert.equal(removed, account.connectionId);
     assert.equal((await f.service.activitySources()).length, 0);
+  },
+);
+
+async function openConnectorFake(t: TestContext) {
+  const runtimeToken = 'fixture-connector-runtime-value';
+  const adminToken = 'fixture-connector-admin-value';
+  const requests: Array<{
+    method: string;
+    path: string;
+    scope: 'admin' | 'runtime' | 'none';
+    app?: string;
+    body: unknown;
+  }> = [];
+  const pending = new Map<
+    string,
+    { service: string; status: string; appId: string | null; returnUri: string }
+  >();
+  const connections = new Map<
+    string,
+    {
+      id: string;
+      service: string;
+      alias: string;
+      status: string;
+      displayName: string;
+      providerAccountId: string;
+    }
+  >();
+  const schema = { type: 'object', properties: { to: { type: 'string' } } };
+  const transitFile = {
+    type: 'object',
+    properties: {
+      fileId: {
+        type: 'string',
+        minLength: 1,
+        description: 'The transit file identifier returned by POST /api/files.',
+      },
+      name: {
+        type: 'string',
+        minLength: 1,
+        description: 'Optional filename override to send to the provider.',
+      },
+      mimeType: {
+        type: 'string',
+        minLength: 1,
+        description: 'Optional MIME type override to send to the provider.',
+      },
+    },
+    additionalProperties: false,
+    required: ['fileId'],
+    description: 'File uploaded through POST /api/files.',
+  };
+  const downloadAttachment = {
+    ...transitFile,
+    description: 'Completed transit file.',
+  };
+  const actions = [
+    ...['send_email', 'fetch_emails', 'list_labels', 'Bad-Name'].map((name) => ({
+      id: `gmail.${name}`,
+      service: 'gmail',
+      name,
+      description: `Synthetic ${name}.`,
+      operationType: 'read',
+      inputSchema: schema,
+      outputSchema: { type: 'object' },
+    })),
+    {
+      id: 'gmail.send_attachment',
+      service: 'gmail',
+      name: 'send_attachment',
+      description: 'Synthetic send_attachment.',
+      operationType: 'write',
+      inputSchema: {
+        type: 'object',
+        properties: { to: { type: 'string' }, file: transitFile },
+        additionalProperties: false,
+        required: ['to', 'file'],
+      },
+      outputSchema: { type: 'object' },
+    },
+    {
+      id: 'gmail.download_attachment',
+      service: 'gmail',
+      name: 'download_attachment',
+      description: 'Synthetic download_attachment.',
+      operationType: 'read',
+      inputSchema: {
+        type: 'object',
+        properties: { messageId: { type: 'string' } },
+        additionalProperties: false,
+        required: ['messageId'],
+      },
+      outputSchema: downloadAttachment,
+    },
+  ];
+  const transitFiles = new Map<string, { bytes: Buffer; name: string; mimeType: string }>();
+  const attachmentId = `${'a'.repeat(32)}.txt`;
+  transitFiles.set(attachmentId, {
+    bytes: Buffer.from('Synthetic attachment bytes.'),
+    name: 'report.txt',
+    mimeType: 'text/plain',
+  });
+  const uploads: Array<{
+    scope: 'admin' | 'runtime' | 'none';
+    name: string;
+    mimeType: string;
+    bytes: Buffer;
+  }> = [];
+  let checkpointExpired = false;
+  const blocked = new Set<string>();
+  let policyAvailable = true;
+  let proxyGranted = true;
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url!, 'http://fixture.invalid');
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(chunk as Buffer);
+    const raw = Buffer.concat(chunks);
+    const contentType = String(request.headers['content-type'] ?? '');
+    const body =
+      raw.length && !contentType.startsWith('multipart/form-data')
+        ? JSON.parse(raw.toString())
+        : undefined;
+    const bearer = request.headers.authorization;
+    const scope =
+      bearer === `Bearer ${adminToken}`
+        ? 'admin'
+        : bearer === `Bearer ${runtimeToken}`
+          ? 'runtime'
+          : 'none';
+    const app = request.headers['x-oo-connector-app-id'] as string | undefined;
+    requests.push({ method: request.method!, path: url.pathname, scope, app, body });
+    const send = (status: number, value: unknown) => {
+      response.writeHead(status, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(value));
+    };
+    const ok = (data: unknown) => send(200, { success: true, message: 'OK', data, meta: {} });
+    const fail = (status: number, errorCode: string, message: string) =>
+      send(status, { success: false, message, data: null, errorCode, meta: {} });
+    const publicFile = request.method === 'GET' && /^\/api\/files\/[^/]+$/.test(url.pathname);
+    const management =
+      url.pathname.startsWith('/api/') ||
+      url.pathname.startsWith('/v1/connections') ||
+      url.pathname.startsWith('/v1/connection-requests/');
+    if (!publicFile && scope !== (management ? 'admin' : 'runtime'))
+      return fail(401, 'unauthorized', 'A valid bearer token is required.');
+    const path = url.pathname.split('/').map(decodeURIComponent);
+    if (request.method === 'POST' && url.pathname === '/api/files') {
+      const form = await new Response(raw, { headers: { 'content-type': contentType } }).formData();
+      const file = form.get('file');
+      if (!(file instanceof File))
+        return send(400, { error: { code: 'invalid_input', message: 'file is required.' } });
+      const bytes = Buffer.from(await file.arrayBuffer());
+      const fileId = `${randomBytes(16).toString('hex')}${file.name.endsWith('.txt') ? '.txt' : ''}`;
+      transitFiles.set(fileId, { bytes, name: file.name, mimeType: file.type });
+      uploads.push({ scope, name: file.name, mimeType: file.type, bytes });
+      return send(200, {
+        fileId,
+        downloadUrl: `${url.origin}/api/files/${fileId}`,
+        sizeBytes: bytes.length,
+        name: file.name,
+        mimeType: file.type,
+      });
+    }
+    if (request.method === 'DELETE' && /^\/api\/files\/[^/]+$/.test(url.pathname)) {
+      const fileId = decodeURIComponent(url.pathname.split('/').at(-1)!);
+      return send(200, { fileId, deleted: transitFiles.delete(fileId) });
+    }
+    if (request.method === 'GET' && /^\/api\/files\/[^/]+$/.test(url.pathname)) {
+      const stored = transitFiles.get(decodeURIComponent(url.pathname.split('/').at(-1)!));
+      if (!stored)
+        return send(404, {
+          error: { code: 'file_not_found', message: 'Transit file was not found.' },
+        });
+      response.writeHead(200, {
+        'content-type': stored.mimeType,
+        'content-length': String(stored.bytes.length),
+      });
+      return response.end(stored.bytes);
+    }
+    if (request.method === 'GET' && url.pathname === '/api/oauth/configs')
+      return send(200, [
+        { service: 'gmail', configured: true, oauthSource: { mode: 'local' } },
+        { service: 'slack', configured: false, oauthSource: { mode: 'local' } },
+      ]);
+    if (request.method === 'GET' && url.pathname === '/v1/providers')
+      return ok(
+        url.searchParams
+          .getAll('service')
+          .filter((service) => service === 'gmail')
+          .map((service) => ({
+            service,
+            displayName: 'Gmail',
+            categories: [{ id: 'email', displayName: 'Email' }],
+          })),
+      );
+    if (request.method === 'POST' && path[2] === 'connections' && path.at(-1) === 'connect') {
+      const service = path[3]!;
+      if (service !== 'gmail')
+        return fail(
+          400,
+          'oauth_client_config_required',
+          `Configure an OAuth client for ${service} first.`,
+        );
+      const id = randomUUID();
+      pending.set(id, {
+        service,
+        status: 'initiated',
+        appId: null,
+        returnUri: body.returnUri,
+      });
+      return ok({
+        authorizationUrl: `https://accounts.example.test/auth?request=${id}`,
+        stateHandle: 'fixture-state',
+        connectionRequestId: id,
+        status: 'initiated',
+        expiresAt: new Date(Date.now() + 600_000).toISOString(),
+      });
+    }
+    if (request.method === 'GET' && path[2] === 'connection-requests') {
+      const entry = pending.get(path[3]!);
+      if (!entry) return fail(404, 'connection_request_not_found', 'Connection request not found.');
+      return ok({
+        connectionRequestId: path[3],
+        service: entry.service,
+        status: entry.status,
+        appId: entry.appId,
+      });
+    }
+    if (request.method === 'GET' && path[2] === 'connections' && path[3] === 'by-id') {
+      const entry = connections.get(path[4]!);
+      return entry ? ok(entry) : fail(404, 'app_not_found', 'Connection not found.');
+    }
+    if (request.method === 'DELETE' && path[2] === 'connections') {
+      const entry = [...connections.values()].find(
+        (item) => item.service === path[3] && item.alias === body?.connectionName,
+      );
+      if (!entry) return fail(404, 'connection_not_found', 'Connection not found.');
+      connections.delete(entry.id);
+      return send(200, { ok: true });
+    }
+    if (request.method === 'POST' && url.pathname === '/mcp') {
+      const call = body as { params: { name: string; arguments: Record<string, string> } };
+      const input = call.params.arguments;
+      const result =
+        call.params.name === 'search_actions'
+          ? {
+              ok: true,
+              data: actions
+                .filter((action) => action.service === input.service && !blocked.has(action.id))
+                .map(({ id }) => ({ id, available: true })),
+            }
+          : !policyAvailable
+            ? {
+                ok: false,
+                error: { code: 'internal_error', message: 'Runtime policy is unavailable.' },
+              }
+            : !actions.some((action) => action.id === input.actionId)
+              ? {
+                  ok: false,
+                  error: { code: 'unknown_action', message: `Unknown action: ${input.actionId}` },
+                }
+              : {
+                  ok: true,
+                  data: { capability: { policy: { allowed: !blocked.has(input.actionId!) } } },
+                };
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.end(
+        `event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: 1, result: { structuredContent: result } })}\n\n`,
+      );
+      return;
+    }
+    if (request.method === 'GET' && url.pathname === '/v1/actions/search')
+      return ok(actions.filter((action) => action.service === url.searchParams.get('service')));
+    if (request.method === 'GET' && path[2] === 'actions') {
+      const action = actions.find((item) => item.id === path[3]);
+      return action ? ok(action) : fail(404, 'unknown_action', `Unknown action: ${path[3]}`);
+    }
+    if (request.method === 'POST' && path[2] === 'actions') {
+      if (!app || !connections.has(app))
+        return fail(403, 'connection_not_allowed', 'The selected connection is not granted.');
+      if (path[3] === 'gmail.send_email') return ok({ id: 'fixture-message' });
+      if (path[3] === 'gmail.send_attachment') return ok({ id: 'fixture-attachment-message' });
+      if (path[3] === 'gmail.download_attachment') {
+        const stored = transitFiles.get(attachmentId)!;
+        return ok({
+          fileId: attachmentId,
+          downloadUrl: `${url.origin}/api/files/${attachmentId}`,
+          sizeBytes: stored.bytes.length,
+          name: stored.name,
+          mimeType: stored.mimeType,
+        });
+      }
+      if (path[3] === 'gmail.list_labels')
+        return fail(403, 'scope_missing', 'The gmail.labels scope is missing.');
+      return fail(502, 'provider_error', 'Gmail answered with a synthetic outage.');
+    }
+    if (request.method === 'POST' && url.pathname === '/v1/proxy/googlecalendar') {
+      if (!app || !connections.has(app))
+        return fail(403, 'connection_not_allowed', 'The selected connection is not granted.');
+      if (body.endpoint === '/calendars/primary/events' && body.query.fields === 'etag')
+        return ok({ status: 200, headers: {}, data: { etag: '"synthetic-calendar-etag"' } });
+      return ok({ status: 404, headers: {}, data: { error: { code: 404 } } });
+    }
+    if (request.method === 'POST' && url.pathname === '/v1/proxy/gmail') {
+      if (!proxyGranted)
+        return fail(403, 'proxy_not_allowed', 'gmail proxy is not granted to this runtime token.');
+      if (!app || !connections.has(app))
+        return fail(403, 'connection_not_allowed', 'The selected connection is not granted.');
+      const reply = (data: unknown) => ok({ status: 200, headers: {}, data });
+      if (body.endpoint === '/users/me/profile') return reply({ historyId: '100' });
+      if (body.endpoint === '/users/me/history') {
+        if (checkpointExpired)
+          return ok({ status: 404, headers: {}, data: { error: { code: 404 } } });
+        return reply(
+          body.query.startHistoryId === '100'
+            ? { historyId: '101', history: [{ messagesAdded: [{ message: { id: 'message-1' } }] }] }
+            : { historyId: body.query.startHistoryId },
+        );
+      }
+      if (body.endpoint === '/users/me/threads' && body.query.q)
+        return reply({ threads: [{ id: 'thread-1' }] });
+      if (body.endpoint === '/users/me/threads/thread-1')
+        return reply({
+          id: 'thread-1',
+          historyId: '101',
+          messages: [{ id: 'message-1', internalDate: '1793523600000', labelIds: ['INBOX'] }],
+        });
+      if (body.endpoint === '/users/me/messages/message-1' && body.query.format === 'metadata') {
+        const headers = [
+          { name: 'From', value: 'Sender <sender@example.test>' },
+          { name: 'To', value: 'owner@example.test' },
+          { name: 'Subject', value: 'Synthetic\nsubject' },
+        ];
+        return reply({
+          id: 'message-1',
+          threadId: 'thread-1',
+          internalDate: '1793523600000',
+          labelIds: ['INBOX'],
+          snippet: 'Synthetic snippet.',
+          payload: {
+            headers: body.query.metadataHeaders
+              ? headers.filter((header) => header.name === body.query.metadataHeaders)
+              : headers,
+          },
+        });
+      }
+      if (body.endpoint === '/users/me/messages' && body.query.q === 'in:sent')
+        return reply({ messages: [{ id: 'sent-1' }] });
+      if (body.endpoint === '/users/me/messages' && body.query.q?.startsWith('to:'))
+        return ok({ status: 204, headers: {}, data: null });
+      if (body.endpoint === '/users/me/messages/sent-1' && body.query.format === 'full')
+        return reply({
+          id: 'sent-1',
+          internalDate: '1793523600000',
+          labelIds: ['SENT'],
+          payload: {
+            mimeType: 'text/plain',
+            headers: [
+              { name: 'From', value: 'Owner <owner@example.test>' },
+              { name: 'To', value: 'friend@example.test' },
+            ],
+            body: { data: Buffer.from('Synthetic sent text.').toString('base64url') },
+          },
+        });
+      return ok({ status: 404, headers: {}, data: { error: { code: 404 } } });
+    }
+    fail(404, 'not_found', 'Not found.');
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(
+    () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  );
+  const url = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`;
+  let created = 0;
+  function connect(displayName = 'owner@example.test', providerAccountId = 'google-owner') {
+    const id = `oc-${++created}`;
+    connections.set(id, {
+      id,
+      service: 'gmail',
+      alias: randomUUID(),
+      status: 'active',
+      displayName,
+      providerAccountId,
+    });
+    return id;
+  }
+  return {
+    runtimeToken,
+    adminToken,
+    requests,
+    uploads,
+    attachmentId,
+    pending,
+    connections,
+    connect,
+    blockAction(id: string) {
+      blocked.add(id);
+    },
+    policyAvailable(available: boolean) {
+      policyAvailable = available;
+    },
+    expireCheckpoint() {
+      checkpointExpired = true;
+    },
+    denyProxy() {
+      proxyGranted = false;
+    },
+    complete(id: string, status: 'connected' | 'failed', email?: string, account?: string) {
+      const entry = pending.get(id)!;
+      entry.status = status;
+      if (status === 'connected') entry.appId = connect(email, account);
+    },
+    provider(ownerId = 'local-development', request?: typeof fetch) {
+      return createOpenConnectorProvider({
+        url,
+        ownerId,
+        runtimeToken,
+        adminToken,
+        ...(request ? { request } : {}),
+      });
+    },
+  };
+}
+
+test('OpenConnector is selected only by explicit server configuration and fails closed without its tokens', async () => {
+  const { appsEnvironment } = await import('../src/server/composition.ts');
+  const runtime = 'fixture-environment-runtime';
+  const admin = 'fixture-environment-admin';
+  const env: Record<string, string | undefined> = {
+    NOD_APPS_PROVIDER: 'openconnector',
+    NOD_OPENCONNECTOR_URL: 'http://openconnector:3000/',
+    NOD_OPENCONNECTOR_RUNTIME_TOKEN: runtime,
+    NOD_OPENCONNECTOR_ADMIN_TOKEN: admin,
+  };
+  assert.deepEqual(appsEnvironment({}, true), { provider: 'composio' });
+  assert.deepEqual(appsEnvironment(env, false), { provider: 'composio' });
+  assert.deepEqual(appsEnvironment(env, true), {
+    provider: 'openconnector',
+    url: 'http://openconnector:3000',
+    runtimeToken: runtime,
+    adminToken: admin,
+  });
+  for (const broken of [
+    { NOD_OPENCONNECTOR_ADMIN_TOKEN: ' ' },
+    { NOD_OPENCONNECTOR_RUNTIME_TOKEN: undefined },
+    { NOD_OPENCONNECTOR_URL: undefined },
+    { NOD_OPENCONNECTOR_URL: 'https://user:pass@connector.internal' },
+    { NOD_OPENCONNECTOR_URL: 'ftp://connector.internal' },
+    { NOD_APPS_PROVIDER: 'another-gateway' },
+  ])
+    assert.throws(
+      () => appsEnvironment({ ...env, ...broken }, true),
+      (error: unknown) =>
+        error instanceof Error &&
+        !error.message.includes(runtime) &&
+        !error.message.includes(admin),
+    );
+  assert.ok(environmentSecrets(env).includes(runtime));
+  assert.ok(environmentSecrets(env).includes(admin));
+  for (const url of [
+    'http://connector.example.test',
+    'http://203.0.113.5:3000',
+    'http://10.1.2.3',
+    'http://openconnector:3000',
+  ])
+    assert.throws(
+      () =>
+        createOpenConnectorProvider({
+          url,
+          ownerId: 'owner',
+          runtimeToken: runtime,
+          adminToken: admin,
+        }),
+      /must use https/,
+    );
+  for (const url of [
+    'http://127.0.0.1:3000',
+    'https://host.docker.internal:3000',
+    'https://connector.example.test',
+  ])
+    createOpenConnectorProvider({
+      url,
+      ownerId: 'owner',
+      runtimeToken: runtime,
+      adminToken: admin,
+    });
+});
+
+test('OpenConnector uploads workspace files into transit storage and saves the files its actions return', async (t) => {
+  const fake = await openConnectorFake(t);
+  const provider = fake.provider();
+  const account = fake.connect();
+  const signal = new AbortController().signal;
+  const session = await provider.createSession('local-development', { gmail: [account] });
+  const tools = (await session.search('GMAIL_SEND_ATTACHMENT')).tools as Record<
+    string,
+    { inputSchema: Record<string, any> }
+  >;
+  const inputSchema = tools.GMAIL_SEND_ATTACHMENT!.inputSchema;
+  assert.equal(inputSchema.properties.file.file_uploadable, true);
+  assert.equal(inputSchema.properties.to.file_uploadable, undefined);
+  assert.equal(
+    transitFileInputSchema({
+      type: 'object',
+      properties: { fileId: { type: 'string' }, mimeType: { type: 'string' } },
+      additionalProperties: false,
+      required: ['fileId'],
+    }),
+    false,
+  );
+  assert.equal(
+    transitFileInputSchema({
+      type: 'object',
+      properties: { fileId: { type: 'string', description: 'The local transit file identifier.' } },
+      required: ['fileId'],
+    }),
+    true,
+  );
+  assert.equal(
+    transitFileInputSchema({
+      type: 'object',
+      properties: {
+        fileId: { type: 'string', description: 'The local transit file identifier to upload.' },
+        parentId: { type: 'string' },
+      },
+      required: ['parentId'],
+    }),
+    false,
+  );
+  const offered = workspaceFileSchemas(inputSchema) as {
+    properties: { file: { anyOf: Array<Record<string, any>> }; to: unknown };
+  };
+  assert.equal(offered.properties.file.anyOf.length, 2);
+  assert.deepEqual(offered.properties.to, inputSchema.properties.to);
+
+  const bytes = Buffer.from('Synthetic workspace file.');
+  const uploaded = await session.upload!(
+    'GMAIL_SEND_ATTACHMENT',
+    { name: 'notes.txt', mimeType: 'text/plain', bytes },
+    signal,
+    account,
+  );
+  assert.deepEqual(Object.keys(uploaded), ['fileId']);
+  assert.deepEqual(fake.uploads, [
+    { scope: 'admin', name: 'notes.txt', mimeType: 'text/plain', bytes },
+  ]);
+
+  const running = await provider.createSession('local-development', { gmail: [account] });
+  await running.execute(
+    'GMAIL_SEND_ATTACHMENT',
+    { to: 'person@example.test', file: uploaded },
+    account,
+    signal,
+  );
+  assert.deepEqual(
+    fake.requests
+      .filter(
+        (entry) => entry.method === 'POST' && entry.path === '/v1/actions/gmail.send_attachment',
+      )
+      .map(({ method, scope, app, body }) => ({ method, scope, app, body })),
+    [
+      {
+        method: 'POST',
+        scope: 'runtime',
+        app: account,
+        body: { input: { to: 'person@example.test', file: uploaded } },
+      },
+    ],
+  );
+  assert.deepEqual(
+    fake.requests
+      .filter((entry) => entry.method === 'DELETE')
+      .map(({ path, scope }) => ({ path, scope })),
+    [{ path: `/api/files/${uploaded.fileId}`, scope: 'admin' }],
+  );
+
+  const stopped = new AbortController();
+  const stopping = fake.provider('local-development', async (input, init) => {
+    const response = await fetch(input, init);
+    if (!String(input).endsWith('/api/files') || init?.method !== 'POST') return response;
+    const body = await response.text();
+    stopped.abort();
+    return new Response(body, { status: response.status, headers: response.headers });
+  });
+  const stoppedSession = await stopping.createSession('local-development', { gmail: [account] });
+  const before = fake.requests.filter((entry) => entry.method === 'DELETE').length;
+  await assert.rejects(
+    stoppedSession.upload!(
+      'GMAIL_SEND_ATTACHMENT',
+      { name: 'stopped.txt', mimeType: 'text/plain', bytes },
+      stopped.signal,
+      account,
+    ),
+  );
+  const removed = fake.requests.filter((entry) => entry.method === 'DELETE').slice(before);
+  assert.equal(removed.length, 1);
+  assert.match(removed[0]!.path, /^\/api\/files\/[a-f0-9]{32}\.txt$/);
+
+  const bare = markTransitFileInputs({
+    type: 'object',
+    properties: {
+      parentId: { type: 'string' },
+      fileId: { type: 'string', description: 'The local transit file identifier to upload.' },
+      name: { type: 'string', description: 'Optional name; defaults to the transit file name.' },
+    },
+    required: ['parentId'],
+  }) as { properties: Record<string, { file_uploadable?: boolean }> };
+  assert.equal(bare.properties.fileId!.file_uploadable, true);
+  assert.equal(bare.properties.name!.file_uploadable, undefined);
+  const attached = await session.upload!(
+    'GMAIL_SEND_ATTACHMENT',
+    { name: 'bare.txt', mimeType: 'text/plain', bytes },
+    signal,
+    account,
+  );
+  await running.execute(
+    'GMAIL_SEND_ATTACHMENT',
+    { to: 'person@example.test', fileId: attached },
+    account,
+    signal,
+  );
+  assert.deepEqual(
+    fake.requests
+      .filter(
+        (entry) => entry.method === 'POST' && entry.path === '/v1/actions/gmail.send_attachment',
+      )
+      .at(-1)?.body,
+    { input: { to: 'person@example.test', fileId: attached.fileId } },
+  );
+
+  const result = (await session.execute(
+    'GMAIL_DOWNLOAD_ATTACHMENT',
+    { messageId: 'message-1' },
+    account,
+    signal,
+  )) as { data: IntegrationDownload };
+  assert.ok(result.data instanceof IntegrationDownload);
+  const saved = (await result.data.start()) as IntegrationFile;
+  assert.equal(saved.name, 'report.txt');
+  assert.equal(saved.mimeType, 'text/plain');
+  assert.equal(Buffer.from(saved.bytes).toString(), 'Synthetic attachment bytes.');
+  assert.deepEqual(
+    fake.requests
+      .filter((entry) => entry.method === 'GET' && entry.path.startsWith('/api/files/'))
+      .map(({ path, scope }) => ({ path, scope })),
+    [{ path: `/api/files/${fake.attachmentId}`, scope: 'none' }],
+  );
+});
+
+test('OpenConnector actions map to exact connector IDs, use only the runtime token and the selected account, and run once', async (t) => {
+  const fake = await openConnectorFake(t);
+  const provider = fake.provider();
+  const account = fake.connect();
+  await assert.rejects(provider.createSession('another-owner', { gmail: [account] }));
+  const session = await provider.createSession('local-development', { gmail: [account] });
+  const found = await session.search('send an email');
+  assert.deepEqual(Object.keys(found.tools as object).sort(), [
+    'GMAIL_DOWNLOAD_ATTACHMENT',
+    'GMAIL_FETCH_EMAILS',
+    'GMAIL_LIST_LABELS',
+    'GMAIL_SEND_ATTACHMENT',
+    'GMAIL_SEND_EMAIL',
+  ]);
+  assert.equal(await session.offers!('GMAIL_SEND_EMAIL'), true);
+  assert.equal(await session.offers!('GMAIL_SEND_FAX'), false);
+  await assert.rejects(session.offers!('SLACK_SEND_MESSAGE'), /outside the connected apps/);
+  fake.blockAction('gmail.fetch_emails');
+  assert.equal(await session.offers!('GMAIL_FETCH_EMAILS'), false);
+  assert.ok(!('GMAIL_FETCH_EMAILS' in ((await session.search('send an email')).tools as object)));
+  assert.deepEqual((await session.search('GMAIL_FETCH_EMAILS')).tools, {});
+  fake.policyAvailable(false);
+  await assert.rejects(
+    session.search('GMAIL_SEND_EMAIL'),
+    /could not check whether the runtime token allows gmail\.send_email: internal_error: Runtime policy is unavailable\./,
+  );
+  await assert.rejects(session.offers!('GMAIL_SEND_EMAIL'), /internal_error/);
+  fake.policyAvailable(true);
+  const exact = (await session.search('GMAIL_SEND_EMAIL')).tools as Record<
+    string,
+    { inputSchema: unknown }
+  >;
+  assert.deepEqual(Object.keys(exact), ['GMAIL_SEND_EMAIL']);
+  assert.deepEqual(exact.GMAIL_SEND_EMAIL!.inputSchema, {
+    type: 'object',
+    properties: { to: { type: 'string' } },
+  });
+  assert.ok(
+    fake.requests.some(
+      (entry) => entry.method === 'GET' && entry.path === '/v1/actions/gmail.send_email',
+    ),
+  );
+  assert.deepEqual(
+    await session.execute('GMAIL_SEND_EMAIL', { to: 'person@example.test' }, account),
+    { data: { id: 'fixture-message' } },
+  );
+  await assert.rejects(
+    session.execute('GMAIL_SEND_EMAIL', { to: 'person@example.test' }, 'oc-unselected'),
+    /Choose a connected account/,
+  );
+  await assert.rejects(
+    session.execute('SLACK_SEND_MESSAGE', {}, account),
+    /outside the connected apps/,
+  );
+  await assert.rejects(
+    session.execute('GMAIL_LIST_LABELS', {}, account),
+    IntegrationPermissionError,
+  );
+  await assert.rejects(session.execute('GMAIL_FETCH_EMAILS', {}, account), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(
+      error.message,
+      /provider_error: Gmail answered with a synthetic outage\. \(HTTP 502\)/,
+    );
+    assert.equal((error as { status?: number }).status, 502);
+    return true;
+  });
+  const executed = fake.requests.filter(
+    (entry) => entry.method === 'POST' && entry.path.startsWith('/v1/actions/'),
+  );
+  assert.deepEqual(
+    executed.map(({ path, scope, app, body }) => ({ path, scope, app, body })),
+    [
+      {
+        path: '/v1/actions/gmail.send_email',
+        scope: 'runtime',
+        app: account,
+        body: { input: { to: 'person@example.test' } },
+      },
+      {
+        path: '/v1/actions/gmail.list_labels',
+        scope: 'runtime',
+        app: account,
+        body: { input: {} },
+      },
+      {
+        path: '/v1/actions/gmail.fetch_emails',
+        scope: 'runtime',
+        app: account,
+        body: { input: {} },
+      },
+    ],
+  );
+  assert.ok(fake.requests.every((entry) => entry.scope === 'runtime'));
+});
+
+test('OpenConnector polls Gmail history through its Gmail proxy, carries over trigger checkpoints and reports an expired history', async (t) => {
+  const fake = await openConnectorFake(t);
+  const provider = fake.provider();
+  const account = fake.connect();
+  const signal = new AbortController().signal;
+  const baseline = await provider.pollInbox!(account, null, signal);
+  assert.deepEqual(baseline.messages, []);
+  const expected = [
+    {
+      id: 'message-1',
+      threadId: 'thread-1',
+      subject: 'Synthetic subject',
+      sender: 'Sender <sender@example.test>',
+      receivedAt: new Date(1793523600000).toISOString(),
+    },
+  ];
+  const next = await provider.pollInbox!(account, baseline.cursor, signal);
+  assert.deepEqual(next.messages, expected);
+  const carried = await provider.pollInbox!(
+    account,
+    JSON.stringify({ accountId: account, checkpoint: { historyId: '100' } }),
+    signal,
+  );
+  assert.deepEqual(carried.messages, expected);
+  assert.deepEqual(
+    fake.requests
+      .map((entry) => ({
+        ...entry,
+        read: entry.body as { endpoint?: string; query?: Record<string, string> },
+      }))
+      .filter(
+        (entry) => entry.path === '/v1/proxy/gmail' && entry.read.endpoint === '/users/me/history',
+      )
+      .map(({ scope, app, read }) => ({
+        scope,
+        app,
+        endpoint: read.endpoint,
+        start: read.query?.startHistoryId,
+      })),
+    [
+      { scope: 'runtime', app: account, endpoint: '/users/me/history', start: '100' },
+      { scope: 'runtime', app: account, endpoint: '/users/me/history', start: '100' },
+    ],
+  );
+  await assert.rejects(provider.pollInbox!('oc-other', next.cursor, signal));
+  fake.expireCheckpoint();
+  await assert.rejects(
+    provider.pollInbox!(account, next.cursor, signal),
+    IntegrationInboxCursorExpired,
+  );
+});
+
+test('OpenConnector reconnects an account without an email label only when the same provider account signs in', async (t) => {
+  const fake = await openConnectorFake(t);
+  const provider = fake.provider();
+  const owner = 'local-development';
+  const saved = fake.connect('Team workspace', 'provider-team');
+  const original = await provider.inspectAccount(saved, owner);
+  assert.equal(original.accountEmail, undefined);
+  const attempt = async (account: string, selected = provider) => {
+    const state = randomBytes(32).toString('base64url');
+    const started = await provider.reconnectAccount!(
+      owner,
+      'gmail',
+      saved,
+      'http://localhost:4310/api/apps/callback',
+    );
+    fake.complete(started.accountId.split(':').at(-1)!, 'connected', 'Team workspace', account);
+    const parsed = await provider.parseCallback(
+      { state },
+      { accountId: started.accountId, service: 'gmail' },
+    );
+    return verifyIntegrationCompletion({
+      parsed,
+      provider: selected,
+      ownerId: owner,
+      pending: {
+        service: 'gmail',
+        callbackHash: createHash('sha256').update(state).digest('hex'),
+        accountId: started.accountId,
+        claimed: true,
+        configurationId: provider.configurationId ?? null,
+        verifyOwner: true,
+        originalEmail: null,
+        originalAuthConfigId: started.authConfigId,
+      },
+    });
+  };
+  assert.equal((await attempt('provider-team')).remote.authConfigId, original.authConfigId);
+  await assert.rejects(attempt('provider-other'), /Sign in with the original account/);
+  await assert.rejects(
+    attempt('provider-team', { ...provider, accountBoundReconnect: false }),
+    /Sign in with the original account/,
+  );
+});
+
+test('OpenConnector removes the connection of a sign-in Nod abandoned, including one finished after Nod gave up', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fake = await openConnectorFake(t);
+  const provider = fake.provider();
+  const callback = 'http://localhost:4310/api/apps/callback?state=fixture';
+  const finished = await provider.authorize!('local-development', 'gmail', callback);
+  fake.complete(
+    finished.accountId.split(':').at(-1)!,
+    'connected',
+    'late@example.test',
+    'google-late',
+  );
+  const lateId = [...fake.connections.keys()].at(-1)!;
+  await provider.deleteAccount(finished.accountId, 'local-development');
+  assert.ok(!fake.connections.has(lateId));
+
+  const open = await provider.authorize!('local-development', 'gmail', callback);
+  await provider.deleteAccount(open.accountId, 'local-development');
+  const kept = fake.connect('kept@example.test', 'google-kept');
+  fake.complete(
+    open.accountId.split(':').at(-1)!,
+    'connected',
+    'later@example.test',
+    'google-later',
+  );
+  const laterId = [...fake.connections.keys()].at(-1)!;
+  assert.ok(fake.connections.has(laterId));
+  t.mock.timers.tick(16 * 60_000);
+  for (let attempt = 0; attempt < 50 && fake.connections.has(laterId); attempt++)
+    await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(!fake.connections.has(laterId));
+  assert.ok(fake.connections.has(kept));
+});
+
+test('OpenConnector Gmail checks retry when the connector cannot be reached', async (t) => {
+  const fake = await openConnectorFake(t);
+  const account = fake.connect();
+  const provider = fake.provider('local-development', async (input, init) => {
+    if (String(input).endsWith('/v1/proxy/gmail')) throw new TypeError('fetch failed');
+    return fetch(input, init);
+  });
+  await assert.rejects(
+    provider.pollInbox!(account, null, new AbortController().signal),
+    IntegrationInboxTransientError,
+  );
+});
+
+test('OpenConnector reads Gmail and Google Calendar for the selected account through their proxies with the runtime token', async (t) => {
+  const fake = await openConnectorFake(t);
+  const provider = fake.provider();
+  const account = fake.connect();
+  const signal = new AbortController().signal;
+  assert.deepEqual(await provider.sentEmails!(account, signal), [
+    {
+      from: 'owner@example.test',
+      to: ['friend@example.test'],
+      automated: false,
+      text: 'Synthetic sent text.',
+    },
+  ]);
+  const reads = fake.requests.filter((entry) => entry.path === '/v1/proxy/gmail');
+  assert.deepEqual(
+    reads.map(({ scope, app, body }) => ({ scope, app, body })),
+    [
+      {
+        scope: 'runtime',
+        app: account,
+        body: {
+          method: 'GET',
+          endpoint: '/users/me/messages',
+          query: { q: 'in:sent', maxResults: '30', fields: 'messages/id' },
+        },
+      },
+      {
+        scope: 'runtime',
+        app: account,
+        body: { method: 'GET', endpoint: '/users/me/messages/sent-1', query: { format: 'full' } },
+      },
+    ],
+  );
+  assert.deepEqual(
+    await provider.verificationEmails!(
+      account,
+      { recipient: 'owner@example.test', senderDomain: 'example.test', after: 0, before: 1 },
+      signal,
+    ),
+    [],
+  );
+  const records = (
+    await provider.activity!.gmail!.read(account, { since: new Date(0).toISOString() }, signal)
+  ).records;
+  assert.deepEqual(
+    records.map((record) => {
+      const message = (record.data as { messages: Array<{ from: string; to: string }> })
+        .messages[0]!;
+      return { from: message.from, to: message.to };
+    }),
+    [{ from: 'Sender <sender@example.test>', to: 'owner@example.test' }],
+  );
+  assert.equal(
+    typeof (await provider.activity!.googlecalendar!.changeToken!(account, signal)),
+    'string',
+  );
+  assert.deepEqual(
+    fake.requests
+      .filter((entry) => entry.path === '/v1/proxy/googlecalendar')
+      .map(({ scope, app, body }) => ({ scope, app, body })),
+    [
+      {
+        scope: 'runtime',
+        app: account,
+        body: {
+          method: 'GET',
+          endpoint: '/calendars/primary/events',
+          query: { fields: 'etag', maxResults: '1' },
+        },
+      },
+    ],
+  );
+  await assert.rejects(provider.sentEmails!('oc-other', signal), /connection_not_allowed/);
+  fake.denyProxy();
+  await assert.rejects(
+    provider.sentEmails!(account, signal),
+    /OpenConnector could not read Gmail: proxy_not_allowed: gmail proxy is not granted to this runtime token\. \(HTTP 403\)/,
+  );
+});
+
+test(
+  'OpenConnector sign-in completes only after the connector confirms it, and only execution reaches connector actions',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const fake = await openConnectorFake(t);
+    const database = await hostedDatabase();
+    const app = Fastify();
+    const owner = 'local-development';
+    const service = await createIntegrations(database.pool, {
+      ownerId: owner,
+      provider: fake.provider(),
+      baseUrl: 'http://localhost:4310',
+      wake: async () => {},
+      mailCheck: async (emails) => emails.map(() => false),
+    });
+    service.registerRoutes(app);
+    t.after(async () => {
+      await app.close();
+      await database.close();
+    });
+    const catalog = (await app.inject('/api/apps/catalog')).json() as AppConnection[];
+    assert.equal(catalog.find((entry) => entry.slug === 'gmail')?.name, 'Gmail');
+    assert.equal(
+      catalog.some((entry) => entry.slug === 'slack'),
+      false,
+    );
+    async function signIn(
+      outcome: 'connected' | 'failed',
+      input: { connectionId?: string; email?: string; account?: string } = {},
+    ) {
+      const started = await app.inject({
+        method: 'POST',
+        url: '/api/apps/gmail/connect',
+        payload: input.connectionId ? { connectionId: input.connectionId } : {},
+      });
+      assert.equal(started.statusCode, 200, started.body);
+      assert.match(started.json().url, /^https:\/\/accounts\.example\.test\/auth\?request=/);
+      const [id, request] = [...fake.pending].at(-1)!;
+      const callback = new URL(request.returnUri);
+      assert.equal(callback.origin, 'http://localhost:4310');
+      assert.equal(callback.pathname, '/api/apps/callback');
+      callback.searchParams.set('status', 'success');
+      callback.searchParams.set('service', 'gmail');
+      fake.complete(id, outcome, input.email, input.account);
+      return app.inject({ url: `${callback.pathname}${callback.search}` });
+    }
+    const forged = await signIn('failed');
+    assert.equal(forged.headers.location, 'http://localhost:4310/apps?connection=cancelled');
+    assert.equal(
+      (await service.list()).some(
+        (entry) => entry.slug === 'gmail' && entry.status === 'connected',
+      ),
+      false,
+    );
+    const completed = await signIn('connected');
+    assert.equal(completed.headers.location, 'http://localhost:4310/apps?connection=connected');
+    const gmail = (await service.list()).find(
+      (entry) => entry.slug === 'gmail' && entry.status === 'connected',
+    )!;
+    assert.equal(gmail.accountId, 'oc-1');
+    assert.equal(gmail.accountEmail, 'owner@example.test');
+    const actionCalls = () =>
+      fake.requests.filter(
+        (entry) => entry.method === 'POST' && entry.path.startsWith('/v1/actions/'),
+      );
+    const search = await service.execute(owner, 'SEARCH_TOOLS', { query: 'send an email' });
+    assert.ok(JSON.stringify(search).includes('GMAIL_SEND_EMAIL'));
+    const prepared = await service.prepare(owner, 'GMAIL_SEND_EMAIL', {
+      to: 'person@example.test',
+      connectionId: gmail.connectionId,
+    });
+    assert.equal(actionCalls().length, 0);
+    await service.execute(owner, 'GMAIL_SEND_EMAIL', prepared);
+    assert.deepEqual(
+      actionCalls().map(({ path, scope, app }) => ({ path, scope, app })),
+      [{ path: '/v1/actions/gmail.send_email', scope: 'runtime', app: 'oc-1' }],
+    );
+    for (const other of [
+      { email: 'someone-else@example.test' },
+      { account: 'google-another-account' },
+    ]) {
+      const switched = await signIn('connected', { connectionId: gmail.connectionId, ...other });
+      assert.equal(switched.headers.location, 'http://localhost:4310/apps?connection=failed');
+      assert.deepEqual([...fake.connections.keys()], ['oc-1']);
+    }
+    assert.equal(fake.connections.get('oc-1')!.displayName, 'owner@example.test');
+    const kept = (await service.list()).find((entry) => entry.connectionId === gmail.connectionId)!;
+    assert.equal(kept.accountId, 'oc-1');
+    assert.equal(kept.status, 'connected');
+    const renewed = await signIn('connected', { connectionId: gmail.connectionId });
+    assert.equal(renewed.headers.location, 'http://localhost:4310/apps?connection=connected');
+    assert.deepEqual([...fake.connections.keys()], ['oc-4']);
+    const current = (await service.list()).find(
+      (entry) => entry.connectionId === gmail.connectionId,
+    )!;
+    assert.equal(current.accountId, 'oc-4');
+    const removed = await app.inject({
+      method: 'POST',
+      url: `/api/apps/gmail/accounts/${gmail.connectionId}/disconnect`,
+    });
+    assert.equal(removed.statusCode, 200, removed.body);
+    assert.equal(fake.connections.size, 0);
+    assert.ok(
+      fake.requests.some(
+        (entry) =>
+          entry.method === 'DELETE' &&
+          entry.path === '/api/connections/gmail' &&
+          entry.scope === 'admin',
+      ),
+    );
+    assert.ok(fake.requests.every((entry) => entry.scope !== 'none'));
   },
 );

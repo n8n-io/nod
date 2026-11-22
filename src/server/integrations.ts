@@ -1174,7 +1174,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       if (original.active && original.service === row.slug)
         email = normalizedEmail(original.accountEmail ?? '');
     }
-    if (!email) throw new IntegrationError(unverifiedAccount, 409);
+    if (!email && !selected.accountBoundReconnect)
+      throw new IntegrationError(unverifiedAccount, 409);
     const nonce = randomBytes(32).toString('base64url');
     const hash = createHash('sha256').update(nonce).digest('hex');
     const callbackUrl = new URL('/api/apps/callback', options.baseUrl);
@@ -1193,7 +1194,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         row.provider_id,
         row.account_id,
         hash,
-        email,
+        email || null,
         returnTo,
         turn?.turnId ?? null,
         [...activeCallbackClaims],
