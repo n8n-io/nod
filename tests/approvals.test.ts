@@ -12,7 +12,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { devNull, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import Fastify from 'fastify';
@@ -57,6 +57,7 @@ import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { createPiMemoryCurator } from '../src/providers/pi/memory-curator.ts';
 import { createIntegrations } from '../src/server/integrations.ts';
 import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
+import { runProcess, serviceEnvironment } from '../src/providers/process.ts';
 
 function markdownNodes(markdown: string) {
   const tree = unified().use(remarkParse).use(remarkGfm).parse(markdown);
@@ -1189,6 +1190,40 @@ test('server configuration refuses remote exposure without a valid token and an 
     assert.equal(defaultPort.accessOrigin, undefined);
   }
   assert.equal(serverNetwork({ NOD_DESKTOP: 'true', NOD_AUTH_TOKEN: '' }).authToken, undefined);
+});
+
+test('server startup scopes data to the configured owner and rejects invalid overrides', async () => {
+  const loadOwner = (environment: NodeJS.ProcessEnv) =>
+    runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      env: { ...serviceEnvironment(), DOTENV_CONFIG_PATH: devNull, ...environment },
+      input: "import { ownerId } from './src/server/config.ts'; console.log(ownerId);",
+      timeoutMs: 10_000,
+    });
+
+  const desktopOwner = 'ABCD1234-0000-4000-8000-000000000001';
+  const selfHostOwner = 'ABCD1234-0000-4000-8000-000000000002';
+  const desktopEnvironment = {
+    NOD_DESKTOP: 'true',
+    NOD_DESKTOP_AUTH_TOKEN: randomBytes(32).toString('base64url'),
+    NOD_DATA_ROOT: tmpdir(),
+    NOD_DESKTOP_OWNER_ID: desktopOwner,
+  };
+
+  for (const [environment, owner] of [
+    [{}, 'local-development'],
+    [{ NOD_SELF_HOST_OWNER_ID: selfHostOwner }, selfHostOwner.toLowerCase()],
+    [{ ...desktopEnvironment, NOD_SELF_HOST_OWNER_ID: selfHostOwner }, desktopOwner.toLowerCase()],
+  ] as const) {
+    const result = await loadOwner(environment);
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.equal(result.stdout.trim(), owner);
+  }
+
+  for (const value of ['', 'invalid']) {
+    const result = await loadOwner({ NOD_SELF_HOST_OWNER_ID: value });
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /Invalid UUID/);
+  }
 });
 
 test('remote access authenticates cookies and bearer clients only on the configured origin and host', async (t) => {

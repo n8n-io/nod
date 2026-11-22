@@ -6,9 +6,13 @@ import { serverNetwork } from './network.ts';
 
 export const { port, host, publicOrigin, authToken, accessOrigin } = serverNetwork(process.env);
 export const desktopMode = process.env.NOD_DESKTOP === 'true';
-export const ownerId = desktopMode
-  ? z.uuid().parse(process.env.NOD_DESKTOP_OWNER_ID).toLowerCase()
-  : 'local-development';
+const configuredOwnerId = desktopMode
+  ? process.env.NOD_DESKTOP_OWNER_ID
+  : process.env.NOD_SELF_HOST_OWNER_ID;
+export const ownerId =
+  desktopMode || configuredOwnerId !== undefined
+    ? z.uuid().parse(configuredOwnerId).toLowerCase()
+    : 'local-development';
 export const dataRoot = resolve(process.env.NOD_DATA_ROOT || '.local');
 export const databaseUrl = process.env.DATABASE_URL || undefined;
 export const webRoot = resolve(process.env.NOD_WEB_ROOT || 'dist/web');
