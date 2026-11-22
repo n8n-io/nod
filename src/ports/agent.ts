@@ -314,7 +314,7 @@ export interface AgentToolMetadata {
   parameters: Record<string, unknown>;
   eager?: boolean;
   companions?: readonly string[] | ((args: Record<string, unknown>) => readonly string[]);
-  deferred?: { namespace: string; description: string };
+  deferred?: { namespace: string; description: string; guide?: string };
 }
 export interface AgentTool extends AgentToolMetadata {
   parallel?: boolean;

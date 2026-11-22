@@ -96,7 +96,7 @@ A stopped turn does not wait for a source check that ignores cancellation. A lat
 
 Optional next steps belong in the result message. There is no separate offer tool, queue or delivery delay.
 
-The agent's context lists the tool names of each connected MCP server, taken from the tool list Nod already keeps, so the agent can load a tool by name instead of searching for it. All servers share one limit of 150 names, filled in connection order; a server whose tools don't fit in what is left shows only its count. The compact context for small models keeps only the counts. Names use the same lowercase letters, digits and `_` as the loaded tools, and they are data from the server, never permission. Apps connected through the connection service are still found with tool search.
+The agent's context lists the tool names of each connected MCP server, taken from the tool list Nod already keeps, so the agent can load a tool by name instead of searching for it. All servers share one limit of 150 names, filled in connection order; a server whose tools don't fit in what is left shows only its count. The compact context for small models keeps only the counts. Names use the same lowercase letters, digits and `_` as the loaded tools, and they are data from the server, never permission. Apps connected through the connection service are still found with tool search. Loading a server's first tool with `nod_tool_search` also returns that server's guide, as untrusted data, so the agent doesn't need a separate `skills` read before using it.
 
 App tool search returns account IDs with the schemas. It needs no separate account list. When a search returns more than six tools, the first three keep full schemas and the rest form an index. Search an exact tool name to read its full schema, or separate several names with commas to read them together. A missing exact app tool name returns an explicit schema error with the available tool index. The agent must choose a returned name. Each action still uses the same account binding, validation and trust check. The observer also receives the names of tools whose schemas are deferred, so it can ask for an exact schema. A name alone cannot run a tool.
 
@@ -235,7 +235,7 @@ Nod keeps one MCP connection per account and address for a minute after its last
 
 Calls from different sessions share that connection. When one call is stopped or times out, only that call ends. Nod opens a new connection for later calls and closes the old one when its other calls finish. An error reply from the server also ends only its own call. A network failure or a lost connection ends every call on it.
 
-When a known tool list expires, a new turn uses the last successful list while Nod refreshes it. It does not wait for that refresh. The first load still waits for the server. Explicit tool searches wait for a current list. Each turn checks the connected accounts again, and each tool call checks its account binding and permission before it runs.
+When a known tool list expires, a new turn uses the last successful list while Nod refreshes it. It does not wait for that refresh. Nod loads each server's list when it starts, so the first turn doesn't wait for it unless the server is still answering. Explicit tool searches wait for a current list. Each turn checks the connected accounts again, and each tool call checks its account binding and permission before it runs.
 
 ## Untrusted results
 

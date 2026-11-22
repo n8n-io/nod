@@ -3593,7 +3593,10 @@ async function initializeApplication(
       clearTimeout(timer);
     }
   }
-  app.addHook('onReady', async () => activity.start());
+  app.addHook('onReady', async () => {
+    void discovered.servers().catch(() => {});
+    return activity.start();
+  });
   app.addHook('onClose', async () => {
     stopConnectionInventory();
     const failures: unknown[] = [];

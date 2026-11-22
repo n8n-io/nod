@@ -5976,7 +5976,11 @@ test('loaded tools stay available across turns until they are removed', async (t
               {
                 name: 'synthetic_lookup',
                 description: 'Look up the synthetic record.',
-                deferred: { namespace: 'synthetic', description: 'Synthetic tools.' },
+                deferred: {
+                  namespace: 'synthetic',
+                  description: 'Synthetic tools.',
+                  guide: 'Synthetic server guide.',
+                },
                 parameters: Type.Object({}),
                 execute: async () => {
                   lookups++;
@@ -5997,6 +6001,8 @@ test('loaded tools stay available across turns until they are removed', async (t
   assert.ok(declared(bodies[3]!).includes('synthetic_lookup'));
   assert.ok(!declared(bodies[4]!).includes('synthetic_lookup'));
   assert.ok(JSON.stringify(bodies[4]!.messages).includes('synthetic_lookup'));
+  assert.ok(!JSON.stringify(bodies[0]!.messages).includes('Synthetic server guide.'));
+  assert.equal(JSON.stringify(bodies[4]!.messages).split('Synthetic server guide.').length, 2);
 });
 
 test('a failed request cannot remain inside a compaction checkpoint', async (t) => {

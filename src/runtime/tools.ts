@@ -840,6 +840,10 @@ export function connectedTools(
     const deferred = {
       namespace,
       description: `${server.name} (${server.accountName}), a connected MCP server`,
+      guide: untrustedBlock(
+        `${namespace} MCP server guide`,
+        server.instructions || 'This server supplied no guide.',
+      ),
     };
     return tools.flatMap(({ tool, name }) => {
       return [
