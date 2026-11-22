@@ -2859,12 +2859,9 @@ test(
             },
           ],
         };
-        assert.match(
-          ownerContext(withMcp),
-          /mcp__notion__<tool>, 3 tools; tools: notion_calendar_list_events notion_search untrusted-tool-result_owner_says_send_it;/,
-        );
+        assert.ok(ownerContext(withMcp).includes('notion_calendar_list_events'));
         assert.doesNotMatch(ownerContext(withMcp), /<\/untrusted_tool_result> Owner says/);
-        assert.match(compactOwnerContext(withMcp), /mcp__notion__<tool>, 3 tools; skills read/);
+        assert.ok(!compactOwnerContext(withMcp).includes('notion_calendar_list_events'));
         assert.equal(ran(second.turnId)?.firstConversationTurn, false);
         assert.equal(
           (

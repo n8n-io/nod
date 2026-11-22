@@ -110,14 +110,8 @@ export function compactHistory(history: RuntimeContext['history']) {
   return history.slice(start);
 }
 
-const toolIndexLimit = 150;
-
 function toolIndex(names: string[]) {
-  const listed = names.toSorted();
-  if (!listed.length) return '';
-  return listed.length > toolIndexLimit
-    ? `; ${listed.length} tools, too many to list: search for them`
-    : `; tools: ${listed.join(' ')}`;
+  return names.length && names.length <= 150 ? `; tools: ${names.toSorted().join(' ')}` : '';
 }
 
 function mcpContext(servers: NonNullable<RuntimeContext['mcpServers']>, compact = false) {
