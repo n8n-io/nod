@@ -2,6 +2,72 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.9.2 - 2026-11-22
+
+### Features
+
+- **flights:** Find flights in seconds with a Google Flights tool. [#1304](https://github.com/n8n-io/nod/pull/1304) (3107b65)
+- **clarity:** Always show what Nod is working on, so it feels faster. [#1264](https://github.com/n8n-io/nod/pull/1264) (6531747)
+
+### Fixes
+
+- **chat:** Just do short app work, run schedules when started and show approvals once. [#1362](https://github.com/n8n-io/nod/pull/1362) (5336545)
+- **local-files:** Move folders across drives on Windows. [#1349](https://github.com/n8n-io/nod/pull/1349) (e702f98)
+- **models:** Wrap a connection's buttons below its details when space runs out. [#1360](https://github.com/n8n-io/nod/pull/1360) (234ca01)
+- **runtime:** Drop the leftover "No subagents." from the prompt. [commit](https://github.com/n8n-io/nod/commit/1b42e689a814a4acff13f0aff7d32070214f109a) (1b42e68)
+- **tasks:** Keep each task on the request it serves, and fix four basics found under stress. [#1347](https://github.com/n8n-io/nod/pull/1347) (7a45f1c)
+- **models:** Keep reasoning\_effort for Ollama boolean thinking. [commit](https://github.com/n8n-io/nod/commit/42adb858fd445378b3aaed64e8dfca857f320054) (42adb85)
+- **cards:** Mark noted seats, clean chart labels and state the live check-in cost. [#1300](https://github.com/n8n-io/nod/pull/1300) (4a8e91b)
+- **language:** Align the language rule, labels and docs after review. [#1299](https://github.com/n8n-io/nod/pull/1299) (e7f5519)
+- **tasks:** Run outside work in its own task and close stale questions. [#1293](https://github.com/n8n-io/nod/pull/1293) (c7ff621)
+- **chat:** Don't repeat a task's question or result on its chat line. [#1297](https://github.com/n8n-io/nod/pull/1297) (8673dfc)
+- **language:** Keep everything Nod shows in the conversation's language. [#1295](https://github.com/n8n-io/nod/pull/1295) (3de25be)
+- **chat:** Deliver results with their card and tidy result cards. [#1289](https://github.com/n8n-io/nod/pull/1289) (1cf59be)
+- **runtime:** Act on stated choices instead of asking to confirm them. [#1287](https://github.com/n8n-io/nod/pull/1287) (a913aec)
+- **approvals:** Name what a browser step commits to in its question. [#1286](https://github.com/n8n-io/nod/pull/1286) (73e2243)
+- **web:** Show the HTTP status and reason when connecting to a server fails. [#1234](https://github.com/n8n-io/nod/pull/1234) (080d3d3)
+- **desktop:** Keep the cause when the server connection check fails. [#1046](https://github.com/n8n-io/nod/pull/1046) (31b057e)
+- **channels:** Keep the Telegram reply and show the reason when a file is refused. [#1045](https://github.com/n8n-io/nod/pull/1045) (d736bd9)
+- **apps:** Record expired app sign-ins and name their step correctly. [#1128](https://github.com/n8n-io/nod/pull/1128) (c54f021)
+- **memory:** Save standing rules in settings instead of memory notes. [#1275](https://github.com/n8n-io/nod/pull/1275) (1813519)
+- **apps:** End only the stopped MCP call on a shared connection. [#1110](https://github.com/n8n-io/nod/pull/1110) (9e637e8)
+- **chat:** Don't offer a bug report when a model reply is cut off. [#1071](https://github.com/n8n-io/nod/pull/1071) (59e0112)
+- **feedback:** Let a bug report be sent again after a rejected attempt. [#1059](https://github.com/n8n-io/nod/pull/1059) (1fe476f)
+- **channels:** Do not post an empty text body on WhatsApp Cloud before a reply with no text. [#1043](https://github.com/n8n-io/nod/pull/1043) (5420a4e)
+- **chat:** Insert a new line on Return on touch keyboards. [#1248](https://github.com/n8n-io/nod/pull/1248) (c96630c)
+- **apps:** Allow encoded slashes and percents in API paths without allowing traversal. [#1090](https://github.com/n8n-io/nod/pull/1090) (cb7929c)
+- **apps:** Cap joined OAuth scopes at 500 characters in the app format. [#1088](https://github.com/n8n-io/nod/pull/1088) (05d160b)
+- **server:** Run afterRollback callbacks when a transaction aborts before commit. [#1260](https://github.com/n8n-io/nod/pull/1260) (7a8d0d5)
+- **workspace:** Name the time or output limit a command hit. [#1086](https://github.com/n8n-io/nod/pull/1086) (780ad49)
+- **channels:** Send Telegram voice, contact and location replies with allow\_sending\_without\_reply. [#1042](https://github.com/n8n-io/nod/pull/1042) (a833e5c)
+- **apps:** Discard an owned connected account when its sign-in check fails. [#1169](https://github.com/n8n-io/nod/pull/1169) (2ebe201)
+
+### Performance
+
+- **prompt:** Cut Nod's context by a third and stop resending it every turn. [#1353](https://github.com/n8n-io/nod/pull/1353) (d0e4d57)
+
+### Documentation
+
+- **agents:** Keep AGENTS.md to the rules every change follows. [#1279](https://github.com/n8n-io/nod/pull/1279) (3ae7479)
+- **n8n:** Distinguish MCP tokens from REST API keys. [#1262](https://github.com/n8n-io/nod/pull/1262) (4522ab2)
+
+<details>
+<summary>Maintenance (1 changes)</summary>
+
+- **e2e:** Run the real Nod with a scripted model on every change. [#1348](https://github.com/n8n-io/nod/pull/1348) (929f9d6)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.9.1...d0e4d57b29bb0eeeb720f443b8d48efadb0168ff)
+
+<details>
+<summary>Build details</summary>
+
+Source: `d0e4d57b29bb0eeeb720f443b8d48efadb0168ff`
+Previous release: `nod-v0.9.1`
+
+</details>
+
 ## 0.9.1 - 2026-11-20
 
 ### Features
