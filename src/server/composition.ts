@@ -3201,13 +3201,16 @@ async function initializeApplication(
             verifiedCalendarRevision = current.revision;
             verifiedInstructionRevision = verdict.instructionRevision;
           }
-          const earlierWrites = await ledger.earlierWrites(turn.threadId, objectIds(prepared, ''));
+          const earlierActions = await ledger.earlierActions(
+            turn.threadId,
+            objectIds(prepared, ''),
+          );
           return {
-            ...(earlierWrites.length
+            ...(earlierActions.length
               ? {
-                  earlierWrites: earlierWrites.map((write) => ({
-                    action: recordedTitle(write.action),
-                    target: write.target,
+                  earlierActions: earlierActions.map((earlier) => ({
+                    action: recordedTitle(earlier.action),
+                    target: earlier.target,
                   })),
                 }
               : {}),
@@ -3263,7 +3266,7 @@ async function initializeApplication(
               action,
               verdict.confirm ? { kind: 'approved' } : verdict.basis,
               actionTarget(action, prepared),
-              !verdict.confirm && verdict.basis.kind === 'read' ? undefined : objectIds(result),
+              objectIds(result),
             );
             return result;
           },

@@ -2878,7 +2878,7 @@ test(
         const [approval] = await approvalsFor(turn);
         assert.equal(approval.status, 'pending');
         assert.equal(approval.action, 'GMAIL_DELETE_MESSAGE');
-        assert.equal(approval.details.earlierWrites, undefined);
+        assert.equal(approval.details.earlierActions, undefined);
         const question = await confirmationFor(approval);
         assert.doesNotMatch(question, /fixture-mail-1/);
         assert.match(question, /permanently delete/i);
@@ -2956,7 +2956,7 @@ test(
           const [approval] = await approvalsFor(turn);
           assert.equal(approval.status, 'pending');
           assert.equal(approval.action, 'GMAIL_DELETE_DRAFT');
-          assert.deepEqual(approval.details.earlierWrites, [
+          assert.deepEqual(approval.details.earlierActions, [
             {
               action: 'Gmail: create email draft',
               target: 'cleanup@example.test · Synthetic team summary',

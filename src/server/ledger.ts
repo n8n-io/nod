@@ -704,7 +704,7 @@ export function createLedger({
     );
   }
 
-  async function earlierWrites(threadId: string, ids: string[]) {
+  async function earlierActions(threadId: string, ids: string[]) {
     if (!ids.length) return [];
     const { rows } = await pool.query<{ action: string; target: string }>(
       `SELECT DISTINCT ON (ref) a.action, a.target FROM app_actions a
@@ -1488,7 +1488,7 @@ export function createLedger({
     speech,
     attributeMediaUsage,
     action,
-    earlierWrites,
+    earlierActions,
     limitReached,
     reachedLimit,
     checkIn,
