@@ -683,10 +683,15 @@ test(
       await t.test('cancelled code requests do not hold ordinary numbered messages', async () => {
         await reset();
         await seed({ status: 'cancelled' });
-        const text = 'Gift ideas: https://example.com/books/05382/some-book/';
-        const response = await send(text);
-        assert.equal(response.statusCode, 200);
-        assert.deepEqual(ordinary, [text]);
+        const messages = [
+          'Gift ideas: https://example.com/books/05382/some-book/',
+          'See http://example.com',
+        ];
+        for (const text of messages) {
+          const response = await send(text);
+          assert.equal(response.statusCode, 200, text);
+        }
+        assert.deepEqual(ordinary, messages);
         assert.deepEqual(injected, []);
       });
       await t.test('cancelled code requests still hold code-shaped replies', async () => {

@@ -161,7 +161,11 @@ export async function createChatVerification(
       ...new Set(
         [...text.matchAll(/\bhttps?:\/\/\S+/giu)].flatMap(([value]) => {
           const url = URL.parse(value);
-          return url ? credentialOrigins(url.origin) : [];
+          return url
+            ? url.protocol === 'https:'
+              ? credentialOrigins(url.origin)
+              : [url.origin]
+            : [];
         }),
       ),
     ];
