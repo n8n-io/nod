@@ -672,27 +672,47 @@ test(
           assert.ok(!JSON.stringify(persisted.rows).includes('7395'));
         },
       );
-      await t.test(
-        'cancelled and expired code requests do not hold ordinary numbered messages',
-        async () => {
-          for (const stale of ['cancelled', 'expired'] as const) {
-            await reset();
-            const request = await seed({
-              status: stale === 'cancelled' ? 'cancelled' : 'waiting',
-            });
-            if (stale === 'expired')
-              await db.pool.query(
-                "UPDATE credential_requests SET flow_expires_at=now()-interval '1 second' WHERE id=$1",
-                [request.requestId],
-              );
-            const text = 'Gift ideas: https://example.com/books/05382/some-book/';
-            const response = await send(text);
-            assert.equal(response.statusCode, 200, stale);
-            assert.deepEqual(ordinary, [text]);
-            assert.deepEqual(entered, []);
-          }
-        },
-      );
+      await t.test('cancelled code requests do not hold ordinary numbered messages', async () => {
+        await reset();
+        await seed({ status: 'cancelled' });
+        const text = 'Gift ideas: https://example.com/books/05382/some-book/';
+        const response = await send(text);
+        assert.equal(response.statusCode, 200);
+        assert.deepEqual(ordinary, [text]);
+        assert.deepEqual(injected, []);
+      });
+      await t.test('cancelled code requests still hold code-shaped replies', async () => {
+        await reset();
+        await seed({ status: 'cancelled', supersededLongAgo: true });
+        for (const text of ['7395', 'my code is 7395']) {
+          const response = await send(text);
+          assert.equal(response.statusCode, 409, text);
+          assert.ok(!response.body.includes(text));
+        }
+        assert.deepEqual(ordinary, []);
+        assert.deepEqual(injected, []);
+        assert.equal((await db.pool.query("SELECT * FROM messages WHERE role='user'")).rowCount, 0);
+      });
+      await t.test('live code requests remain private after flow navigation expires', async () => {
+        await reset();
+        const request = await seed();
+        await db.pool.query(
+          "UPDATE credential_requests SET flow_expires_at=now()-interval '1 second' WHERE id=$1",
+          [request.requestId],
+        );
+        const response = await send('7395');
+        assert.equal(response.statusCode, 200, response.body);
+        assert.equal(response.json().verificationStatus, 'submitted');
+        assert.deepEqual(ordinary, []);
+        assert.deepEqual(
+          injected.map(({ code }) => code),
+          ['7395'],
+        );
+        assert.doesNotMatch(
+          JSON.stringify((await db.pool.query('SELECT text FROM messages')).rows),
+          /7395/,
+        );
+      });
       await t.test(
         'an expired payment still holds code-like replies while an invoice question reaches chat',
         async () => {
