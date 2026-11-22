@@ -455,7 +455,13 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           new Error('This schedule already has a run in progress or waiting for your answer.'),
           { statusCode: 409 },
         );
-      return startRun(client, row, input.requestId, now());
+      return startRun(
+        client,
+        row,
+        input.requestId,
+        now(),
+        '\nThe owner started this run with Run now.',
+      );
     });
     refresh();
     return { ...run, activeRun: await activeRun(pool, id) };
