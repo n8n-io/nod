@@ -69,7 +69,7 @@ test(
     await thread.initializeThreads();
     await db.pool.query(`CREATE TABLE credential_requests (
     id text PRIMARY KEY,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),
-    owner_id text NOT NULL,kind text NOT NULL,flow_expires_at timestamptz,
+    owner_id text NOT NULL,origin text NOT NULL,kind text NOT NULL,flow_expires_at timestamptz,
     status text NOT NULL DEFAULT 'pending'
   )`);
     const ordinary: string[] = [];
@@ -176,6 +176,7 @@ test(
         owner?: string;
         channel?: string;
         kind?: string;
+        origin?: string;
         archived?: boolean;
         status?: string;
         reason?: string;
@@ -201,8 +202,15 @@ test(
         ],
       );
       await db.pool.query(
-        `INSERT INTO credential_requests(id,thread_id,turn_id,owner_id,kind) VALUES($1,$2,$3,$4,$5)`,
-        [requestId, threadId, turnId, owner, options.kind ?? 'otp'],
+        `INSERT INTO credential_requests(id,thread_id,turn_id,owner_id,origin,kind) VALUES($1,$2,$3,$4,$5,$6)`,
+        [
+          requestId,
+          threadId,
+          turnId,
+          owner,
+          options.origin ?? 'https://example.test',
+          options.kind ?? 'otp',
+        ],
       );
       await db.pool.query(
         "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'assistant','Reply with the verification code.',$3,$4)",
@@ -683,7 +691,7 @@ test(
       });
       await t.test('cancelled code requests still hold code-shaped replies', async () => {
         await reset();
-        await seed({ status: 'cancelled', supersededLongAgo: true });
+        await seed({ status: 'cancelled', superseded: true });
         for (const text of [
           '7395',
           'my code is 7395',
@@ -692,6 +700,7 @@ test(
           'https://example.test/otp/482913',
           'https://example.test/?verification_code=482913',
           'OTP: https://example.test/482913',
+          'código: https://example.test/verificar/482913/continuar',
         ]) {
           const response = await send(text);
           assert.equal(response.statusCode, 409, text);
@@ -700,6 +709,16 @@ test(
         assert.deepEqual(ordinary, []);
         assert.deepEqual(injected, []);
         assert.equal((await db.pool.query("SELECT * FROM messages WHERE role='user'")).rowCount, 0);
+      });
+      await t.test('superseded code requests stop fencing after ten minutes', async () => {
+        await reset();
+        await seed({ status: 'cancelled', supersededLongAgo: true });
+        for (const text of ['2026', 'What happened to invoice NS-1042']) {
+          const response = await send(text);
+          assert.equal(response.statusCode, 200, text);
+        }
+        assert.deepEqual(ordinary, ['2026', 'What happened to invoice NS-1042']);
+        assert.deepEqual(injected, []);
       });
       await t.test('live code requests remain private after flow navigation expires', async () => {
         await reset();

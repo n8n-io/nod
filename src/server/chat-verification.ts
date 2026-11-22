@@ -72,9 +72,9 @@ export async function createChatVerification(
     refresh: () => void;
   },
 ) {
-  const codeRequests = `(SELECT id,owner_id,thread_id,turn_id,kind,status FROM credential_requests WHERE kind='otp'${
+  const codeRequests = `(SELECT id,owner_id,thread_id,turn_id,kind,status,origin FROM credential_requests WHERE kind='otp'${
     options.submitPayment
-      ? ` UNION ALL SELECT id::text,owner_id,thread_id,turn_id,'payment',status FROM vault_payments`
+      ? ` UNION ALL SELECT id::text,owner_id,thread_id,turn_id,'payment',status,NULL::text FROM vault_payments`
       : ''
   })`;
   await pool.query(`CREATE TABLE IF NOT EXISTS chat_verification_submissions (
@@ -156,6 +156,14 @@ export async function createChatVerification(
       (reply.kind === 'invalid' &&
         (authenticationTerm.test(text) ||
           classifyVerificationReply(withoutUrls).kind !== 'ordinary'));
+    const messageOrigins = [
+      ...new Set(
+        [...text.matchAll(/\bhttps?:\/\/\S+/giu)].flatMap(([value]) => {
+          const url = URL.parse(value);
+          return url ? [url.origin] : [];
+        }),
+      ),
+    ];
     if (
       reply.kind === 'ordinary' &&
       !codes.payment &&
@@ -279,10 +287,13 @@ export async function createChatVerification(
           await client.query<{ kind: 'otp' | 'payment'; channel: string }>(
             `SELECT r.kind,u.channel FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
              WHERE r.owner_id=$1 AND u.owner_id=$1 AND (u.channel=$2 OR r.kind='payment') AND r.thread_id=$3
-               AND r.status='pending' AND (u.status IN ('running','waiting') OR $7::boolean)
-               AND (r.turn_id=$6::uuid OR $7::boolean OR NOT ${supersededSql(
+               AND r.status='pending'
+               AND (u.status IN ('running','waiting') OR $7::boolean OR (r.kind='otp' AND r.origin=ANY($9::text[])))
+               AND (r.turn_id=$6::uuid OR NOT ${supersededSql(
                  'u',
-                 `newer.created_at>u.created_at AND (NOT $7::boolean OR newer.created_at<now()-interval '10 minutes')`,
+                 `newer.created_at>u.created_at
+                  AND (NOT ($7::boolean OR (r.kind='otp' AND r.origin=ANY($9::text[])))
+                    OR newer.created_at<now()-interval '10 minutes')`,
                )})
                AND ((r.kind='payment' AND ($4::boolean OR ($8::boolean AND u.channel=$2))) OR (r.kind='otp' AND $5::boolean)) LIMIT 1`,
             [
@@ -294,6 +305,7 @@ export async function createChatVerification(
               turnId ?? null,
               Boolean(otpCodeLike || codes.payment || paymentCodeLike),
               reply.kind === 'code',
+              messageOrigins,
             ],
           )
         ).rows[0];
