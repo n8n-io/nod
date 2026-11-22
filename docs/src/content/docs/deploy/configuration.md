@@ -72,9 +72,9 @@ Use the [self-hosting guide](/deploy/self-host/) to configure HTTPS and private 
 
 ### Use a desktop owner ID
 
-Set `NOD_SELF_HOST_OWNER_ID` in the server's `.env` to the UUID from your desktop installation when you move its data. Nod converts the UUID to lowercase. Omit the variable to use `local-development`. An empty or invalid value prevents the server from starting.
+Set `NOD_SELF_HOST_OWNER_ID` in the server's `.env` to the `ownerId` from `profile.json` in your desktop profile folder when you move its data. Nod converts the UUID to lowercase. Omit the variable to use `local-development`. An empty or invalid value prevents the server from starting.
 
-Each server uses one owner ID. Changing it changes which owner's data Nod can see. Move the desktop data separately and keep its original [Vault key](#vault) to read saved credentials.
+Each server uses one owner ID. Changing it changes which owner's data Nod can see. Moving the desktop data is a separate step. The desktop app keeps its Vault key in the operating system's protected storage, and Nod has no supported way to export it. Without that original key, the server can't read saved credentials and cards; reconnect apps and add them again.
 
 ## Models
 
