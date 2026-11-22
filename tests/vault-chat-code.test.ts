@@ -715,6 +715,7 @@ test(
           'código: https://example.com/verificar/482913/continuar',
           'código: https://www.example.com/verificar/482913/continuar',
           'código: https://cuenta.example.com/verificar/482913/continuar',
+          'código: https://cuenta.identidad.es/verificar/482913/continuar',
         ]) {
           const response = await send(text);
           assert.equal(response.statusCode, 409, text);

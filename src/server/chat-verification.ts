@@ -151,7 +151,7 @@ export async function createChatVerification(
     const paymentCodeLike = options.submitPayment && codeBearingPaymentReply(text);
     const withoutUrls = text.replace(/\bhttps?:\/\/\S+/giu, '');
     const authenticationTerm =
-      /(?:^|[^\p{L}\p{N}])(?:2fa|auth|authentication|code|login|magic(?:-link)?|mfa|one-time(?:-code|password)?|otp|passcode|pin|signin|token|verification|verify)(?:$|[^\p{L}\p{N}])/iu;
+      /(?:^|[^\p{L}\p{N}])(?:2fa|auth\p{L}*|c[oó]dig\p{L}*|codic\p{L}*|code|login|magic(?:-link)?|mfa|one-time(?:-code|password)?|otp|passcode|pin|signin|token|verif\p{L}*)(?:$|[^\p{L}\p{N}])/iu;
     const otpCodeLike =
       reply.kind === 'code' ||
       reply.kind === 'wrapped' ||
