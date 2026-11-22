@@ -188,7 +188,7 @@ import {
 } from './redaction.ts';
 import { createLedger, limitsInput } from './ledger.ts';
 import { createActivityLog } from './activity-log.ts';
-import { actionTarget } from './action-presentation.ts';
+import { actionTarget, objectIds, recordedTitle } from './action-presentation.ts';
 import { usageFileName, usagePdf } from './usage-report.ts';
 import { buildFeedbackReport, type FeedbackReportOptions } from './bug-report.ts';
 import { registerFeedback } from './feedback.ts';
@@ -1901,6 +1901,7 @@ async function initializeApplication(
                           action,
                           provenance.basis ?? { kind: 'approved' },
                           actionTarget(action, args, provenance.details),
+                          objectIds(result),
                         );
                         return privateEmailResult(
                           (
@@ -3200,7 +3201,16 @@ async function initializeApplication(
             verifiedCalendarRevision = current.revision;
             verifiedInstructionRevision = verdict.instructionRevision;
           }
+          const earlierWrites = await ledger.earlierWrites(turn.threadId, objectIds(prepared, ''));
           return {
+            ...(earlierWrites.length
+              ? {
+                  earlierWrites: earlierWrites.map((write) => ({
+                    action: recordedTitle(write.action),
+                    target: write.target,
+                  })),
+                }
+              : {}),
             ...(verdict.confirm ? { reason: verdict.reason } : {}),
             ...(account
               ? {
@@ -3253,6 +3263,7 @@ async function initializeApplication(
               action,
               verdict.confirm ? { kind: 'approved' } : verdict.basis,
               actionTarget(action, prepared),
+              !verdict.confirm && verdict.basis.kind === 'read' ? undefined : objectIds(result),
             );
             return result;
           },

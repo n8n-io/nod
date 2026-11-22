@@ -477,6 +477,21 @@ const quoted = (text: string) => `â€œ${text.length > 80 ? `${text.slice(0, 79)}â
 const dollarsOrNone = (value: unknown, label: string) =>
   value === null ? `no ${label}` : `${label} $${String(value)}`;
 
+export function objectIds(value: unknown, key = 'id') {
+  const ids = new Set<string>();
+  const pending: Array<[unknown, number]> = [[value, 0]];
+  for (let visited = 0; pending.length && visited < 500 && ids.size < 20; visited++) {
+    const [item, depth] = pending.pop()!;
+    if (!item || typeof item !== 'object' || depth > 4) continue;
+    for (const [name, child] of Object.entries(item)) {
+      const text = typeof child === 'string' || typeof child === 'number' ? String(child) : '';
+      if ((!key || name === key) && /^[^\s]{4,200}$/.test(text)) ids.add(text);
+      else if (child && typeof child === 'object') pending.push([child, depth + 1]);
+    }
+  }
+  return [...ids];
+}
+
 export function recordedTitle(action: string) {
   if (action === 'NOD_browser') return 'Browser';
   if (action === 'NOD_workspace_command') return 'Run a workspace command';
