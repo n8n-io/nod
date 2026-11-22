@@ -2,11 +2,12 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { SubmitMessageResponse, VerificationRequest } from '../shared/contracts.ts';
+import { loopbackHost } from '../shared/loopback.ts';
 import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
 import { lockThread } from './thread.ts';
 import { transaction } from './transaction.ts';
 import { supersededSql, waitingTurnSql } from './turn-chain.ts';
-import { credentialOrigins } from './vault.ts';
+import { credentialSite } from './vault.ts';
 
 interface VerificationInput {
   clientMessageId: string;
@@ -157,18 +158,15 @@ export async function createChatVerification(
       (reply.kind === 'invalid' &&
         (authenticationTerm.test(text) ||
           classifyVerificationReply(withoutUrls).kind !== 'ordinary'));
-    const messageOrigins = [
-      ...new Set(
-        [...text.matchAll(/\bhttps?:\/\/\S+/giu)].flatMap(([value]) => {
-          const url = URL.parse(value);
-          return url
-            ? url.protocol === 'https:'
-              ? credentialOrigins(url.origin)
-              : [url.origin]
-            : [];
-        }),
-      ),
-    ];
+    const messageSites = new Set(
+      [...text.matchAll(/\bhttps?:\/\/\S+/giu)].flatMap(([value]) => {
+        const url = URL.parse(value);
+        return url &&
+          (url.protocol === 'https:' || (url.protocol === 'http:' && loopbackHost(url.hostname)))
+          ? [credentialSite(url.origin)]
+          : [];
+      }),
+    );
     if (
       reply.kind === 'ordinary' &&
       !codes.payment &&
@@ -289,18 +287,22 @@ export async function createChatVerification(
       if (!requests.rowCount) {
         if (requestId) throw conflict(unavailableMessage);
         const waiting = (
-          await client.query<{ kind: 'otp' | 'payment'; channel: string }>(
-            `SELECT r.kind,u.channel FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
+          await client.query<{
+            kind: 'otp' | 'payment';
+            channel: string;
+            origin: string | null;
+          }>(
+            `SELECT r.kind,u.channel,r.origin FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
              WHERE r.owner_id=$1 AND u.owner_id=$1 AND (u.channel=$2 OR r.kind='payment') AND r.thread_id=$3
                AND r.status='pending'
-               AND (u.status IN ('running','waiting') OR $7::boolean OR (r.kind='otp' AND r.origin=ANY($9::text[])))
+               AND (u.status IN ('running','waiting') OR $7::boolean OR (r.kind='otp' AND $9::boolean))
                AND (r.turn_id=$6::uuid OR NOT ${supersededSql(
                  'u',
                  `newer.created_at>u.created_at
-                  AND (NOT ($7::boolean OR (r.kind='otp' AND r.origin=ANY($9::text[])))
+                  AND (NOT ($7::boolean OR (r.kind='otp' AND $9::boolean))
                     OR newer.created_at<now()-interval '10 minutes')`,
                )})
-               AND ((r.kind='payment' AND ($4::boolean OR ($8::boolean AND u.channel=$2))) OR (r.kind='otp' AND $5::boolean)) LIMIT 1`,
+               AND ((r.kind='payment' AND ($4::boolean OR ($8::boolean AND u.channel=$2))) OR (r.kind='otp' AND $5::boolean))`,
             [
               options.ownerId,
               channel,
@@ -310,10 +312,15 @@ export async function createChatVerification(
               turnId ?? null,
               Boolean(otpCodeLike || codes.payment || paymentCodeLike),
               reply.kind === 'code',
-              messageOrigins,
+              messageSites.size > 0,
             ],
           )
-        ).rows[0];
+        ).rows.find(
+          ({ kind, origin }) =>
+            kind !== 'otp' ||
+            otpCodeLike ||
+            (origin !== null && messageSites.has(credentialSite(origin))),
+        );
         if (waiting)
           throw conflict(
             waiting.kind === 'payment'

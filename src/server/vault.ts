@@ -393,6 +393,11 @@ export function credentialOrigin(value: string) {
   return url.origin;
 }
 
+export function credentialSite(value: string) {
+  const host = new URL(credentialOrigin(value)).hostname.replace(/^www\./, '');
+  return parseDomain(host, { allowPrivateDomains: true }).domain ?? host;
+}
+
 export function credentialOrigins(value: string) {
   const origin = credentialOrigin(value);
   const url = new URL(origin);

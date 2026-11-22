@@ -686,6 +686,7 @@ test(
         const messages = [
           'Gift ideas: https://example.com/books/05382/some-book/',
           'See http://example.com',
+          'Gift ideas: https://elsewhere.test/books/482913/some-book/',
         ];
         for (const text of messages) {
           const response = await send(text);
@@ -711,6 +712,7 @@ test(
           'OTP: https://example.com/482913',
           'código: https://example.com/verificar/482913/continuar',
           'código: https://www.example.com/verificar/482913/continuar',
+          'código: https://cuenta.example.com/verificar/482913/continuar',
         ]) {
           const response = await send(text);
           assert.equal(response.statusCode, 409, text);
