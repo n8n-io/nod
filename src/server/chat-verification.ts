@@ -151,6 +151,12 @@ export async function createChatVerification(
     const paymentCodeLike = options.submitPayment && codeBearingPaymentReply(text);
     const withoutUrls = text.replace(/\bhttps?:\/\/\S+/giu, '');
     const searchableText = text.normalize('NFKD').replace(/\p{M}/gu, '');
+    const searchableWithoutUrls = withoutUrls.normalize('NFKD').replace(/\p{M}/gu, '');
+    const localizedLabel =
+      /[:：]/u.test(searchableWithoutUrls) &&
+      [...searchableWithoutUrls.matchAll(/\p{L}+/gu)].some(([word]) =>
+        /[^\u0000-\u007f]/u.test(word),
+      );
     const authenticationTerm =
       /(?:^|[^\p{L}\p{N}])(?:2fa|auth(?:entication|enticator|orization|orize(?:d|s|ing)?)?|codig\p{L}*|codic\p{L}*|code|login|magic(?:-link)?|mfa|one-time(?:-code|password)?|otp|passcode|pin|signin|token|verif\p{L}*)(?:$|[^\p{L}\p{N}])/iu;
     const otpCodeLike =
@@ -158,6 +164,7 @@ export async function createChatVerification(
       reply.kind === 'wrapped' ||
       (reply.kind === 'invalid' &&
         (authenticationTerm.test(searchableText) ||
+          localizedLabel ||
           classifyVerificationReply(withoutUrls).kind !== 'ordinary'));
     const messageSites = new Set(
       [...text.matchAll(/\bhttps?:\/\/\S+/giu)].flatMap(([value]) => {

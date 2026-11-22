@@ -719,6 +719,7 @@ test(
           'código: https://cuenta.example.com/verificar/482913/continuar',
           'código: https://cuenta.identidad.es/verificar/482913/continuar',
           'co\u0301digo: https://cuenta.identidad.es/verificar/482913/continuar',
+          '验证码：https://cuenta.identidad.cn/482913/继续',
         ]) {
           const response = await send(text);
           assert.equal(response.statusCode, 409, text);
