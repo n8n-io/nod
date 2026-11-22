@@ -382,7 +382,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     missed: Date[] = [],
   ) {
     const turnId = await enqueueTurn(
-      `Scheduled task: ${row.title}\n${row.prompt}\nDeliver what this schedule asks for in this run, even when an earlier message covered the same ground. When it asks for nothing to be sent, message the owner only about a useful result, a problem or a necessary question.${note}`,
+      `Scheduled task: ${row.title}\n${row.prompt}\nDo this run now; the schedule already decided its timing. Deliver what this schedule asks for in this run, even when an earlier message covered the same ground. When it asks for nothing to be sent, message the owner only about a useful result, a problem or a necessary question.${note}`,
       {
         sourceId: `schedule:${row.id}:${jobId}`,
         source: 'schedule',
@@ -455,7 +455,13 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           new Error('This schedule already has a run in progress or waiting for your answer.'),
           { statusCode: 409 },
         );
-      return startRun(client, row, input.requestId, now());
+      return startRun(
+        client,
+        row,
+        input.requestId,
+        now(),
+        '\nThe owner started this run with Run now.',
+      );
     });
     refresh();
     return { ...run, activeRun: await activeRun(pool, id) };

@@ -141,6 +141,16 @@ const changedRead = (path: string, reason?: unknown) =>
   );
 const keepOutLimit = 100;
 
+async function removeCopied(source: string, copy: string) {
+  for (const name of await readdir(copy)) {
+    const copied = nodePath.join(copy, name);
+    if ((await lstat(copied)).isDirectory())
+      await removeCopied(nodePath.join(source, name), copied);
+    else await rm(nodePath.join(source, name));
+  }
+  await rmdir(source);
+}
+
 type Turn = { turnId: string; threadId: string };
 type Query = Pick<Pool, 'query'>;
 export type WorkspaceRead = (input: z.infer<typeof workspaceFileReference>) => Promise<Uint8Array>;
@@ -434,13 +444,15 @@ export function createLocalFiles(
         throw error;
       });
     }
-    if (info.isDirectory() && process.platform !== 'win32') {
-      await mkdir(target).catch(fail);
+    if (info.isDirectory()) {
+      const windows = process.platform === 'win32';
+      if (!windows) await mkdir(target).catch(fail);
       return rename(source, target).catch(async (error: NodeJS.ErrnoException) => {
         if (error.code !== 'EXDEV') {
-          await rmdir(target).catch(() => undefined);
-          throw error;
+          if (!windows) await rmdir(target).catch(() => undefined);
+          return fail(error);
         }
+        if (windows) await mkdir(target).catch(fail);
         try {
           for (const name of await readdir(source))
             await cp(nodePath.join(source, name), nodePath.join(target, name), {
@@ -454,7 +466,7 @@ export function createLocalFiles(
           await rm(target, { recursive: true, force: true });
           throw copy;
         }
-        await rm(source, { recursive: true });
+        await removeCopied(source, target);
       });
     }
     if (info.isSymbolicLink()) {
@@ -469,9 +481,7 @@ export function createLocalFiles(
         throw error;
       });
     }
-    if (process.platform !== 'win32')
-      throw new IntegrationError(`${source} is not a file, folder or link.`);
-    await rename(source, target);
+    throw new IntegrationError(`${source} is not a file, folder or link.`);
   }
 
   async function regularFile(path: string) {

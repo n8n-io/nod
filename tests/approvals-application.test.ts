@@ -2818,7 +2818,7 @@ test(
           let drafts = 0;
           confirmationModel = (_input, schema) => {
             drafts++;
-            assert.deepEqual(schema?.required, ['text', 'action', 'decline']);
+            assert.deepEqual(schema?.required, ['text', 'action', 'question', 'decline']);
             assert.equal(schema?.additionalProperties, false);
             return drafts === 1
               ? { text: 'Save the synthetic development rule?' }

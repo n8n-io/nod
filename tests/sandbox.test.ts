@@ -1472,6 +1472,47 @@ test('local file version checks keep the cause of a failed path check', async (t
   }
 });
 
+test('a folder moved to another drive keeps a file that arrives during the copy', async (t) => {
+  const home = await realpath(await mkdtemp(join(tmpdir(), 'nod-cross-drive-')));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const source = join(home, 'box');
+  await mkdir(join(source, 'inner'), { recursive: true });
+  await writeFile(join(source, 'inner', 'a.txt'), 'a');
+  const pool = {
+    query: async () => ({ rows: [{ local_files_enabled: true, local_keep_out: [] }] }),
+  } as unknown as Pool;
+  const files = createLocalFiles(pool, 'owner', {
+    home,
+    dataRoot: join(home, 'data'),
+    available: true,
+  });
+  const { rename: originalRename, cp: originalCp } = fs;
+  const crossDrive = Object.assign(new Error('EXDEV: cross-device link not permitted'), {
+    code: 'EXDEV',
+  });
+  const renamed = t.mock.method(fs, 'rename', (...args: Parameters<typeof fs.rename>) =>
+    args[0] === source ? Promise.reject(crossDrive) : Reflect.apply(originalRename, fs, args),
+  );
+  const copied = t.mock.method(fs, 'cp', async (...args: Parameters<typeof fs.cp>) => {
+    await writeFile(join(source, 'late.txt'), 'late');
+    return Reflect.apply(originalCp, fs, args);
+  });
+  syncBuiltinESMExports();
+  try {
+    const result = (await files.execute('LOCAL_FILES_MOVE', {
+      moves: [{ from: source, to: join(home, 'crate') }],
+    })) as { failed: unknown[] };
+    assert.equal(result.failed.length, 1);
+  } finally {
+    renamed.mock.restore();
+    copied.mock.restore();
+    syncBuiltinESMExports();
+  }
+  assert.equal(await readFile(join(home, 'crate', 'inner', 'a.txt'), 'utf8'), 'a');
+  assert.equal(await readFile(join(source, 'late.txt'), 'utf8'), 'late');
+  assert.ok(!existsSync(join(source, 'inner')));
+});
+
 test('local imports reject changed and oversized files before reading bytes', async (t) => {
   const home = await realpath(await mkdtemp(join(tmpdir(), 'nod-import-size-')));
   t.after(() => rm(home, { recursive: true, force: true }));

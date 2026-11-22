@@ -385,6 +385,10 @@ export function MessageBubble({
               ? 'answered'
               : null;
   const cardText = card ? splitQuestion(visibleText) : null;
+  const shownText =
+    message.role === 'assistant' && message.approval?.fields && message.approval.cardQuestion
+      ? message.approval.cardQuestion
+      : visibleText;
   const cardTitle = cardText && (
     <MessageText text={cardText.question} connectedAppIds={connectedAppIds} />
   );
@@ -795,9 +799,9 @@ export function MessageBubble({
                   title={cardTitle}
                 />
               ) : (
-                visibleText && (
+                shownText && (
                   <MessageText
-                    text={visibleText}
+                    text={shownText}
                     connectedAppIds={connectedAppIds}
                     handoff={!streaming && handoff}
                     handoffPaused={handoffPaused}
