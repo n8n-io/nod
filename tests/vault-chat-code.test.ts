@@ -689,12 +689,23 @@ test(
           'Gift ideas: https://elsewhere.example.test/books/482913/some-book/',
           'About the author: https://example.com/books/482913/some-book/',
           'Read the authority report: https://example.com/reports/482913/',
+          'おすすめ：https://books.example.net/item/482913/details',
         ];
         for (const text of messages) {
           const response = await send(text);
           assert.equal(response.statusCode, 200, text);
         }
         assert.deepEqual(ordinary, messages);
+        assert.deepEqual(injected, []);
+      });
+      await t.test('only a numbered URL can match a stale request site', async () => {
+        await reset();
+        await seed({ status: 'cancelled', origin: 'https://example.com' });
+        const text =
+          'See https://example.com/help and https://books.example.org/item/482913/details';
+        const response = await send(text);
+        assert.equal(response.statusCode, 200);
+        assert.deepEqual(ordinary, [text]);
         assert.deepEqual(injected, []);
       });
       await t.test('cancelled code requests still hold code-shaped replies', async () => {
@@ -720,6 +731,7 @@ test(
           'código: https://cuenta.identidad.es/verificar/482913/continuar',
           'co\u0301digo: https://cuenta.identidad.es/verificar/482913/continuar',
           '验证码：https://cuenta.identidad.cn/482913/继续',
+          'https://identity.net/sign-in/482913/continue',
         ]) {
           const response = await send(text);
           assert.equal(response.statusCode, 409, text);
