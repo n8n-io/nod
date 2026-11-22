@@ -286,41 +286,49 @@ export async function createChatVerification(
       );
       if (!requests.rowCount) {
         if (requestId) throw conflict(unavailableMessage);
-        const waiting = (
-          await client.query<{
-            kind: 'otp' | 'payment';
-            channel: string;
-            origin: string | null;
-          }>(
-            `SELECT r.kind,u.channel,r.origin FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
-             WHERE r.owner_id=$1 AND u.owner_id=$1 AND (u.channel=$2 OR r.kind='payment') AND r.thread_id=$3
-               AND r.status='pending'
-               AND (u.status IN ('running','waiting') OR $7::boolean OR (r.kind='otp' AND $9::boolean))
-               AND (r.turn_id=$6::uuid OR NOT ${supersededSql(
-                 'u',
-                 `newer.created_at>u.created_at
-                  AND (NOT ($7::boolean OR (r.kind='otp' AND $9::boolean))
-                    OR newer.created_at<now()-interval '10 minutes')`,
-               )})
-               AND ((r.kind='payment' AND ($4::boolean OR ($8::boolean AND u.channel=$2))) OR (r.kind='otp' AND $5::boolean))`,
-            [
-              options.ownerId,
-              channel,
-              thread.id,
-              Boolean(codes.payment || paymentCodeLike),
-              reply.kind !== 'ordinary',
-              turnId ?? null,
-              Boolean(otpCodeLike || codes.payment || paymentCodeLike),
-              reply.kind === 'code',
-              messageSites.size > 0,
-            ],
-          )
-        ).rows.find(
-          ({ kind, origin }) =>
-            kind !== 'otp' ||
-            otpCodeLike ||
-            (origin !== null && messageSites.has(credentialSite(origin))),
-        );
+        let waiting:
+          { kind: 'otp' | 'payment'; channel: string; origin: string | null } | undefined;
+        for (let offset = 0; !waiting; offset += 50) {
+          const rows = (
+            await client.query<{
+              kind: 'otp' | 'payment';
+              channel: string;
+              origin: string | null;
+            }>(
+              `SELECT r.kind,u.channel,r.origin FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
+               WHERE r.owner_id=$1 AND u.owner_id=$1 AND (u.channel=$2 OR r.kind='payment') AND r.thread_id=$3
+                 AND r.status='pending'
+                 AND (u.status IN ('running','waiting') OR $7::boolean OR (r.kind='otp' AND $9::boolean))
+                 AND (r.turn_id=$6::uuid OR NOT ${supersededSql(
+                   'u',
+                   `newer.created_at>u.created_at
+                    AND (NOT ($7::boolean OR (r.kind='otp' AND $9::boolean))
+                      OR newer.created_at<now()-interval '10 minutes')`,
+                 )})
+                 AND ((r.kind='payment' AND ($4::boolean OR ($8::boolean AND u.channel=$2))) OR (r.kind='otp' AND $5::boolean))
+               ORDER BY u.created_at DESC,r.id DESC LIMIT 50 OFFSET $10`,
+              [
+                options.ownerId,
+                channel,
+                thread.id,
+                Boolean(codes.payment || paymentCodeLike),
+                reply.kind !== 'ordinary',
+                turnId ?? null,
+                Boolean(otpCodeLike || codes.payment || paymentCodeLike),
+                reply.kind === 'code',
+                messageSites.size > 0,
+                offset,
+              ],
+            )
+          ).rows;
+          waiting = rows.find(
+            ({ kind, origin }) =>
+              kind !== 'otp' ||
+              otpCodeLike ||
+              (origin !== null && messageSites.has(credentialSite(origin))),
+          );
+          if (rows.length < 50) break;
+        }
         if (waiting)
           throw conflict(
             waiting.kind === 'payment'

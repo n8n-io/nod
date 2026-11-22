@@ -394,8 +394,11 @@ export function credentialOrigin(value: string) {
 }
 
 export function credentialSite(value: string) {
-  const host = new URL(credentialOrigin(value)).hostname.replace(/^www\./, '');
-  return parseDomain(host, { allowPrivateDomains: true }).domain ?? host;
+  const url = new URL(credentialOrigin(value));
+  const host = url.hostname.replace(/^www\./, '');
+  const domain = parseDomain(host, { allowPrivateDomains: true });
+  const site = domain.isIcann || domain.isPrivate ? (domain.domain ?? host) : host;
+  return `${url.protocol}//${site}${url.port ? `:${url.port}` : ''}`;
 }
 
 export function credentialOrigins(value: string) {

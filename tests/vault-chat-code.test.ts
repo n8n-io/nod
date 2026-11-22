@@ -682,11 +682,11 @@ test(
       );
       await t.test('cancelled code requests do not hold ordinary numbered messages', async () => {
         await reset();
-        await seed({ status: 'cancelled' });
+        await seed({ status: 'cancelled', origin: 'https://example.com:8443' });
         const messages = [
           'Gift ideas: https://example.com/books/05382/some-book/',
           'See http://example.com',
-          'Gift ideas: https://elsewhere.test/books/482913/some-book/',
+          'Gift ideas: https://elsewhere.example.test/books/482913/some-book/',
         ];
         for (const text of messages) {
           const response = await send(text);
@@ -702,6 +702,8 @@ test(
           superseded: true,
           origin: 'https://example.com',
         });
+        for (let index = 0; index < 50; index += 1)
+          await seed({ status: 'cancelled', origin: `https://site-${index}.test` });
         for (const text of [
           '7395',
           'my code is 7395',
