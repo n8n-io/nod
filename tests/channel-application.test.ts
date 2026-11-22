@@ -1446,6 +1446,30 @@ test(
         throw new Error(`Synthetic app render failed ${authToken} for example.person@example.com`);
       });
       await application.app.ready();
+      await t.test(
+        'native bearer discovery and bootstrap match the external client contract',
+        async () => {
+          const nativeHeaders = { host: headers.host, authorization: `Bearer ${authToken}` };
+          for (const [url, fields] of [
+            ['/api/client/capabilities', { contractVersion: 'number', authentication: 'object' }],
+            ['/api/session', { user: 'object', settings: 'object', capabilities: 'object' }],
+            ['/api/state', { threadId: 'string', messages: 'object', turns: 'object' }],
+            ['/api/messages', { messages: 'object', hasMore: 'boolean' }],
+          ] as const) {
+            const response = await application.app.inject({ url, headers: nativeHeaders });
+            assert.equal(response.statusCode, 200, response.body);
+            const body = response.json();
+            for (const [field, type] of Object.entries(fields)) {
+              assert.equal(typeof body[field], type, `${url}: ${field}`);
+              if (field === 'messages' || field === 'turns') assert.ok(Array.isArray(body[field]));
+            }
+          }
+          assert.equal(
+            (await application.app.inject({ url: '/api/client/capabilities', headers })).statusCode,
+            401,
+          );
+        },
+      );
       const failedRequest = await application.app.inject({
         url: '/api/diagnostics-check/synthetic-private-record?email=other.person@example.com',
         headers,
