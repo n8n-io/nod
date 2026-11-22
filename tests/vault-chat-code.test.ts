@@ -69,7 +69,8 @@ test(
     await thread.initializeThreads();
     await db.pool.query(`CREATE TABLE credential_requests (
     id text PRIMARY KEY,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),
-    owner_id text NOT NULL,kind text NOT NULL,status text NOT NULL DEFAULT 'pending'
+    owner_id text NOT NULL,kind text NOT NULL,flow_expires_at timestamptz,
+    status text NOT NULL DEFAULT 'pending'
   )`);
     const ordinary: string[] = [];
     const injected: Array<{ owner: string; turnId: string; code: string; requestId: string }> = [];
@@ -669,6 +670,27 @@ test(
              UNION ALL SELECT fields::text||status FROM vault_payments`,
           );
           assert.ok(!JSON.stringify(persisted.rows).includes('7395'));
+        },
+      );
+      await t.test(
+        'cancelled and expired code requests do not hold ordinary numbered messages',
+        async () => {
+          for (const stale of ['cancelled', 'expired'] as const) {
+            await reset();
+            const request = await seed({
+              status: stale === 'cancelled' ? 'cancelled' : 'waiting',
+            });
+            if (stale === 'expired')
+              await db.pool.query(
+                "UPDATE credential_requests SET flow_expires_at=now()-interval '1 second' WHERE id=$1",
+                [request.requestId],
+              );
+            const text = 'Gift ideas: https://example.com/books/05382/some-book/';
+            const response = await send(text);
+            assert.equal(response.statusCode, 200, stale);
+            assert.deepEqual(ordinary, [text]);
+            assert.deepEqual(entered, []);
+          }
         },
       );
       await t.test(

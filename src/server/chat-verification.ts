@@ -72,7 +72,7 @@ export async function createChatVerification(
     refresh: () => void;
   },
 ) {
-  const codeRequests = `(SELECT id,owner_id,thread_id,turn_id,kind,status FROM credential_requests WHERE kind='otp'${
+  const codeRequests = `(SELECT id,owner_id,thread_id,turn_id,kind,status FROM credential_requests WHERE kind='otp' AND (flow_expires_at IS NULL OR flow_expires_at>now())${
     options.submitPayment
       ? ` UNION ALL SELECT id::text,owner_id,thread_id,turn_id,'payment',status FROM vault_payments`
       : ''
@@ -270,7 +270,8 @@ export async function createChatVerification(
           await client.query<{ kind: 'otp' | 'payment'; channel: string }>(
             `SELECT r.kind,u.channel FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
              WHERE r.owner_id=$1 AND u.owner_id=$1 AND (u.channel=$2 OR r.kind='payment') AND r.thread_id=$3
-               AND r.status='pending' AND (r.turn_id=$6::uuid OR NOT ${supersededSql(
+               AND r.status='pending' AND u.status IN ('running','waiting')
+               AND (r.turn_id=$6::uuid OR NOT ${supersededSql(
                  'u',
                  `newer.created_at>u.created_at AND (NOT $7::boolean OR newer.created_at<now()-interval '10 minutes')`,
                )})
