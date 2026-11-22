@@ -147,6 +147,9 @@ export async function createChatVerification(
       payment: options.submitPayment ? securityCodeIn(text) : undefined,
     };
     const paymentCodeLike = options.submitPayment && codeBearingPaymentReply(text);
+    const otpCodeLike =
+      reply.kind !== 'ordinary' &&
+      classifyVerificationReply(text.replace(/\bhttps?:\/\/\S+/giu, '')).kind !== 'ordinary';
     if (
       reply.kind === 'ordinary' &&
       !codes.payment &&
@@ -283,9 +286,7 @@ export async function createChatVerification(
               Boolean(codes.payment || paymentCodeLike),
               reply.kind !== 'ordinary',
               turnId ?? null,
-              reply.kind === 'code' ||
-                reply.kind === 'wrapped' ||
-                Boolean(codes.payment || paymentCodeLike),
+              Boolean(otpCodeLike || codes.payment || paymentCodeLike),
               reply.kind === 'code',
             ],
           )
