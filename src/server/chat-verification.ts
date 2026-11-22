@@ -147,17 +147,15 @@ export async function createChatVerification(
       payment: options.submitPayment ? securityCodeIn(text) : undefined,
     };
     const paymentCodeLike = options.submitPayment && codeBearingPaymentReply(text);
+    const withoutUrls = text.replace(/\bhttps?:\/\/\S+/giu, '');
+    const authenticationTerm =
+      /(?:^|[^\p{L}\p{N}])(?:2fa|auth|authentication|code|login|magic(?:-link)?|mfa|one-time(?:-code|password)?|otp|passcode|pin|signin|token|verification|verify)(?:$|[^\p{L}\p{N}])/iu;
     const otpCodeLike =
-      reply.kind !== 'ordinary' &&
-      classifyVerificationReply(
-        text.replace(/\bhttps?:\/\/\S+/giu, (url) =>
-          /(?:^|[./?&#=_-])(?:2fa|auth|authentication|code|login|magic(?:-link)?|mfa|one-time(?:-code|password)?|otp|passcode|pin|signin|token|verification|verify)(?:$|[./?&#=_-])/iu.test(
-            url,
-          )
-            ? url
-            : '',
-        ),
-      ).kind !== 'ordinary';
+      reply.kind === 'code' ||
+      reply.kind === 'wrapped' ||
+      (reply.kind === 'invalid' &&
+        (authenticationTerm.test(text) ||
+          classifyVerificationReply(withoutUrls).kind !== 'ordinary'));
     if (
       reply.kind === 'ordinary' &&
       !codes.payment &&
