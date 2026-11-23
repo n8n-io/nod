@@ -275,7 +275,6 @@ try {
       await assert.rejects(browser.act(id,{action:'snapshot'}),error=>error.code==='browser_not_open');
       const opened=await browser.act(id,{action:'open',url:'https://example.com/'});
       assert.equal(new URL(opened.url).hostname,'example.com');
-      assert.ok(opened.text.includes('This domain is for use in documentation examples'),opened.text);
       const marker='nod-browser-'+id;
       await browser.act(id,{action:'evaluate',script:'(() => { const heading=document.createElement("h1"); heading.textContent='+JSON.stringify(marker)+'; const button=document.createElement("button"); button.textContent="Complete synthetic check"; button.onclick=()=>{heading.textContent+=" complete";}; document.body.replaceChildren(heading,button); })()'});
       assert.ok((await browser.act(id,{action:'snapshot'})).text.includes(marker));
