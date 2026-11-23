@@ -64,7 +64,7 @@ flowchart TD
   rank --> answer[Pi answers, streaming as it writes]:::go
 ```
 
-The memory model selects existing notes. It can connect an indirect question to a preference or possession. It expands search terms with related concepts and source names, then ranks the returned messages. The server accepts only note paths and message IDs from the supplied records. Model-written facts do not enter this evidence packet or memory.
+The memory model selects existing notes. It can connect an indirect question to a preference or possession. It expands search terms with related concepts and source names, then ranks the returned messages. The server accepts only note paths and message IDs from the supplied records. Model-written facts do not enter this evidence packet or memory. When the memory model fails a request and you have [backup models](/connect/models/#backup-models), this selection moves to the next one.
 
 For this selection, Nod sends at most 4,000 characters of the current request and 1,200 characters from each of up to six recent owner messages to the memory model. Long messages keep their beginning and end with an omission marker between them. Full messages remain available through conversation search when the task needs their contents.
 

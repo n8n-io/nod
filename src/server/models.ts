@@ -108,7 +108,11 @@ function modelPricing(model: ModelDefinition): ModelChoice['pricing'] {
   };
 }
 
+const auxiliaryEffort = (efforts: ModelChoice['efforts']) =>
+  efforts.find((level) => ['off', 'low', 'medium'].includes(level)) ?? efforts[0];
+
 export const modelRouteInput = z.union([modelSelectionInput, z.literal('light'), z.null()]);
+export const modelBackupsInput = z.array(modelSelectionInput).max(3);
 
 export interface WorkOrigin {
   kind: WorkKind;
@@ -375,6 +379,7 @@ export function createModelService(options: {
   let initialized = false;
   let selection: ModelSelection | null = null;
   let routes: ModelRoutes = {};
+  let backups: ModelSelection[] = [];
   let starting: Promise<unknown> = Promise.resolve();
   const pendingControllers = new Set<AbortController>();
   let closed = false;
@@ -466,6 +471,7 @@ export function createModelService(options: {
     });
     selection = state.selection;
     routes = state.routes;
+    backups = state.backups;
     checkSelection(state);
     options.changed?.();
   }
@@ -620,6 +626,25 @@ export function createModelService(options: {
         models[0];
       if (definition) return { row, definition };
     }
+  }
+  function usableBackups(connectionId: string | undefined, modelId: string) {
+    const seen = new Set([`${connectionId}:${modelId}`]);
+    return backups.flatMap((item) => {
+      const row = rows.find((candidate) => candidate.id === item.connectionId);
+      const definition =
+        row?.status === 'connected'
+          ? row.models.find(
+              (model) =>
+                model.choice.id === item.modelId &&
+                !model.choice.audio &&
+                model.choice.efforts.length > 0,
+            )
+          : undefined;
+      const key = `${item.connectionId}:${item.modelId}`;
+      if (!row || !definition || seen.has(key)) return [];
+      seen.add(key);
+      return [{ row, definition, item }];
+    });
   }
   function classificationModel(otherConnections = false) {
     const selected = selection && { ...selection };
@@ -1215,8 +1240,22 @@ export function createModelService(options: {
     paused(origin: WorkOrigin) {
       try {
         const { selection: work } = service.workModel(origin);
-        const row = rows.find((item) => item.id === work.connectionId);
-        return requested(row, work.modelId).some((id) => (row?.retry?.[id] ?? 0) > Date.now());
+        const paused = (choice: ModelSelection) => {
+          const row = rows.find((item) => item.id === choice.connectionId);
+          return requested(row, choice.modelId).some((id) => (row?.retry?.[id] ?? 0) > Date.now());
+        };
+        const usable = (choice: ModelSelection) => {
+          try {
+            return Boolean(chosen(false, choice));
+          } catch {
+            return false;
+          }
+        };
+        return (
+          paused(work) &&
+          (!usable(work) ||
+            usableBackups(work.connectionId, work.modelId).every(({ item }) => paused(item)))
+        );
       } catch {
         return false;
       }
@@ -1224,16 +1263,20 @@ export function createModelService(options: {
     async automaticRequestsAllowed(origin: WorkOrigin, auxiliary = false) {
       try {
         const work = service.workModel(origin);
-        for (const access of [
-          await service.resolve(false, work.selection),
-          ...(auxiliary ? [await service.resolve(true)] : []),
-        ]) {
-          await access.prepareRequest?.(
-            access.textModel?.definition.choice.id ?? access.definition.choice.id,
-            true,
-          );
-        }
-        return true;
+        const takes = async (access: ModelAccess) => {
+          try {
+            await access.prepareRequest?.(
+              access.textModel?.definition.choice.id ?? access.definition.choice.id,
+              true,
+            );
+            return true;
+          } catch {
+            return false;
+          }
+        };
+        for (const access of await service.candidates(work.selection))
+          if (await takes(access)) return !auxiliary || (await takes(await service.resolve(true)));
+        return false;
       } catch {
         return false;
       }
@@ -1306,6 +1349,48 @@ export function createModelService(options: {
         selection: { ...work.selection, effort: defaultEffort(row.provider, definition.choice) },
       };
     },
+    async candidates(
+      choice: ModelSelection | null = selection,
+      auxiliary = false,
+    ): Promise<ModelAccess[]> {
+      const primary = await service.resolve(auxiliary, choice);
+      return [
+        primary,
+        ...usableBackups(primary.connectionId, primary.definition.choice.id).map(
+          ({ row, definition, item }): ModelAccess => ({
+            connectionId: row.id,
+            provider: row.provider,
+            method: row.method,
+            definition,
+            effort: auxiliary
+              ? auxiliaryEffort(definition.choice.efforts)
+              : definition.choice.efforts.includes(item.effort)
+                ? item.effort
+                : defaultEffort(row.provider, definition.choice),
+            ...requestAccess(row),
+            needsReconnect: (credential) =>
+              needsReconnect(row.id, { models: row.models, credential }),
+          }),
+        ),
+      ];
+    },
+    async setBackups(value: ModelSelection[]) {
+      const list = modelBackupsInput.parse(value);
+      await store.change((state) => {
+        const key = (choice: ModelSelection) =>
+          `${choice.connectionId}:${choice.modelId}:${choice.effort}`;
+        const saved = new Set(state.backups.map(key));
+        const seen = new Set<string>();
+        state.backups = list.filter((choice) => {
+          if (!saved.has(key(choice))) textChoice(state.connections, choice);
+          const model = `${choice.connectionId}:${choice.modelId}`;
+          if (seen.has(model)) return false;
+          seen.add(model);
+          return true;
+        });
+      });
+      await reload();
+    },
     async setRoute(
       lane: ModelLane,
       value: ModelRoute | null,
@@ -1368,6 +1453,7 @@ export function createModelService(options: {
         selection,
         ...(selectionIssue ? { selectionIssue } : {}),
         routes,
+        backups,
         light: lightModel(),
         ...(unpriced ? { unpricedPreparationModel: unpriced } : {}),
       };
@@ -1381,6 +1467,9 @@ export function createModelService(options: {
         );
         if (!state.connections.some((row) => row.id === state.selection?.connectionId))
           state.selection = null;
+        state.backups = state.backups.filter((choice) =>
+          state.connections.some((row) => row.id === choice.connectionId),
+        );
         for (const row of state.connections) {
           try {
             if (!credential(row)) row.status = 'reconnect';
@@ -1522,6 +1611,7 @@ export function createModelService(options: {
             ([, route]) => route === 'light' || route?.connectionId !== id,
           ),
         );
+        state.backups = state.backups.filter((choice) => choice.connectionId !== id);
         return { row, selectionCleared };
       });
       if (removed.selectionCleared)
@@ -1616,13 +1706,11 @@ export function createModelService(options: {
     ): Promise<ModelAccess> {
       const { selected, row, definition, companion } = chosen(auxiliary, choice);
       return {
+        connectionId: row.id,
         provider: row.provider,
         method: row.method,
         definition,
-        effort: auxiliary
-          ? (definition.choice.efforts.find((level) => ['off', 'low', 'medium'].includes(level)) ??
-            definition.choice.efforts[0])
-          : selected.effort,
+        effort: auxiliary ? auxiliaryEffort(definition.choice.efforts) : selected.effort,
         ...(companion
           ? {
               textModel: {
@@ -1680,6 +1768,11 @@ export function createModelService(options: {
         });
         routes.put('/api/models/selection', async (request) => {
           await service.select(modelSelectionInput.parse(request.body));
+          return service.view();
+        });
+        routes.put('/api/models/backups', async (request) => {
+          const input = z.object({ backups: modelBackupsInput }).strict().parse(request.body);
+          await service.setBackups(input.backups);
           return service.view();
         });
         routes.put('/api/models/routes', async (request) => {

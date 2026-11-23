@@ -11462,6 +11462,24 @@ test(
               code: /HTTP 402.*weight_exceeds_budget/,
             },
             {
+              prompt: 'model-backups-failed-fixture',
+              error:
+                prefix +
+                ['Primary', 'Backup']
+                  .map((name) =>
+                    JSON.stringify({
+                      error: {
+                        code: 402,
+                        message: `${name} credits used up.`,
+                        detail: 'synthetic-private-provider-detail',
+                      },
+                    }),
+                  )
+                  .join('; then compatible / fixture-backup: '),
+              reason: /Primary credits used up\..*Backup credits used up\./,
+              code: /fixture-backup: HTTP 402; Backup credits used up\./,
+            },
+            {
               prompt: 'model-plain-quota-fixture',
               error: prefix + 'quota_exceeded',
               reason: /quota_exceeded/,

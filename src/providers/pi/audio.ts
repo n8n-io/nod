@@ -26,6 +26,12 @@ export function readsNativeAudio(model: { provider: string; id: string; api: str
   );
 }
 
+export function hasNativeAudio(context: Context) {
+  return context.messages.some(
+    (message) => message.role === 'user' && Boolean((message as AudioMessage)[filesKey]),
+  );
+}
+
 export function audioMessage(text: string, images: AgentImage[], audio: AgentAudioInput) {
   const details = detailsSchema.parse({ id: randomUUID(), recordedAt: Date.now(), ...audio });
   return {

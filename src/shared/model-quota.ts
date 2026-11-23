@@ -83,12 +83,15 @@ function readFailure(text: string) {
   return { start, end, reasons };
 }
 
-export function modelFailureReason(text: string) {
+export function modelFailureReason(text: string): string {
   const { start, end, reasons } = readFailure(text);
-  if (!reasons.length) return text;
+  if (start === -1 || end <= start) return text;
   const rest = reasons.reduce(
     (value, reason) => value.replace(` (${reason})`, ''),
     text.slice(end + 1),
   );
-  return `${text.slice(0, start)}${[...new Set(reasons)].join('; ')}${rest}`;
+  const head = reasons.length
+    ? `${text.slice(0, start)}${[...new Set(reasons)].join('; ')}`
+    : text.slice(0, end + 1);
+  return `${head}${modelFailureReason(rest)}`;
 }

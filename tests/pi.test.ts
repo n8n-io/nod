@@ -1,5 +1,5 @@
 import { lightestEffort, type ModelSelection } from '../src/shared/models.ts';
-import type { Context } from '@earendil-works/pi-ai';
+import type { Context, UserMessage } from '@earendil-works/pi-ai';
 import type { ModelAccess } from '../src/ports/models.ts';
 import { createPiModelBackend, createPiModelRuntime } from '../src/providers/pi/models.ts';
 import type { Presentation } from '../src/shared/presentation.ts';
@@ -10384,6 +10384,426 @@ test('model HTTP failures keep their response status within each request and ret
   assert.equal(statuses.length, 0);
   assert.equal(reports.length, 2);
   assert.ok(reports.every(({ status }) => status === 'failed'));
+});
+
+async function fallbackServer(t: TestContext, answer: (model: string) => number) {
+  const { createServer } = await import('node:http');
+  const requests: string[] = [];
+  const server = createServer((request, response) => {
+    const parts: Buffer[] = [];
+    request.on('data', (part) => parts.push(part));
+    request.on('end', () => {
+      const { model } = JSON.parse(Buffer.concat(parts).toString()) as { model: string };
+      requests.push(model);
+      const status = answer(model);
+      if (status !== 200) {
+        response.writeHead(status, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: { message: 'Synthetic failure.' } }));
+        return;
+      }
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.end(
+        `data: ${JSON.stringify({
+          id: `fixture-${model}`,
+          choices: [
+            { index: 0, delta: { content: `Answer from ${model}.` }, finish_reason: 'stop' },
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        })}\n\ndata: [DONE]\n\n`,
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const url = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}/v1`;
+  const access = (id: string, cost = 1): ModelAccess => {
+    const value = smallContextAccess('compatible', id, 131_072);
+    const pricing = { input: cost, output: cost, cacheRead: 0, cacheWrite: 0 };
+    value.definition = {
+      choice: { ...value.definition.choice, pricing },
+      spec: { ...value.definition.spec, baseUrl: url, cost: pricing },
+    };
+    value.read = async () => ({ type: 'endpoint', url, key: 'fixture-key' });
+    return { ...value, connectionId: `fixture-${id}` };
+  };
+  return { requests, access };
+}
+
+test('a busy work model gets one retry, then the same request continues on a backup, and a running helper follows', async (t) => {
+  const { modelPricingSignature } = await import('../src/shared/models.ts');
+  const directory = await mkdtemp(join(tmpdir(), 'nod-fallback-turn-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const { requests, access } = await fallbackServer(t, (model) =>
+    model === 'fixture-backup' ? 200 : 503,
+  );
+  const agent = createPiAgent({
+    provider: 'compatible',
+    resolve: async () => [access('fixture-primary'), access('fixture-backup', 5)],
+    sessionRoot: directory,
+    createSession: async (options) => {
+      options?.settingsManager?.applyOverrides({ retry: { baseDelayMs: 1, maxAgentDelayMs: 1 } });
+      return createAgentSession(options);
+    },
+  });
+  t.after(() => agent.dispose());
+  const execution = fakeExecution(randomUUID());
+  const open = (extra: object, events: AgentEvent[]) =>
+    agent.open({
+      ...execution,
+      ...extra,
+      ...sandbox,
+      systemPrompt: 'Synthetic fixture',
+      tools: [],
+      shouldStop: () => false,
+      onEvent: (event) => events.push(event),
+    });
+  const events: AgentEvent[] = [];
+  const main = await open({}, events);
+  const helper = await open(
+    { sessionId: randomUUID(), runId: randomUUID(), parentRunId: execution.runId },
+    [],
+  );
+  await main.prompt('Synthetic question.', []);
+  assert.deepEqual(requests, ['fixture-primary', 'fixture-primary', 'fixture-backup']);
+  assert.deepEqual(
+    events.filter((event) => event.type === 'fallback'),
+    [{ type: 'fallback', from: 'fixture-primary', to: 'fixture-backup' }],
+  );
+  const usage = events.flatMap((event) => (event.type === 'model_usage' ? [event] : []));
+  assert.deepEqual(
+    usage.map(({ model, status }) => [model, status]),
+    [
+      ['fixture-primary', 'failed'],
+      ['fixture-primary', 'failed'],
+      ['fixture-backup', 'succeeded'],
+    ],
+  );
+  assert.equal(
+    usage.at(-1)!.pricingSignature,
+    modelPricingSignature(
+      { input: 5, output: 5, cacheRead: 0, cacheWrite: 0 },
+      'openai-completions',
+    ),
+  );
+  assert.ok(events.some((event) => event.type === 'final' && /fixture-backup/.test(event.text)));
+
+  requests.length = 0;
+  await helper.prompt('Synthetic helper question.', []);
+  await helper.dispose();
+  await main.dispose();
+  assert.deepEqual(requests, ['fixture-backup']);
+});
+
+test('a turn fallback moves on after Pi gives up or at once on request errors, never after output, on a refusal, a Stop or the selected model overflowing, and sends a backup no primary credentials', async () => {
+  const { createTurnFallback } = await import('../src/providers/pi/fallback.ts');
+  const errors: Record<string, string> = {
+    busy: '503 Service Unavailable (HTTP 503)',
+    quota: '429 insufficient_quota: You exceeded your current quota (HTTP 429)',
+    overflow: 'prompt is too long: 213462 tokens > 131072 maximum',
+    partial: '503 Service Unavailable (HTTP 503)',
+    stop: '503 Service Unavailable (HTTP 503)',
+    refusal: 'The model declined to answer.',
+  };
+  const model = (id: string) =>
+    ({
+      provider: 'compatible',
+      id,
+      api: 'openai-completions',
+      input: ['text'],
+      contextWindow: 131_072,
+    }) as never;
+  const choice = (id: string, provider: 'openai' | 'compatible', paused = false): ModelAccess => ({
+    provider,
+    method: 'api_key',
+    effort: 'off',
+    read: async () => undefined,
+    ...(paused
+      ? {
+          prepareRequest: async () => {
+            throw new Error(`${id} is paused.`);
+          },
+        }
+      : {}),
+    definition: {
+      choice: {
+        id,
+        name: id,
+        efforts: ['off'],
+        images: id === 'fixture-last',
+        contextWindow: 131_072,
+      },
+      spec: {},
+    },
+  });
+  const setup = (script: Record<string, Array<string | undefined>>, stop?: AbortController) => {
+    const calls: Array<{ id: string; timeoutMs?: number; credentials: boolean }> = [];
+    let retrying = false;
+    const phases = new WeakMap<object, { requestPhase: string }>();
+    const connection = (id: string) => ({
+      model: model(id),
+      requestFacts: (message: object) => phases.get(message),
+      runtime: {
+        streamSimple: (
+          _target: never,
+          _context: never,
+          options?: { timeoutMs?: number; apiKey?: string; headers?: object },
+        ) => {
+          calls.push({
+            id,
+            timeoutMs: options?.timeoutMs,
+            credentials: Boolean(options?.apiKey || options?.headers),
+          });
+          const outcome = script[id]!.shift();
+          if (outcome === 'stop') stop?.abort();
+          const message = {
+            ...fauxAssistantMessage(outcome ? '' : `Answer from ${id}.`),
+            provider: 'compatible',
+            model: id,
+            api: 'openai-completions',
+            ...(outcome ? { stopReason: 'error' as const, errorMessage: errors[outcome] } : {}),
+          } as AssistantMessage;
+          phases.set(message, { requestPhase: outcome === 'refusal' ? 'stream' : 'response' });
+          const stream = createAssistantMessageEventStream();
+          if (outcome === 'partial')
+            stream.push({ type: 'text_delta', contentIndex: 0, delta: 'Part', partial: message });
+          stream.push(
+            outcome
+              ? { type: 'error', reason: 'error', error: message }
+              : { type: 'done', reason: 'stop', message },
+          );
+          stream.end(message);
+          return stream;
+        },
+      },
+    });
+    const work = connection('fixture-work');
+    const moved: Array<[number, number]> = [];
+    const fallback = createTurnFallback({
+      primary: {
+        access: choice('fixture-work', 'openai'),
+        connection: work as never,
+        stream: work.runtime.streamSimple as never,
+      },
+      backups: [
+        choice('fixture-first', 'openai'),
+        choice('fixture-paused', 'openai', true),
+        choice('fixture-last', 'compatible'),
+      ],
+      start: 0,
+      automatic: true,
+      connect: async (backup) => connection(backup.definition.choice.id) as never,
+      retrying: () => retrying,
+      shared: () => 0,
+      switched: () => {},
+      moved: (from, to) => moved.push([from, to]),
+      failed: () => {},
+    });
+    const send = (retry: boolean, signal?: AbortSignal, content?: UserMessage['content']) => {
+      retrying = retry;
+      return fallback
+        .stream(
+          work.model,
+          { messages: content ? [{ role: 'user', content, timestamp: 1 }] : [] },
+          { timeoutMs: 1234, signal, apiKey: 'fixture-work-key', headers: { 'x-work': '1' } },
+        )
+        .result();
+    };
+    return { calls, moved, fallback, send };
+  };
+
+  const moving = setup({
+    'fixture-work': ['busy', 'busy'],
+    'fixture-first': [undefined, 'quota'],
+    'fixture-last': [undefined],
+  });
+  assert.equal((await moving.send(true)).stopReason, 'error');
+  assert.equal((await moving.send(false)).stopReason, 'stop');
+  assert.equal((await moving.send(true)).stopReason, 'stop');
+  assert.deepEqual(moving.calls, [
+    { id: 'fixture-work', timeoutMs: 1234, credentials: true },
+    { id: 'fixture-work', timeoutMs: 1234, credentials: true },
+    { id: 'fixture-first', timeoutMs: 1234, credentials: false },
+    { id: 'fixture-first', timeoutMs: 1234, credentials: false },
+    { id: 'fixture-last', timeoutMs: 1234, credentials: false },
+  ]);
+  assert.deepEqual(moving.moved, [
+    [0, 1],
+    [1, 3],
+  ]);
+
+  const pictured = setup({ 'fixture-work': ['quota'], 'fixture-last': [undefined] });
+  const image = [{ type: 'image' as const, data: 'AA==', mimeType: 'image/png' }];
+  assert.equal((await pictured.send(true, undefined, image)).stopReason, 'stop');
+  assert.deepEqual(
+    pictured.calls.map(({ id }) => id),
+    ['fixture-work', 'fixture-last'],
+  );
+
+  const crowded = setup({
+    'fixture-work': ['busy'],
+    'fixture-first': ['overflow'],
+    'fixture-last': [undefined],
+  });
+  assert.equal((await crowded.send(false)).stopReason, 'stop');
+  assert.deepEqual(
+    crowded.calls.map(({ id }) => id),
+    ['fixture-work', 'fixture-first', 'fixture-last'],
+  );
+
+  for (const outcome of ['overflow', 'partial', 'stop', 'refusal']) {
+    const stop = new AbortController();
+    const staying = setup({ 'fixture-work': [outcome] }, stop);
+    assert.equal((await staying.send(false, stop.signal)).stopReason, 'error');
+    assert.equal(staying.fallback.switched(), false, outcome);
+    assert.deepEqual(
+      staying.calls.map(({ id }) => id),
+      ['fixture-work'],
+    );
+  }
+});
+
+test('a turn fallback moves a text-only request off a native-audio model and prices each attempt with the model that served it', async () => {
+  const { createTurnFallback } = await import('../src/providers/pi/fallback.ts');
+  const busy = '503 Service Unavailable (HTTP 503)';
+  const connection = (provider: string, id: string, input: number, failing: boolean) => {
+    const model = {
+      provider,
+      id,
+      api: 'openai-completions',
+      input: ['text'],
+      contextWindow: 131_072,
+      cost: { input, output: input, cacheRead: 0, cacheWrite: 0 },
+    };
+    return {
+      model,
+      runtime: {
+        streamSimple: () => {
+          const message = {
+            ...fauxAssistantMessage(failing ? '' : 'Synthetic answer.'),
+            provider,
+            model: id,
+            api: 'openai-completions',
+            ...(failing ? { stopReason: 'error' as const, errorMessage: busy } : {}),
+          } as AssistantMessage;
+          const stream = createAssistantMessageEventStream();
+          stream.push(
+            failing
+              ? { type: 'error', reason: 'error', error: message }
+              : { type: 'done', reason: 'stop', message },
+          );
+          stream.end(message);
+          return stream;
+        },
+        getModel: () => undefined,
+      },
+    };
+  };
+  const choice = (provider: 'openai' | 'compatible', id: string): ModelAccess => ({
+    provider,
+    method: 'api_key',
+    effort: 'off',
+    read: async () => undefined,
+    definition: {
+      choice: { id, name: id, efforts: ['off'], images: false, contextWindow: 131_072 },
+      spec: {},
+    },
+  });
+  for (const [provider, id] of [
+    ['openai', 'gpt-audio-1.5'],
+    ['compatible', 'fixture-shared'],
+  ] as const) {
+    const work = connection(provider, id, 1, true);
+    const fallback = createTurnFallback({
+      primary: {
+        access: choice(provider, id),
+        connection: work as never,
+        stream: work.runtime.streamSimple as never,
+      },
+      backups: [choice('compatible', 'fixture-shared')],
+      start: 0,
+      automatic: false,
+      connect: async () => connection('compatible', 'fixture-shared', 5, false) as never,
+      retrying: () => false,
+      shared: () => 0,
+      switched: () => {},
+      moved: () => {},
+      failed: () => {},
+    });
+    const result = await fallback
+      .stream(work.model as never, {
+        messages: [{ role: 'user', content: 'Synthetic question.', timestamp: 1 }],
+      })
+      .result();
+    assert.equal(result.stopReason, 'stop');
+    assert.equal(fallback.model(result)?.cost.input, 5);
+  }
+});
+
+test('an automatic turn starts on the first model that takes automatic requests, or fails with the first reason', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-fallback-paused-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const { requests, access } = await fallbackServer(t, () => 200);
+  const turn = async (refused: string[]) => {
+    const refusing = (id: string): ModelAccess => ({
+      ...access(id),
+      prepareRequest: async (_id, automatic) => {
+        if (automatic && refused.includes(id)) throw new Error(`Synthetic ${id} is paused.`);
+        return async () => {};
+      },
+    });
+    const agent = createPiAgent({
+      provider: 'compatible',
+      resolve: async () => [refusing('fixture-primary'), refusing('fixture-backup')],
+      sessionRoot: directory,
+    });
+    t.after(() => agent.dispose());
+    const session = await agent.open({
+      ...fakeExecution(randomUUID()),
+      ...sandbox,
+      automatic: true,
+      systemPrompt: 'Synthetic fixture',
+      tools: [],
+      shouldStop: () => false,
+      onEvent: () => {},
+    });
+    await session.prompt('Synthetic question.', []);
+    await session.dispose();
+  };
+  await turn(['fixture-primary']);
+  assert.deepEqual(requests, ['fixture-backup']);
+  requests.length = 0;
+  await assert.rejects(
+    turn(['fixture-primary', 'fixture-backup']),
+    /Synthetic fixture-primary is paused/,
+  );
+  assert.deepEqual(requests, []);
+});
+
+test('recall moves to the next backup after one failed request and reports every attempt', async (t) => {
+  const { requests, access } = await fallbackServer(t, (model) =>
+    model === 'fixture-backup' ? 200 : 503,
+  );
+  const usage: string[] = [];
+  const recall = (models: string[]) =>
+    createPiMemoryCurator({
+      provider: 'compatible',
+      resolve: async () => models.map((id) => access(id)),
+    }).curate(
+      { task: 'recall', instructions: 'Synthetic recall.', input: {} },
+      undefined,
+      (event) => usage.push(`${event.model}:${event.status}`),
+    );
+  assert.equal(await recall(['fixture-primary', 'fixture-backup']), null);
+  assert.deepEqual(requests, ['fixture-primary', 'fixture-backup']);
+  assert.deepEqual(usage, ['fixture-primary:failed', 'fixture-backup:succeeded']);
+  requests.length = 0;
+  await assert.rejects(recall(['fixture-primary', 'fixture-other']), /fixture-other/);
+  assert.deepEqual(requests, [
+    'fixture-primary',
+    'fixture-other',
+    'fixture-other',
+    'fixture-other',
+  ]);
 });
 
 test('action review failures identify the task, model, provider, and bounded provider reason', async (t) => {

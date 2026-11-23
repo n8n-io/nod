@@ -1277,6 +1277,7 @@ export async function createPiModelRuntime(
       signal: options?.signal ? AbortSignal.any([options.signal, silence.signal]) : silence.signal,
       maxTokens: output,
       maxRetries: 0,
+      ...(access.provider === 'compatible' ? { timeoutMs: localModelSilenceMs } : {}),
       onResponse: async (response, model) => {
         phase = 'response';
         status = response.status;

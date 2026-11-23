@@ -278,6 +278,7 @@ export function createAgentRuntime(dependencies: {
     let completed = false;
     let lastReply = '';
     let lastPresentation = '';
+    let fallbackNoted: string | undefined;
     let checkInSpent = context.checkIn?.spentUsd ?? 0;
     let checkInPlan = context.checkIn?.planUsd ?? 0;
     let checkInBlocked = false;
@@ -1229,6 +1230,14 @@ export function createAgentRuntime(dependencies: {
             const retry = `${event.model} failed, trying again (${event.attempt} of ${event.attempts})`;
             pendingReplies = pendingReplies.then(() =>
               context.emit('retry', retry, { execution }).catch(() => {}),
+            );
+            void pendingReplies.catch(() => {});
+          }
+          if (event.type === 'fallback' && event.to !== fallbackNoted) {
+            fallbackNoted = event.to;
+            const note = `${event.from} failed, so this used ${event.to}.`;
+            pendingReplies = pendingReplies.then(() =>
+              context.emit('retry', note, { execution }).catch(() => {}),
             );
             void pendingReplies.catch(() => {});
           }

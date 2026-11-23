@@ -260,6 +260,7 @@ export interface ApplicationAdapters {
   keepAwake?: KeepAwake;
   localFilesHome?: string;
   memoryCurator?: MemoryCurator;
+  recallCurator?: MemoryCurator;
   classificationCurator?: MemoryCurator;
   imageCurator?: MemoryCurator;
   onboardingCurator?: MemoryCurator;
@@ -510,7 +511,7 @@ export function createDefaultAdapters(
     },
     models,
     agent: createPiAgent({
-      resolve: (choice) => models.resolve(false, choice),
+      resolve: (choice) => models.candidates(choice),
       provider,
       model,
       sessionRoot: join(dataRoot, 'sessions'),
@@ -617,6 +618,14 @@ export function createDefaultAdapters(
     integrationBrowser,
     keyStore,
     memoryCurator: modelCurator,
+    recallCurator: createPiMemoryCurator({
+      get provider() {
+        return models.current.provider;
+      },
+      resolve: () => models.candidates(undefined, true),
+      configured: () => models.configured,
+      traces,
+    }),
     trustCurator: createPiMemoryCurator({
       get provider() {
         return models.current.provider;
@@ -1072,7 +1081,12 @@ async function initializeApplication(
           }
         : undefined,
   });
-  const memoryRecall = createMemoryRecall({ pool, ownerId, memory, curator });
+  const memoryRecall = createMemoryRecall({
+    pool,
+    ownerId,
+    memory,
+    curator: adapters.recallCurator ? ledger.curator(adapters.recallCurator) : curator,
+  });
   const writingStyle = createWritingStyleLearning({ memory, curator });
   let channels: Awaited<ReturnType<typeof createChannels>> | undefined;
   const communication = createCommunication({

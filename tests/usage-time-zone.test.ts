@@ -113,7 +113,13 @@ test('Usage uses the computer time zone for activity and opened logs', async (t)
     ['/api/trust', view],
     [
       '/api/models',
-      { connections: [], selection: null, routes: {}, light: null } satisfies ModelsResponse,
+      {
+        connections: [],
+        selection: null,
+        routes: {},
+        backups: [],
+        light: null,
+      } satisfies ModelsResponse,
     ],
     ['/api/vault/activity', vault],
     ['/api/vault', []],
