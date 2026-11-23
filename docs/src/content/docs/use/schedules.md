@@ -76,7 +76,7 @@ Open a schedule's **See details** to read its runs, newest first. Select **Load 
 
 Each run shows its status. When a saved web reply is available, select **See details** on the result to read it within the schedule. Runs with complete API pricing also show their recorded cost. Subscription usage and runs with unavailable pricing show no cost amount. Review recorded app actions and activity from deleted schedules in [Usage](/use/spending/).
 
-If a scheduled check needs your answer before it can verify a result, Nod can save the observation on the same run after it resumes.
+Nod can save an observation while a scheduled check is running in your active conversation, including after the check resumes from your answer. Each run keeps its first saved observation.
 
 ## Work Nod starts on its own
 
