@@ -62,12 +62,17 @@ export async function protectWindowsProfile(root, resourcesPath) {
   );
 }
 
-async function runWsl(wsl, args, options, guest = false) {
+async function runWsl(wsl, args, options, source = 'host') {
   try {
     return await execute(wsl, args, options);
   } catch (error) {
     options.signal?.throwIfAborted();
-    if (guest && error.exitCode !== 4294967295) throw error;
+    if (
+      source === 'guest'
+        ? error.exitCode !== 4294967295
+        : source === 'host' && !Number.isInteger(error.exitCode)
+    )
+      throw error;
     throw Object.assign(
       new Error(
         `Nod could not start WSL 2. Select Install WSL, then restart Windows and open Nod. ${error.message}`,
@@ -274,7 +279,7 @@ async function prepareWindows(options, onComputerStart, progress) {
   const hostEnvironment = windowsEnvironment();
   const wsl = join(hostEnvironment.SYSTEMROOT, 'System32/wsl.exe');
   const host = (args, extra) => runWsl(wsl, args, { env: hostEnvironment, signal, ...extra });
-  await host(['--status'], { timeout: 15_000 });
+  await runWsl(wsl, ['--status'], { env: hostEnvironment, signal, timeout: 15_000 }, 'probe');
   progress.step = 'profile';
   await protectWindowsProfile(dataRoot, resourcesPath);
   progress.step = 'assets';
@@ -353,7 +358,7 @@ async function prepareWindows(options, onComputerStart, progress) {
       : join(controlRoot, 'wsl');
   const guestArgs = ['--distribution', distribution, '--user', 'root', '--exec'];
   const guest = (command, extra) =>
-    runWsl(wsl, [...guestArgs, ...command], { env: hostEnvironment, signal, ...extra }, true);
+    runWsl(wsl, [...guestArgs, ...command], { env: hostEnvironment, signal, ...extra }, 'guest');
   const temporaryState = `${configPath}.${randomBytes(6).toString('hex')}.tmp`;
   const save = async () => {
     await writeFile(temporaryState, JSON.stringify(saved), { flag: 'wx' });
@@ -579,13 +584,14 @@ export async function removeWindowsComputer(dataRoot) {
   const distribution = distributionName(dataRoot);
   const env = windowsEnvironment();
   const wsl = join(env.SYSTEMROOT, 'System32/wsl.exe');
-  const { registered } = await distributions(wsl, env).catch(() => ({ registered: [] }));
-  if (registered.includes(distribution))
+  const listed = await distributions(wsl, env).catch(() => undefined);
+  if (listed?.registered.includes(distribution))
     await execute(wsl, ['--unregister', distribution], { env, timeout: 300_000 });
   const saved = await readFile(join(dataRoot, 'desktop-runtime/state.json'), 'utf8')
     .then((value) => JSON.parse(value))
     .catch(() => undefined);
   if (
+    listed &&
     saved?.distribution === distribution &&
     typeof saved.computerPath === 'string' &&
     basename(saved.computerPath) === distribution

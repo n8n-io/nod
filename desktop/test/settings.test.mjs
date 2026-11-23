@@ -1724,11 +1724,11 @@ test('a first Windows setup without disk space offers another folder and retries
   const choose = f.handlers.get('nod:runtime:choose-folder');
   chosen = join(f.profileRoot, 'synthetic-inside');
   await assert.rejects(choose(event), /outside Nod/);
-  assert.equal((await f.storage.store.get()).computerDirectory, undefined);
+  assert.equal(await f.storage.store.computerDirectory(), undefined);
   assert.equal(attempts, 1);
   chosen = join(dirname(f.profileRoot), 'synthetic-other-drive');
   await choose(event);
-  assert.equal((await f.storage.store.get()).computerDirectory, chosen);
+  assert.equal(await f.storage.store.computerDirectory(), chosen);
   assert.equal(attempts, 2);
   await f.prepare({ retry: true });
   assert.equal(f.status().needsStorage, false);

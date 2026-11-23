@@ -84,10 +84,10 @@ async function quit() {
   await run(application, ['--quit'], { timeout: 60_000 }).catch(() => {});
   for (let attempt = 0; (await running()) && attempt < 180; attempt++) await delay(1000);
   assert.equal(await running(), false, 'Nod did not quit.');
-  const active = await run(wsl, ['--list', '--running', '--quiet'], {
-    env: { ...process.env, WSL_UTF8: '1' },
-  }).catch(() => '');
-  assert.doesNotMatch(active.replaceAll('\0', ''), /^nod-[a-f0-9]{12}\s*$/m);
+  assert.match(
+    await run(wsl, ['--list', '--verbose', '--all'], { env: { ...process.env, WSL_UTF8: '1' } }),
+    /nod-[a-f0-9]{12}\s+Stopped/,
+  );
 }
 
 async function returning() {
@@ -150,6 +150,6 @@ try {
   await quit();
 } finally {
   await copyFile(log, join(output, 'windows-startup.log')).catch(() => {});
+  await writeFile(join(output, 'windows-startup.json'), JSON.stringify(receipt, null, 2));
+  console.log(JSON.stringify(receipt));
 }
-await writeFile(join(output, 'windows-startup.json'), JSON.stringify(receipt, null, 2));
-console.log(JSON.stringify(receipt));

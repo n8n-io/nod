@@ -259,7 +259,6 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       theme: value.theme,
       zoomFactor: value.zoomFactor ?? 1,
       ...(value.serverUrl ? { serverUrl: value.serverUrl } : {}),
-      ...(value.computerDirectory ? { computerDirectory: value.computerDirectory } : {}),
       ...(value.welcome ? { welcome: { ...value.welcome } } : {}),
       onboardingPreferenceStep:
         value.onboardingPreferenceStep === 'complete' ? 'complete' : 'launchAtLogin',
@@ -268,6 +267,9 @@ export function createSettingsStore(path, encryption, platform = process.platfor
   return {
     get() {
       return exclusive(async () => redacted(await read()));
+    },
+    computerDirectory() {
+      return exclusive(async () => (await read()).computerDirectory);
     },
     hasSavedKeys() {
       return exclusive(async () => Object.keys((await read()).secrets).length > 0);

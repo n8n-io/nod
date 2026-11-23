@@ -321,7 +321,7 @@ const lifecycle = createDesktopLifecycle({
         dataRoot: profileRoot,
         resourcesPath: engineRoot,
         preserveRuntimeCache: testInstall,
-        computerDirectory: (await settings.get()).computerDirectory,
+        computerDirectory: await settings.computerDirectory(),
         resolveDownloadUrl: updateSource?.runtimeDownloadUrl,
         signal,
         onStatus: (value) => {
@@ -3013,6 +3013,7 @@ async function prepare(options = {}) {
       progress: status.runtime.progress,
       secondsLeft: status.runtime.secondsLeft,
       needsRuntimeArchive: false,
+      needsStorage: false,
     });
     return lifecycle.start({ retry: options?.retry === true });
   })()

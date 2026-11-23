@@ -4903,7 +4903,8 @@ const state = JSON.parse(readFileSync(path, 'utf8'));
 const args = process.argv.slice(2);
 state.calls.push(args.slice(0, 2).join(' '));
 let code = 0;
-if (args[0] === '--list')
+if (args[0] === '--list' && state.offline) code = 1;
+else if (args[0] === '--list')
   process.stdout.write(Buffer.from('\\uFEFF' + (args.includes('--all') ? state.registered : state.ready).join('\\r\\n') + '\\r\\n', 'utf16le'));
 if (args[0] === '--unregister') state.registered = state.ready = [];
 if (args[0] === '--import') {
@@ -5018,6 +5019,10 @@ process.exit(code);
     assert.equal(JSON.parse(await readFile(statePath, 'utf8')).imported, computer);
     assert.equal((await saved()).computerPath, computer);
     await writeFile(join(elsewhere, 'keep.txt'), 'synthetic owner file');
+    await wsl({ offline: true });
+    await removeWindowsComputer(profile);
+    assert.deepEqual((await readdir(elsewhere)).sort(), [distribution, 'keep.txt'].sort());
+    await wsl({ offline: false });
     await removeWindowsComputer(profile);
     assert.deepEqual(await readdir(elsewhere), ['keep.txt']);
   },

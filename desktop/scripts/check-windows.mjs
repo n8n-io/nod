@@ -171,6 +171,7 @@ if (process.env.WORKSPACE_CONTAINER) {
     const runtime = await import('../runtime/windows.mjs');
     const system = (name) => join(process.env.SYSTEMROOT, 'System32', name);
     console.log('Checking that a WSL failure offers its repair and keeps the Windows error.');
+    const automatic = /AUTO_START/.test(await run(system('sc.exe'), ['qc', 'WslService']));
     await run(system('sc.exe'), ['config', 'WslService', 'start=', 'disabled']);
     await run(system('sc.exe'), ['stop', 'WslService']).catch(() => {});
     try {
@@ -189,28 +190,35 @@ if (process.env.WORKSPACE_CONTAINER) {
         },
       );
     } finally {
-      await run(system('sc.exe'), ['config', 'WslService', 'start=', 'demand']);
+      await run(system('sc.exe'), [
+        'config',
+        'WslService',
+        'start=',
+        automatic ? 'auto' : 'demand',
+      ]);
     }
     await run(wsl, ['--status']);
     receipt.wslFailure = true;
     console.log('Checking that setup replaces a half-installed computer.');
     const distribution = `nod-${createHash('sha256').update(resolve(profile).toLowerCase()).digest('hex').slice(0, 12)}`;
-    await run(
-      system('WindowsPowerShell/v1.0/powershell.exe'),
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        `$ErrorActionPreference = 'Stop'; $key = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss\\{${randomUUID()}}'; New-Item -Path $key -Force | Out-Null; Set-ItemProperty -Path $key -Name DistributionName -Value '${distribution}'; Set-ItemProperty -Path $key -Name BasePath -Value $env:NOD_HALF_INSTALLED; Set-ItemProperty -Path $key -Name State -Value 3 -Type DWord; Set-ItemProperty -Path $key -Name Version -Value 2 -Type DWord; Set-ItemProperty -Path $key -Name DefaultUid -Value 0 -Type DWord; Set-ItemProperty -Path $key -Name Flags -Value 15 -Type DWord`,
-      ],
-      { env: { ...process.env, NOD_HALF_INSTALLED: join(profile, 'desktop-runtime', 'wsl') } },
-    );
-    assert.match(
-      await run(wsl, ['--list', '--verbose', '--all'], { env: { ...process.env, WSL_UTF8: '1' } }),
-      new RegExp(`${distribution}\\s+Installing`),
-    );
     let prepared;
     try {
+      await run(
+        system('WindowsPowerShell/v1.0/powershell.exe'),
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `$ErrorActionPreference = 'Stop'; $key = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss\\{${randomUUID()}}'; New-Item -Path $key -Force | Out-Null; Set-ItemProperty -Path $key -Name DistributionName -Value '${distribution}'; Set-ItemProperty -Path $key -Name BasePath -Value $env:NOD_HALF_INSTALLED; Set-ItemProperty -Path $key -Name State -Value 3 -Type DWord; Set-ItemProperty -Path $key -Name Version -Value 2 -Type DWord; Set-ItemProperty -Path $key -Name DefaultUid -Value 0 -Type DWord; Set-ItemProperty -Path $key -Name Flags -Value 15 -Type DWord`,
+        ],
+        { env: { ...process.env, NOD_HALF_INSTALLED: join(profile, 'desktop-runtime', 'wsl') } },
+      );
+      assert.match(
+        await run(wsl, ['--list', '--verbose', '--all'], {
+          env: { ...process.env, WSL_UTF8: '1' },
+        }),
+        new RegExp(`${distribution}\\s+Installing`),
+      );
       prepared = await runtime.prepareWindowsRuntime(
         {
           dataRoot: profile,
@@ -305,6 +313,7 @@ if (process.env.WORKSPACE_CONTAINER) {
         .catch(() => null);
       if (saved?.distribution && /^nod-[a-f0-9]{12}$/.test(saved.distribution))
         await run(wsl, ['--unregister', saved.distribution]);
+      else await run(wsl, ['--unregister', distribution]).catch(() => {});
     }
   }
   console.log('Checking that an update installs its runtime file.');

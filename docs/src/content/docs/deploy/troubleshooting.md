@@ -125,7 +125,7 @@ To start over, select **Remove all data…** in the **Nod** menu. Nod deletes yo
 
 ### Windows setup says Nod needs more free disk space
 
-The private computer needs room for its disk. If your system drive is too full during first setup, select **Choose folder** and pick a folder on another drive. Nod keeps the private computer there and tries again. Your profile, keys and settings stay where they are. **Remove all data…** removes the private computer from that folder too.
+Setup needs room for the private computer's disk and for the files it downloads and unpacks. If your system drive is too full for the private computer during first setup, select **Choose folder** and pick a folder on another drive. Nod keeps the private computer there and tries again. The download and unpacked files still use the system drive, so if the same message returns, free space there and select **Try again**. Your profile, keys and settings stay where they are. **Remove all data…** removes the private computer from that folder too.
 
 ### Windows keeps offering the same update
 
