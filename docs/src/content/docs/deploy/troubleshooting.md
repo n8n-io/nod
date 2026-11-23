@@ -115,11 +115,17 @@ On Windows, Nod replaces only a recorded, unfinished import. The next attempt re
 
 Before another import, Nod removes a partial disk only from a generated folder named in its valid unfinished-import record. Older and unknown folders are kept.
 
-If the saved configuration is missing or invalid, setup stops and keeps the existing computer. The same applies when a completed computer loses its registration or WSL does not report it as ready. Restart Windows, then try again. If the problem continues, keep the files and report the failure. An older unfinished import can also need this recovery because it has no setup record.
+If the saved configuration is missing or invalid, setup stops and keeps the existing computer. Restore a missing configuration from your backup. If there is no backup or the configuration is invalid, keep the files and report the failure with the startup log.
+
+If a completed computer loses its registration or WSL does not report it as ready, restart Windows, then try again. Conflicting WSL status reads also stop startup without changing files. If the problem continues, keep the files and report the failure. An older unfinished import can need recovery because it has no setup record.
+
+If setup needs more disk space, select a folder on another drive or free space. A different folder on the same drive still needs space for both the setup files and the private computer. Nod keeps a verified download for the next attempt.
 
 On a Mac, setup keeps runtime files that passed their checks, even if a later download fails. **Try again** checks and reuses those files. It does not remove a verified image while the private computer loads it.
 
 On Windows, database errors show whether PostgreSQL stopped, reached a memory limit, or failed its TCP check inside WSL. If PostgreSQL answers inside WSL, the error names the Windows connection that failed. Open **Technical details** to read the original error, its code, its stack, and available native command output. These details also appear in the startup log. Saved secrets are removed.
+
+During use, a database query can wait up to 30 seconds for a reply. If the connection stops returning data, Nod closes it and reports the failure. Nod does not repeat the failed work. After the connection is restored, a new request can use a new connection. Check the result of an action before you ask Nod to do it again.
 
 On a Mac, **Technical details** and the startup log also show the cause of a runtime download failure. This includes a connection error inside `fetch failed` or a damaged archive error. Select **Try again** after you restore the connection. If Nod can keep the saved part, an interrupted download resumes. Otherwise it starts again.
 
@@ -258,22 +264,22 @@ To report a bug, use the [bug report form](https://github.com/n8n-io/nod/issues/
 
 The `nod-feedback-report-v3` JSON attachment connects the steps before a failure with the affected chat, agent work, app usage, and connections. It helps with support, debugging, and product improvement. It combines technical metadata with recent content after best-effort redaction.
 
-| Section                 | What it shows                                                                                                                                                                                          |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Runtime                 | App version, release, platform, known model provider, model family, selected model ID, reasoning effort, model routes, and the trust check mode.                                                       |
-| System                  | The time the report was prepared, time zone, operating system and its version, CPU count, memory, Node.js, Electron and database versions, runtime uptime, and whether Nod runs in a container.        |
-| Settings                | Locale, time zone, quiet hours, whether automatic preparation, local files, a notification rule or rules are set, spending limits, and each chat app's mode and link state. Rule text isn't included.  |
-| Chat                    | Recent user and assistant message text, roles, character and attachment counts, and reply metadata.                                                                                                    |
-| Turns and agent work    | Request source, channel, outcome, waiting state, queue and run duration, tool category, parent-child relationships, and whether a background check stopped at screening (its outcome shows the rest).  |
-| Model usage             | Request outcomes, duration, token counts, recorded cost and estimates, model IDs, known model categories and operations, and a 24-hour summary by model and operation.                                 |
-| Tasks and schedules     | State, progress counts, enabled state, overdue work, and recent run and failure counts.                                                                                                                |
-| Connections             | Managed app, browser, direct connection, and model connection state, plus reconnect and event-delivery health.                                                                                         |
-| Channels                | Receiving and delivery states, with a permitted failure reason.                                                                                                                                        |
-| Runtime logs            | Recent tool inputs and results, and connection activity.                                                                                                                                               |
-| Failures                | Application and background failures with error class, message, stack with source file names, status, exit code and process output. A repeated failure appears once with a count.                       |
-| Startup log             | Desktop startup, runtime preparation and update steps: versions, update check, download, install and restart results, and exit codes.                                                                  |
-| App activity and errors | Recent screen categories, API failure categories and status codes, UI errors, failed requests with the server's reason, live update disconnects, and captured app error messages and stacks.           |
-| App window              | Whether the window was online and visible, the live update connection state, the age of the last update, saved and displayed message counts, window size, locale, and clock difference to the runtime. |
+| Section                 | What it shows                                                                                                                                                                                            |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime                 | App version, release, platform, known model provider, model family, selected model ID, reasoning effort, model routes, and the trust check mode.                                                         |
+| System                  | The report time, time zone, operating system, CPU count, memory, Node.js, Electron and database versions, runtime uptime, container state, and database connection counts (limit, total, idle, waiting). |
+| Settings                | Locale, time zone, quiet hours, whether automatic preparation, local files, a notification rule or rules are set, spending limits, and each chat app's mode and link state. Rule text isn't included.    |
+| Chat                    | Recent user and assistant message text, roles, character and attachment counts, and reply metadata.                                                                                                      |
+| Turns and agent work    | Request source, channel, outcome, waiting state, queue and run duration, tool category, parent-child relationships, and whether a background check stopped at screening (its outcome shows the rest).    |
+| Model usage             | Request outcomes, duration, token counts, recorded cost and estimates, model IDs, known model categories and operations, and a 24-hour summary by model and operation.                                   |
+| Tasks and schedules     | State, progress counts, enabled state, overdue work, and recent run and failure counts.                                                                                                                  |
+| Connections             | Managed app, browser, direct connection, and model connection state, plus reconnect and event-delivery health.                                                                                           |
+| Channels                | Receiving and delivery states, with a permitted failure reason.                                                                                                                                          |
+| Runtime logs            | Recent tool inputs and results, and connection activity.                                                                                                                                                 |
+| Failures                | Application and background failures with error class, message, stack with source file names, status, exit code and process output. A repeated failure appears once with a count.                         |
+| Startup log             | Desktop startup, runtime preparation and update steps: versions, update check, download, install and restart results, and exit codes.                                                                    |
+| App activity and errors | Recent screen categories, API failure categories and status codes, UI errors, failed requests with the server's reason, live update disconnects, and captured app error messages and stacks.             |
+| App window              | Whether the window was online and visible, the live update connection state, the age of the last update, saved and displayed message counts, window size, locale, and clock difference to the runtime.   |
 
 Database activity covers the latest 24 hours for your account across its conversations and background work. Each database section includes at most 200 entries, or 400 for agent execution events. Connection and schedule sections show current state. Report-local labels preserve execution relationships without exporting their original IDs. Activity uses relative ages and durations. The report carries one absolute time: when it was prepared.
 

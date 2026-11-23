@@ -71,6 +71,7 @@ export async function transaction<T>(
     }
     return value;
   } catch (error) {
+    if (!stopped && error instanceof Error && error.message === 'Query read timeout') stop();
     if (!stopped)
       await client.query('ROLLBACK').then(
         () => runRollback(),

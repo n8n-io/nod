@@ -2810,20 +2810,28 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       const text = offline ? `${offline.reason} (${offline.code}).` : failureText(error);
       const alternative = failure === 'model' ? dependencies.modelAlternative?.() : undefined;
       const server = Boolean(offline && dependencies.desktopRuntime);
-      if (
-        await failTurn(turnId, dependencies.present, text, {
-          failure,
-          expected: error instanceof ToolFailureError || error instanceof OutputLimitError,
-          next: alternative ?? (server ? offlineHint : undefined),
-          contextExhausted: error instanceof ContextLimitError,
-          cause: offline
-            ? { ...offline, ...(server ? { link: 'server' as const } : {}) }
-            : failure === 'model'
-              ? { reason: [text, alternative].filter(Boolean).join(' '), link: 'models' }
-              : undefined,
-        })
-      )
-        logFailure('turn_failed', error, { threadId, turnId, sessionId: turn.session_id });
+      logFailure('turn_failed', error, {
+        threadId,
+        turnId,
+        sessionId: turn.session_id,
+        databasePool: {
+          max: pool.options.max,
+          total: pool.totalCount,
+          idle: pool.idleCount,
+          waiting: pool.waitingCount,
+        },
+      });
+      await failTurn(turnId, dependencies.present, text, {
+        failure,
+        expected: error instanceof ToolFailureError || error instanceof OutputLimitError,
+        next: alternative ?? (server ? offlineHint : undefined),
+        contextExhausted: error instanceof ContextLimitError,
+        cause: offline
+          ? { ...offline, ...(server ? { link: 'server' as const } : {}) }
+          : failure === 'model'
+            ? { reason: [text, alternative].filter(Boolean).join(' '), link: 'models' }
+            : undefined,
+      });
     }
   } finally {
     if (signal.aborted && !stopping)

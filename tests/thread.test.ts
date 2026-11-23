@@ -13377,6 +13377,12 @@ test(
       secrets: ['synthetic-password/123'],
       profile: async () => ({ names: ['Marta Vidal'], region: 'PT' }),
     };
+    const poolBefore = {
+      max: f.pool.options.max,
+      total: f.pool.totalCount,
+      idle: f.pool.idleCount,
+      waiting: f.pool.waitingCount,
+    };
     const encoded = await buildFeedbackReport(options);
     for (const omitted of [
       ...privateValues,
@@ -13521,6 +13527,7 @@ test(
     assert.equal(report.system.osVersion, '15.1.0');
     assert.equal(report.system.electron, null);
     assert.ok(report.system.memoryMb > 0);
+    assert.deepEqual(report.system.databasePool, poolBefore);
     assert.deepEqual(report.client, { stream: 'closed', savedMessages: 4, renderedMessages: 3 });
     assert.deepEqual(report.modelSettings, [
       {
@@ -14104,6 +14111,95 @@ test(
       await pool.end();
     }
     assert.equal(ran, false);
+  },
+);
+
+test(
+  'a silent database connection times out without replaying work and the next request gets a fresh connection',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15_000 },
+  async (t) => {
+    const { createConnection, createServer } = await import('node:net');
+    const { setImmediate: nextTick } = await import('node:timers/promises');
+    const { createPool, pool: applicationPool } = await import('../src/server/db.ts');
+    const { transaction } = await import('../src/server/transaction.ts');
+    const schema = `test_silent_database_${randomUUID().replaceAll('-', '')}`;
+    const database = new URL(process.env.TEST_DATABASE_URL!);
+    const admin = new pg.Pool({ connectionString: database.href });
+    await admin.query(`CREATE SCHEMA ${schema}; CREATE TABLE ${schema}.saved(value integer)`);
+    const sockets = new Set<import('node:net').Socket>();
+    let blocked = false;
+    let observed = () => {};
+    let queries = 0;
+    const proxy = createServer((client) => {
+      const upstream = createConnection({
+        host: database.hostname,
+        port: Number(database.port || 5432),
+      });
+      for (const socket of [client, upstream]) {
+        sockets.add(socket);
+        socket.on('error', () => {});
+        socket.on('close', () => {
+          sockets.delete(socket);
+          client.destroy();
+          upstream.destroy();
+        });
+      }
+      client.on('data', (bytes) => {
+        if (bytes[0] === 81) queries++;
+      });
+      client.pipe(upstream);
+      upstream.on('data', (bytes) => {
+        if (blocked) observed();
+        else client.write(bytes);
+      });
+    });
+    await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve));
+    const endpoint = new URL(database);
+    endpoint.hostname = '127.0.0.1';
+    endpoint.port = String((proxy.address() as import('node:net').AddressInfo).port);
+    endpoint.searchParams.set('options', `-c search_path=${schema}`);
+    const pool = createPool({ connectionString: endpoint.href, max: 1 });
+    t.after(async () => {
+      for (const socket of sockets) socket.destroy();
+      await pool.end();
+      t.mock.timers.reset();
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+      if (!applicationPool.ending) await applicationPool.end();
+    });
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    for (const kind of ['query', 'transaction']) {
+      await pool.query('SELECT 1');
+      const before = queries;
+      const received = new Promise<void>((resolve) => {
+        observed = resolve;
+      });
+      const pending =
+        kind === 'transaction'
+          ? transaction(async (client) => {
+              blocked = true;
+              await client.query('INSERT INTO saved VALUES(1)');
+            }, pool)
+          : (() => {
+              blocked = true;
+              return pool.query('SELECT 1');
+            })();
+      let failure: unknown;
+      const failed = pending.catch((error: unknown) => {
+        failure = error;
+      });
+      await received;
+      t.mock.timers.tick(30_000);
+      await nextTick();
+      assert.ok(failure instanceof Error, kind);
+      assert.match(failure.message, /Query read timeout/);
+      assert.equal(pool.totalCount, 0, kind);
+      assert.equal(queries - before, kind === 'transaction' ? 2 : 1, kind);
+      await failed;
+      blocked = false;
+      assert.equal((await pool.query('SELECT count(*)::int AS count FROM saved')).rows[0].count, 0);
+    }
   },
 );
 

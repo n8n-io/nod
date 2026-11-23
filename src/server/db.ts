@@ -11,9 +11,12 @@ function poolSize(value: string | undefined, fallback: number) {
   return size;
 }
 
-function createPool(config: pg.PoolConfig) {
+export function createPool(config: pg.PoolConfig) {
   const created = new pg.Pool({
     connectionTimeoutMillis: 10_000,
+    query_timeout: 30_000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
     ...config,
   });
   created.on('error', (error) => logFailure('database_idle_error', error));

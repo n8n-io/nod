@@ -137,7 +137,14 @@ async function distributions(wsl, env, signal) {
       .split(/\r?\n/)
       .map((value) => value.trim())
       .filter(Boolean);
-  return { ready: await list(), registered: await list('--all') };
+  const ready = await list();
+  const registered = await list('--all');
+  if (ready.some((name) => !registered.includes(name)))
+    throw Object.assign(
+      new Error('WSL returned conflicting computer states. The files were kept. Try again.'),
+      { code: 'NOD_COMPUTER_NOT_READY' },
+    );
+  return { ready, registered };
 }
 
 export async function installWsl({ signal } = {}) {
@@ -436,8 +443,11 @@ async function prepareWindows(options, onComputerStart, progress) {
     const elsewhere = !existing && options.computerDirectory;
     if (elsewhere) await mkdir(computerPath, { recursive: true });
     const free = async (path) => {
-      const space = await statfs(path);
-      return space.bavail * space.bsize;
+      const space = await (options.inspectDisk ?? statfs)(path);
+      return {
+        bytes: Number(space.bavail) * Number(space.bsize),
+        device: space.dev ?? (await stat(path)).dev,
+      };
     };
     const computer =
       manifest.guest.expandedBytes +
@@ -446,9 +456,12 @@ async function prepareWindows(options, onComputerStart, progress) {
       manifest.guest.expandedBytes +
       (present ? 0 : Math.max(0, manifest.guest.bytes - partial)) +
       2 * 1024 ** 3;
+    const sourceSpace = await free(controlRoot);
+    const targetSpace = elsewhere ? await free(computerPath) : sourceSpace;
+    const separateDrive = sourceSpace.device !== targetSpace.device;
     if (
-      (await free(controlRoot)) < staging + (elsewhere ? 0 : computer) ||
-      (elsewhere && (await free(computerPath)) < computer + 2 * 1024 ** 3)
+      sourceSpace.bytes < staging + (separateDrive ? 0 : computer) ||
+      (separateDrive && targetSpace.bytes < computer + 2 * 1024 ** 3)
     )
       throw Object.assign(
         new Error(

@@ -4967,12 +4967,13 @@ process.exit(code);
       return state.calls;
     };
     let downloads = 0;
-    const prepare = (computerDirectory) =>
+    const prepare = (computerDirectory, inspectDisk) =>
       prepareWindowsRuntime(
         {
           dataRoot: profile,
           resourcesPath: resources,
           computerDirectory,
+          inspectDisk,
           resolveDownloadUrl: async () => 'https://runtime.example.invalid/guest.tar.gz',
           fetch: async () => {
             downloads++;
@@ -5026,14 +5027,30 @@ process.exit(code);
     const occupied = join(elsewhere, distribution);
     await mkdir(occupied, { recursive: true });
     await writeFile(join(occupied, 'ext4.vhdx'), 'synthetic existing computer');
+    await wsl({ ready: [], registered: [], broken: false });
+    const space = 2 * 1024 ** 3 + expanded.length + 4;
+    await assert.rejects(
+      prepare(elsewhere, async () => ({ bavail: space, bsize: 1, dev: 1 })),
+      { code: 'NOD_COMPUTER_STORAGE_FULL', step: 'assets' },
+    );
+    assert.equal(downloads, 1);
+    assert.ok(!(await wsl()).some((call) => call.startsWith('--import')));
+    assert.equal(sha256(await readFile(kept)), sha256(archive));
     await wsl({ ready: [distribution], registered: [distribution], broken: false });
-    await assert.rejects(prepare(elsewhere), (error) => {
-      assert.equal(error.code, undefined);
-      assert.equal(error.step, 'start');
-      assert.equal(error.exitCode, 7);
-      assert.match(error.message, /synthetic guest stop/);
-      return true;
-    });
+    await assert.rejects(
+      prepare(elsewhere, async (path) => ({
+        bavail: space,
+        bsize: 1,
+        dev: path === dirname(configPath) ? 1 : 2,
+      })),
+      (error) => {
+        assert.equal(error.code, undefined);
+        assert.equal(error.step, 'start');
+        assert.equal(error.exitCode, 7);
+        assert.match(error.message, /synthetic guest stop/);
+        return true;
+      },
+    );
     assert.deepEqual(await wsl(), [
       '--status',
       '--list --quiet',
@@ -5103,6 +5120,12 @@ process.exit(code);
         absent: true,
       },
       {
+        name: 'conflicting WSL status reads',
+        code: 'NOD_COMPUTER_NOT_READY',
+        value: { ...JSON.parse(original), initializing: true },
+        absent: true,
+      },
+      {
         name: 'older computer is not ready',
         value: legacy,
         hidden: true,
@@ -5161,11 +5184,12 @@ process.exit(code);
     );
     await rm(configPath);
     let failedPath;
-    for (const code of ['ERROR_FILE_EXISTS', 'E_ACCESSDENIED']) {
+    for (const code of ['ERROR_FILE_EXISTS', 'E_ACCESSDENIED', '0x80072747', '0x800705b4']) {
       await wsl({ ready: [], registered: [], broken: code });
       await assert.rejects(prepare(elsewhere), (error) => {
         assert.equal(error.code, undefined);
         assert.equal(error.wslCode, code);
+        assert.equal(startupErrorFacts(error).wslCode, code);
         assert.equal(error.step, 'import');
         assert.equal(error.exitCode, 1);
         assert.match(error.message, new RegExp(code));

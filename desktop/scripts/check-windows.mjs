@@ -324,11 +324,19 @@ if (process.env.WORKSPACE_CONTAINER) {
         try {
           if (content === undefined) await rm(configPath);
           else await writeFile(configPath, content);
+          let changed = false;
           await assert.rejects(
             runtime.prepareWindowsRuntime({ dataRoot: profile, resourcesPath: engine }, () => {
-              assert.fail('An uncertain computer must stay unchanged.');
+              changed = true;
             }),
+            {
+              code:
+                content === undefined
+                  ? 'NOD_COMPUTER_CONFIGURATION_MISSING'
+                  : 'NOD_COMPUTER_CONFIGURATION_INVALID',
+            },
           );
+          assert.equal(changed, false, 'An uncertain computer must stay unchanged.');
           assert.match(
             await run(wsl, ['--list', '--quiet', '--all'], {
               env: { ...process.env, WSL_UTF8: '1' },

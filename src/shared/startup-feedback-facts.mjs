@@ -158,6 +158,8 @@ const wslCodes = new Set([
   'ERROR_ACCESS_DENIED',
   'ERROR_DISK_FULL',
   'WSL_E_IMPORT_FAILED',
+  '0x80072747',
+  '0x800705b4',
 ]);
 const reasons = {
   status_regular: 'The saved report status is not one regular file.',
