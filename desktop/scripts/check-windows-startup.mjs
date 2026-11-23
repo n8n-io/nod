@@ -36,7 +36,7 @@ async function running() {
 
 async function install(path) {
   console.log(`Installing ${path}.`);
-  await run(path, ['/S'], { timeout: 600_000 });
+  await run(path, ['/S', `/D=${dirname(application)}`], { timeout: 600_000 });
   assert.ok(await present(application));
 }
 
