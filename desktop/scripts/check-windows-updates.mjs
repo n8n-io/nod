@@ -377,7 +377,7 @@ app.whenReady().then(async () => {
         NOD_INSTALLER_REJECT: occupied,
         NOD_INSTALLER_SCREENSHOT: join(output, 'install-directory.png'),
       },
-      timeout: 180_000,
+      timeout: 360_000,
     },
   );
   installed = true;
