@@ -127,6 +127,38 @@ export type StartupSignal =
   | 'SIGHUP'
   | 'SIGQUIT'
   | 'SIGPIPE';
+export type StartupStep =
+  | 'wsl'
+  | 'profile'
+  | 'assets'
+  | 'download'
+  | 'extract'
+  | 'import'
+  | 'update'
+  | 'start'
+  | 'storage'
+  | 'workspace'
+  | 'browser'
+  | 'ready'
+  | 'loading'
+  | 'loaded'
+  | 'database'
+  | 'threads'
+  | 'memory'
+  | 'apps'
+  | 'listening';
+export type StartupCode =
+  | 'NOD_WSL_REQUIRED'
+  | 'RUNTIME_ARCHIVE_REQUIRED'
+  | 'NOD_RUNTIME_STOP_FAILED'
+  | 'NOD_CONTAINER_STOPPED'
+  | 'NOD_DATABASE_CONNECTION_FAILED'
+  | 'NOD_DATABASE_OUT_OF_MEMORY'
+  | 'NOD_DATABASE_STOPPED'
+  | 'NOD_DATABASE_NOT_READY'
+  | 'NOD_COMPUTER_PROTECTION_FAILED'
+  | 'NOD_COMPUTER_STORAGE_FULL'
+  | 'NOD_KVM_UNAVAILABLE';
 export type StartupErrorFacts = {
   detailsOmitted: true;
   class?: StartupErrorClass;
@@ -135,6 +167,8 @@ export type StartupErrorFacts = {
   httpStatus?: number;
   exitCode?: number;
   signal?: StartupSignal;
+  code?: StartupCode;
+  step?: StartupStep;
 };
 export type StartupEventFacts = {
   event: StartupEvent;
@@ -142,6 +176,7 @@ export type StartupEventFacts = {
   error?: StartupErrorFacts;
   phase?: StartupPhase;
   stage?: StartupStage;
+  step?: StartupStep;
   durationMs?: number;
   count?: number;
   exitCode?: number;
@@ -173,6 +208,8 @@ export class StartupFeedbackError extends Error {
   httpStatus?: number;
   exitCode?: number;
   signal?: StartupSignal;
+  code?: StartupCode;
+  step?: StartupStep;
   errors?: StartupErrorFacts[];
   constructor(reason: string, cause?: unknown);
 }

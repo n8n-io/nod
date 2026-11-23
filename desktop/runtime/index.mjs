@@ -103,11 +103,12 @@ export async function retainStopExecutable(lima, controlRoot) {
   }
 }
 
-export function execute(
-  command,
-  args,
-  { env, signal, timeout = 120_000, input, encoding = 'utf8' } = {},
-) {
+function commandText(chunks) {
+  const bytes = Buffer.concat(chunks);
+  return bytes.toString(bytes.includes(0) ? 'utf16le' : 'utf8').replaceAll('\uFEFF', '');
+}
+
+export function execute(command, args, { env, signal, timeout = 120_000, input } = {}) {
   signal?.throwIfAborted();
   return new Promise((resolveRun, reject) => {
     const child = spawn(command, args, {
@@ -116,8 +117,8 @@ export function execute(
       shell: false,
       windowsHide: true,
     });
-    let output = '';
-    let stdout = '';
+    const stdout = [];
+    const tails = { stdout: { chunks: [], bytes: 0 }, stderr: { chunks: [], bytes: 0 } };
     let stdoutBytes = 0;
     let timedOut = false;
     let spawnError;
@@ -135,17 +136,24 @@ export function execute(
       timedOut = true;
       stop();
     }, timeout);
-    const collect = (chunk) => {
-      output = (output + chunk).slice(-128 * 1024);
+    const keep = (tail, chunk) => {
+      tail.chunks.push(chunk);
+      tail.bytes += chunk.length;
+      while (tail.bytes - tail.chunks[0].length > 128 * 1024) {
+        const dropped = tail.chunks.shift().length;
+        tail.bytes -= dropped;
+        if (dropped % 2) {
+          tail.chunks[0] = tail.chunks[0].subarray(1);
+          tail.bytes -= 1;
+        }
+      }
     };
-    child.stdout.setEncoding(encoding);
-    child.stderr.setEncoding(encoding);
     child.stdout.on('data', (chunk) => {
-      collect(chunk);
-      stdoutBytes += Buffer.byteLength(chunk, encoding);
-      if (stdoutBytes <= 8 * 1024 * 1024) stdout += chunk;
+      stdoutBytes += chunk.length;
+      if (stdoutBytes <= 8 * 1024 * 1024) stdout.push(chunk);
+      keep(tails.stdout, chunk);
     });
-    child.stderr.on('data', collect);
+    child.stderr.on('data', (chunk) => keep(tails.stderr, chunk));
     child.on('error', (error) => {
       spawnError = error;
     });
@@ -162,11 +170,13 @@ export function execute(
       clearTimeout(killTimer);
       signal?.removeEventListener('abort', stop);
       if (signal?.aborted) return reject(new Error('Nod setup was cancelled.'));
-      const failure = (message) =>
-        Object.assign(new Error(message), {
-          details: [spawnError?.stack, output.replaceAll('\0', '').trim()]
-            .filter(Boolean)
-            .join('\n'),
+      const output = [commandText(tails.stdout.chunks), commandText(tails.stderr.chunks)]
+        .map((text) => text.trim())
+        .filter(Boolean)
+        .join('\n');
+      const failure = (message, facts) =>
+        Object.assign(new Error(message), facts, {
+          details: [spawnError?.stack, output].filter(Boolean).join('\n'),
         });
       if (spawnError)
         return reject(
@@ -174,18 +184,19 @@ export function execute(
         );
       if (timedOut) return reject(failure('Nod runtime setup took too long. Please retry.'));
       if (code !== 0) {
-        const detail = output.replaceAll('\0', '').replace(/\s+/g, ' ').trim();
+        const detail = output.replace(/\s+/g, ' ');
         return reject(
           failure(
             `Nod runtime command failed (${code})${
               detail ? `: ${detail.length > 300 ? '…' : ''}${detail.slice(-300)}` : '.'
             }`,
+            { exitCode: code },
           ),
         );
       }
       if (stdoutBytes > 8 * 1024 * 1024)
         return reject(failure('Nod runtime command produced too much output.'));
-      resolveRun(stdout.trim());
+      resolveRun(commandText(stdout).trim());
     });
   });
 }

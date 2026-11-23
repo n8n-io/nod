@@ -231,6 +231,10 @@ There's no daily release. Only a merged release pull request, which changes `des
 
 Pull requests and normal merges to `main` run source checks and isolated native update fixtures on Windows and both Mac architectures when desktop files change. These fixtures check secure storage, installer failures and saved-profile preservation without publishing a release.
 
+Each night, and when you start **CI** by hand on a branch, a Windows runner also checks a real first setup, update and next start. It turns on real-time virus scanning, installs the latest published release, opens it and waits for the private computer and background service, trying again up to twice if that release fails to start. It then installs the current build over it, opens Nod again and checks a later start too. The job reuses the published Windows runtime that matches the source, or the latest published one. **Build desktop release** runs the same check on the installer it built.
+
+The release build's Windows check also stops the WSL service to confirm that Nod reports the Windows error in readable text with the code that offers **Install WSL**, plants a half-installed WSL distribution to confirm that setup replaces it, and installs the private computer in a chosen folder.
+
 Pull requests that change Linux build inputs also run **Build Linux desktop**. It builds and installs the Flatpak preview, checks its engine and bundle parts, and uploads the files. **Build desktop release** packages all desktop apps and verifies their release assets before publication.
 
 The required **Checks, tests and build** result waits for both Mac update checks. If either Mac check fails, that required result fails too.

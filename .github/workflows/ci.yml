@@ -397,6 +397,70 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
 
+  windows-startup:
+    name: Windows first setup, update and next start
+    needs: checks
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: windows-2025
+    timeout-minutes: 75
+    env:
+      CI: 'true'
+      NOD_DESKTOP_VERSION: 999.0.0
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install tooling and dependencies
+        uses: ./.github/actions/setup-node
+        with:
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            desktop/pnpm-lock.yaml
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
+        with:
+          go-version: '1.26.8'
+          cache: false
+      - name: Install Electron, desktop tooling and NSIS
+        run: |
+          pnpm --dir desktop install --frozen-lockfile
+          choco install nsis --yes --no-progress
+      - name: Download the Electron binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node desktop/scripts/prepare-windows-electron.mjs
+      - name: Build the web app
+        run: pnpm run build
+      - name: Find the published Windows runtime for this source, or the latest one
+        id: runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/desktop-release.mjs windows-runtime
+      - name: Reuse the published Windows runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOD_WINDOWS_RUNTIME_TAG: ${{ steps.runtime.outputs.windows_runtime_tag }}
+          NOD_WINDOWS_RUNTIME_FINGERPRINT: ${{ steps.runtime.outputs.windows_runtime_fingerprint }}
+        run: node .github/scripts/desktop-release.mjs reuse-windows-runtime
+      - name: Package the Windows installer
+        run: node desktop/scripts/build-windows.mjs
+      - name: Set up on the latest release, update to this build and start again
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOD_PREVIOUS_RELEASE=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName) \
+            node desktop/scripts/check-windows-startup.mjs
+      - name: Preserve the startup log and receipt
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: windows-startup
+          path: |
+            dist/windows/windows-startup.json
+            dist/windows/windows-startup.log
+          if-no-files-found: ignore
+
   secrets:
     name: Secret scanning
     runs-on: blacksmith-2vcpu-ubuntu-2404

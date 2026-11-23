@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { access, mkdir, open, readFile, realpath, rename, rm } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, isAbsolute, resolve } from 'node:path';
 
 const preferenceFields = ['launchAtLogin', 'notifications'];
 const onboardingPreferenceSteps = ['notifications', 'launchAtLogin', 'complete'];
@@ -132,6 +132,11 @@ export function createSettingsStore(path, encryption, platform = process.platfor
           (!Number.isFinite(value.zoomFactor) ||
             value.zoomFactor < 0.25 ||
             value.zoomFactor > 5)) ||
+        (value.computerDirectory !== undefined &&
+          (typeof value.computerDirectory !== 'string' ||
+            value.computerDirectory.length > 4096 ||
+            !isAbsolute(value.computerDirectory) ||
+            resolve(value.computerDirectory) !== value.computerDirectory)) ||
         (value.onboardingPreferenceStep !== undefined &&
           !onboardingPreferenceSteps.includes(value.onboardingPreferenceStep)) ||
         (value.serverUrl !== undefined &&
@@ -263,6 +268,9 @@ export function createSettingsStore(path, encryption, platform = process.platfor
     get() {
       return exclusive(async () => redacted(await read()));
     },
+    computerDirectory() {
+      return exclusive(async () => (await read()).computerDirectory);
+    },
     hasSavedKeys() {
       return exclusive(async () => Object.keys((await read()).secrets).length > 0);
     },
@@ -317,6 +325,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
               ![
                 'theme',
                 'zoomFactor',
+                'computerDirectory',
                 ...preferenceFields,
                 'onboardingPreferenceStep',
                 'welcome',
@@ -338,6 +347,18 @@ export function createSettingsStore(path, encryption, platform = process.platfor
           if (!Number.isFinite(input.zoomFactor) || input.zoomFactor < 0.25 || input.zoomFactor > 5)
             throw new Error('Choose a supported zoom level.');
           value.zoomFactor = input.zoomFactor;
+        }
+        if (input.computerDirectory !== undefined) {
+          if (
+            input.computerDirectory !== null &&
+            (typeof input.computerDirectory !== 'string' ||
+              input.computerDirectory.length > 4096 ||
+              !isAbsolute(input.computerDirectory) ||
+              resolve(input.computerDirectory) !== input.computerDirectory)
+          )
+            throw new Error('Choose a valid private-computer storage folder.');
+          if (input.computerDirectory === null) delete value.computerDirectory;
+          else value.computerDirectory = input.computerDirectory;
         }
         if (input.welcome !== undefined) {
           if (

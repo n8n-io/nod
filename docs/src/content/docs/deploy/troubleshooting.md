@@ -109,7 +109,9 @@ On Mac and Linux, Nod records new first setups and marks them complete after the
 
 An interrupted Mac setup from an older version can lack that record. If retry still fails, keep its files and [report a bug with the startup log](#report-a-bug-with-a-diagnostic-report).
 
-If the background service does not respond within two minutes, the startup log records the elapsed wait and the last health check failure. It also records whether the service reported its port. An unexpected service exit has a separate log entry.
+The background service reports each startup step, and the startup log records each step with the time since the service started. Loading its code can take up to ten minutes on a slow or busy computer. Each later step can take two minutes. If a step takes longer, Nod stops waiting, and the log records the elapsed wait, the last health check failure, the last startup step and whether the service reported its port. An unexpected service exit has a separate log entry.
+
+On Windows, an interrupted first setup can leave the private computer half installed. The next attempt removes that unfinished computer and installs it again. A failed setup keeps its verified download, so **Try again** does not download it again.
 
 On a Mac, setup keeps runtime files that passed their checks, even if a later download fails. **Try again** checks and reuses those files. It does not remove a verified image while the private computer loads it.
 
@@ -121,13 +123,19 @@ Quit Nod and open it again. If the error continues, restart Windows. Keep your a
 
 To start over, select **Remove all data…** in the **Nod** menu. Nod deletes your profile and private computer, then restarts and opens setup. See [Remove Nod](/get-started/install-desktop/#remove-nod) for what it keeps.
 
+### Windows setup says Nod needs more free disk space
+
+Setup needs room for the private computer's disk and for the files it downloads and unpacks. If your system drive is too full for the private computer during first setup, select **Choose folder** and pick a folder on another drive. Nod keeps the private computer there and tries again. The download and unpacked files still use the system drive, so if the same message returns, free space there and select **Try again**. Your profile, keys and settings stay where they are. **Remove all data…** removes the private computer from that folder too.
+
 ### Windows keeps offering the same update
 
 Nod versions before 0.7.0 on Windows can't install their own updates. Quit Nod from the tray icon, then run the latest installer as described in [Update Nod](/get-started/install-desktop/#update-nod). It keeps your profile, keys and data. Don't uninstall Nod or delete its folders first.
 
 ### Windows says WSL is missing
 
-Select **Install WSL** in Nod, approve the administrator request, restart the PC and open Nod again. A device policy can block WSL installation.
+Nod says it could not start WSL 2 when WSL is missing, when Windows has not turned on its virtual machine feature, or when WSL needs an update. The message ends with the error from Windows, in your language.
+
+Select **Install WSL** in Nod, approve the administrator request, restart the PC and open Nod again. This installs or updates WSL and turns on the features it needs. A device policy can block WSL installation. If the Windows error says virtualization is turned off, turn it on in your PC's firmware settings first.
 
 ### PostgreSQL fails after a Mac VM kernel update
 

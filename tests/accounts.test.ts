@@ -9599,12 +9599,33 @@ test('startup facts keep only structured bounded codes and do not call getters o
     exitCode: 4294967295,
     signal: 'SIGTERM',
   });
+  assert.deepEqual(
+    startupErrorFacts({
+      code: 'NOD_WSL_REQUIRED',
+      step: 'import',
+      exitCode: 4294967295,
+    }),
+    {
+      detailsOmitted: true,
+      exitCode: 4294967295,
+      code: 'NOD_WSL_REQUIRED',
+      step: 'import',
+    },
+  );
+  assert.deepEqual(
+    startupErrorFacts({
+      code: 'NOD_SYNTHETIC_PRIVATE_CODE',
+      step: 'C:\\Users\\Synthetic Owner',
+    }),
+    { detailsOmitted: true },
+  );
   const poisoned = Object.defineProperties(
     {},
     Object.fromEntries(
       [
         'name',
         'code',
+        'step',
         'syscall',
         'status',
         'phase',

@@ -564,7 +564,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.release_needed == 'true'
     runs-on: windows-2025
-    timeout-minutes: 60
+    timeout-minutes: 90
     environment:
       name: release
       deployment: false
@@ -619,6 +619,13 @@ jobs:
           NOD_TRACES_TOKEN: ${{ secrets.NOD_TRACES_TOKEN }}
         run: node desktop/scripts/build-windows.mjs
       - run: node desktop/scripts/check-windows.mjs
+      - name: Set up on the latest release, update to this build and start again
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOD_PREVIOUS_RELEASE=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName) \
+            node desktop/scripts/check-windows-startup.mjs
       - run: Copy-Item .local/windows-runtime-assets/runtime-win32-x64-*.json dist/windows/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

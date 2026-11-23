@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('nodDesktop', {
   warmup: () => invoke('nod:warmup'),
   importRuntime: () => invoke('nod:runtime:import'),
   installWsl: () => invoke('nod:runtime:install-wsl'),
+  chooseComputerDirectory: () => invoke('nod:runtime:choose-folder'),
   showStartupLog: () => invoke('nod:startup-log:show'),
   openStartupFeedback: () => invoke('nod:startup-feedback:open'),
   closeStartupFeedback: () => invoke('nod:startup-feedback:close'),

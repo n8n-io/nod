@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { copyFile, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -169,12 +169,61 @@ if (process.env.WORKSPACE_CONTAINER) {
   {
     const profile = join(installation, 'synthetic-profile');
     const runtime = await import('../runtime/windows.mjs');
+    const system = (name) => join(process.env.SYSTEMROOT, 'System32', name);
+    console.log('Checking that a WSL failure offers its repair and keeps the Windows error.');
+    const automatic = /AUTO_START/.test(await run(system('sc.exe'), ['qc', 'WslService']));
+    await run(system('sc.exe'), ['config', 'WslService', 'start=', 'disabled']);
+    await run(system('sc.exe'), ['stop', 'WslService']).catch(() => {});
+    try {
+      await assert.rejects(
+        runtime.prepareWindowsRuntime(
+          { dataRoot: join(installation, 'synthetic-unavailable'), resourcesPath: engine },
+          () => {},
+        ),
+        (error) => {
+          console.log(error.message);
+          assert.equal(error.code, 'NOD_WSL_REQUIRED');
+          assert.equal(error.step, 'wsl');
+          assert.equal(error.message.includes('\0'), false);
+          assert.match(error.message, /Wsl\//);
+          return true;
+        },
+      );
+    } finally {
+      await run(system('sc.exe'), [
+        'config',
+        'WslService',
+        'start=',
+        automatic ? 'auto' : 'demand',
+      ]);
+    }
+    await run(wsl, ['--status']);
+    receipt.wslFailure = true;
+    console.log('Checking that setup replaces a half-installed computer.');
+    const distribution = `nod-${createHash('sha256').update(resolve(profile).toLowerCase()).digest('hex').slice(0, 12)}`;
     let prepared;
     try {
+      await run(
+        system('WindowsPowerShell/v1.0/powershell.exe'),
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `$ErrorActionPreference = 'Stop'; $key = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss\\{${randomUUID()}}'; New-Item -Path $key -Force | Out-Null; Set-ItemProperty -Path $key -Name DistributionName -Value '${distribution}'; Set-ItemProperty -Path $key -Name BasePath -Value $env:NOD_HALF_INSTALLED; Set-ItemProperty -Path $key -Name State -Value 3 -Type DWord; Set-ItemProperty -Path $key -Name Version -Value 2 -Type DWord; Set-ItemProperty -Path $key -Name DefaultUid -Value 0 -Type DWord; Set-ItemProperty -Path $key -Name Flags -Value 15 -Type DWord`,
+        ],
+        { env: { ...process.env, NOD_HALF_INSTALLED: join(profile, 'desktop-runtime', 'wsl') } },
+      );
+      assert.match(
+        await run(wsl, ['--list', '--verbose', '--all'], {
+          env: { ...process.env, WSL_UTF8: '1' },
+        }),
+        new RegExp(`${distribution}\\s+Installing`),
+      );
       prepared = await runtime.prepareWindowsRuntime(
         {
           dataRoot: profile,
           resourcesPath: engine,
+          computerDirectory: join(installation, 'synthetic-other-drive'),
           onStatus: (value) => value.phase === 'downloading' || console.log(value.message),
           resolveDownloadUrl: async () =>
             'https://runtime.example.invalid/nod-Runtime-win32-x64.tar.gz',
@@ -187,6 +236,18 @@ if (process.env.WORKSPACE_CONTAINER) {
       );
       await assert.rejects(stat(archive), { code: 'ENOENT' });
       await assert.rejects(stat(join(profile, 'desktop-runtime/guest.tar.gz')), { code: 'ENOENT' });
+      assert.match(
+        await run(wsl, ['--list', '--verbose', '--all'], {
+          env: { ...process.env, WSL_UTF8: '1' },
+        }),
+        new RegExp(`${distribution}\\s+Running`),
+      );
+      receipt.halfInstalled = true;
+      assert.ok(
+        (await stat(join(installation, 'synthetic-other-drive', distribution, 'ext4.vhdx'))).size,
+      );
+      await assert.rejects(stat(join(profile, 'desktop-runtime/wsl')), { code: 'ENOENT' });
+      receipt.chosenFolder = true;
       await run(
         join(engine, 'windows-runtime/bin/docker.exe'),
         [
@@ -252,6 +313,7 @@ if (process.env.WORKSPACE_CONTAINER) {
         .catch(() => null);
       if (saved?.distribution && /^nod-[a-f0-9]{12}$/.test(saved.distribution))
         await run(wsl, ['--unregister', saved.distribution]);
+      else await run(wsl, ['--unregister', distribution]).catch(() => {});
     }
   }
   console.log('Checking that an update installs its runtime file.');

@@ -4869,6 +4869,165 @@ test('Windows storage starts on a free port, and a readiness failure names its c
   }
 });
 
+test(
+  'Windows setup replaces a half-installed computer, names a WSL failure in the owner’s language, keeps its download for the retry and installs in a chosen folder',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    const { gzipSync } = await import('node:zlib');
+    const { prepareWindowsRuntime, removeWindowsComputer } = await import('../runtime/windows.mjs');
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'nod-windows-setup-')));
+    const system = join(root, 'Windows');
+    const resources = join(root, 'engine');
+    const profile = join(root, 'profile');
+    const statePath = join(system, 'System32', 'wsl-state.json');
+    const previous = process.env.SYSTEMROOT;
+    process.env.SYSTEMROOT = system;
+    t.after(async () => {
+      if (previous === undefined) delete process.env.SYSTEMROOT;
+      else process.env.SYSTEMROOT = previous;
+      await rm(root, { recursive: true, force: true });
+    });
+    await mkdir(join(system, 'System32', 'WindowsPowerShell', 'v1.0'), { recursive: true });
+    await mkdir(join(resources, 'windows-runtime', 'bin'), { recursive: true });
+    await writeFile(
+      join(system, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+      '#!/bin/sh\nexit 0\n',
+      { mode: 0o755 },
+    );
+    await writeFile(
+      join(system, 'System32', 'wsl.exe'),
+      `#!${process.execPath}
+const { readFileSync, writeFileSync } = require('node:fs');
+const path = ${JSON.stringify(statePath)};
+const state = JSON.parse(readFileSync(path, 'utf8'));
+const args = process.argv.slice(2);
+state.calls.push(args.slice(0, 2).join(' '));
+let code = 0;
+if (args[0] === '--list' && state.offline) code = 1;
+else if (args[0] === '--list')
+  process.stdout.write(Buffer.from('\\uFEFF' + (args.includes('--all') ? state.registered : state.ready).join('\\r\\n') + '\\r\\n', 'utf16le'));
+if (args[0] === '--unregister') state.registered = state.ready = [];
+if (args[0] === '--import') {
+  if (state.broken) {
+    process.stdout.write(Buffer.from("La machine virtuelle n’a pas pu être démarrée car une fonctionnalité requise n’est pas installée.\\r\\nCode d’erreur : Wsl/Service/RegisterDistro/CreateVm/HCS/HCS_E_SERVICE_NOT_AVAILABLE\\r\\n", 'utf16le'));
+    code = 1;
+  } else {
+    state.registered = state.ready = [args[1]];
+    state.imported = args[2];
+  }
+}
+if (args[0] === '--distribution') {
+  process.stderr.write('synthetic guest stop');
+  code = 7;
+}
+writeFileSync(path, JSON.stringify(state));
+process.exit(code);
+`,
+      { mode: 0o755 },
+    );
+    const transport = Buffer.from('synthetic transport');
+    await writeFile(join(resources, 'windows-runtime', 'bin', 'docker.exe'), transport);
+    const expanded = Buffer.alloc(8192, 'synthetic computer image ');
+    const archive = gzipSync(expanded);
+    const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+    await writeFile(
+      join(resources, 'windows-runtime', 'manifest.json'),
+      JSON.stringify({
+        version: 1,
+        platform: 'win32-x64',
+        guest: {
+          file: 'guest.tar.gz',
+          sha256: sha256(archive),
+          bytes: archive.length,
+          expandedBytes: expanded.length,
+        },
+        images: ['workspace', 'browser', 'postgres'].map((name) => ({
+          name,
+          id: `sha256:${sha256(name)}`,
+          size: 1,
+        })),
+        transport: { file: 'bin/docker.exe', sha256: sha256(transport) },
+      }),
+    );
+    const distribution = `nod-${sha256(profile.toLowerCase()).slice(0, 12)}`;
+    const wsl = async (change) => {
+      const state = JSON.parse(await readFile(statePath, 'utf8').catch(() => '{"calls":[]}'));
+      if (change) await writeFile(statePath, JSON.stringify({ ...state, ...change, calls: [] }));
+      return state.calls;
+    };
+    let downloads = 0;
+    const prepare = (computerDirectory) =>
+      prepareWindowsRuntime(
+        {
+          dataRoot: profile,
+          resourcesPath: resources,
+          computerDirectory,
+          resolveDownloadUrl: async () => 'https://runtime.example.invalid/guest.tar.gz',
+          fetch: async () => {
+            downloads++;
+            return new Response(archive);
+          },
+        },
+        () => {},
+      );
+    const saved = async () =>
+      JSON.parse(await readFile(join(profile, 'desktop-runtime', 'state.json'), 'utf8'));
+    const kept = join(profile, 'desktop-runtime', `guest-${sha256(archive).slice(0, 12)}.tar.gz`);
+
+    await wsl({ ready: [], registered: [distribution], broken: true });
+    await assert.rejects(prepare(), (error) => {
+      assert.equal(error.code, 'NOD_WSL_REQUIRED');
+      assert.equal(error.step, 'import');
+      assert.equal(error.exitCode, 1);
+      assert.match(error.message, /HCS_E_SERVICE_NOT_AVAILABLE/);
+      assert.match(error.message, /une fonctionnalité requise n’est pas installée/);
+      assert.equal(error.message.includes('\0'), false);
+      return true;
+    });
+    assert.deepEqual(await wsl(), [
+      '--status',
+      '--list --quiet',
+      '--list --quiet',
+      `--unregister ${distribution}`,
+      `--import ${distribution}`,
+    ]);
+    assert.equal((await saved()).initializing, true);
+    assert.equal(sha256(await readFile(kept)), sha256(archive));
+
+    const elsewhere = join(root, 'another drive');
+    await mkdir(elsewhere);
+    await wsl({ ready: [distribution], registered: [distribution], broken: false });
+    await assert.rejects(prepare(elsewhere), (error) => {
+      assert.equal(error.code, undefined);
+      assert.equal(error.step, 'start');
+      assert.equal(error.exitCode, 7);
+      assert.match(error.message, /synthetic guest stop/);
+      return true;
+    });
+    assert.deepEqual(await wsl(), [
+      '--status',
+      '--list --quiet',
+      '--list --quiet',
+      `--unregister ${distribution}`,
+      `--import ${distribution}`,
+      `--distribution ${distribution}`,
+    ]);
+    assert.equal(downloads, 1);
+    assert.equal((await saved()).initializing, undefined);
+    await assert.rejects(stat(kept), { code: 'ENOENT' });
+    const computer = join(elsewhere, distribution);
+    assert.equal(JSON.parse(await readFile(statePath, 'utf8')).imported, computer);
+    assert.equal((await saved()).computerPath, computer);
+    await writeFile(join(elsewhere, 'keep.txt'), 'synthetic owner file');
+    await wsl({ offline: true });
+    await removeWindowsComputer(profile);
+    assert.deepEqual((await readdir(elsewhere)).sort(), [distribution, 'keep.txt'].sort());
+    await wsl({ offline: false });
+    await removeWindowsComputer(profile);
+    assert.deepEqual(await readdir(elsewhere), ['keep.txt']);
+  },
+);
+
 async function windowsImageFixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'nod-windows-image-order-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -4902,13 +5061,17 @@ state = json.load(original_open(state_path))
 manifest = json.load(original_open(os.path.join(root, 'manifest.json')))
 def mapped(path):
     path = os.fspath(path)
-    for prefix in ['/opt/nod-assets/', '/var/lib/nod/']:
+    for prefix in ['/opt/nod-assets/', '/var/lib/nod/', '/var/log/']:
         if path.startswith(prefix): return os.path.join(root, path[len(prefix):])
     if path == '/var/lib/nod': return root
     raise RuntimeError('Unexpected fixture path')
 def run(args, **kwargs):
     state['commands'].append(args[1:])
-    if args[1:] == ['info']: return subprocess.CompletedProcess(args, 0)
+    if args[1:] == ['info']:
+        if state.get('stuck'):
+            state['stuck'] = False
+            raise subprocess.TimeoutExpired(args, kwargs['timeout'])
+        return subprocess.CompletedProcess(args, 0)
     if args[1:3] == ['image', 'inspect']:
         value = state['images'].get(args[-1])
         result = subprocess.CompletedProcess(args, 0 if value else 1, stdout=value or '')
@@ -4925,6 +5088,7 @@ def makedirs(path, **kwargs):
     assert mapped(path) == root
 os.makedirs = makedirs
 subprocess.run = run
+subprocess.Popen = lambda *args, **kwargs: state['commands'].append(['dockerd'])
 sys.argv = [source, command]
 try:
     exec(compile(source_code, source, 'exec'), {'__name__': '__main__'})
@@ -4940,6 +5104,10 @@ finally:
     async wrong(name) {
       const state = JSON.parse(await readFile(join(root, 'state.json'), 'utf8'));
       await writeFile(join(root, 'state.json'), JSON.stringify({ ...state, wrong: name }));
+    },
+    async stuck() {
+      const state = JSON.parse(await readFile(join(root, 'state.json'), 'utf8'));
+      await writeFile(join(root, 'state.json'), JSON.stringify({ ...state, stuck: true }));
     },
     run(command, name) {
       return execFileSync(
@@ -4958,6 +5126,13 @@ finally:
     },
   };
 }
+
+test('the Windows guest starts Docker and keeps waiting when a readiness check hangs', async (t) => {
+  const windows = await windowsImageFixture(t);
+  await windows.stuck();
+  windows.run('start');
+  assert.deepEqual((await windows.read()).commands, [['info'], ['dockerd'], ['info']]);
+});
 
 test('runtime hands off verified storage before browser readiness and fences failed or aborted handoffs', async (t) => {
   const { finishRuntime } = await import('../runtime/index.mjs');

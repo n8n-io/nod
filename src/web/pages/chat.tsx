@@ -163,7 +163,7 @@ function Working({
       <div className="working-details">
         <div className="working-text">
           <div hidden={!thinking}>
-            <LiveLine item={chat} quiet={quiet && thinking} />
+            <LiveLine item={chat} quiet={quiet && thinking} clipped />
           </div>
           {!thinking && (
             <span className="live-line-current" role="status">

@@ -50,6 +50,7 @@ export function createDesktopLifecycle({
       secondsLeft: undefined,
       needsRuntimeArchive: false,
       needsWsl: false,
+      needsStorage: false,
       ...value,
     });
   }
@@ -62,6 +63,7 @@ export function createDesktopLifecycle({
       details: startupErrorDetails(error),
       needsRuntimeArchive: error.code === 'RUNTIME_ARCHIVE_REQUIRED',
       needsWsl: error.code === 'NOD_WSL_REQUIRED',
+      needsStorage: error.code === 'NOD_COMPUTER_STORAGE_FULL',
     });
   }
 

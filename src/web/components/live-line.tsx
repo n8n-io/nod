@@ -81,10 +81,12 @@ export function LiveLine({
   item,
   quiet = true,
   history = true,
+  clipped = false,
 }: {
   item?: Activity;
   quiet?: boolean;
   history?: boolean;
+  clipped?: boolean;
 }) {
   const labelId = useId();
   const label = useRef<HTMLSpanElement>(null);
@@ -123,26 +125,29 @@ export function LiveLine({
       {meta && ` · ${meta}`}
     </span>
   );
-  if (!history || !item?.recent?.length) return current;
+  const recent = item?.recent ?? [];
+  if (!history || !item || !(recent.length || (clipped && described))) return current;
   return (
     <details className="live-line" key={item.turnId}>
       <summary aria-labelledby={labelId}>
         {current}
         <ChevronDown size={14} aria-hidden="true" />
       </summary>
-      <ol aria-label="Recent completed activity">
-        {item.recent.map((entry) => (
-          <li key={entry.id}>
-            <Check size={12} aria-hidden="true" />
-            <span>
-              <Markdown allowedElements={[]} unwrapDisallowed>
-                {entry.summary}
-              </Markdown>
-              {entry.site && <span className="live-line-site"> · {entry.site}</span>}
-            </span>
-          </li>
-        ))}
-      </ol>
+      {recent.length > 0 && (
+        <ol aria-label="Recent completed activity">
+          {recent.map((entry) => (
+            <li key={entry.id}>
+              <Check size={12} aria-hidden="true" />
+              <span>
+                <Markdown allowedElements={[]} unwrapDisallowed>
+                  {entry.summary}
+                </Markdown>
+                {entry.site && <span className="live-line-site"> · {entry.site}</span>}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
     </details>
   );
 }
