@@ -132,7 +132,9 @@ function scriptedReply(messages: Entry[]) {
     .filter((request) => !request.text.startsWith('task:'))
     .map((request) => `Answer: ${request.text}`);
   return {
-    hold: pending.find((request) => request.text.includes('linger:'))?.text,
+    hold: pending.find(
+      (request) => request.text.startsWith('task:') && request.text.includes('linger:'),
+    )?.text,
     text: answers.join('\n'),
   };
 }

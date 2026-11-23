@@ -1612,7 +1612,7 @@ async function failTurn(
            AND EXISTS (SELECT 1 FROM messages m JOIN chain c ON c.id=m.turn_id WHERE m.owner_id=$2 AND m.role='user')
            AND NOT EXISTS (SELECT 1 FROM messages m JOIN chain c ON c.id=m.turn_id
              WHERE m.owner_id=$2 AND m.role='user'
-               AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.owner_id=$2 AND t.source_message_id=m.id))) AS handed_off
+               AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.owner_id=$2 AND t.source_message_id=m.id AND t.state='open'))) AS handed_off
          FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.status='running' FOR UPDATE`,
         [turnId, ownerId, thread.id],
       )
