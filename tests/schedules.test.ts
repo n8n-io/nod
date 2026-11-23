@@ -1178,54 +1178,6 @@ test(
         },
       );
       await t.test(
-        'schedule history identifies the saved message for a file-only result',
-        async () => {
-          const before = clock;
-          const schedule = await create({ cron: '*/15 * * * *' });
-          const job = await jobFor(schedule.id);
-          clock = new Date(job.data.scheduledFor);
-          await deliver([job]);
-          const [run] = await runs(schedule.id);
-          assert.ok(run);
-          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [run.turnId]);
-          const messageId = randomUUID();
-          const artifactId = randomUUID();
-          await db.pool.query(
-            `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments)
-           SELECT $1,owner_id,'assistant','',thread_id,id,$2 FROM turns WHERE id=$3`,
-            [
-              messageId,
-              JSON.stringify([
-                {
-                  id: artifactId,
-                  name: 'synthetic.csv',
-                  mimeType: 'text/csv',
-                  size: 10,
-                  url: `/api/artifacts/${artifactId}`,
-                },
-              ]),
-              run.turnId,
-            ],
-          );
-          const [result] = await runs(schedule.id);
-          assert.equal(result?.messageId, messageId);
-          assert.equal(result.attachmentMessageId, messageId);
-          assert.equal(result.messageText, '');
-          const textId = randomUUID();
-          await db.pool.query(
-            `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,created_at)
-           SELECT $1,owner_id,'assistant','Preparing the synthetic file.',thread_id,id,now()-interval '1 second'
-           FROM turns WHERE id=$2`,
-            [textId, run.turnId],
-          );
-          const [withProgress] = await runs(schedule.id);
-          assert.equal(withProgress?.messageId, textId);
-          assert.equal(withProgress.attachmentMessageId, messageId);
-          await request('DELETE', `/api/schedules/${schedule.id}`);
-          clock = before;
-        },
-      );
-      await t.test(
         'a schedule model changes only the model of its next runs and reprices its month',
         async (t) => {
           const { createLedger } = await import('../src/server/ledger.ts');
@@ -1479,7 +1431,7 @@ test(
           await expectRunCost(0.15);
         },
       );
-      await t.test('schedule history opens the finished reply after progress', async () => {
+      await t.test('run history returns the finished reply and the shared files', async () => {
         const before = clock;
         const schedule = await create({ cron: '*/15 * * * *' });
         const job = await jobFor(schedule.id);
@@ -1487,35 +1439,26 @@ test(
         await deliver([job]);
         const [run] = await runs(schedule.id);
         await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [run!.turnId]);
-        const reportId = randomUUID();
-        const fileId = randomUUID();
-        const file = {
-          id: fileId,
-          name: 'fixture.csv',
-          mimeType: 'text/csv',
-          size: 13,
-          url: `/api/artifacts/${fileId}`,
-        };
+        const [reportId, fileId] = [randomUUID(), randomUUID()];
+        const file = { id: randomUUID(), name: 'fixture.csv', mimeType: 'text/csv', size: 13 };
         for (const [id, text, seconds, attachments] of [
           [randomUUID(), 'Checking the synthetic report.', 0, []],
           [reportId, 'The synthetic report is complete.', 1, []],
-          [randomUUID(), '', 2, [file]],
+          [fileId, '', 2, [{ ...file, url: `/api/artifacts/${file.id}` }]],
         ] as const)
           await db.pool.query(
-            `INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text,stream_id,created_at,attachments)
-             SELECT $1,owner_id,thread_id,id,'assistant',$3,$4,now()+$5 * interval '1 second',$6::jsonb
+            `INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text,created_at,attachments)
+             SELECT $1,owner_id,thread_id,id,'assistant',$3,now()+$4 * interval '1 second',$5::jsonb
              FROM turns WHERE id=$2`,
-            [id, run!.turnId, text, randomUUID(), seconds, JSON.stringify(attachments)],
+            [id, run!.turnId, text, seconds, JSON.stringify(attachments)],
           );
-        const response = await request('GET', `/api/schedule-runs?scheduleId=${schedule.id}`);
-        assert.equal(response.statusCode, 200, response.body);
-        const [result] = response.json<ScheduleHistory>().runs;
+        const [result] = await runs(schedule.id);
         assert.equal(result!.messageId, reportId);
         assert.equal(result!.messageText, 'The synthetic report is complete.');
+        assert.equal(result!.attachmentMessageId, fileId);
         await request('DELETE', `/api/schedules/${schedule.id}`);
         clock = before;
       });
-
       await t.test(
         'a recurring schedule starts no run while its last run is busy or waiting on the owner',
         async () => {
@@ -2797,7 +2740,6 @@ test('waiting scheduled runs open their pending question without starting anothe
       else Reflect.deleteProperty(globalThis, key);
   });
   pageDataCache.clear();
-  const fileMessageId = randomUUID();
   const completed: ScheduleRun = {
     id: randomUUID(),
     scheduleId: randomUUID(),
@@ -2809,10 +2751,9 @@ test('waiting scheduled runs open their pending question without starting anothe
     status: 'succeeded',
     error: null,
     observation: null,
-    messageId: fileMessageId,
-    messagePreview: '',
-    messageText: '',
-    attachmentMessageId: fileMessageId,
+    messageId: randomUUID(),
+    messagePreview: 'Synthetic report ready.',
+    messageText: 'Synthetic report ready.',
   };
   const queued: ScheduleRun = {
     ...completed,
@@ -2824,7 +2765,6 @@ test('waiting scheduled runs open their pending question without starting anothe
     messageId: null,
     messagePreview: null,
     messageText: null,
-    attachmentMessageId: null,
   };
   let schedule: Schedule = {
     id: completed.scheduleId,
@@ -2895,17 +2835,6 @@ test('waiting scheduled runs open their pending question without starting anothe
   );
   assert.ok(runNow);
   await act(async () => runNow.click());
-  await act(async () => pageDataCache.refresh(historyPath, true));
-  const fileResult = [...dom.window.document.querySelectorAll('button')].find((button) =>
-    button.textContent?.includes('Show files in chat'),
-  );
-  assert.ok(fileResult);
-  const fileRow = fileResult.closest('.schedule-run');
-  assert.ok(fileRow);
-  assert.equal(fileRow.querySelector('button[aria-expanded]'), null);
-  await act(async () => fileResult.click());
-  assert.deepEqual(focused, [{ messageId: completed.messageId }]);
-  focused.length = 0;
   const expectedMutations = [`POST /api/schedules/${schedule.id}/run`];
   assert.deepEqual(mutations, expectedMutations);
 

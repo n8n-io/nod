@@ -336,7 +336,7 @@ function ScheduleRunRow({ run, openResult }: { run: ScheduleRun; openResult: boo
           Show files in chat
         </Button>
       )}
-      {run.messageId && (text.trim() || !run.attachmentMessageId) && (
+      {text.trim() && (
         <PlanDetails
           label={`${run.title}, ${date(run.scheduledFor)}`}
           summary={run.messagePreview}
