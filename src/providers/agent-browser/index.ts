@@ -1978,15 +1978,14 @@ export function createAgentBrowserComputer(options: {
               `Choice ${index + 1} of ${methods.length}.`,
               guard,
             );
+          if (observed && observed.role !== 'button' && observed.role !== 'link')
+            throw refused('choice_ineligible');
           const control = await (async () =>
             devtools.signInControl(ref ? await pointOf(state, ref) : { selector: target }))().catch(
             (error: unknown) => {
-              if (!(error instanceof BrowserActionError && error.code === 'browser_sign_in_choice'))
-                throw error;
-              throw error.signInGuard === 'choice_ineligible' &&
-                (observed?.role === 'button' || observed?.role === 'link')
-                ? new BrowserActionError('browser_click_intercepted', undefined, 'control_covered')
-                : refused(error.signInGuard);
+              throw error instanceof BrowserActionError && error.code === 'browser_sign_in_choice'
+                ? refused(error.signInGuard)
+                : error;
             },
           );
           if (control.origin !== origin) throw refused('choice_foreign_origin');

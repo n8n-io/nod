@@ -1399,10 +1399,7 @@ test(
           (error: unknown) => {
             assert.ok(error instanceof BrowserActionError);
             assert.equal(error.code, 'browser_sign_in_choice');
-            assert.equal(
-              error.signInGuard,
-              path === '/initial-plain' ? 'choice_ineligible' : 'control_hidden',
-            );
+            assert.equal(error.signInGuard, 'choice_ineligible');
             return true;
           },
         );
@@ -1524,6 +1521,7 @@ test(
       await act({ action: 'click', selector: '#change' });
       await assert.rejects(client.signInMethods!('fixture', origin, veiled), (error: unknown) => {
         assert.equal(Object(error).code, 'browser_click_intercepted');
+        assert.equal(Object(error).signInGuard, 'control_covered');
         return true;
       });
       await assert.rejects(
