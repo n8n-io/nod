@@ -1724,6 +1724,54 @@ test(
           clock = before;
         },
       );
+      await t.test('renaming a schedule preserves paused skips for its next run', async () => {
+        const before = clock;
+        const schedule = await create({ cron: '*/15 * * * *' });
+        modelPaused = true;
+        try {
+          const skippedAt: string[] = [];
+          for (let i = 0; i < 2; i++) {
+            const job = await jobFor(schedule.id);
+            skippedAt.push(job.data.scheduledFor);
+            clock = new Date(job.data.scheduledFor);
+            await deliver([job]);
+          }
+          const next = (await jobFor(schedule.id)).data.scheduledFor;
+          const response = await request('PATCH', `/api/schedules/${schedule.id}`, {
+            title: 'Renamed schedule',
+          });
+          assert.equal(response.statusCode, 200, response.body);
+          const job = await jobFor(schedule.id);
+          assert.equal(job.data.scheduledFor, next);
+          modelPaused = false;
+          clock = new Date(job.data.scheduledFor);
+          await deliver([job]);
+          const [run] = await runs(schedule.id);
+          assert.ok(run);
+          const { id: threadId } = await thread.activeThread(db.pool, ownerId);
+          await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [run.turnId]);
+          const messageId = await thread.withTurnLock(run.turnId, (client) =>
+            thread.insertAssistantMessage(
+              client,
+              { threadId, turnId: run.turnId },
+              'Synthetic result.',
+            ),
+          );
+          const { presentation } = (
+            await db.pool.query('SELECT presentation FROM messages WHERE id=$1', [messageId])
+          ).rows[0];
+          assert.equal(presentation?.type, 'schedule-run');
+          assert.deepEqual(
+            presentation.skipped,
+            skippedAt.map((at) => ({ at, reason: 'paused' })),
+          );
+          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [run.turnId]);
+        } finally {
+          modelPaused = false;
+          await request('DELETE', `/api/schedules/${schedule.id}`);
+          clock = before;
+        }
+      });
       await t.test(
         'a baseline added to an existing watch is what its next run compares with',
         async () => {

@@ -1228,12 +1228,17 @@ export function createSchedules(dependencies: ScheduleDependencies) {
             ? mergeOwnerInstructions(previous.authority, fresh)
             : previous.authority;
       await cancelPending(client, previous);
+      const timingChanged = ['kind', 'cron', 'runAt', 'timeZone', 'enabled'].some(
+        (key) => key in input,
+      );
       const saved = (
         await client.query<ScheduleRow>(
           `UPDATE schedules SET title=$3,prompt=$4,kind=$5,cron=$6,run_at=$7,time_zone=$8,
              enabled=$9,authority=$10::jsonb,
              baseline_observation=COALESCE($11::jsonb,baseline_observation),
-             watch=CASE WHEN $12 THEN $13::jsonb ELSE watch END,skipped='[]'::jsonb,revision=revision+1 WHERE id=$1 AND owner_id=$2 RETURNING ${columns}`,
+             watch=CASE WHEN $12 THEN $13::jsonb ELSE watch END,
+             skipped=CASE WHEN $14 THEN '[]'::jsonb ELSE skipped END,
+             revision=revision+1 WHERE id=$1 AND owner_id=$2 RETURNING ${columns}`,
           [
             id,
             ownerId,
@@ -1250,12 +1255,10 @@ export function createSchedules(dependencies: ScheduleDependencies) {
               : null,
             'watch' in input,
             input.watch ? JSON.stringify(input.watch) : null,
+            timingChanged,
           ],
         )
       ).rows[0]!;
-      const timingChanged = ['kind', 'cron', 'runAt', 'timeZone', 'enabled'].some(
-        (key) => key in input,
-      );
       const updated = await enqueue(
         client,
         saved,

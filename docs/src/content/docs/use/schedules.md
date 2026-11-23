@@ -118,6 +118,8 @@ If a run comes due while the assistant is stopped, it runs once when Nod is runn
 
 You see the same in chat. The first message of a late run, or of a run after skipped ones, starts with a run track: when the run was due, the runs Nod skipped while it wasn't running, and when it ran. A recurring schedule also skips its timed runs while automatic requests to its model are paused after failed requests; those show on the track of its next run, with that reason. A run that fails at the model shows the track with why it failed, a **Run now** button and, when the model request found no network, the error code. In the desktop app's local assistant, that failure also links to [running Nod on a server](/deploy/self-host/) so schedules keep running while the computer sleeps. The track is written by Nod, not by the model.
 
+Renaming a schedule keeps the skips already recorded for its next run.
+
 ## Related resources
 
 - [Track tasks](/use/tasks/)
