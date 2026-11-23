@@ -84,7 +84,7 @@ jobs:
           persist-credentials: false
       - name: Install tooling and dependencies once
         uses: ./.github/actions/setup-node
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .local/ci-test-timings
           key: ci-test-timings-v2-${{ github.run_id }}-${{ github.run_attempt }}
@@ -223,7 +223,7 @@ jobs:
         run: node .github/scripts/ci-tests.mjs
       - name: Cache test times for later runs
         if: success() && steps.scope.outputs.integration == 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .local/ci-test-timings
           key: ci-test-timings-v2-${{ github.run_id }}-${{ github.run_attempt }}
@@ -242,7 +242,7 @@ jobs:
       - name: Install tooling and dependencies
         uses: ./.github/actions/setup-node
       - name: Set up the Docker layer cache
-        uses: useblacksmith/setup-docker-builder@06dd9c83a5d541274d2e3ac67625560979275267
+        uses: useblacksmith/setup-docker-builder@9657a6e02ca6445e6d6ce5ffaf370f4828dea50d
         with:
           cache-key: n8n-io/nod/ci
       - name: Build the browser, workspace and server images

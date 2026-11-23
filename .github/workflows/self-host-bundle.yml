@@ -76,7 +76,7 @@ jobs:
       - name: Check release integrity and refusal paths
         run: node --test --test-name-pattern='server (release|bundle)' desktop/test/runtime-assets.test.mjs
       - name: Set up the Docker layer cache
-        uses: useblacksmith/setup-docker-builder@06dd9c83a5d541274d2e3ac67625560979275267
+        uses: useblacksmith/setup-docker-builder@9657a6e02ca6445e6d6ce5ffaf370f4828dea50d
         with:
           cache-key: n8n-io/nod/self-host-${{ matrix.arch }}
       - name: Exercise a checkout with private file permissions
