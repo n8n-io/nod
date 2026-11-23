@@ -115,7 +115,7 @@ A snapshot can use a CSS selector to read one part of the page. If the selector 
 
 A browser wait takes one condition: text to appear, a URL to match, or a page load state. `waitMs` sets how long to wait for that condition. If the call omits the condition or supplies more than one, Nod gets a validation error and can correct the wait on the same page.
 
-Browser hit tests convert viewport positions to document coordinates using the target page or frame's current scroll position. This keeps sign-in choices and the form shown to the trust check bound to the visible control after scrolling.
+Browser hit tests convert viewport positions to document coordinates using the target page or frame's current scroll position. This keeps sign-in choices and the form shown to the trust check bound to the visible control after scrolling. A hit test finds the control a click would reach. A layer that lets clicks through does not block a sign-in choice. A banner or dialog over the control does, and Nod has to dismiss it first.
 
 For a private sign-in click, Nod keeps the control's position in its frame and its position in the main page. Nod calculates the position in the main page again before each check. It checks the visible point and live target from the main page, then sends one press and release through the checked frame's browser session. The page can still change between the check and the press. Nod does not retry input. The private picker still refuses a frame whose origin differs from the page's origin.
 

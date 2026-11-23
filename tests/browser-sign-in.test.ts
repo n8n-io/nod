@@ -1293,7 +1293,7 @@ test(
       }
       if (request.url === '/scrolled' || request.url === '/scrolled-xy') {
         response.end(
-          `<form action="/selected" method="post" style="margin:1800px 0 0 ${request.url === '/scrolled-xy' ? 1600 : 0}px"><button id="primary">Continue with Example</button></form><button id="change" onclick="const cover=document.createElement('div');cover.style.cssText='position:fixed;inset:0;z-index:1000';document.body.append(cover)">Cover control</button>`,
+          `<form action="/selected" method="post" style="margin:1800px 0 0 ${request.url === '/scrolled-xy' ? 1600 : 0}px"><button id="primary">Continue with Example</button></form><button id="change" onclick="const cover=document.createElement('div');cover.style.cssText='position:fixed;inset:0;z-index:1000';document.body.append(cover)">Cover control</button><button id="veil" onclick="const veil=document.createElement('div');veil.style.cssText='position:fixed;inset:0;z-index:1000;pointer-events:none';document.body.append(veil)">Veil control</button>`,
         );
         return;
       }
@@ -1399,7 +1399,10 @@ test(
           (error: unknown) => {
             assert.ok(error instanceof BrowserActionError);
             assert.equal(error.code, 'browser_sign_in_choice');
-            assert.equal(error.signInGuard, 'choice_ineligible');
+            assert.equal(
+              error.signInGuard,
+              path === '/initial-plain' ? 'choice_ineligible' : 'control_hidden',
+            );
             return true;
           },
         );
@@ -1503,6 +1506,26 @@ test(
       await assert.rejects(
         client.signInMethods!('fixture', origin, [{ label: 'Ignored', selector: '@' + covered }]),
       );
+      await act({ action: 'open', url: origin + '/scrolled' });
+      const veiled = [
+        {
+          label: 'Ignored',
+          selector:
+            '@' +
+            /button "Continue with Example"[^\n]*ref=(e\d+)/.exec(
+              (await act({ action: 'click', selector: '#veil' })).text,
+            )?.[1],
+        },
+      ];
+      assert.equal(
+        (await client.signInMethods!('fixture', origin, veiled)).methods[0]!.label,
+        'Continue with Example',
+      );
+      await act({ action: 'click', selector: '#change' });
+      await assert.rejects(client.signInMethods!('fixture', origin, veiled), (error: unknown) => {
+        assert.equal(Object(error).code, 'browser_click_intercepted');
+        return true;
+      });
       await assert.rejects(
         client.signInMethods!('fixture', origin, [{ label: 'Ignored', selector: 'button' }]),
         (error: unknown) => {

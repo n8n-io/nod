@@ -913,7 +913,9 @@ export async function openDevtools(
       return (await controlTarget(query))?.controls ?? [];
     },
     async signInControl(query: ControlQuery): Promise<BoundSignInControl> {
-      const found = query.selector ? await signInSelector(query.selector) : await locate(query);
+      const found = query.selector
+        ? await signInSelector(query.selector)
+        : await locate(query, true);
       if (!found)
         throw new BrowserActionError('browser_sign_in_choice', undefined, 'choice_missing');
       try {
@@ -957,7 +959,7 @@ export async function openDevtools(
         )) as { node: { backendNodeId: number } };
         const snapshot = await snapshotOf(result.objectId, found.session);
         if (!snapshot)
-          throw new BrowserActionError('browser_sign_in_choice', undefined, 'choice_ineligible');
+          throw new BrowserActionError('browser_sign_in_choice', undefined, 'control_hidden');
         const controls = await controlsFor({
           backendNodeId: node.backendNodeId,
           session: found.session,
