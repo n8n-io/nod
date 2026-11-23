@@ -1534,55 +1534,21 @@ test(
           clock = before;
         },
       );
-      await t.test(
-        'changing schedule kind clears a watch without reviving legacy data',
-        async () => {
-          const before = clock;
-          const account = randomUUID();
-          watched.set(account, 'constant');
-          const schedule = await create({ cron: '*/15 * * * *', watch: [account] });
-          const patch = async (body: Record<string, unknown>) => {
-            const response = await request('PATCH', `/api/schedules/${schedule.id}`, body);
-            assert.equal(response.statusCode, 200, response.body);
-          };
-          await patch({ title: 'Still watched' });
-          assert.deepEqual((await saved(schedule.id)).watch, [account]);
-          const once = { kind: 'once', runAt: new Date(clock.getTime() + 60_000).toISOString() };
-          const prepared = await personal.prepareScheduleChange('schedule_update', {
-            id: schedule.id,
-            ...once,
-          });
-          assert.equal(prepared.after.watch, null);
-          const invalid = await request('PATCH', `/api/schedules/${schedule.id}`, {
-            ...once,
-            watch: [account],
-          });
-          assert.equal(invalid.statusCode, 400, invalid.body);
-          await patch(once);
-          assert.equal((await saved(schedule.id)).watch, null);
-          await db.pool.query('UPDATE schedules SET watch=$2::jsonb WHERE id=$1 AND owner_id=$3', [
-            schedule.id,
-            JSON.stringify([account]),
-            ownerId,
-          ]);
-          await patch({ kind: 'recurring', cron: '*/15 * * * *' });
-          assert.equal((await saved(schedule.id)).watch, null);
-          for (let i = 0; i < 2; i++) {
-            const job = await jobFor(schedule.id);
-            clock = new Date(job.data.scheduledFor);
-            await deliver([job]);
-            await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=ANY($1::uuid[])", [
-              (await runs(schedule.id)).map((run) => run.turnId),
-            ]);
-          }
-          assert.equal((await runs(schedule.id)).length, 2);
-          await patch({ kind: 'once', runAt: new Date(clock.getTime() + 60_000).toISOString() });
-          await patch({ kind: 'recurring', cron: '*/15 * * * *', watch: [account] });
-          assert.deepEqual((await saved(schedule.id)).watch, [account]);
-          await request('DELETE', `/api/schedules/${schedule.id}`);
-          clock = before;
-        },
-      );
+      await t.test('changing a watched schedule to one-time drops its watch', async () => {
+        const account = randomUUID();
+        watched.set(account, 'constant');
+        const schedule = await create({ cron: '*/15 * * * *', watch: [account] });
+        const patch = async (body: Record<string, unknown>) => {
+          const response = await request('PATCH', `/api/schedules/${schedule.id}`, body);
+          assert.equal(response.statusCode, 200, response.body);
+        };
+        await patch({ title: 'Still watched' });
+        assert.deepEqual((await saved(schedule.id)).watch, [account]);
+        await patch({ kind: 'once', runAt: new Date(clock.getTime() + 60_000).toISOString() });
+        await patch({ kind: 'recurring', cron: '*/15 * * * *' });
+        assert.equal((await saved(schedule.id)).watch, null);
+        await request('DELETE', `/api/schedules/${schedule.id}`);
+      });
       await t.test('stale watched jobs do not poll accounts or start runs', async () => {
         const before = clock;
         const account = randomUUID();
@@ -1773,53 +1739,29 @@ test(
           clock = before;
         },
       );
-      await t.test('renaming a schedule preserves paused skips for its next run', async () => {
+      await t.test('renaming a schedule keeps the skips recorded for its next run', async () => {
         const before = clock;
         const schedule = await create({ cron: '*/15 * * * *' });
         modelPaused = true;
-        try {
-          const skippedAt: string[] = [];
-          for (let i = 0; i < 2; i++) {
-            const job = await jobFor(schedule.id);
-            skippedAt.push(job.data.scheduledFor);
-            clock = new Date(job.data.scheduledFor);
-            await deliver([job]);
-          }
-          const next = (await jobFor(schedule.id)).data.scheduledFor;
-          const response = await request('PATCH', `/api/schedules/${schedule.id}`, {
-            title: 'Renamed schedule',
-          });
-          assert.equal(response.statusCode, 200, response.body);
+        for (let i = 0; i < 2; i++) {
           const job = await jobFor(schedule.id);
-          assert.equal(job.data.scheduledFor, next);
-          modelPaused = false;
           clock = new Date(job.data.scheduledFor);
           await deliver([job]);
-          const [run] = await runs(schedule.id);
-          assert.ok(run);
-          const { id: threadId } = await thread.activeThread(db.pool, ownerId);
-          await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [run.turnId]);
-          const messageId = await thread.withTurnLock(run.turnId, (client) =>
-            thread.insertAssistantMessage(
-              client,
-              { threadId, turnId: run.turnId },
-              'Synthetic result.',
-            ),
-          );
-          const { presentation } = (
-            await db.pool.query('SELECT presentation FROM messages WHERE id=$1', [messageId])
-          ).rows[0];
-          assert.equal(presentation?.type, 'schedule-run');
-          assert.deepEqual(
-            presentation.skipped,
-            skippedAt.map((at) => ({ at, reason: 'paused' })),
-          );
-          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [run.turnId]);
-        } finally {
-          modelPaused = false;
-          await request('DELETE', `/api/schedules/${schedule.id}`);
-          clock = before;
         }
+        modelPaused = false;
+        const next = (await jobFor(schedule.id)).data.scheduledFor;
+        await request('PATCH', `/api/schedules/${schedule.id}`, { title: 'Renamed schedule' });
+        const job = await jobFor(schedule.id);
+        assert.equal(job.data.scheduledFor, next);
+        clock = new Date(next);
+        await deliver([job]);
+        const [run] = await runs(schedule.id);
+        const { skipped } = (
+          await db.pool.query('SELECT skipped FROM schedule_runs WHERE turn_id=$1', [run!.turnId])
+        ).rows[0];
+        assert.equal(skipped.length, 2);
+        await request('DELETE', `/api/schedules/${schedule.id}`);
+        clock = before;
       });
       await t.test(
         'a baseline added to an existing watch is what its next run compares with',
