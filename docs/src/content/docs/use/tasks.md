@@ -25,7 +25,7 @@ Tasks share one [workspace](/use/workspace/#one-workspace-for-all-tasks) and own
 
 Open **Scheduled** to review tasks and upcoming schedules. Open tasks appear first, and a working task shows a live line of what it is doing. Expand **Finished** for tasks that are done or stopped, and **Inactive** for paused schedules. Select a schedule’s name for its runs. See [Schedules](/use/schedules/).
 
-![The Scheduled page with a working task and a task that needs you above two recurring schedules, each with its model and monthly cost, and three ideas for another schedule.](../../../assets/screens/scheduled-open-tasks.png)
+![The Scheduled page with a working task and a task that needs you above two recurring schedules, each with its model, and three ideas for another schedule.](../../../assets/screens/scheduled-open-tasks.png)
 
 Select **Rules** to ask Nod in chat to show the rules that apply to every task. Tell Nod in chat what to change.
 

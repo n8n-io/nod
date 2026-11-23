@@ -66,7 +66,7 @@
 }
 .schedule-row-main {
   display: grid;
-  grid-template-columns: minmax(44px, auto) minmax(160px, 1fr) fit-content(220px) 104px auto 16px;
+  grid-template-columns: minmax(44px, auto) minmax(160px, 1fr) fit-content(220px) auto 16px;
   align-items: center;
   gap: 12px;
   min-height: 72px;
@@ -137,20 +137,6 @@
   max-width: 100%;
   color: var(--text-secondary);
 }
-.schedule-row-price {
-  display: grid;
-  justify-items: end;
-  line-height: 1.45;
-  font-variant-numeric: tabular-nums;
-}
-.schedule-row-price > :first-child {
-  color: var(--text-secondary);
-  font-size: var(--text-control);
-}
-.schedule-row-price > :last-child {
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
 .schedule-row-run {
   margin-right: -8px;
   color: var(--muted-foreground);
@@ -186,17 +172,6 @@
 .schedule-row-actions > :last-child {
   margin-left: auto;
 }
-.schedule-total {
-  padding: 4px 85px 0 0;
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-.schedule-total b {
-  color: var(--text-secondary);
-  font-weight: 500;
-}
 .schedule-ideas {
   display: grid;
   gap: 12px;
@@ -219,10 +194,10 @@
 }
 @container (max-width: 640px) {
   .schedule-row-main {
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
-      'name name switch'
-      'model price run';
+      'name switch'
+      'model run';
     gap: 6px 8px;
     min-height: 0;
     padding: 14px 12px 12px 16px;
@@ -236,9 +211,6 @@
   }
   .schedule-row-model {
     grid-area: model;
-  }
-  .schedule-row-price {
-    grid-area: price;
   }
   .schedule-row-run {
     grid-area: run;
@@ -254,9 +226,6 @@
   }
   .schedule-row-more {
     padding: 8px 16px 16px;
-  }
-  .schedule-total {
-    padding-right: 53px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

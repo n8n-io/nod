@@ -254,14 +254,6 @@ export function ScheduleRow({
         <div className="schedule-row-model">
           <ScheduleModel schedule={schedule} />
         </div>
-        <div className="schedule-row-price">
-          {schedule.monthlyUsd !== null && (
-            <>
-              <span>≈{money(schedule.monthlyUsd)}</span>
-              <span>a month</span>
-            </>
-          )}
-        </div>
         <Button
           variant="ghost"
           size="icon"
