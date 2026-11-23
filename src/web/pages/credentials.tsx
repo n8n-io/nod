@@ -463,6 +463,7 @@ function CredentialForm({ id, embedded, onClose, onRequestChange }: PrivateFormP
       { entryId },
       submitted,
       'This saved login could not be used. Try again or choose another login.',
+      true,
     );
   }
   async function listManaged(account: string) {

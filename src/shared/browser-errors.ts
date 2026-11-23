@@ -24,7 +24,7 @@ const browserErrors = {
   browser_card_reload:
     'A script ran on this document, so Nod will not enter a saved value on it. Reload the page and take a fresh snapshot before a new private operation.',
   browser_card_field:
-    'Nod could not verify a card field, so nothing more was entered. Check the result before another attempt.',
+    'Nod could not prepare a field for private entry, so nothing more was entered. Check the result before another attempt.',
   browser_card_disabled:
     'The submit control stayed disabled. Nod did not activate it. Check the result before another attempt.',
   browser_card_site:
