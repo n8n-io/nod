@@ -277,6 +277,74 @@ export async function nativeCatalog(
   const headers = { Authorization: `Bearer ${credential.key}` };
   if (modelProviderInfo[provider].catalog === 'bundled') return local;
 
+  if (provider === 'cortecs') {
+    const data = parse(
+      z.object({ data: z.array(z.unknown()).max(10000) }),
+      await read('https://api.cortecs.ai/v1/models?currency=USD', headers),
+    );
+    return list(
+      data.data,
+      z.object({
+        id: modelId,
+        context_size: z.number().int().positive().max(100000000),
+        max_output_tokens: z.number().int().positive().max(100000000),
+        input_modalities: z.array(z.string()),
+        output_modalities: z.array(z.string()),
+        supported_features: z.array(z.string()),
+        pricing: z.object({
+          currency: z.literal('USD'),
+          input_token: z.number().nonnegative().finite(),
+          output_token: z.number().nonnegative().finite(),
+          cache_read_cost: z.number().nonnegative().finite().optional(),
+          cache_write_cost: z.number().nonnegative().finite().optional(),
+        }),
+      }),
+    )
+      .filter(
+        (model) =>
+          model.supported_features.includes('tools') &&
+          model.input_modalities.includes('text') &&
+          model.output_modalities.length === 1 &&
+          model.output_modalities[0] === 'text' &&
+          assistantModelId(model.id),
+      )
+      .map((model): Model<'openai-completions'> => ({
+        id: model.id,
+        name: model.id,
+        provider,
+        api: 'openai-completions',
+        baseUrl: 'https://api.cortecs.ai/v1',
+        contextWindow: model.context_size,
+        maxTokens: Math.min(32_768, model.max_output_tokens, Math.floor(model.context_size / 2)),
+        input: model.input_modalities.includes('image') ? ['text', 'image'] : ['text'],
+        reasoning: model.supported_features.includes('reasoning'),
+        thinkingLevelMap: model.supported_features.includes('reasoning')
+          ? {
+              off: null,
+              minimal: 'minimal',
+              low: 'low',
+              medium: 'medium',
+              high: 'high',
+              xhigh: 'xhigh',
+              max: 'max',
+            }
+          : undefined,
+        cost: {
+          input: model.pricing.input_token,
+          output: model.pricing.output_token,
+          cacheRead: model.pricing.cache_read_cost ?? model.pricing.input_token,
+          cacheWrite: model.pricing.cache_write_cost ?? model.pricing.input_token,
+        },
+        compat: {
+          supportsStore: false,
+          supportsDeveloperRole: false,
+          supportsStrictMode: false,
+          supportsReasoningEffort: true,
+          maxTokensField: 'max_tokens',
+        },
+      }));
+  }
+
   if (provider === 'google') {
     const tokens = new Set<string>();
     const ids = new Set<string>();

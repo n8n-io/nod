@@ -32,7 +32,7 @@ Select **Add connection** (or **Add** when you already have a connection), then 
 | Other named providers              | Service-specific API key                                  | A capable model from that connection     |
 | OpenAI-compatible                  | Server address and optional key                           | A model offered by the server            |
 
-Other providers include Ant Ling, Baseten, Cerebras, DeepSeek, Fireworks AI, Groq, Hugging Face, Kimi Coding China, Meta, MiniMax, Mistral, Moonshot AI, NVIDIA, OpenCode Zen and Go, Qwen Token Plan, Radius, Together AI, Vercel AI Gateway, xAI, Xiaomi MiMo and token plans, and Z.AI. The picker includes their supported regional variants.
+Other providers include Ant Ling, Baseten, Cerebras, Cortecs, DeepSeek, Fireworks AI, Groq, Hugging Face, Kimi Coding China, Meta, MiniMax, Mistral, Moonshot AI, NVIDIA, OpenCode Zen and Go, Qwen Token Plan, Radius, Together AI, Vercel AI Gateway, xAI, Xiaomi MiMo and token plans, and Z.AI. The picker includes their supported regional variants.
 
 When an account model list is available, Nod loads it. For services with only a bundled catalog, Nod saves the key and checks access on first use. Neither a catalog nor a saved key proves that your account has credit or permission to run every listed model.
 
@@ -147,6 +147,34 @@ The `openrouter/free` and `openrouter/auto` routers can select different models 
 </Steps>
 
 The key is separate from Google identity sign-in. Free-tier quotas can limit long tasks; inspect your project's limits in AI Studio if Google reports that a quota is exhausted.
+
+</TabItem>
+<TabItem label="Cortecs">
+
+<Steps>
+
+1. Choose **Cortecs** and paste your Cortecs API key into the private **API key** field.
+2. Select **Connect**, then choose a model from that connection.
+
+</Steps>
+
+Nod uses Cortecs's Chat Completions API at `https://api.cortecs.ai/v1`. Your key stays on Nod's server. Your Cortecs account's routing settings still apply.
+
+Nod loads tool-capable text models from your account's [model catalog](https://docs.cortecs.ai/api/models). It reads context limits and image support instead of assuming a 128,000-token context. Models without usable context, output, or USD pricing metadata aren't listed.
+
+For reasoning models, Nod offers effort levels from minimal to max. [Cortecs maps the requested effort](https://docs.cortecs.ai/routing/reasoning) to the levels the routed model supports. Nod doesn't offer an off setting because some models always reason.
+
+Each response uses the smallest of these output limits:
+
+- 32,768 tokens.
+- The model's advertised output limit.
+- Half the model's context window, rounded down. For windows below 65,536 tokens, Nod uses one quarter instead.
+
+Nod's history compaction still applies, even with a larger context window. Different Cortecs hosting providers can have different limits.
+
+Usage estimates use catalog prices requested in USD, not Cortecs's default EUR prices. These are the cheapest available provider rates, not a billing guarantee. Routing, exchange rates, caching, and fees can change actual charges. Use Cortecs's own budget controls for a billing limit.
+
+Select **Reload models** to refresh capabilities and prices. If you already use Kimi through **OpenAI-compatible**, keep that connection for existing conversations: switching providers does not preserve their reasoning history.
 
 </TabItem>
 <TabItem label="Other services">
@@ -374,6 +402,7 @@ Every service below supports environment setup. You can add several provider key
 | `cerebras`                   | Cerebras                    | `CEREBRAS_API_KEY`                   |
 | `cloudflare-workers-ai`      | Cloudflare Workers AI       | `CLOUDFLARE_WORKERS_AI_API_KEY`      |
 | `cloudflare-ai-gateway`      | Cloudflare AI Gateway       | `CLOUDFLARE_AI_GATEWAY_API_KEY`      |
+| `cortecs`                    | Cortecs                     | `CORTECS_API_KEY`                    |
 | `deepseek`                   | DeepSeek                    | `DEEPSEEK_API_KEY`                   |
 | `fireworks`                  | Fireworks AI                | `FIREWORKS_API_KEY`                  |
 | `groq`                       | Groq                        | `GROQ_API_KEY`                       |

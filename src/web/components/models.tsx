@@ -126,7 +126,10 @@ export function ModelProviderLogo({
       style={{
         width: size,
         height: size,
-        maskImage: `url('/logos/${modelProviderLogos[provider] ?? 'server'}.svg')`,
+        maskImage:
+          provider === 'cortecs'
+            ? "url('/logos/models/cortecs.png')"
+            : `url('/logos/${modelProviderLogos[provider] ?? 'server'}.svg')`,
       }}
       aria-hidden="true"
     />

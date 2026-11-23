@@ -3389,6 +3389,260 @@ test('secret redaction keeps valid tokens when another token is missing', () => 
   );
 });
 
+describe('Cortecs model transport', () => {
+  const credential = { type: 'api_key' as const, key: 'fixture-cortecs-key' };
+  const listed = {
+    id: 'fixture-thinking',
+    context_size: 1_048_576,
+    max_output_tokens: 500_000,
+    input_modalities: ['text', 'image'],
+    output_modalities: ['text'],
+    supported_features: ['tools', 'reasoning'],
+    pricing: {
+      currency: 'USD',
+      input_token: 2,
+      output_token: 9,
+      cache_read_cost: 0.2,
+      cache_write_cost: 2.5,
+    },
+    baseUrl: 'https://untrusted.example',
+  };
+
+  test('Cortecs discovery feeds context, vision, reasoning and USD usage into a tool round trip', async () => {
+    const { Type } = await import('@sinclair/typebox');
+    const { createPiModelBackend, createPiModelRuntime } =
+      await import('../src/providers/pi/models.ts');
+    const backend = createPiModelBackend({
+      fetch: async (input, init) => {
+        assert.equal(String(input), 'https://api.cortecs.ai/v1/models?currency=USD');
+        assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${credential.key}`);
+        assert.equal(init?.redirect, 'error');
+        return Response.json({
+          data: [
+            listed,
+            {
+              ...listed,
+              id: 'fixture-text',
+              input_modalities: ['text'],
+              supported_features: ['tools'],
+              max_output_tokens: 4096,
+            },
+            { ...listed, id: 'no-tools', supported_features: [] },
+            { ...listed, id: 'image-output', output_modalities: ['text', 'image'] },
+            { ...listed, id: 'unknown-context', context_size: null },
+            { ...listed, id: 'wrong-currency', pricing: { ...listed.pricing, currency: 'EUR' } },
+            { ...listed, id: '../bad' },
+          ],
+        });
+      },
+    });
+    const definitions = await backend.catalog('cortecs', 'api_key', credential);
+    assert.deepEqual(
+      definitions.map(({ choice }) => choice.id),
+      ['fixture-thinking', 'fixture-text'],
+    );
+    assert.equal(definitions[0].choice.contextWindow, 1_048_576);
+    assert.equal(definitions[0].choice.images, true);
+    assert.deepEqual(definitions[0].choice.efforts, [
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+    ]);
+    assert.equal(definitions[1].choice.images, false);
+    assert.deepEqual(definitions[1].choice.efforts, ['off']);
+    assert.equal(definitions[1].spec.maxTokens, 4096);
+    const { runtime, model } = await createPiModelRuntime({
+      provider: 'cortecs',
+      method: 'api_key',
+      definition: definitions[0],
+      effort: 'low',
+      read: async () => credential,
+    });
+    const context = {
+      systemPrompt: 'Use the supplied tool.',
+      messages: [
+        {
+          role: 'user' as const,
+          content: [
+            { type: 'text' as const, text: 'x'.repeat(420_000) },
+            { type: 'image' as const, data: 'aW1hZ2U=', mimeType: 'image/png' },
+          ],
+          timestamp: 1,
+        },
+      ],
+      tools: [
+        {
+          name: 'lookup',
+          description: 'Look up a number',
+          parameters: Type.Object({ n: Type.Number() }),
+        },
+      ],
+    };
+    const first = await runtime
+      .streamSimple(model, context, {
+        reasoning: 'low',
+        maxTokens: 500_000,
+        fetch: async (input, init) => {
+          assert.equal(String(input), 'https://api.cortecs.ai/v1/chat/completions');
+          assert.equal(init?.redirect, 'error');
+          assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${credential.key}`);
+          const body = JSON.parse(String(init?.body));
+          assert.equal(body.max_tokens, 32_768);
+          assert.equal(body.reasoning_effort, 'low');
+          assert.equal(body.store, undefined);
+          assert.equal(body.messages[0].role, 'system');
+          assert.equal(body.messages[1].content[1].type, 'image_url');
+          assert.equal(body.tools[0].function.name, 'lookup');
+          assert.ok(!JSON.stringify(body).includes(credential.key));
+          return new Response(
+            [
+              {
+                choices: [
+                  {
+                    index: 0,
+                    delta: { role: 'assistant', reasoning_content: 'Check the number.' },
+                  },
+                ],
+              },
+              {
+                choices: [
+                  {
+                    index: 0,
+                    delta: {
+                      tool_calls: [
+                        {
+                          index: 0,
+                          id: 'call_fixture',
+                          type: 'function',
+                          function: { name: 'lookup', arguments: '{"n":7}' },
+                        },
+                      ],
+                    },
+                    finish_reason: 'tool_calls',
+                  },
+                ],
+              },
+              {
+                choices: [],
+                usage: {
+                  prompt_tokens: 1000,
+                  completion_tokens: 50,
+                  total_tokens: 1050,
+                  prompt_tokens_details: { cached_tokens: 200 },
+                },
+              },
+            ]
+              .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+              .join('') + 'data: [DONE]\n\n',
+            { headers: { 'Content-Type': 'text/event-stream' } },
+          );
+        },
+      })
+      .result();
+    assert.equal(first.stopReason, 'toolUse', first.errorMessage);
+    assert.ok(
+      first.content.some(
+        (part) => part.type === 'thinking' && part.thinking === 'Check the number.',
+      ),
+    );
+    const tool = first.content.find((part) => part.type === 'toolCall');
+    assert.ok(tool?.type === 'toolCall');
+    assert.deepEqual(tool.arguments, { n: 7 });
+    assert.ok(Math.abs(first.usage.cost.total - 0.00209) < 1e-10);
+    const second = await runtime
+      .streamSimple(
+        model,
+        {
+          ...context,
+          messages: [
+            ...context.messages,
+            first,
+            {
+              role: 'toolResult',
+              toolCallId: tool.id,
+              toolName: 'lookup',
+              content: [{ type: 'text', text: '14' }],
+              isError: false,
+              timestamp: 2,
+            },
+          ],
+        },
+        {
+          reasoning: 'high',
+          maxTokens: 128,
+          fetch: async (_input, init) => {
+            const body = JSON.parse(String(init?.body));
+            const assistant = body.messages.find(
+              (message: { role: string }) => message.role === 'assistant',
+            );
+            assert.equal(assistant.reasoning_content, 'Check the number.');
+            assert.equal(assistant.tool_calls[0].id, tool.id);
+            assert.equal(body.messages.at(-1).tool_call_id, tool.id);
+            assert.equal(body.reasoning_effort, 'high');
+            assert.equal(body.max_tokens, 128);
+            return new Response(
+              'data: {"choices":[{"index":0,"delta":{"content":"14"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+              { headers: { 'Content-Type': 'text/event-stream' } },
+            );
+          },
+        },
+      )
+      .result();
+    assert.equal(second.stopReason, 'stop', second.errorMessage);
+    assert.ok(second.content.some((part) => part.type === 'text' && part.text === '14'));
+  });
+
+  test('Cortecs keeps service errors specific and removes the API key', async () => {
+    const { createPiModelBackend, createPiModelRuntime } =
+      await import('../src/providers/pi/models.ts');
+    const backend = createPiModelBackend({
+      fetch: async () =>
+        Response.json(
+          { error: { message: `Access denied for ${credential.key}` } },
+          { status: 403 },
+        ),
+    });
+    await assert.rejects(backend.catalog('cortecs', 'api_key', credential), (error: Error) => {
+      assert.match(error.message, /403/);
+      assert.match(error.message, /Access denied/);
+      assert.ok(!error.message.includes(credential.key));
+      return true;
+    });
+    const [definition] = await createPiModelBackend({
+      fetch: async () => Response.json({ data: [listed] }),
+    }).catalog('cortecs', 'api_key', credential);
+    const { runtime, model } = await createPiModelRuntime({
+      provider: 'cortecs',
+      method: 'api_key',
+      definition,
+      effort: 'low',
+      read: async () => credential,
+    });
+    const result = await runtime
+      .streamSimple(
+        model,
+        { messages: [{ role: 'user', content: 'Hello', timestamp: 1 }] },
+        {
+          fetch: async (_input, init) => {
+            assert.equal(init?.redirect, 'error');
+            return Response.json(
+              { error: { message: `Capacity unavailable for ${credential.key}` } },
+              { status: 503 },
+            );
+          },
+        },
+      )
+      .result();
+    assert.equal(result.stopReason, 'error');
+    assert.match(result.errorMessage!, /503/);
+    assert.match(result.errorMessage!, /Capacity unavailable/);
+    assert.ok(!JSON.stringify(result).includes(credential.key));
+  });
+});
+
 test('compatible model discovery retains HTTP failures and private values through the connection route', async (t) => {
   const { createServer } = await import('node:http');
   const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
@@ -3759,6 +4013,20 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
     const backend = createPiModelBackend({
       fetch: async (input) => {
+        if (String(input) === 'https://api.cortecs.ai/v1/models?currency=USD')
+          return Response.json({
+            data: [
+              {
+                id: 'fixture-text',
+                context_size: 262144,
+                max_output_tokens: 8192,
+                input_modalities: ['text'],
+                output_modalities: ['text'],
+                supported_features: ['tools'],
+                pricing: { currency: 'USD', input_token: 1, output_token: 2 },
+              },
+            ],
+          });
         assert.equal(String(input), 'https://api.openai.com/v1/models');
         return Response.json({ data: ['gpt-6.1-sol', 'gpt-6-luna'].map((id) => ({ id })) });
       },
@@ -4286,7 +4554,13 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const backend = {
       ...f.backend,
       catalog: (provider: import('../src/shared/models.ts').ModelProvider) =>
-        f.backend.catalog(provider, 'api_key'),
+        f.backend.catalog(
+          provider,
+          'api_key',
+          provider === 'cortecs'
+            ? { type: 'api_key', key: 'fixture-environment-cortecs-key' }
+            : undefined,
+        ),
     };
     const owner = await f.create(
       'fixture-environment-owner',

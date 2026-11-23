@@ -55,4 +55,12 @@ Source asset: inline radius-logo-mark SVG, with presentation classes removed.
 Attribution: Earendil Works. This asset is not covered by either bundled MIT
 license.
 
+Cortecs
+Source: https://cortecs.ai/favicon.ico (reviewed 2026-11-16)
+Local asset: cortecs.png
+The favicon's white mark is extracted as a transparent monochrome PNG mask,
+with the blue background removed and padding normalized.
+Attribution: Cortecs GmbH. This asset is not covered by either bundled MIT
+license.
+
 Provider names and trademarks remain with their respective owners.

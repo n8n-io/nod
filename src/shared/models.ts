@@ -11,6 +11,7 @@ export const apiKeyModelProviders = [
   'cerebras',
   'cloudflare-workers-ai',
   'cloudflare-ai-gateway',
+  'cortecs',
   'deepseek',
   'fireworks',
   'groq',
@@ -277,6 +278,7 @@ export const modelProviderNames = {
   cerebras: 'Cerebras',
   'cloudflare-workers-ai': 'Cloudflare Workers AI',
   'cloudflare-ai-gateway': 'Cloudflare AI Gateway',
+  cortecs: 'Cortecs',
   deepseek: 'DeepSeek',
   fireworks: 'Fireworks AI',
   groq: 'Groq',
@@ -375,6 +377,7 @@ export const modelProviderInfo: Record<
     env: 'CLOUDFLARE_AI_GATEWAY_API_KEY',
     catalog: 'account',
   },
+  cortecs: { keyUrl: 'cortecs.ai', env: 'CORTECS_API_KEY', catalog: 'account' },
   deepseek: {
     keyUrl: 'platform.deepseek.com/api_keys',
     env: 'DEEPSEEK_API_KEY',

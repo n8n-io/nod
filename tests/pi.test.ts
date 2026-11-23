@@ -5265,124 +5265,204 @@ test('owner context stays out of the system prompt and compaction summaries and 
 });
 
 test('Pi compacts at its threshold with the lowest supported summary effort', async (t) => {
-  const { createServer } = await import('node:http');
-  const chunk = (value: object) => `data: ${JSON.stringify(value)}\n\n`;
-  const bodies: Array<{ messages: unknown[]; reasoning_effort?: string }> = [];
-  const summary = (body: (typeof bodies)[number]) =>
-    JSON.stringify(body.messages).includes('<conversation>') ||
-    JSON.stringify(body.messages).includes('## Original Request');
-  let agentRequests = 0;
-  const server = createServer((request, response) => {
-    const parts: Buffer[] = [];
-    request.on('data', (part) => parts.push(part));
-    request.on('end', () => {
-      const body = JSON.parse(Buffer.concat(parts).toString());
-      bodies.push(body);
-      const step = summary(body) ? 0 : ++agentRequests;
-      response.writeHead(200, { 'content-type': 'text/event-stream' });
-      response.end(
-        chunk({
-          id: `crossing-${bodies.length}`,
-          choices: [
+  for (const provider of ['compatible', 'cortecs'] as const)
+    await t.test(provider, async (t) => {
+      const selected =
+        provider === 'cortecs'
+          ? await access(provider, 'kimi-k3.1-pro')
+          : smallContextAccess(provider, 'fixture-large', 300_000);
+      selected.effort = 'high';
+      if (provider === 'compatible') {
+        selected.definition.choice.efforts = ['low', 'high'];
+        selected.definition.spec = {
+          ...selected.definition.spec,
+          reasoning: true,
+          thinkingLevelMap: { off: null, minimal: null, medium: null },
+        };
+      }
+      const bodies: Array<{
+        messages: Array<{ role: string; content: unknown; tool_call_id?: string }>;
+        reasoning_effort?: string;
+        max_tokens: number;
+      }> = [];
+      const summary = (body: (typeof bodies)[number]) =>
+        JSON.stringify(body.messages).includes('<conversation>') ||
+        JSON.stringify(body.messages).includes('## Original Request');
+      const events: AgentEvent[] = [];
+      const inputTokens: number[] = [];
+      let agentRequests = 0;
+      let inspections = 0;
+      t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        assert.equal(String(input), `${selected.definition.spec.baseUrl}/chat/completions`);
+        if (provider === 'cortecs') {
+          assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer fixture-model-key');
+          assert.equal(init?.redirect, 'error');
+        }
+        const body = JSON.parse(String(init?.body));
+        bodies.push(body);
+        const step = summary(body) ? 0 : ++agentRequests;
+        const tokens = Math.ceil(Buffer.byteLength(JSON.stringify(body.messages)) / 3);
+        inputTokens.push(tokens);
+        assert.ok(tokens + body.max_tokens < (provider === 'cortecs' ? 1_048_576 : 300_000));
+        if (step) assert.equal(body.max_tokens, provider === 'cortecs' ? 32_768 : 4096);
+        if (step === 4) {
+          assert.equal(inspections, 1);
+          assert.ok(
+            body.messages.some(
+              (message: (typeof bodies)[number]['messages'][number]) =>
+                message.role === 'tool' && message.tool_call_id === 'inspect-once',
+            ),
+          );
+          assert.ok(JSON.stringify(body).includes('Synthetic inspection receipt'));
+        }
+        if (!step) {
+          assert.equal(inspections, 1);
+          assert.ok(
+            !events.some((event) => event.type === 'final' && event.text === 'Synthetic answer 4'),
+          );
+        }
+        return reply(
+          step === 3
+            ? {
+                role: 'assistant',
+                reasoning_content: 'Inspect the requested record once.',
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'inspect-once',
+                    type: 'function',
+                    function: { name: 'inspect_fixture', arguments: '{}' },
+                  },
+                ],
+              }
+            : {
+                role: 'assistant',
+                content: step
+                  ? `Synthetic answer ${step}`
+                  : 'Synthetic summary: The earlier records were reviewed. The inspection completed once; continue from its receipt.',
+              },
+          step === 3 ? 'tool_calls' : 'stop',
+          {
+            prompt_tokens: tokens,
+            completion_tokens: 48,
+            total_tokens: tokens + 48,
+            completion_tokens_details: { reasoning_tokens: 16 },
+          },
+        );
+      });
+      const directory = await mkdtemp(join(tmpdir(), 'nod-pi-crossing-'));
+      t.after(() => rm(directory, { recursive: true, force: true }));
+      const agent = createPiAgent({
+        provider,
+        sessionRoot: directory,
+        resolve: async () => selected,
+      });
+      t.after(() => agent.dispose());
+      const execution = fakeExecution(randomUUID());
+      const open = () =>
+        agent.open({
+          ...execution,
+          restricted: true,
+          systemPrompt: 'Synthetic instructions',
+          workspace: recordingWorkspace().workspace,
+          runTool: async (_name, _params, run) => run(),
+          tools: [
             {
-              index: 0,
-              delta:
-                step === 3
-                  ? {
-                      role: 'assistant',
-                      tool_calls: [
-                        {
-                          index: 0,
-                          id: 'inspect-once',
-                          type: 'function',
-                          function: { name: 'inspect_fixture', arguments: '{}' },
-                        },
-                      ],
-                    }
-                  : {
-                      role: 'assistant',
-                      content: step ? `Synthetic answer ${step}` : 'Synthetic summary',
+              name: 'inspect_fixture',
+              description: 'Inspect the synthetic fixture.',
+              parameters: Type.Object({}),
+              execute: async () => {
+                inspections++;
+                return {
+                  content: [
+                    {
+                      type: 'text',
+                      text: 'Synthetic inspection receipt. ' + 'Record checked. '.repeat(100),
                     },
+                  ],
+                };
+              },
             },
           ],
-        }) +
-          chunk({
-            id: `crossing-${bodies.length}`,
-            choices: [{ index: 0, delta: {}, finish_reason: step === 3 ? 'tool_calls' : 'stop' }],
-            usage: {
-              prompt_tokens: [50, 1000, 2000, 257_000, 257_200][step],
-              completion_tokens: 2,
-              total_tokens: [50, 1000, 2000, 257_000, 257_200][step] + 2,
-            },
-          }) +
-          'data: [DONE]\n\n',
+          shouldStop: () => false,
+          onEvent: (event) => events.push(event),
+        });
+      for (const text of [
+        'Older synthetic history: ' + 'filler words '.repeat(30_000).slice(0, 360_000),
+        'Recent synthetic history: ' + 'filler words '.repeat(32_000).slice(0, 384_000),
+        'Inspect the fixture. ' + 'filler words '.repeat(3000).slice(0, 36_000),
+      ]) {
+        const session = await open();
+        await session.prompt(text, []);
+        await session.dispose();
+      }
+      assert.deepEqual(bodies.map(summary), [false, false, false, true, false]);
+      assert.deepEqual(
+        bodies.map((body) => body.reasoning_effort),
+        ['high', 'high', 'high', provider === 'cortecs' ? 'minimal' : 'low', 'high'],
+      );
+      const restored = openLocalSession(join(directory, execution.sessionId));
+      assert.equal(restored.getEntries().filter((entry) => entry.type === 'compaction').length, 1);
+      assert.ok(JSON.stringify(restored.getEntries()).includes('Older synthetic history:'));
+      const continuation = await open();
+      assert.equal(continuation.resumed, true);
+      await continuation.prompt(
+        'Continue from the inspection receipt without inspecting again.',
+        [],
+      );
+      await continuation.dispose();
+      assert.equal(bodies.length, 6);
+      assert.equal(inspections, 1);
+      assert.equal(bodies[5].reasoning_effort, 'high');
+      const continued = JSON.stringify(bodies[5].messages);
+      assert.ok(continued.includes('Synthetic summary:'));
+      assert.ok(continued.includes('Synthetic inspection receipt'));
+      assert.ok(!continued.includes('Older synthetic history:'));
+      assert.ok(continued.includes('Recent synthetic history:'));
+      assert.ok(inputTokens[5] < inputTokens[2]);
+      assert.deepEqual(
+        events.flatMap((event) => (event.type === 'error' ? [event.message] : [])),
+        [],
+      );
+      assert.deepEqual(
+        events.flatMap((event) => (event.type === 'final' ? [event.text] : [])),
+        ['Synthetic answer 1', 'Synthetic answer 2', 'Synthetic answer 4', 'Synthetic answer 5'],
+      );
+      const usage = events.filter((event) => event.type === 'model_usage');
+      assert.deepEqual(
+        usage.map((event) => event.inputTokens),
+        inputTokens.filter((_, index) => !summary(bodies[index])),
+      );
+      assert.equal(new Set(usage.map((event) => event.id)).size, 5);
+      const compactions = events.flatMap((event) =>
+        event.type === 'provider_usage' && event.usage.operation === 'compaction'
+          ? [event.usage]
+          : [],
+      );
+      assert.equal(compactions.length, 1);
+      assert.equal(compactions[0].status, 'succeeded');
+      assert.equal(compactions[0].inputTokens, inputTokens[bodies.findIndex(summary)]);
+      const accounting = [...usage, ...compactions];
+      assert.equal(new Set(accounting.map((event) => event.id)).size, bodies.length);
+      for (const event of accounting) {
+        assert.equal(event.provider, provider);
+        assert.equal(event.model, selected.definition.choice.id);
+        assert.equal(event.outputTokens, 48);
+        if (provider === 'cortecs') assert.ok(event.costUsd !== null && event.costUsd! > 0);
+      }
+      const answered = events.findIndex(
+        (event) => event.type === 'final' && event.text === 'Synthetic answer 4',
+      );
+      assert.ok(
+        answered >
+          events.findIndex(
+            (event) => event.type === 'provider_usage' && event.usage === compactions[0],
+          ),
+      );
+      t.diagnostic(
+        JSON.stringify({ provider, inputTokens, inspections, compactions: compactions.length }),
       );
     });
-  });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
-  const url = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}/v1`;
-  const access = smallContextAccess('compatible', 'fixture-large', 300_000);
-  access.effort = 'high';
-  access.read = async () => ({ type: 'endpoint', url });
-  access.definition.choice.efforts = ['low', 'high'];
-  access.definition.spec = {
-    ...access.definition.spec,
-    baseUrl: url,
-    reasoning: true,
-    thinkingLevelMap: { off: null, minimal: null, medium: null },
-  };
-  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-crossing-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const agent = createPiAgent({
-    provider: 'compatible',
-    sessionRoot: directory,
-    resolve: async () => access,
-  });
-  t.after(() => agent.dispose());
-  const execution = fakeExecution(randomUUID());
-  const events: import('../src/ports/agent.ts').AgentEvent[] = [];
-  const open = () =>
-    agent.open({
-      ...execution,
-      restricted: true,
-      systemPrompt: 'Synthetic instructions',
-      workspace: recordingWorkspace().workspace,
-      runTool: async (_name, _params, run) => run(),
-      tools: [
-        {
-          name: 'inspect_fixture',
-          description: 'Inspect the synthetic fixture.',
-          parameters: Type.Object({}),
-          execute: async () => ({ content: [{ type: 'text', text: 'Inspected.' }] }),
-        },
-      ],
-      shouldStop: () => false,
-      onEvent: (event) => events.push(event),
-    });
-  for (const text of [
-    `Older synthetic history: ${'filler words '.repeat(30_000)}`,
-    `Recent synthetic history: ${'filler words '.repeat(30_000)}`,
-    'Inspect the fixture.',
-  ]) {
-    const session = await open();
-    await session.prompt(text, []);
-    await session.dispose();
-  }
-
-  assert.deepEqual(bodies.map(summary), [false, false, false, true, false]);
-  assert.deepEqual(
-    bodies.map((body) => body.reasoning_effort),
-    ['high', 'high', 'high', 'low', 'high'],
-  );
-  const answered = events.findIndex(
-    (event) => event.type === 'final' && event.text === 'Synthetic answer 4',
-  );
-  const compactions = events.flatMap((event, index) =>
-    event.type === 'provider_usage' && event.usage.operation === 'compaction' ? [index] : [],
-  );
-  assert.equal(compactions.length, 1);
-  assert.ok(answered > compactions[0]);
 });
 
 async function contextRecoveryServer(
@@ -10185,6 +10265,97 @@ test('task and batch classification have a small request budget and never retrie
       });
 });
 
+test('Cortecs Kimi curator rejects reasoning-only and truncated decisions at its token limit', async (t) => {
+  const selected = await access('cortecs', 'kimi-k3.1-pro');
+  selected.effort = 'minimal';
+  for (const task of ['classify', 'attention', 'review'] as const)
+    for (const outcome of [
+      'reasoning only',
+      'partial JSON',
+      'complete JSON at length',
+      'stop',
+    ] as const)
+      await t.test(`${task}: ${outcome}`, async (t) => {
+        const limit = task === 'review' ? 8192 : 512;
+        const decision =
+          task === 'review'
+            ? { allowed: true, basis: 'Read the synthetic record.' }
+            : { task_type: 'research' };
+        const output = outcome === 'stop' ? 96 : limit;
+        const reasoning = outcome === 'reasoning only' ? output : output - 32;
+        let calls = 0;
+        let traces = 0;
+        const usage: Array<Partial<ProviderUsageEvent>> = [];
+        t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+          calls++;
+          assert.equal(String(input), 'https://api.cortecs.ai/v1/chat/completions');
+          assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer fixture-model-key');
+          assert.equal(init?.redirect, 'error');
+          const body = JSON.parse(String(init?.body));
+          assert.equal(body.model, 'kimi-k3.1-pro');
+          assert.equal(body.max_tokens, limit);
+          assert.equal(body.reasoning_effort, 'minimal');
+          assert.equal(body.messages.at(-1).content, '{"request":"Read the synthetic record."}');
+          assert.ok(!JSON.stringify(body).includes('fixture-model-key'));
+          return reply(
+            {
+              role: 'assistant',
+              reasoning_content: 'Check owner scope. '.repeat(Math.floor(reasoning / 4)),
+              content:
+                outcome === 'reasoning only'
+                  ? null
+                  : JSON.stringify(decision) +
+                    (outcome === 'partial JSON' ? '\n{"unfinished":' : ''),
+            },
+            outcome === 'stop' ? 'stop' : 'length',
+            {
+              prompt_tokens: 128,
+              completion_tokens: output,
+              total_tokens: 128 + output,
+              completion_tokens_details: { reasoning_tokens: reasoning },
+            },
+          );
+        });
+        const curator = createPiMemoryCurator({
+          provider: 'cortecs',
+          configured: () => true,
+          resolve: async () => selected,
+          traces: { active: () => true, record: () => traces++ },
+        });
+        const run = () =>
+          curator.curate(
+            {
+              task,
+              instructions:
+                'Decide whether the owner requested this action. Return one JSON object.',
+              input: { request: 'Read the synthetic record.' },
+            },
+            undefined,
+            (event) => usage.push(event),
+          );
+        if (outcome === 'stop') assert.deepEqual(await run(), decision);
+        else
+          await assert.rejects(run(), (error: Error) => {
+            assert.match(
+              error.message,
+              task === 'review' ? /action review model/ : /classification model/,
+            );
+            assert.ok(error.message.includes(`Task: ${task}.`));
+            assert.ok(error.message.includes('cortecs/kimi-k3.1-pro'));
+            assert.match(error.message, /reply stopped at the token limit/);
+            assert.doesNotMatch(error.message, /JSON|fixture-model-key|Check owner scope/);
+            return true;
+          });
+        assert.equal(calls, 1);
+        assert.equal(usage.length, 1);
+        assert.equal(usage[0].provider, 'cortecs');
+        assert.equal(usage[0].model, 'kimi-k3.1-pro');
+        assert.equal(usage[0].outputTokens, output);
+        assert.equal(usage[0].inputTokens, 128);
+        assert.equal(traces, 0);
+      });
+});
+
 test('turn-bound reviews and memory writes can finish slowly and still stop before completion', async (t) => {
   const clock = t.mock.timers;
   t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => {
@@ -11887,32 +12058,61 @@ test('Anthropic connection failures explain workspace access without leaking pro
 });
 
 async function access(provider: ModelAccess['provider'], id: string): Promise<ModelAccess> {
+  const credential = { type: 'api_key' as const, key: 'fixture-model-key' };
   const backend = createPiModelBackend({
-    fetch: async () => {
+    fetch: async (input, init) => {
+      if (provider === 'cortecs') {
+        assert.equal(String(input), 'https://api.cortecs.ai/v1/models?currency=USD');
+        assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${credential.key}`);
+        assert.equal(init?.redirect, 'error');
+        return Response.json({
+          data: [
+            {
+              id: 'kimi-k3.1-pro',
+              context_size: 1_048_576,
+              max_output_tokens: 500_000,
+              input_modalities: ['text', 'image'],
+              output_modalities: ['text'],
+              supported_features: ['tools', 'reasoning'],
+              pricing: { currency: 'USD', input_token: 0.6, output_token: 2.5 },
+            },
+          ],
+        });
+      }
       throw new Error('Network access is disabled.');
     },
   });
-  const definition = (await backend.catalog(provider, 'api_key')).find(
-    ({ choice }) => choice.id === id,
-  );
+  const definition = (
+    await backend.catalog(provider, 'api_key', provider === 'cortecs' ? credential : undefined)
+  ).find(({ choice }) => choice.id === id);
   assert.ok(definition);
   return {
     provider,
     method: 'api_key',
     definition,
     effort: 'medium',
-    read: async () => ({ type: 'api_key', key: 'fixture-model-key' }),
+    read: async () => credential,
   };
 }
 
-function reply(content: Record<string, unknown>, finish = 'stop') {
+function reply(
+  content: Record<string, unknown>,
+  finish = 'stop',
+  usage = {
+    prompt_tokens: 10,
+    completion_tokens: 4,
+    total_tokens: 14,
+    completion_tokens_details: { reasoning_tokens: 0 },
+  },
+) {
+  const id = `fixture-${randomUUID()}`;
   const chunk = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
   return new Response(
-    chunk({ id: 'fixture-reply', choices: [{ index: 0, delta: content }] }) +
+    chunk({ id, choices: [{ index: 0, delta: content }] }) +
       chunk({
-        id: 'fixture-reply',
+        id,
         choices: [{ index: 0, delta: {}, finish_reason: finish }],
-        usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 },
+        usage,
       }) +
       'data: [DONE]\n\n',
     { headers: { 'content-type': 'text/event-stream' } },
@@ -11942,6 +12142,88 @@ test('model requests reach the provider and retain transport causes', async (t) 
     assert.match(oversized.errorMessage ?? '', /ECONNRESET/);
     assert.equal(requestFacts(oversized)!.requestPhase, 'request');
   }
+  await t.test(
+    'Cortecs Kimi caps output and leaves context-window rejection to the provider',
+    async (t) => {
+      const { runtime, model, requestFacts } = await createPiModelRuntime(
+        await access('cortecs', 'kimi-k3.1-pro'),
+      );
+      const requests: Array<{ max_tokens: number; input: number }> = [];
+      const disconnected = calls;
+      for (const tokens of [
+        model.contextWindow - model.maxTokens - 4096,
+        model.contextWindow - Math.floor(model.maxTokens / 2),
+        model.contextWindow + 4096,
+      ]) {
+        const before = requests.length;
+        const result = await runtime.completeSimple(
+          model,
+          {
+            systemPrompt: 'Inspect the synthetic records.',
+            messages: [
+              {
+                role: 'user',
+                content: 'Synthetic record. '.repeat(tokens).slice(0, tokens * 3),
+                timestamp: 1,
+              },
+            ],
+          },
+          {
+            maxTokens: 500_000,
+            reasoning: 'minimal',
+            fetch: async (input, init) => {
+              assert.equal(String(input), 'https://api.cortecs.ai/v1/chat/completions');
+              assert.equal(
+                new Headers(init?.headers).get('authorization'),
+                'Bearer fixture-model-key',
+              );
+              assert.equal(init?.redirect, 'error');
+              const body = JSON.parse(String(init?.body));
+              assert.equal(body.model, 'kimi-k3.1-pro');
+              assert.equal(body.reasoning_effort, 'minimal');
+              assert.equal(body.max_tokens, 32_768);
+              assert.equal(body.max_tokens, model.maxTokens);
+              const inputTokens = Math.ceil(Buffer.byteLength(JSON.stringify(body.messages)) / 3);
+              requests.push({ max_tokens: body.max_tokens, input: inputTokens });
+              if (inputTokens + body.max_tokens > model.contextWindow)
+                return Response.json(
+                  { error: { message: 'Context length exceeded: Synthetic Cortecs request.' } },
+                  { status: 400 },
+                );
+              return reply(
+                { role: 'assistant', content: 'The synthetic records are consistent.' },
+                'stop',
+                {
+                  prompt_tokens: inputTokens,
+                  completion_tokens: 12,
+                  total_tokens: inputTokens + 12,
+                  completion_tokens_details: { reasoning_tokens: 0 },
+                },
+              );
+            },
+          },
+        );
+        assert.equal(requests.length, before + 1);
+        if (tokens + model.maxTokens > model.contextWindow) {
+          assert.equal(result.stopReason, 'error');
+          assert.match(
+            result.errorMessage ?? '',
+            /Context length exceeded: Synthetic Cortecs request/,
+          );
+          assert.match(result.errorMessage ?? '', /400/);
+          assert.equal(requestFacts(result)!.requestPhase, 'response');
+        } else {
+          assert.equal(result.stopReason, 'stop', result.errorMessage);
+          assert.ok(
+            JSON.stringify(result.content).includes('The synthetic records are consistent.'),
+          );
+        }
+      }
+      assert.equal(requests.length, 3);
+      assert.equal(calls, disconnected);
+      t.diagnostic(JSON.stringify(requests));
+    },
+  );
   for (const [index, provider] of (['compatible', 'openrouter'] as const).entries()) {
     const { runtime, model } = await createPiModelRuntime(
       smallContextAccess(provider, 'fixture-disconnect', 131072),
