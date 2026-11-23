@@ -11,7 +11,7 @@ Nod needs a model connection to think and reply. Connect one or more services in
 
 Your requests go to the service you connect. Paid providers bill you for use. To run a model on your own computer instead, see [Local models](/connect/local-models/).
 
-Nod checks the selected model in the background. You can continue setup as soon as Nod saves the connection and selects a model. Chat shows a small status while the check runs. It disappears when the check succeeds. If the check fails, chat shows the service's reason and a link to **Models**.
+Nod checks the selected model in the background. You can continue setup as soon as Nod saves the connection and selects a model. Chat shows a small status while the check runs. It disappears when the check succeeds. If the check fails, chat shows the service's reason and a link to **Models**. A check the service turns away only because it's busy for now, such as a rate limit or a model at capacity (HTTP 429), doesn't count as a failure; a 429 for a used-up quota or billing limit does.
 
 A model discovery failure shows the service name, HTTP status and service reason when available. Nod removes the connection key.
 
