@@ -118,7 +118,7 @@ export function execute(command, args, { env, signal, timeout = 120_000, input }
       windowsHide: true,
     });
     const stdout = [];
-    const tails = { stdout: [], stderr: [] };
+    const tails = { stdout: { chunks: [], bytes: 0 }, stderr: { chunks: [], bytes: 0 } };
     let stdoutBytes = 0;
     let timedOut = false;
     let spawnError;
@@ -137,9 +137,16 @@ export function execute(command, args, { env, signal, timeout = 120_000, input }
       stop();
     }, timeout);
     const keep = (tail, chunk) => {
-      tail.push(chunk);
-      let bytes = tail.reduce((total, part) => total + part.length, 0);
-      while (bytes - tail[0].length > 128 * 1024) bytes -= tail.shift().length;
+      tail.chunks.push(chunk);
+      tail.bytes += chunk.length;
+      while (tail.bytes - tail.chunks[0].length > 128 * 1024) {
+        const dropped = tail.chunks.shift().length;
+        tail.bytes -= dropped;
+        if (dropped % 2) {
+          tail.chunks[0] = tail.chunks[0].subarray(1);
+          tail.bytes -= 1;
+        }
+      }
     };
     child.stdout.on('data', (chunk) => {
       stdoutBytes += chunk.length;
@@ -163,7 +170,7 @@ export function execute(command, args, { env, signal, timeout = 120_000, input }
       clearTimeout(killTimer);
       signal?.removeEventListener('abort', stop);
       if (signal?.aborted) return reject(new Error('Nod setup was cancelled.'));
-      const output = [commandText(tails.stdout), commandText(tails.stderr)]
+      const output = [commandText(tails.stdout.chunks), commandText(tails.stderr.chunks)]
         .map((text) => text.trim())
         .filter(Boolean)
         .join('\n');
