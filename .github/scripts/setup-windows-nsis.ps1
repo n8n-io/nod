@@ -3,9 +3,12 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows') {
   throw 'Use a disposable GitHub Windows runner.'
 }
 $installer = Join-Path $env:RUNNER_TEMP 'nsis-3.13-setup.exe'
-Invoke-WebRequest -Uri 'https://downloads.sourceforge.net/project/nsis/NSIS%203/3.13/nsis-3.13-setup.exe' -OutFile $installer -MaximumRetryCount 3 -RetryIntervalSec 5 -TimeoutSec 120
-if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash -ne 'DB9A1038BBC0E53FEF24F423FD609979BD578E942F1BE1198DB186D1C42652A3') {
-  throw 'The NSIS installer failed its SHA-256 check.'
+& curl.exe --fail --location --retry 3 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 120 --proto '=https' --proto-redir '=https' --tlsv1.2 --output $installer 'https://downloads.sourceforge.net/project/nsis/NSIS%203/3.13/nsis-3.13-setup.exe'
+if ($LASTEXITCODE -ne 0) { throw "The NSIS download failed with code $LASTEXITCODE." }
+$digest = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash
+if ($digest -ne 'DB9A1038BBC0E53FEF24F423FD609979BD578E942F1BE1198DB186D1C42652A3') {
+  $bytes = (Get-Item -LiteralPath $installer).Length
+  throw "The NSIS installer failed its SHA-256 check: $digest ($bytes bytes)."
 }
 $destination = Join-Path $env:RUNNER_TEMP 'nsis-3.13'
 $install = Start-Process -FilePath $installer -ArgumentList "/S /D=$destination" -PassThru
