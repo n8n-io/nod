@@ -130,7 +130,7 @@ After an operation finishes, the line keeps up to four recent operations, with t
 
 ![Expanded recent activity below the current step and above the message box.](../../../assets/screens/chat-recent-activity.png)
 
-The line follows only the work on your messages. A task shows its progress on its own card, and a question from a task or schedule shows it on the small line above that question. When your message goes to a task, the line's place shows that task's dot, title and current step under your message. This happens when you reply to one of the task's messages or answer its question, or when Nod sends your message to the task. The task's progress stays there until it posts a message, finishes or needs you. Select it to open the task. Meanwhile, the line above an earlier question from that task shows only the task's name. While anything works, the message box says **Send another message to Nod…**. While a task works, a small dot pulses just above the top-right corner of the message box. A task that needs your answer shows a slightly larger pink dot with a question mark. Hover over a dot or focus it to see which task it is. Select it to open the task's card with a soft highlight: if the card is already on screen, the chat stays where it is; otherwise the chat scrolls to it.
+The line follows only the work on your messages. A task started in chat shows its progress on its own card, which opens from the tasks line at the end of the chat, and a question from a task or schedule shows it on the small line above that question. When your message goes to a task, the line's place shows that task's title and current step under your message. This happens when you reply to one of the task's messages or answer its question, or when Nod sends your message to the task. The task's progress stays there until it posts a message, finishes or needs you. Select it to open the task. Meanwhile, the line above an earlier question from that task shows only the task's name. While anything works, the message box says **Send another message to Nod…**. While tasks started in chat run, one line at the end of the chat counts them and says how many need you, such as "2 tasks running · 1 needs you". Select it to open a task's card. See [Tasks](/use/tasks/).
 
 ### Send more while Nod works
 
@@ -213,7 +213,7 @@ Nod has one main chat. `/clear` does not create a second conversation or delete 
 
 ## Stop Nod
 
-While Nod works, the status line under the chat shows its work on your messages, and each task shows its progress on its card and as a dot above the message box.
+While Nod works, the status line under the chat shows its work on your messages, and each task started in chat shows its progress on its card, which opens from the tasks line at the end of the chat.
 
 While the message box is empty, **Stop** appears beside the send button while Nod is working. Select it to stop Nod. The send button stays in place and becomes available when you type a message.
 

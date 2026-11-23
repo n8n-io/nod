@@ -3,7 +3,10 @@ import { ArrowDown, Check, ChevronDown, ChevronLeft, ChevronUp } from 'lucide-re
 import { captureAnalytics } from '../lib/analytics';
 import { errorMessage, post } from '../lib/api';
 import type { Activity, Task } from '../../shared/contracts';
+import { LiveLine } from './live-line';
 import { MessageText } from './message';
+
+const started = (task: Task) => task.status === 'queued' || task.status === 'working';
 
 function progress(task: Task, finishing: boolean) {
   if (task.status === 'needs_you') return 'Needs you';
@@ -41,7 +44,7 @@ export function TaskLine({
   const open = tasks.filter(
     (task) =>
       Boolean(task.messageId) &&
-      (task.status === 'working' || task.status === 'needs_you' || running.has(task.id)),
+      (started(task) || task.status === 'needs_you' || running.has(task.id)),
   );
   const ids = open.map((task) => task.id).join(' ');
   const [view, setView] = useState<string | null>(null);
@@ -49,6 +52,7 @@ export function TaskLine({
   const [linked, setLinked] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const summary = useRef<HTMLButtonElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
   const text = useRef<HTMLSpanElement>(null);
   const show = (next: string) => {
     const line = root.current;
@@ -132,7 +136,8 @@ export function TaskLine({
     const align = () => {
       if (stopped) return;
       place();
-      if (pinned && scroller) scroller.scrollTop = scroller.scrollHeight;
+      if (pinned && scroller && !window.getSelection()?.toString())
+        scroller.scrollTop = scroller.scrollHeight;
     };
     align();
     void document.fonts?.ready.then(align);
@@ -151,12 +156,19 @@ export function TaskLine({
       line.style.marginBottom = '';
     };
   }, [visible]);
-  if (!visible) return null;
   const count = open.length;
   const needs = open.filter((task) => task.status === 'needs_you').length;
   const current = view && view !== 'list' ? open.find((task) => task.id === view) : undefined;
   const listing = view === 'list' && count > 1;
   const expanded = Boolean(current || listing);
+  useEffect(() => {
+    if (view && !expanded) setView(null);
+  }, [view, expanded]);
+  if (!visible) return null;
+  const move = (next: string | null) => {
+    setView(next);
+    (next ? pop.current : summary.current)?.focus();
+  };
   return (
     <div className="task-line" ref={root}>
       <button
@@ -196,12 +208,14 @@ export function TaskLine({
       {expanded && (
         <div
           className="task-line-pop"
+          ref={pop}
+          tabIndex={-1}
           role="group"
           aria-label={current ? current.title : 'Running tasks'}
           style={room ? { maxHeight: room } : undefined}
         >
           {current ? (
-            card(current, () => setView(null), count > 1 ? () => setView('list') : undefined)
+            card(current, () => move(null), count > 1 ? () => move('list') : undefined)
           ) : (
             <div className="task-line-list" aria-label="Running tasks">
               {open.map((task) => (
@@ -209,11 +223,11 @@ export function TaskLine({
                   key={task.id}
                   type="button"
                   className="task-line-row"
-                  onClick={() => setView(task.id)}
+                  onClick={() => move(task.id)}
                 >
                   <span className="task-line-title">{task.title}</span>
                   <span className="task-line-status" data-status={task.status}>
-                    {progress(task, task.status !== 'working' && task.status !== 'needs_you')}
+                    {progress(task, !started(task) && task.status !== 'needs_you')}
                   </span>
                 </button>
               ))}
@@ -227,12 +241,14 @@ export function TaskLine({
 
 export function TaskStackCard({
   task,
+  live,
   onReply,
   onClose,
   onBack,
 }: {
   task: Task;
-  onReply(): void;
+  live?: Activity;
+  onReply?(): void;
   onClose(): void;
   onBack?(): void;
 }) {
@@ -270,6 +286,11 @@ export function TaskStackCard({
           <MessageText text={task.question} />
         </div>
       )}
+      {live && task.status !== 'needs_you' && (
+        <p className="task-stack-now">
+          <LiveLine item={live} history={false} />
+        </p>
+      )}
       {steps.length ? (
         <ol className="task-todo" data-status={task.status}>
           {steps.map((step, i) => (
@@ -282,7 +303,7 @@ export function TaskStackCard({
           ))}
         </ol>
       ) : (
-        task.now && <p className="task-stack-now">{task.now}</p>
+        !live && task.now && <p className="task-stack-now">{task.now}</p>
       )}
       {details && task.doneWhen && (
         <div className="task-stack-details" id={`task-details-${task.id}`}>
@@ -324,15 +345,17 @@ export function TaskStackCard({
               Open browser
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={() => {
-                captureAnalytics('task_action', { action: 'reply' });
-                onReply();
-              }}
-            >
-              Reply
-            </button>
+            onReply && (
+              <button
+                type="button"
+                onClick={() => {
+                  captureAnalytics('task_action', { action: 'reply' });
+                  onReply();
+                }}
+              >
+                Reply
+              </button>
+            )
           )}
           <button
             type="button"
@@ -372,7 +395,7 @@ export function TaskChip({
   running: boolean;
   answerId?: string;
 }) {
-  const inStack = task.status === 'working' || task.status === 'needs_you' || running;
+  const inStack = started(task) || task.status === 'needs_you' || running;
   const state =
     task.status === 'needs_you'
       ? 'needs_you'
@@ -385,7 +408,7 @@ export function TaskChip({
     task.status === 'needs_you'
       ? 'Needs you'
       : inStack
-        ? task.status === 'working'
+        ? started(task)
           ? 'Task started'
           : 'Finishing'
         : task.status === 'done'

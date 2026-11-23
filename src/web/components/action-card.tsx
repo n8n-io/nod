@@ -196,10 +196,13 @@ export function ApprovalChoiceCard({
   const rows = task
     ? [approval.title, 'Skip this step', 'Stop the task']
     : [approval.title, declineLabel(approval)];
-  const ended = task && (stopped || taskStopped) && state !== 'working' && state !== 'done';
+  const ended =
+    task &&
+    (stopped || taskStopped) &&
+    (state === 'pending' || (state === 'expired' && !approval.failure));
   const chosen = ended ? 2 : state === 'declined' ? 1 : 0;
   const stop = async () => {
-    if (!onStopTask || stopping) return;
+    if (!onStopTask || stopping || locked) return;
     setStopping(true);
     setStopError('');
     try {

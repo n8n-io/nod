@@ -1319,6 +1319,7 @@ button.message-work:is(:hover, :focus-visible) {
   right: 0;
   bottom: calc(100% + 6px);
   z-index: 30;
+  border-radius: 16px;
 }
 .task-line-pop > * {
   max-height: inherit;
@@ -1605,7 +1606,7 @@ button.task-chip:is(:hover, :focus-visible) {
   font-weight: 500;
 }
 @container (max-width: 520px) {
-  .task-chip-title {
+  button.task-chip .task-chip-title {
     display: none;
   }
 }

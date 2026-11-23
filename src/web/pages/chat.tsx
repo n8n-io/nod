@@ -30,7 +30,6 @@ import { classifyVerificationReply, securityCodeIn } from '../../shared/verifica
 import { ChatTools } from '../components/chat-tools';
 import { ServiceLogo } from '../components/service-logo';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
-import { TaskCard } from './tasks';
 import { MessageBubble, WorkLabel, type MessageWork } from '../components/message';
 import { conversationFiles } from '../components/attachment-card';
 import { ArtifactWorkspace } from '../components/artifact-drawer';
@@ -794,17 +793,7 @@ export function Chat({
       )
     : undefined;
   const workOf = (message: Message): MessageWork | undefined => {
-    const cardTask =
-      message.role === 'assistant'
-        ? state.tasks?.find((task) => task.messageId === message.id)
-        : undefined;
-    const work =
-      message.role === 'assistant'
-        ? (message.work ??
-          (cardTask
-            ? { kind: 'task' as const, id: cardTask.id, title: cardTask.title }
-            : undefined))
-        : undefined;
+    const work = message.role === 'assistant' ? message.work : undefined;
     if (!work) return undefined;
     const item = live.find((entry) =>
       work.kind === 'task' ? entry.taskId === work.id : entry.runId === work.id,
@@ -812,9 +801,7 @@ export function Chat({
     const moved = work.kind === 'task' && routedItem?.taskId === work.id;
     return labelOf(
       work,
-      message.approval?.state === 'pending' ||
-        message.answerChoicesPending ||
-        cardTask?.status === 'needs_you'
+      message.approval?.state === 'pending' || message.answerChoicesPending
         ? 'needs_you'
         : item && !moved
           ? 'working'
@@ -1227,26 +1214,6 @@ export function Chat({
     };
     window.addEventListener('nod:focus-message', focusMessage);
     return () => window.removeEventListener('nod:focus-message', focusMessage);
-  }, []);
-  useEffect(() => {
-    const openTask = (event: Event) => {
-      const id = (event as CustomEvent<{ taskId?: unknown }>).detail?.taskId;
-      const element = scroll.current;
-      const card = Array.from(element?.querySelectorAll<HTMLElement>('[data-task-id]') ?? []).find(
-        (item) => item.dataset.taskId === id,
-      );
-      if (!element || !card?.getClientRects().length) return;
-      const view = element.getBoundingClientRect();
-      const box = card.getBoundingClientRect();
-      if (box.top >= view.top && box.bottom <= view.bottom) return;
-      stickToBottom.current = false;
-      card.scrollIntoView({
-        block: 'center',
-        behavior: prefersReducedMotion() ? 'auto' : 'smooth',
-      });
-    };
-    window.addEventListener('nod:open-task', openTask);
-    return () => window.removeEventListener('nod:open-task', openTask);
   }, []);
   useEffect(() => {
     if (!visible || !focusTarget || loadingHistory) return;
@@ -2530,23 +2497,29 @@ export function Chat({
                 <TaskLine
                   tasks={state.tasks ?? []}
                   live={live}
-                  card={(task, close, back) => (
-                    <TaskStackCard
-                      task={task}
-                      onClose={close}
-                      onBack={back}
-                      onReply={() => {
-                        const target =
-                          allMessages.find((item) => item.id === task.questionMessageId) ??
-                          allMessages.find((item) => item.id === task.messageId);
-                        if (!target) return;
-                        taskReply.current = target.id;
-                        setReplyTo(target);
-                        close();
-                        composer.current?.focus();
-                      }}
-                    />
-                  )}
+                  card={(task, close, back) => {
+                    const target =
+                      allMessages.find((item) => item.id === task.questionMessageId) ??
+                      allMessages.find((item) => item.id === task.messageId);
+                    return (
+                      <TaskStackCard
+                        key={task.id}
+                        task={task}
+                        live={live.find((item) => item.taskId === task.id)}
+                        onClose={close}
+                        onBack={back}
+                        onReply={
+                          target &&
+                          (() => {
+                            taskReply.current = target.id;
+                            setReplyTo(target);
+                            close();
+                            composer.current?.focus();
+                          })
+                        }
+                      />
+                    );
+                  }}
                 />
               )}
             </div>
