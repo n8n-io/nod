@@ -77,7 +77,7 @@ flowchart TD
 
 Select a schedule's name in **Scheduled** to read its runs, newest first. Select **Load earlier runs** for older results. Completed one-time schedules remain under **Inactive**, with their runs available to review.
 
-Each run shows its status. When a saved web reply is available, select **See details** on the result to read it within the schedule. When a run shares files, select **Show files in chat** to open them. Runs with complete API pricing also show their recorded cost. Subscription usage and runs with unavailable pricing show no cost amount. Review recorded app actions and activity from deleted schedules in [Usage](/use/spending/).
+Each run is one line with its time, status, the start of its result and its cost. Select a run to read its full result beside the list, or below it on a narrow screen; the latest run is selected first. When a run shares files, select **Show files in chat** to open them. Runs with complete API pricing also show their recorded cost. Subscription usage and runs with unavailable pricing show no cost amount. Review recorded app actions and activity from deleted schedules in [Usage](/use/spending/).
 
 ## Work Nod starts on its own
 

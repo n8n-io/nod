@@ -18,12 +18,7 @@ import { useDateFormat } from '../lib/date-format';
 import { DeletePlan } from '../components/delete-plan';
 import { LiveLine } from '../components/live-line';
 import { MessageText } from '../components/message';
-import {
-  PauseSwitch,
-  PlanDetails,
-  ScheduleEditor,
-  useDirectChange,
-} from '../components/plan-controls';
+import { PauseSwitch, ScheduleEditor, useDirectChange } from '../components/plan-controls';
 import { Button, Loading, Notice } from '../components/ui';
 import { money } from '../lib/money';
 import { ScheduleCost, ScheduleModel } from '../components/model-choices';
@@ -348,30 +343,69 @@ export function ScheduleRow({
   );
 }
 
-function ScheduleRunRow({ run, openResult }: { run: ScheduleRun; openResult: boolean }) {
+function ScheduleRunLine({
+  run,
+  selected,
+  detailId,
+  onSelect,
+}: {
+  run: ScheduleRun;
+  selected: boolean;
+  detailId: string;
+  onSelect(): void;
+}) {
   const dateFormat = useDateFormat();
-  const [open, setOpen] = useState(openResult);
-  const text = run.messageText ?? run.messagePreview ?? '';
-  useEffect(() => {
-    if (openResult) setOpen(true);
-  }, [openResult]);
-  const date = (value: string) => scheduleDate(value, run.timeZone, dateFormat);
   return (
-    <li className="schedule-run">
-      <div className="schedule-run-heading">
+    <li>
+      <button
+        type="button"
+        className="schedule-run-line"
+        aria-current={selected || undefined}
+        aria-controls={detailId}
+        onClick={onSelect}
+      >
+        <time dateTime={run.scheduledFor}>
+          {scheduleDate(run.scheduledFor, run.timeZone, dateFormat)}
+        </time>
+        <span className="task-status" data-status={run.status}>
+          <StatusIcon status={run.status} />
+          {statusLabels[run.status]}
+        </span>
+        <span className="schedule-run-preview">
+          {run.error ?? run.messagePreview ?? run.observation?.summary ?? ''}
+        </span>
+        <span className="schedule-run-cost">
+          {typeof run.costUsd === 'number' ? money(run.costUsd) : ''}
+        </span>
+      </button>
+    </li>
+  );
+}
+
+function ScheduleRunDetail({ run, id }: { run: ScheduleRun; id: string }) {
+  const dateFormat = useDateFormat();
+  const date = (value: string) => scheduleDate(value, run.timeZone, dateFormat);
+  const text = run.messageText ?? run.messagePreview ?? '';
+  const facts = [
+    typeof run.costUsd === 'number'
+      ? `${money(run.costUsd)}${['queued', 'running', 'waiting'].includes(run.status) ? ' so far' : ' recorded cost'}`
+      : null,
+    run.timeZone !== dateFormat.timeZone ? run.timeZone : null,
+  ].filter(Boolean);
+  return (
+    <section
+      className="schedule-run-detail"
+      id={id}
+      aria-label={`${run.title}, ${date(run.scheduledFor)}`}
+    >
+      <div className="schedule-run-detail-heading">
         <time dateTime={run.scheduledFor}>{date(run.scheduledFor)}</time>
         <span className="task-status" data-status={run.status}>
           <StatusIcon status={run.status} />
           {statusLabels[run.status]}
         </span>
       </div>
-      {run.timeZone !== dateFormat.timeZone && <p className="saved-plan-note">{run.timeZone}</p>}
-      {typeof run.costUsd === 'number' && (
-        <p className="saved-plan-note">
-          {money(run.costUsd)}
-          {['queued', 'running', 'waiting'].includes(run.status) ? ' so far' : ' recorded cost'}
-        </p>
-      )}
+      {facts.length > 0 && <p className="saved-plan-note">{facts.join(' · ')}</p>}
       {run.error && <p className="schedule-run-error">{run.error}</p>}
       {run.observation && (
         <p className="saved-plan-note">
@@ -384,10 +418,16 @@ function ScheduleRunRow({ run, openResult }: { run: ScheduleRun; openResult: boo
           </a>
         </p>
       )}
+      {text.trim() && (
+        <div className="schedule-run-text">
+          <MessageText text={text} />
+        </div>
+      )}
       {run.attachmentMessageId && (
         <Button
           variant="ghost"
           size="sm"
+          className="schedule-run-files"
           onClick={() =>
             window.dispatchEvent(
               new CustomEvent('nod:focus-message', {
@@ -399,22 +439,21 @@ function ScheduleRunRow({ run, openResult }: { run: ScheduleRun; openResult: boo
           Show files in chat
         </Button>
       )}
-      {text.trim() && (
-        <PlanDetails
-          label={`${run.title}, ${date(run.scheduledFor)}`}
-          summary={run.messagePreview}
-          open={open}
-          onOpenChange={setOpen}
-        >
-          <MessageText text={text} />
-        </PlanDetails>
-      )}
-    </li>
+    </section>
   );
 }
 
 function ScheduleRuns({ schedule, resultTurnId }: { schedule: Schedule; resultTurnId?: string }) {
   const history = useScheduleHistory(schedule.id);
+  const [selectedId, setSelectedId] = useState<string>();
+  const detailId = useId();
+  useEffect(() => {
+    if (resultTurnId) setSelectedId(undefined);
+  }, [resultTurnId]);
+  const selected =
+    history.runs.find((run) => run.id === selectedId) ??
+    history.runs.find((run) => run.turnId === resultTurnId) ??
+    history.runs[0];
   return (
     <section className="schedule-runs" aria-label={`Runs for ${schedule.title}`}>
       <h3>Runs</h3>
@@ -433,24 +472,35 @@ function ScheduleRuns({ schedule, resultTurnId }: { schedule: Schedule; resultTu
       )}
       {!history.data && history.loading && <Loading label="Loading runs…" />}
       {history.data && !history.runs.length && <p className="saved-plan-note">No runs yet.</p>}
-      {history.runs.length > 0 && (
-        <ol className="schedule-runs-list">
-          {history.runs.map((run) => (
-            <ScheduleRunRow key={run.id} run={run} openResult={run.turnId === resultTurnId} />
-          ))}
-        </ol>
-      )}
-      {history.earlierError && <Notice>{history.earlierError}</Notice>}
-      {history.cursor && (
-        <Button
-          variant="ghost"
-          className="schedule-history-more"
-          size="sm"
-          disabled={history.loadingEarlier}
-          onClick={() => void history.loadEarlier()}
-        >
-          {history.loadingEarlier ? 'Loading…' : 'Load earlier runs'}
-        </Button>
+      {selected && (
+        <div className="schedule-runs-body">
+          <div className="schedule-runs-index">
+            <ol className="schedule-run-lines">
+              {history.runs.map((run) => (
+                <ScheduleRunLine
+                  key={run.id}
+                  run={run}
+                  selected={run.id === selected.id}
+                  detailId={detailId}
+                  onSelect={() => setSelectedId(run.id)}
+                />
+              ))}
+            </ol>
+            {history.earlierError && <Notice>{history.earlierError}</Notice>}
+            {history.cursor && (
+              <Button
+                variant="ghost"
+                className="schedule-history-more"
+                size="sm"
+                disabled={history.loadingEarlier}
+                onClick={() => void history.loadEarlier()}
+              >
+                {history.loadingEarlier ? 'Loading…' : 'Load earlier runs'}
+              </Button>
+            )}
+          </div>
+          <ScheduleRunDetail run={selected} id={detailId} />
+        </div>
       )}
     </section>
   );

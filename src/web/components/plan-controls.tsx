@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { ChevronDown, LoaderCircle, Pencil, Plus } from './icons';
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
+import { LoaderCircle, Pencil, Plus } from './icons';
 import type { Schedule } from '../../shared/contracts';
 import {
   Button,
@@ -936,58 +936,6 @@ export function ScheduleTask({ taskId, onCreated }: { taskId: string; onCreated?
         Schedule task
       </Button>
     </div>
-  );
-}
-
-export function PlanDetails({
-  label,
-  summary,
-  children,
-  actions,
-  open: expanded,
-  onOpenChange,
-}: {
-  label: string;
-  summary?: ReactNode;
-  children: ReactNode;
-  actions?: ReactNode;
-  open?: boolean;
-  onOpenChange?(open: boolean): void;
-}) {
-  const [opened, setOpen] = useState(false);
-  const open = expanded ?? opened;
-  const id = useId();
-  return (
-    <>
-      {!open && summary && <p className="saved-plan-summary">{summary}</p>}
-      <div
-        className="saved-plan-details"
-        id={id}
-        data-open={open}
-        aria-hidden={!open}
-        inert={!open}
-      >
-        <div className="saved-plan-details-content">{children}</div>
-      </div>
-      <div className="saved-plan-footer">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="saved-plan-more"
-          aria-expanded={open}
-          aria-controls={id}
-          aria-label={`${open ? 'Hide' : 'See'} details for ${label}`}
-          onClick={() => {
-            setOpen(!open);
-            onOpenChange?.(!open);
-          }}
-        >
-          {open ? 'Hide details' : 'See details'}
-          <ChevronDown size={16} aria-hidden="true" />
-        </Button>
-        {actions && <div className="saved-plan-actions">{actions}</div>}
-      </div>
-    </>
   );
 }
 

@@ -248,38 +248,103 @@
   font-size: var(--text-control);
   font-weight: 500;
 }
-.schedule-runs-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.schedule-runs-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 420px);
+  align-items: start;
+  gap: 16px;
 }
-.schedule-run {
+.schedule-runs-index {
   display: grid;
   gap: 8px;
   min-width: 0;
-  padding: 16px 0;
 }
-.schedule-run:first-child {
-  padding-top: 0;
+.schedule-runs-index > .schedule-history-more {
+  justify-self: start;
 }
-.schedule-run:last-child {
-  padding-bottom: 0;
+.schedule-run-lines {
+  display: grid;
+  gap: 2px;
+  margin: 0 -12px;
+  padding: 0;
+  list-style: none;
 }
-.schedule-run + .schedule-run {
-  border-top: 1px solid var(--border);
+.schedule-run-line {
+  display: grid;
+  grid-template-columns: 112px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-control);
+  text-align: left;
+  cursor: pointer;
 }
-.schedule-run-heading {
+.schedule-run-line:hover {
+  background: var(--nav-hover);
+}
+.schedule-run-line[aria-current='true'] {
+  background: var(--accent-soft);
+}
+.schedule-run-line:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+.schedule-run-line > time {
+  color: var(--foreground);
+  white-space: nowrap;
+}
+.schedule-run-line > .task-status,
+.schedule-run-detail-heading > .task-status {
+  padding: 1px 10px 1px 6px;
+  font-size: 12px;
+}
+.schedule-run-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.schedule-run-cost {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.schedule-run-detail {
+  position: sticky;
+  top: 12px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  max-height: 520px;
+  padding: 16px;
+  border-radius: var(--card-radius);
+  background: var(--surface-subtle);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.schedule-run-detail-heading {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   font-size: var(--text-control);
+  font-weight: 500;
 }
-.schedule-run-heading > time {
-  flex: 1;
+.schedule-run-text {
+  font-size: var(--text-control);
+  overflow-wrap: anywhere;
 }
-.schedule-runs > .schedule-history-more {
+.schedule-run-detail > .schedule-run-files {
   justify-self: start;
+  margin-left: -12px;
 }
 .task-status {
   display: inline-flex;
@@ -635,4 +700,22 @@
 .task-commands li > small {
   color: var(--muted-foreground);
   font-size: 12px;
+}
+@container (max-width: 900px) {
+  .schedule-runs-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .schedule-run-detail {
+    position: static;
+    max-height: none;
+  }
+}
+@container (max-width: 640px) {
+  .schedule-run-line {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .schedule-run-preview,
+  .schedule-run-cost {
+    display: none;
+  }
 }
