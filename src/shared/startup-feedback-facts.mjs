@@ -107,6 +107,32 @@ const signals = new Set([
   'SIGQUIT',
   'SIGPIPE',
 ]);
+const steps = new Set([
+  'wsl',
+  'profile',
+  'assets',
+  'download',
+  'extract',
+  'import',
+  'update',
+  'start',
+  'storage',
+  'workspace',
+  'browser',
+  'ready',
+]);
+const codes = new Set([
+  'NOD_WSL_REQUIRED',
+  'RUNTIME_ARCHIVE_REQUIRED',
+  'NOD_RUNTIME_STOP_FAILED',
+  'NOD_CONTAINER_STOPPED',
+  'NOD_DATABASE_CONNECTION_FAILED',
+  'NOD_DATABASE_OUT_OF_MEMORY',
+  'NOD_DATABASE_STOPPED',
+  'NOD_DATABASE_NOT_READY',
+  'NOD_COMPUTER_PROTECTION_FAILED',
+  'NOD_KVM_UNAVAILABLE',
+]);
 const reasons = {
   status_regular: 'The saved report status is not one regular file.',
   status_changed: 'The saved report status changed. Check it again.',
@@ -163,6 +189,8 @@ export function startupErrorFacts(value) {
     ],
     ['exitCode', integer(data(value, 'exitCode'), -2147483648, 4294967295)],
     ['signal', choice(signals, data(value, 'signal'))],
+    ['code', choice(codes, data(value, 'code'))],
+    ['step', choice(steps, data(value, 'step'))],
   ])
     if (selected !== undefined) result[key] = selected;
   return result;
