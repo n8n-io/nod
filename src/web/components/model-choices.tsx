@@ -318,11 +318,18 @@ export function ScheduleCost({ schedule }: { schedule: Schedule }) {
           <>
             <strong>≈{money(schedule.monthlyUsd)} a month</strong>
             {name && ` on ${name}`}
+            {recent > 0 && ` · ${money(recent)} in the last 30 days`}
+          </>
+        ) : schedule.kind === 'recurring' ? (
+          <>
+            <strong>No estimate yet</strong>
+            {recent > 0 && ` · ${money(recent)} in the last 30 days`}
           </>
         ) : (
-          <strong>No estimate yet</strong>
+          <>
+            <strong>{money(recent)}</strong> in the last 30 days
+          </>
         )}
-        {recent > 0 && ` · ${money(recent)} in the last 30 days`}
       </span>
     </div>
   );

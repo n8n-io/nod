@@ -50,6 +50,7 @@
   overflow-wrap: anywhere;
 }
 
+.schedule-inactive > .saved-plan-list,
 .schedule-inactive > .schedule-list {
   margin-top: 12px;
 }
@@ -316,8 +317,6 @@
   font-variant-numeric: tabular-nums;
 }
 .schedule-run-detail {
-  position: sticky;
-  top: 12px;
   display: grid;
   align-content: start;
   gap: 10px;
@@ -359,7 +358,8 @@
   font-weight: 500;
 }
 .task-status[data-status='needs_you'],
-.schedule-run .task-status[data-status='waiting'] {
+.schedule-run-line > .task-status[data-status='waiting'],
+.schedule-run-detail-heading > .task-status[data-status='waiting'] {
   background: var(--accent-soft);
   color: var(--accent);
 }
@@ -706,7 +706,6 @@
     grid-template-columns: minmax(0, 1fr);
   }
   .schedule-run-detail {
-    position: static;
     max-height: none;
   }
 }
