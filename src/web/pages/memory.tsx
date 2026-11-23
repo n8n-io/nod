@@ -1585,7 +1585,7 @@ export function Memory({
               onClick={() => {
                 setExporting(true);
                 setSettingError('');
-                downloadExport('/api/memory/export', 'nod-memory.md', 'Your memory')
+                downloadExport('/api/memory/export', 'nod-memory.md')
                   .catch((cause) => setSettingError(errorMessage(cause)))
                   .finally(() => setExporting(false));
               }}

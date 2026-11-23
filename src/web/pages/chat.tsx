@@ -31,7 +31,7 @@ import { ChatTools } from '../components/chat-tools';
 import { ServiceLogo } from '../components/service-logo';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
 import { TaskCard } from './tasks';
-import { MessageBubble, type MessageWork } from '../components/message';
+import { MessageBubble, WorkLabel, type MessageWork } from '../components/message';
 import { conversationFiles } from '../components/attachment-card';
 import { ArtifactWorkspace } from '../components/artifact-drawer';
 import { PrivateEntryWorkspace } from '../components/private-entry';
@@ -133,12 +133,14 @@ function Working({
   sending = false,
   writing = false,
   quiet = true,
+  routed,
 }: {
   items?: Activity[];
   label?: string;
   sending?: boolean;
   writing?: boolean;
   quiet?: boolean;
+  routed?: MessageWork;
 }) {
   const found = items.find((item) => !item.background && !item.taskId);
   const chat = found?.doing === 'queued' ? undefined : found;
@@ -146,6 +148,15 @@ function Working({
   const receipt = items.some((item) => !item.background && item.received)
     ? 'Got your message. I’ll read it after this step.'
     : null;
+  if (!thinking && !label && !receipt && routed)
+    return (
+      <div className="thinking">
+        <NodGlyph size={28} mode="thinking" />
+        <div className="working-details">
+          <WorkLabel work={routed} />
+        </div>
+      </div>
+    );
   if (!thinking && !label && !receipt && !found) return null;
   return (
     <div className="thinking" hidden={!thinking && !label && !receipt}>
@@ -767,22 +778,48 @@ export function Chat({
   const chatWork = connected
     ? live.find((item) => !item.background && !item.taskId && !item.runId)
     : undefined;
+  const lastOwner = allMessages.findLast((message) => message.role === 'user');
+  const routedWork = !chatWork && lastOwner?.work?.kind === 'task' ? lastOwner.work : undefined;
+  const routedItem = routedWork
+    ? live.find(
+        (entry) =>
+          entry.taskId === routedWork.id &&
+          (entry.turnId === routedWork.turnId || entry.turnId === lastOwner!.turnId) &&
+          !allMessages.some(
+            (message) =>
+              message.role === 'assistant' &&
+              message.turnId === entry.turnId &&
+              message.createdAt > lastOwner!.createdAt,
+          ),
+      )
+    : undefined;
   const workOf = (message: Message): MessageWork | undefined => {
-    const work = message.work;
+    const work = message.role === 'assistant' ? message.work : undefined;
     if (!work) return undefined;
     const item = live.find((entry) =>
       work.kind === 'task' ? entry.taskId === work.id : entry.runId === work.id,
     );
+    const moved = work.kind === 'task' && routedItem?.taskId === work.id;
+    return labelOf(
+      work,
+      message.approval?.state === 'pending' || message.answerChoicesPending
+        ? 'needs_you'
+        : item && !moved
+          ? 'working'
+          : 'idle',
+      moved ? undefined : item,
+    );
+  };
+  const labelOf = (
+    work: NonNullable<Message['work']>,
+    status: MessageWork['status'],
+    item: Activity | undefined,
+  ): MessageWork => {
     const task =
       work.kind === 'task' ? state.tasks?.find((entry) => entry.id === work.id) : undefined;
     return {
       title: work.title,
-      status:
-        message.approval?.state === 'pending' || message.answerChoicesPending
-          ? 'needs_you'
-          : item
-            ? 'working'
-            : 'idle',
+      status,
       live: item,
       ...(task?.messageId
         ? {
@@ -801,6 +838,7 @@ export function Chat({
         : {}),
     };
   };
+  const routed = routedWork && routedItem ? labelOf(routedWork, 'working', routedItem) : undefined;
   const lastChatWork = useRef<{ threadId: string; item: Activity } | null>(null);
   if (chatWork) lastChatWork.current = { threadId, item: chatWork };
   const finishing = lastChatWork.current?.threadId === threadId ? lastChatWork.current.item : null;
@@ -2458,6 +2496,7 @@ export function Chat({
                   sending={sending}
                   writing={Boolean(streamEntries.length) && finishing?.doing !== 'tool'}
                   quiet={!streamEntries.length}
+                  routed={connected ? routed : undefined}
                 />
               )}
             </div>

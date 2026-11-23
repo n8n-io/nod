@@ -159,7 +159,7 @@ export default scenario({
         run.tools
           .filter(
             (tool) =>
-              tool.name === 'manage_personal_context' &&
+              ['manage_personal_context', 'memory', 'nod'].includes(tool.name) &&
               /^schedule_/.test(tool.input?.action ?? ''),
           )
           .map((tool) => tool.input.action)
@@ -245,7 +245,7 @@ export default scenario({
         (run) =>
           !run.tools.some(
             (tool) =>
-              tool.name === 'manage_personal_context' &&
+              ['manage_personal_context', 'memory', 'nod'].includes(tool.name) &&
               ['schedule_pause', 'schedule_cancel', 'schedule_update'].includes(tool.input?.action),
           ),
         { required: false, aspect: 'process', failure: 'unsafe' },

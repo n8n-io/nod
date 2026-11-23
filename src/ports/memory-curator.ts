@@ -4,7 +4,6 @@ import type { AgentImage } from './agent.ts';
 export interface MemoryCurator {
   id: string;
   configured: boolean;
-  select?(signal?: AbortSignal): Promise<MemoryCurator>;
   curate(
     request: {
       task:
@@ -19,6 +18,7 @@ export interface MemoryCurator {
         | 'brief'
         | 'vision'
         | 'classify'
+        | 'activity'
         | 'attention'
         | 'check';
       instructions: string;

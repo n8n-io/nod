@@ -1,76 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createDecisionModel } from '../src/providers/decisions.ts';
-import { createTrustReview, ClearedMessageReviewError } from '../src/server/trust-review.ts';
+import { createTrustReview } from '../src/server/trust-review.ts';
 import { trustBasis, trustDecision } from '../src/server/trust-basis.ts';
-
-test('a complete Jev review clearance keeps later permission failures separate', async () => {
-  const { jevPolicy } = await import('../src/server/trust-jev-policy.ts');
-  const checked = {
-    userMessages: [
-      { at: '2026-11-19T09:00:00Z', text: 'Set the synthetic monthly limit to 100 dollars.' },
-    ],
-    action: { name: 'NOD_limits_update', arguments: { monthlyUsd: 100 } },
-    messageDrafts: [
-      {
-        draftId: null,
-        connectionId: 'synthetic-connection',
-        target: {},
-        messages: [],
-        unavailable: true,
-      },
-    ],
-  };
-  const answer: {
-    choice: string;
-    probability: number;
-    model: { provider: string; requested: string; served: string };
-    additional: Record<string, { choice: boolean; probability: number }>;
-  } = {
-    choice: 'message:0',
-    probability: 1,
-    model: { provider: 'typesafe', requested: 'jev-1.14.0', served: 'jev-1.14.0' },
-    additional: {
-      ...Object.fromEntries(
-        Object.keys(jevPolicy.features).map((name) => [name, { choice: false, probability: 1 }]),
-      ),
-      draftReviewClear_0: { choice: true, probability: 1 },
-    },
-  };
-  const review = createTrustReview({
-    review: async () => assert.fail('The decision check cannot switch to an LLM.'),
-    decisions: {
-      check: async (request) => {
-        request.forModel?.({ provider: 'typesafe', model: 'jev-1.14.0' });
-        return answer;
-      },
-    },
-  });
-  await assert.rejects(
-    review('', checked),
-    (error) =>
-      error instanceof ClearedMessageReviewError && /effects are incomplete/.test(error.message),
-  );
-  for (const field of ['message_review', 'direct_request']) {
-    const value = answer.additional[field];
-    delete answer.additional[field];
-    await assert.rejects(
-      review('', checked),
-      (error) =>
-        !(error instanceof ClearedMessageReviewError) && Object(error).reviewRequired === true,
-    );
-    answer.additional[field] = value;
-  }
-  answer.additional.draftReviewClear_0 = { choice: false, probability: 1 };
-  assert.equal(Object(await review('', checked)).reviewRequired, true);
-  answer.additional.draftReviewClear_0 = { choice: true, probability: 1 };
-  answer.model.served = 'synthetic-wrong-model';
-  await assert.rejects(
-    review('', checked),
-    (error) =>
-      !(error instanceof ClearedMessageReviewError) && Object(error).reviewRequired === true,
-  );
-});
 
 test('Jev keeps action data out of the owner proof and blocks failures without an LLM', async (t) => {
   for (const provider of ['openrouter', 'typesafe'] as const)
@@ -91,9 +23,6 @@ test('Jev keeps action data out of the owner proof and blocks failures without a
       let resolutions = 0;
       let llmCalls = 0;
       let recipientConflict = false;
-      let messageReview = 0.01;
-      let draftClearance = 1;
-      let effect = 'send';
       let wrongMethod = 0;
       let failure:
         'http' | 'version' | 'probability' | 'refusal' | 'connection' | 'stop' | undefined;
@@ -130,24 +59,13 @@ test('Jev keeps action data out of the owner proof and blocks failures without a
               if (item.type === 'noul') {
                 const positive = ['direct_request', 'needed_step', 'permission'].includes(name);
                 const noul =
-                  name === 'message_review'
-                    ? messageReview
-                    : name === 'recipient_conflict' && recipientConflict
+                  name === 'recipient_conflict' && recipientConflict
+                    ? 0.99
+                    : positive
                       ? 0.99
-                      : positive
-                        ? 0.99
-                        : 0.01;
+                      : 0.01;
                 return [name, { type: 'noul', noul: failure === 'probability' ? 1.1 : noul }];
               }
-              if (name === 'draftReviewClear_0')
-                return [
-                  name,
-                  {
-                    type: 'choice',
-                    choice: String(draftClearance >= 0.5),
-                    probabilities: { true: draftClearance, false: 1 - draftClearance },
-                  },
-                ];
               const choice =
                 name === 'trust'
                   ? 'message:0'
@@ -155,7 +73,7 @@ test('Jev keeps action data out of the owner proof and blocks failures without a
                     ? wrongMethod > 0.5
                       ? 'browser'
                       : 'any'
-                    : effect;
+                    : 'send';
               return [
                 name,
                 failure === 'refusal'
@@ -198,12 +116,6 @@ test('Jev keeps action data out of the owner proof and blocks failures without a
       );
       assert.equal(requests, 2);
       assert.equal(resolutions, 1);
-      for (messageReview of [0.99, 0.5, 0.02]) {
-        const required = await check();
-        assert.equal(Object(required).reviewRequired, true);
-        assert.equal(trustBasis(required, withOwnerIds(words, ['owner-message'])), undefined);
-      }
-      messageReview = 0.01;
       recipientConflict = true;
       requests = 0;
       assert.equal(trustBasis(await check(), withOwnerIds(words, ['owner-message'])), undefined);
@@ -232,105 +144,10 @@ test('Jev keeps action data out of the owner proof and blocks failures without a
       failure = 'refusal';
       requests = 0;
       controller = new AbortController();
-      assert.deepEqual(await check(), {
-        run: false,
-        reviewRequired: true,
-        reviewUnavailable: true,
-      });
+      assert.equal(await check(), undefined);
       assert.equal(requests, 1);
       assert.equal(llmCalls, 0);
-      failure = undefined;
-      controller = new AbortController();
-      words.userMessages[0].text = 'Delete the synthetic draft now.';
-      effect = 'delete';
-      Object.assign(input.action, {
-        name: 'GMAIL_DELETE_DRAFT',
-        arguments: { draft_id: 'synthetic-draft' },
-      });
-      Object.assign(input, {
-        messageDrafts: [
-          {
-            draftId: 'synthetic-draft',
-            connectionId: 'synthetic-account',
-            target: {},
-            messages: [],
-            unavailable: true,
-          },
-        ],
-      });
-      for (draftClearance of [1, 0.98, 0]) {
-        const result = await check();
-        if (draftClearance === 1)
-          assert.equal(trustBasis(result, withOwnerIds(words, ['owner-message']))?.kind, 'message');
-        else assert.equal(Object(result).reviewRequired, true);
-      }
-      draftClearance = 1;
-      input.action.name = 'GMAIL_SEND_DRAFT';
-      assert.equal(Object(await check()).reviewRequired, true);
-      assert.equal(llmCalls, 0);
     });
-});
-
-test('Jev keeps required message review before an early rule or unknown-effect refusal', async () => {
-  for (const mode of ['rule', 'unknown effect']) {
-    let requests = 0;
-    const decisions = createDecisionModel({
-      resolve: async () => ({
-        provider: 'typesafe',
-        key: 'synthetic-jev-key',
-        model: 'jev-1.14.0',
-      }),
-      fetch: async (_url, init) => {
-        requests++;
-        const request = JSON.parse(String(init?.body));
-        const answers = Object.fromEntries(
-          Object.entries(request.questions).map(([name, value]) => {
-            const question = value as { type: string; criteria?: Record<string, string> };
-            if (question.type === 'noul')
-              return [name, { type: 'noul', noul: name === 'message_review' ? 0.99 : 0.01 }];
-            const choice = name === 'trust' ? (mode === 'rule' ? 'rule' : 'message:1') : 'unknown';
-            return [
-              name,
-              {
-                type: 'choice',
-                choice,
-                probabilities: Object.fromEntries(
-                  Object.keys(question.criteria!).map((key) => [key, Number(key === choice)]),
-                ),
-              },
-            ];
-          }),
-        );
-        return Response.json({
-          model: 'jev-1.14.0',
-          answers,
-          usage: { input_tokens: 100, cost: 0.00001 },
-        });
-      },
-    });
-    const review = createTrustReview({
-      decisions,
-      review: async () => assert.fail('A decision refusal cannot switch to an LLM.'),
-    });
-    const result = await review('Preserve the owner review step.', {
-      userMessages: [
-        {
-          at: '2026-11-01T09:00:00Z',
-          text: 'Draft this. Show it before sending.',
-          canAuthorize: false,
-        },
-        { at: '2026-11-02T09:00:00Z', text: 'Change the ending and send it.', canAuthorize: true },
-      ],
-      ...(mode === 'rule' ? { userRules: 'Show email drafts before sending.' } : {}),
-      action: {
-        name: 'CONNECTED_MCP_CALL',
-        arguments: { input: { draft_id: 'synthetic-message' } },
-      },
-    });
-    assert.equal(Object(result).run, false);
-    assert.equal(Object(result).reviewRequired, true);
-    assert.equal(requests, 1);
-  }
 });
 
 test('Jev checks elapsed time, local clocks and weekdays before it permits an action', async () => {

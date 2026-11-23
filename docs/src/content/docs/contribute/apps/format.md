@@ -57,7 +57,7 @@ The [app schema](https://nod.n8n.io/docs/schemas/apps/v1/app.schema.json) and [f
 | Field          | Requirement                                                          |
 | -------------- | -------------------------------------------------------------------- |
 | `$schema`      | Required app profile v1 schema URL                                   |
-| `displayName`  | Required display name, up to 80 characters                           |
+| `displayName`  | Required display name on one line, up to 80 characters               |
 | `icon`         | Optional path under `./io.n8n.nod/`; SVG, PNG, or WebP, up to 128 KB |
 | `categories`   | Optional array of up to 10 category names                            |
 | `prompts`      | Two to four concrete example requests                                |
@@ -67,7 +67,7 @@ The [app schema](https://nod.n8n.io/docs/schemas/apps/v1/app.schema.json) and [f
 
 Unknown fields and unsupported connection combinations fail validation. Other client extension namespaces keep their own meaning. A profile version change requires an explicit migration.
 
-Text fields must contain visible text. Do not start or end them with whitespace.
+Text fields must contain visible text. Do not start or end them with whitespace. The display name can't contain control or format characters or line separators, such as line breaks or text direction marks.
 
 The published schema files are generated. `pnpm check:apps` fails if they differ from their TypeScript source. Maintainers update them with `pnpm generate:app-schemas` when the profile changes.
 
@@ -84,9 +84,9 @@ Select one named server from `mcp.json`:
 }
 ```
 
-The `scopes` field is optional and is valid only with `oauth2`. Fixed connections select one authentication method: `oauth2`, `bearer`, or `x-api-key`. Nod sends API keys in `X-API-Key`.
+The `scopes` field is optional and is valid only with `oauth2`. Its limits are under [OAuth scopes](#oauth-scopes). Fixed connections select one authentication method: `oauth2`, `bearer`, or `x-api-key`. Nod sends API keys in `X-API-Key`.
 
-`mcp.json` must target the matching Agent Plugins schema version. It must contain exactly one server with `type: "streamable-http"`. Its address must be public HTTPS without credentials, a query, or a fragment. DNS and network checks also run when Nod connects.
+`mcp.json` must target the matching Agent Plugins schema version. It must contain exactly one server, named as in the connection's `server` field, with `type: "streamable-http"`. Its address must be public HTTPS without credentials, a query, or a fragment. DNS and network checks also run when Nod connects.
 
 Static headers, stdio servers, and legacy SSE servers are outside the current Nod app profile. A schema-valid Agent Plugin can still use features Nod does not support.
 
@@ -120,6 +120,10 @@ API and CLI folders omit `mcp.json`. Unknown fields, extra transports, app-folde
 Fixed server addresses and CLI download addresses must use public HTTPS on port 80 or 443. OAuth endpoints use port 443. Owner-supplied n8n instance addresses follow the separate instance policy.
 
 See the complete [API and CLI examples](/contribute/apps/api-and-cli/).
+
+## OAuth scopes
+
+Fixed MCP and HTTP API connections that use `oauth2` share the same `scopes` limits: up to 30 scopes of up to 100 characters each, and at most 500 characters when joined with spaces. Editors don't check the joined length; `pnpm check:apps` does.
 
 ## Connect form hints
 

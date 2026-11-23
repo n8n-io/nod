@@ -265,7 +265,7 @@ The Mac build logs show separate times for signing, notarization, ZIP creation, 
 Drafts are never offered to the installer or the updater.
 
 - Mac and Windows apps check at startup, even when their runtime fails to start, every six hours while open, and after waking if a check is due. **Check for Updates…** checks right away. Linux users install the next bundle; Nod's own update checks are off there.
-- After a failed automatic check, Nod retries after 15 minutes, doubling up to six hours, and the menu shows **Update Failed. Try Again…**.
+- After a failed automatic check, Nod retries after one minute, doubling up to 15 minutes, and the menu shows **Update Failed. Try Again…**.
 - Existing private-service builds try up to three newer releases and offer the first complete one. Public GitHub builds use the latest regular release and fail closed if its platform files are incomplete. The publisher checks all four bundles before publication and returns a release to draft if public asset delivery fails.
 - A Mac app outside Applications offers to move itself there at startup, because it can update itself only from Applications.
 - Updates download in the background. While a runtime pack or Windows installer downloads, the update menu item shows its percentage. On a Mac with a running local VM, Nod tries to load the new runtime's images before restart; a deferred or failed preload leaves that work for startup. Windows applies a changed WSL runtime after restart.

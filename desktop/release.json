@@ -1,10 +1,10 @@
 {
-  "version": "0.9.1",
-  "previousTag": "nod-v0.9.0",
-  "source": "517d7f5d96fe52b3ccacc5c7ce65560dabbff07a",
-  "highlights": "## More room for your work\n\nDrag the edge of the sidebar to change its width, or hide it for more space. Nod remembers your choice.\n\n## See what your schedules are doing\n\nOpen a scheduled run to see its current activity and completed steps. Each completed step appears once.\n\n## Also in this release\n\n- **Draft review:** If you ask to review a draft before it is sent, that review stays required after edits.\n- **Startup help:** Send a startup report even when chat cannot open.\n- **Telegram:** Approve or decline requests with buttons in Telegram.\n- **Connections:** Rename custom MCP connections. Failed model connections keep the service's reason.\n- **Privacy:** Bug reports mask more personal details. Review the report before you send it.\n- **Mac updates:** Update checks wait until an update already in progress finishes.",
+  "version": "0.9.2",
+  "previousTag": "nod-v0.9.1",
+  "source": "d0e4d57b29bb0eeeb720f443b8d48efadb0168ff",
+  "highlights": "## 💬 One chat for your work\n\nAsk Nod to reply to an email, forward it or delete it. Nod now aims to finish short work in connected apps directly in chat.\n\nLarger jobs have their own tasks. You can send several requests and let separate tasks progress at the same time. Reply to a task's message to give it a correction or an update.\n\n## 👀 See the current step\n\nA live line shows what Nod is doing. Open it to see recent steps. Keep typing while Nod works. It reads your next message after its current step.\n\n## ✅ Checked from start to finish\n\nThis release fixes cases where requests could get mixed together or left without an answer. New checks run through whole conversations, including several requests, task replies, Stop and a restart.\n\n## Also in this release\n\n- **Schedules:** **Run now** starts the run even outside its usual time. Your rules still apply.\n- **Approvals:** Email approvals show the recipients, subject and message once, with the question above the card. Nod can also name the recipient and subject when it asks to send a draft it created.\n- **Flight searches:** Compare Google Flights results in one card. Prices cover all travellers, before bag and seat fees.\n- **Language:** Replies, task updates and approval questions follow your conversation's language.\n- **Conversations:** Nod sends fewer repeated details to your model as the conversation grows.",
   "video": {
-    "url": "https://github.com/user-attachments/assets/8be1aa61-3119-4c1f-9c64-bdd333b07a00",
-    "releaseSha256": "691a8291464e48f10e51d7f44b5b31c8719bfa902f2fdaa4f865b99a0436a0ad"
+    "url": "https://github.com/user-attachments/assets/cafed6e3-c72c-4d34-b4b9-cc4157593a55",
+    "releaseSha256": "aab3e08dd39eccd0b7973e7e96532601bcd7ce2ea077c38dfdb75334f1bbcf04"
   }
 }

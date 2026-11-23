@@ -88,7 +88,7 @@ Selection can make mistakes. If a call fails or returns invalid data, Nod keeps 
 
 ## How the model saves memory
 
-The memory tools are actions of Pi's `manage_personal_context` tool. Pi never writes a note. `memory_learn` names the owner's messages, and the memory model writes the notes from them:
+The memory tools are actions of Pi's `memory` tool. Pi never writes a note. `memory_learn` names the owner's messages, and the memory model writes the notes from them:
 
 ```mermaid
 flowchart LR
@@ -161,7 +161,7 @@ Reflection reads owner messages written since the last batch, 40 at a time, unti
 - It records what the owner says about their life, including what a request reveals: people, places, possessions, events, plans, numbers, interests and preferences, one fact per entry. Each message comes with the time it was sent, so an entry about an event starts with its date, with words like "yesterday" resolved.
 - Each operation cites messages and a verbatim quote. Only cited messages that contain the quote count as evidence.
 - An add with the same text as an inferred entry adds evidence to it. Reflection never changes a stated entry.
-- Each add must say whether it's sensitive. Unless the owner turned on **Remember sensitive topics**, the server drops sensitive adds. An add without the flag is invalid.
+- Each add must say whether it's sensitive. Unless the owner turned on **Include sensitive details**, the server drops sensitive adds. An add without the flag is invalid.
 - A model error or unreadable answer is retried on the next two ticks, then the batch is skipped. The progress watermark is saved in the same write as the operations, so a batch applies once.
 
 Sensitive topics are health, religion, politics, sexuality, gender identity, ethnicity, immigration status and criminal history.
@@ -186,7 +186,7 @@ Learned skills are procedures Nod writes for itself after a task, as [Hermes Age
 
 - **Index and body.** The owner context lists each learned skill's name and one-line description. Pi reads the body with `skills read` before a matching flow. The body reaches Pi inside an `untrusted_tool_result` block.
 - **Writing.** Pi calls `skills save` when no learned skill covers a flow that took several steps, needed a workaround or was corrected, and `skills patch` when a skill it followed was wrong or out of date. It saves quietly.
-- **Preparing.** The server first removes known secret values from the draft. The memory model then rewrites it as a reusable procedure. It is told to remove names, contact details, addresses, account, order and booking numbers, amounts and message content and to write placeholders such as `<order number>` instead; as a model, it can miss one. It drops any step that sends something to an outside party unless that is the flow's purpose. The server refuses a result with card numbers, keys or links with logins. Unless **Remember sensitive topics** is on, a skill about a sensitive topic isn't saved.
+- **Preparing.** The server first removes known secret values from the draft. The memory model then rewrites it as a reusable procedure. It is told to remove names, contact details, addresses, account, order and booking numbers, amounts and message content and to write placeholders such as `<order number>` instead; as a model, it can miss one. It drops any step that sends something to an outside party unless that is the flow's purpose. The server refuses a result with card numbers, keys or links with logins. Unless **Include sensitive details** is on, a skill about a sensitive topic isn't saved.
 - **Who can write.** Only work the owner started, in chat, a task or a schedule, can save or patch a skill. Background event runs and subagents can read skills but not write them. Nothing is saved while saving is off.
 - **Owner edits.** Once the owner edits a skill in Settings, Pi can no longer save over it or patch it. The call is refused and tells Pi to ask the owner first.
 - **Limits.** A body holds up to 6,000 characters and a description 200. Memory keeps up to 40 skills. When it's full, the skill used least recently that the owner hasn't edited is dropped. A built-in guide's name can't be reused.

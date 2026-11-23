@@ -416,6 +416,7 @@ test(
           assert.ok(runtime, 'A turn must use its assigned synthetic runtime.');
           return runtime.runTurn({
             ...context,
+            background: true,
             reply(...args) {
               const operation = context.reply(...args);
               publicationOperations.push(operation);

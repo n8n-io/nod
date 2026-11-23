@@ -27,6 +27,10 @@ on:
         description: Only these scenarios, comma-separated (empty for the whole tier)
         type: string
         default: ''
+      capability:
+        description: Only scenarios with this capability, such as approvals or browser (empty for every capability)
+        type: string
+        default: ''
       budget:
         description: Optional spend limit in dollars; leave empty to run all attempts
         type: string
@@ -100,6 +104,7 @@ jobs:
           REPEAT: ${{ inputs.repeat || '3' }}
           MODEL: ${{ inputs.model || 'openai/gpt-6.1-sol' }}
           SCENARIO: ${{ inputs.scenario }}
+          CAPABILITY: ${{ inputs.capability }}
           BUDGET: ${{ inputs.budget }}
         shell: bash
         run: |
@@ -108,6 +113,7 @@ jobs:
           args=(--model "$MODEL" --judge anthropic/claude-sonnet-5-5 --tier "$TIER" --repeat "$REPEAT" --concurrency 4)
           if [ -n "$BUDGET" ]; then args+=(--budget "$BUDGET"); fi
           if [ -n "$SCENARIO" ]; then args+=(--scenario "$SCENARIO"); fi
+          if [ -n "$CAPABILITY" ]; then args+=(--capability "$CAPABILITY"); fi
           candidate="$(label "$GITHUB_REF_NAME")-$(git rev-parse --short=7 HEAD)"
           echo "candidate=$candidate" >> "$GITHUB_OUTPUT"
           base=""

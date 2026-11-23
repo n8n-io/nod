@@ -802,14 +802,18 @@ export function stressScenario(
             )
             .every(
               (t) =>
-                ['read_source', 'proactive_issue', 'manage_personal_context', 'task'].includes(
-                  t.name,
-                ) &&
+                [
+                  'read_source',
+                  'proactive_issue',
+                  'manage_personal_context',
+                  'memory',
+                  'task',
+                ].includes(t.name) &&
                 (t.name !== 'task' ||
                   ['start', 'update', 'list'].includes(
                     String((t.input as { action?: unknown })?.action),
                   )) &&
-                (t.name !== 'manage_personal_context' ||
+                (!['manage_personal_context', 'memory'].includes(t.name) ||
                   [
                     'memory_read',
                     'memory_find',

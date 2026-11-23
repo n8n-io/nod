@@ -14,14 +14,20 @@
 .settings-sidebar {
   display: flex;
   flex-direction: column;
-  flex: none;
+  flex: 0 0 232px;
   min-width: 0;
+  padding: 30px 18px 20px;
+  border-right: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 .settings-sidebar > header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  padding-inline: 12px;
+  margin-bottom: 28px;
 }
 .settings-sidebar h1,
 .settings-category > h2 {
@@ -35,45 +41,43 @@
 .settings-sidebar nav {
   display: flex;
   flex-direction: column;
+  gap: 4px;
 }
 .settings-nav-item {
   display: flex;
   align-items: center;
+  width: 100%;
+  gap: 10px;
+  min-height: 42px;
+  padding: 10px 12px;
   border: 0;
+  border-radius: var(--radius-full);
   color: var(--muted-foreground);
   background: transparent;
   text-align: left;
   font: inherit;
   font-size: 14px;
+  font-weight: 450;
   cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
 }
 .settings-nav-item > svg {
   flex: none;
 }
-@media (min-width: 641px) {
-  .settings-sidebar {
-    flex-basis: var(--side-width);
-    padding: var(--page-top) var(--side-inset) var(--side-bottom);
-    border-right: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
-    background: var(--sidebar);
-    overflow-y: auto;
-    scrollbar-width: thin;
-  }
-  .settings-sidebar > header {
-    height: var(--side-header);
-    padding-left: var(--side-header-inset);
-    margin-bottom: var(--side-header-gap);
-  }
-  .settings-sidebar h1 {
-    line-height: var(--side-header);
-  }
-  .settings-sidebar nav {
-    gap: var(--nav-row-spacing);
-  }
-  .settings-nav-item:nth-child(3),
-  .settings-nav-item:nth-child(6) {
-    margin-top: 12px;
-  }
+.settings-nav-item:hover {
+  background: var(--hover);
+  color: var(--foreground);
+}
+.settings-nav-item[aria-current='location'] {
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 550;
+}
+.settings-nav-item:nth-child(3),
+.settings-nav-item:nth-child(6) {
+  margin-top: 12px;
 }
 .settings-dirty-dot {
   width: 5px;
@@ -85,7 +89,9 @@
 }
 .settings-back.button {
   justify-content: flex-start;
+  gap: 10px;
   margin-top: auto;
+  padding-inline: 12px;
   color: var(--muted-foreground);
 }
 .settings-main {
@@ -521,28 +527,11 @@
     transform: translateY(0);
   }
 }
-@media (min-width: 641px) {
-  :root[data-desktop='true'] .settings-page::before {
-    content: '';
-    position: absolute;
-    bottom: 100%;
-    left: 0;
-    width: var(--side-width);
-    height: var(--desktop-titlebar-height);
-    border-right: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
-    background: var(--sidebar);
-    -webkit-app-region: drag;
-  }
-}
-@media (min-width: 641px) and (max-width: 900px) {
+@media (max-width: 900px) {
   .settings-sidebar {
     flex-basis: 208px;
+    padding-inline: 12px;
   }
-  :root[data-desktop='true'] .settings-page::before {
-    width: 208px;
-  }
-}
-@media (max-width: 900px) {
   .account-settings-body {
     padding-inline: 28px;
   }
@@ -552,10 +541,14 @@
     flex-direction: column;
   }
   .settings-sidebar {
+    flex: none;
     padding: 12px 16px 8px;
+    overflow: visible;
+    border-right: 0;
     border-bottom: 1px solid var(--border);
   }
   .settings-sidebar > header {
+    padding: 0;
     margin-bottom: 10px;
     padding-left: 78px;
     min-height: 36px;
@@ -570,25 +563,17 @@
     scrollbar-width: none;
   }
   .settings-nav-item {
+    width: auto;
     flex: none;
-    gap: 10px;
     padding: 8px 12px;
-    border-radius: var(--radius-full);
     font-size: 13px;
-    font-weight: 450;
     min-height: 36px;
   }
   .settings-nav-item > svg {
     display: none;
   }
-  .settings-nav-item:hover {
-    background: var(--hover);
-    color: var(--foreground);
-  }
-  .settings-nav-item[aria-current='location'] {
-    color: var(--accent);
-    background: var(--accent-soft);
-    font-weight: 550;
+  .settings-nav-item:nth-child(n) {
+    margin-top: 0;
   }
   .settings-sidebar > .tooltip-trigger:has(.settings-back) {
     position: absolute;
@@ -601,7 +586,6 @@
     left: 12px;
     min-height: 36px;
     margin: 0;
-    gap: 10px;
     padding-inline: 6px;
   }
   .account-settings-body {
@@ -669,6 +653,9 @@
 @media (prefers-reduced-motion: reduce) {
   .settings-page {
     animation: none;
+  }
+  .settings-nav-item {
+    transition: none;
   }
 }
 

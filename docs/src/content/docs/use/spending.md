@@ -31,7 +31,7 @@ Sign-ins and card submissions open the saved Vault item when it is still availab
 
 To review or change [standing instructions](/trust/approvals/#standing-instructions), [rules](/trust/approvals/#your-rules) or task check-ins, ask Nod in chat.
 
-Chat messages don't include cost or action receipts. Review spending and app actions in **Usage**. On **Scheduled**, an enabled recurring schedule shows its projected monthly cost once there's priced usage to base it on, and its details show its runs and their recorded costs. A new schedule's projection uses your other schedules' recent runs, your recent requests, or the request that set it up, until it has finished runs of its own. When Nod creates a recurring schedule or changes its timing, its reply states the projection. Plan usage and unpriced runs have no recorded cost amount. If you switch a schedule from a ChatGPT plan to a priced API model, its forecast uses recorded tokens. A run with an unknown supporting charge, such as a review, cannot be used for the forecast.
+Chat messages don't include cost or action receipts. Review spending and app actions in **Usage**. On **Scheduled**, an enabled recurring schedule shows its projected monthly cost once there's priced usage to base it on, and its details show its runs and their recorded costs. A new schedule's projection uses your other schedules' recent runs, your recent tasks, your recent requests, or the request that set it up, until it has finished runs of its own. When Nod creates a recurring schedule or changes its timing, its reply states the projection. Plan usage and unpriced runs have no recorded cost amount. If you switch a schedule from a ChatGPT plan to a priced API model, its forecast uses recorded tokens. A run with an unknown supporting charge, such as a review, cannot be used for the forecast.
 
 With an API model selected, select this month's total to see a chart and a forecast, such as "On track for $12.40". It also says how much was background work: source checks, schedules and tasks Nod started, plus work that runs outside any of them, such as email checks, memory upkeep and writing style. Point to or select a day on the chart to see that day’s spend and the total so far. You can also focus the chart and use the arrow keys. Every app action is recorded, reads included.
 
@@ -108,7 +108,7 @@ Conservative bounds can pause preparation before its recorded spending reaches t
 
 ## Task check-ins
 
-A task checks in with you when its spending since your last message to it passes the check-in amount, $5 by default. Nod stops before its next step. It states the cost and what continuing would do, then asks whether to keep going. It includes a completed result only when that helps your decision and you can inspect the result.
+A task checks in with you when its spending since your last message to it passes the check-in amount, $5 by default. Nod stops before its next step. It first shows everything useful it found so far, then states what the task has spent at the moment it asks and what continuing would add, and asks whether to keep going.
 
 - Say yes, and the task continues until it spends that amount again.
 - Say no, and Nod stops the task.

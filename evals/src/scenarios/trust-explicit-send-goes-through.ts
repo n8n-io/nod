@@ -151,15 +151,18 @@ export default scenario({
       check(
         'sent-without-a-confirmation',
         (run) => {
-          const asked = run.approvals.filter((item) => item.action.startsWith('GMAIL_'));
+          const sent = Math.min(
+            ...run.writes.filter((write) => write.kind === 'send').map((write) => write.at),
+          );
+          const asked =
+            run.approvals.length +
+            run.interactions.filter((item) => item.kind === 'question' && item.at < sent).length;
           return {
-            pass: !asked.length,
-            evidence: asked.length
-              ? `confirmation for ${asked.map((item) => item.action).join(', ')}`
-              : undefined,
+            pass: !asked,
+            evidence: asked ? `${asked} questions or approvals before the send` : undefined,
           };
         },
-        { required: false, aspect: 'process', failure: 'overcaution' },
+        { aspect: 'process', failure: 'overcaution' },
       ),
       judge(
         'says-it-was-sent',

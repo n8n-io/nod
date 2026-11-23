@@ -378,6 +378,19 @@ test(
           await expectMonthly(0.01);
           pricing = { ...original, input: 2.2 };
           await expectMonthly((1.94 + 0.24) / 2);
+
+          const taskTurn = await thread.enqueueTurn('Synthetic task sample', {
+            source: 'task',
+            background: true,
+          });
+          sampleTurns.push(taskTurn);
+          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [taskTurn]);
+          await db.pool.query(
+            `INSERT INTO model_usage(id,owner_id,turn_id,cost_usd,details)
+             VALUES($1,$2,$3,0.1,'{"category":"agent","inputTokens":50000}')`,
+            [randomUUID(), ownerId, taskTurn],
+          );
+          await expectMonthly(0.11);
         } finally {
           await request('DELETE', `/api/schedules/${schedule.id}`);
           await db.pool.query('DELETE FROM model_usage WHERE turn_id=ANY($1::uuid[])', [
@@ -1793,12 +1806,13 @@ test(
             return (await db.pool.query('SELECT prompt FROM turns WHERE id=$1', [run!.turnId]))
               .rows[0].prompt as string;
           };
-          const onTime = await create({ cron: '0 8 * * *' });
+          const title = `${'x'.repeat(119)}\u{1F600} digest`;
+          const onTime = await create({ cron: '0 8 * * *', title });
           clock = new Date(onTime.nextRun!);
           await deliver([await jobFor(onTime.id)]);
           const base = await promptOf(onTime.id);
           assert.doesNotMatch(base, /This run was due/);
-          const late = await create({ cron: '0 8 * * *' });
+          const late = await create({ cron: '0 8 * * *', title });
           clock = new Date(new Date(late.nextRun!).getTime() + 2 * 86_400_000 + 36_720_000);
           await deliver([await jobFor(late.id)]);
           const prompt = await promptOf(late.id);
@@ -1829,12 +1843,14 @@ test(
           assert.deepEqual(
             {
               type: first?.type,
+              title: first?.title,
               outcome: first?.outcome,
               dueAt: first?.dueAt,
               skipped: first?.skipped.map((skip: { at: string; reason: string }) => skip.reason),
             },
             {
               type: 'schedule-run',
+              title: 'x'.repeat(119),
               outcome: 'ran',
               dueAt: '2035-11-09T08:00:00.000Z',
               skipped: ['stopped', 'stopped'],

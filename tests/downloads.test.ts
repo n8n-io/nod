@@ -1194,6 +1194,13 @@ test('Composio file links that are private, insecure, rebinding or oversized are
     }),
   );
   assert.equal(requests, 1);
+  const refused = (await settled(
+    await createComposioFiles({
+      resolver: publicResolver,
+      request: async () => ({ status: 403, headers: {}, body: new Uint8Array() }),
+    })({ file: fileObject() }, AbortSignal.timeout(1000)),
+  )) as { file: { error?: string } };
+  assert.match(refused.file.error ?? '', /\(HTTP 403\)/);
   for (const size of [0, fileBytes + 1])
     await failed(
       createComposioFiles({

@@ -98,10 +98,10 @@ function VenueCard({ venue, action }: { venue: Venue; action?: ReactNode }) {
       <div className="booking-content">
         <div className="booking-name">
           <div className="booking-title">
-            {!hasPhotos && !venue.url && (
+            {!hasPhotos && (
               <span className="booking-symbol">
                 <CalendarClock size={16} aria-hidden="true" />
-                {action}
+                {!venue.url && action}
               </span>
             )}
             <h4>{venue.name}</h4>

@@ -261,8 +261,11 @@ export function loadAppCatalog(directory = fileURLToPath(new URL('../apps/', imp
           throw new Error(
             `App ${entry.name}: fixed apps need one MCP server; owner-supplied endpoints must omit mcp.json.`,
           );
-        const selected = mcp.mcpServers[!instance ? connection.server : ''];
-        if (!selected || selected.type !== 'streamable-http')
+        const server = !instance ? connection.server : '';
+        const selected = Object.hasOwn(mcp.mcpServers, server) ? mcp.mcpServers[server] : undefined;
+        if (!selected)
+          throw new Error(`App ${entry.name}: mcp.json has no server named ${server}.`);
+        if (selected.type !== 'streamable-http')
           throw new Error(`App ${entry.name}: the selected server must use streamable-http.`);
         endpoint = publicAddress(selected.url, entry.name);
         if (Object.keys(selected.headers ?? {}).length)
@@ -311,7 +314,11 @@ export function loadAppCatalog(directory = fileURLToPath(new URL('../apps/', imp
       ...(icon ? { icon } : {}),
       ...(skills ? { skills } : {}),
     };
-    if (!definition.instancePath) appAccessSchema.parse(appAccessPath(definition));
+    if (!definition.instancePath) {
+      const access = appAccessSchema.safeParse(appAccessPath(definition));
+      if (!access.success)
+        throw new Error(`App ${entry.name}: invalid connection: ${access.error.message}`);
+    }
     result.set(manifest.name, definition);
   }
   return result;

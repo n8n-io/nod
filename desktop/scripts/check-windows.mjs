@@ -89,9 +89,7 @@ if (process.env.WORKSPACE_CONTAINER) {
     await execute('edit', { path: 'notes/report π.txt', edits: [{ oldText: 'beta', newText: 'gamma' }] });
     assert.equal(await execute('read', { path: workspace.path + '/notes/report π.txt' }), 'alpha gamma');
     assert.equal((await provider.readArtifact(id, workspace.path + '/notes/report π.txt', 1024)).toString('utf8'), 'alpha gamma');
-    assert((await execute('ls', {})).split('\\n').includes('notes/'));
-    assert.equal(await execute('ls', { path: 'notes' }), 'report π.txt');
-    assert.equal(await execute('find', { path: 'notes', pattern: '*.txt' }), 'report π.txt');
+    assert.equal((await execute('bash', { command: 'find notes -type f' })).trim(), 'notes/report π.txt');
     assert.equal((await execute('bash', { command: 'pwd' })).trim(), workspace.path);
     await assert.rejects(access(resolve(workspace.path)), { code: 'ENOENT' });
     for (const forward of [false, true]) {

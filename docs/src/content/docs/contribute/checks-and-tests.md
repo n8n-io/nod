@@ -122,9 +122,49 @@ Keep independent browser cases in the matching test files so they can run in sep
 
 Wait for a controlled frame to finish loading before checking an old control binding. A reload can still show the previous document while navigation is pending.
 
+## End-to-end tests
+
+[`tests/e2e.test.ts`](https://github.com/n8n-io/nod/blob/main/tests/e2e.test.ts) checks what a user feels when they send several messages, steer and stop work, or Nod restarts. It starts the real Nod in a child process: the server, the thread worker, the Pi runtime, task sessions, schedules and the trust check, on a disposable schema in the PostgreSQL database at `TEST_DATABASE_URL`. Only the model is scripted, and there is no memory or trust model, so an outside action always asks. The run needs no key and gives the same result every time. The test talks to Nod over its HTTP API, like the web app, and restarts it after a real `SIGKILL`.
+
+```mermaid
+flowchart LR
+  test([Scenario]):::accent -- messages, replies, Stop --> nod[Real Nod<br/>in a child process]
+  nod --> pi[Pi runtime]
+  pi -- each request --> model[Scripted model]:::muted
+  nod --> db[(Disposable<br/>schema)]
+  test -- invariants --> db
+```
+
+The scripted model behaves like a real one in the ways that matter for the harness. It reads each owner message from the request data and acknowledges every new message with a reaction before it starts work, so steered messages pile up the way they do with a live model. Its tools go through `codemode`.
+
+| Message starts with | What the scripted model does                                                            |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| `task:`             | Starts a task for that message. The task finishes with `Done:` and its instruction      |
+| `hold:`             | Waits until the scenario calls `release` with the same text, or the turn stops          |
+| Anything else       | Answers `Answer:` and the message. A scheduled run sends the answer with `send_message` |
+
+After each scenario, `nod.violations()` checks the invariants a user relies on:
+
+- No turn stays queued or running, and no task stays open.
+- No turn failed, apart from the ones the scenario expects.
+- Each task's first turn starts from the owner message it serves, and its title matches that message.
+- Every owner message gets a reply, a reaction or a task.
+- No owner message runs more than once.
+
+To add a scenario, add a subtest to `tests/e2e.test.ts`. Drive Nod with `send`, `release`, `stopTask`, `stopAll`, `crash` and `restart`, check the user-visible result, then assert that `nod.violations()` is empty. A scenario must fail on the code without the fix it protects: run it against `main` once before you rely on it. Set `NOD_E2E_KEEP=1` to keep the data folder with the saved Pi sessions after a run.
+
+Point `TEST_DATABASE_URL` at a disposable PostgreSQL, never your normal local database:
+
+```sh title="Terminal"
+docker run -d --rm --name nod-e2e-db -p 127.0.0.1:55432:5432 -e POSTGRES_USER=nod -e POSTGRES_PASSWORD=nod postgres:17-alpine
+TEST_DATABASE_URL=postgres://nod:nod@127.0.0.1:55432/nod pnpm exec tsx --test tests/e2e.test.ts
+```
+
+CI runs it with the other tests whenever a change reaches the code it imports. Capability evals grade related outcomes with a real model every night, such as `two-requests-flight-then-tickets` for two requests in a row and `send-it-after-a-draft` for a send that needs no second question. See [evals](/contribute/evals/).
+
 ## Manual acceptance harness
 
-[`scripts/e2e-nod.ts`](https://github.com/n8n-io/nod/blob/main/scripts/e2e-nod.ts) runs manual scenarios with a configured model key, disposable local database schema, and isolated browser and workspace containers. The harness supplies memory and classification curators. Its onboarding and trust reviews use the selected model at its lightest effort, as production does. This is the first advertised `off`, `minimal`, `low`, or `medium` level, or the model's first advertised level if none of those is supported. You can check typed approval, decline, and expiry through the configured application path. Automated tests use synthetic curators and actions. They never call a live model or connected account.
+[`scripts/e2e-nod.ts`](https://github.com/n8n-io/nod/blob/main/scripts/e2e-nod.ts) runs manual scenarios with a configured model key, disposable local database schema, and isolated browser and workspace containers. The harness supplies memory and classification curators. Its onboarding and trust reviews use the selected model at its lightest effort, as production does. This is the first advertised `off`, `minimal`, `low`, or `medium` level, or the model's first advertised level if none of those is supported. You can check typed approval, decline, and expiry through the configured application path. Without a `nod-workspace` container, set `NOD_E2E_NETWORK` to a Docker network you created for the harness and `NOD_E2E_WORKSPACE_IMAGE` to a workspace image, such as `nod-eval-workspace:latest`. Automated tests use synthetic curators and actions. They never call a live model or connected account.
 
 ## Mac guest protection
 
@@ -177,7 +217,7 @@ CI reads the changed files on pull requests, merge queue checks and pushes to `m
 
 The required **Checks, tests and build** result keeps its existing name. One Linux runner installs dependencies once. It runs formatting, Oxlint, type checks, desktop contracts, eval contracts and application tests in parallel. A failed command fails the result. Failed or incomplete check selection also fails the result. No branch protection change is needed.
 
-The runner builds the clients before application tests. It uses the runner's Chromium and a disposable PostgreSQL service. Each test file has its own process. Up to two files run at once. Independent native browser control cases also run in parallel, with separate profiles and servers. Recorded file times put the slowest files first. Without recorded times, file size sets the order. Successful runs cache file paths and times. Test results and private content do not enter this cache.
+The runner builds the clients before application tests. It uses the runner's Chromium and a disposable PostgreSQL service. Each test file has its own process. Up to eight files run at once. Independent native browser control cases also run in parallel, with separate profiles and servers. Recorded file times put the slowest files first. Without recorded times, file size sets the order. Successful runs cache file paths and times. Test results and private content do not enter this cache.
 
 Pull requests and merge queue checks run the selected Linux checks and security scans. Native Mac, Windows installer and container deployment acceptance run on `main` when their inputs change. Daily and manual runs use every check. The desktop publication rehearsal also runs outside pull requests and the merge queue. Other selected desktop contracts stay on the PR path. Release packaging requires successful CI for the exact source revision. Release workflows also check the packaged apps before publication.
 

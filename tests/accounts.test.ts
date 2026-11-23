@@ -929,11 +929,7 @@ test('decision trust never calls an LLM for uncertainty, missing results or fail
     },
     review: async () => assert.fail('Missing configuration must not start an LLM request.'),
   });
-  assert.deepEqual(await unavailable(instructions, input), {
-    run: false,
-    reviewRequired: true,
-    reviewUnavailable: true,
-  });
+  assert.equal(await unavailable(instructions, input), undefined);
   for (const output of [
     undefined,
     {},
@@ -947,11 +943,7 @@ test('decision trust never calls an LLM for uncertainty, missing results or fail
       decisions: { check: async () => output },
       review: async () => assert.fail('Missing results must not select another model.'),
     });
-    const refused = await missing(instructions, input);
-    assert.equal(Object(refused).run, false);
-    assert.equal(Object(refused).reviewRequired, true);
-    assert.equal(Object(refused).reviewUnavailable, true);
-    assert.equal(trustBasis(refused, withOwnerIds(words, ['message'])), undefined);
+    assert.equal(await missing(instructions, input), undefined);
   }
   const unscored = createTrustReview({
     decisions: { check: async () => ({ answer: 'yes' }) },
@@ -1016,22 +1008,11 @@ test('batched trust validates all answers, records one request, and refuses conf
         resolve: async () => ({ provider, key: 'synthetic-batch-key' }),
         fetch: async (_url, init) => {
           const body = JSON.parse(String(init?.body));
-          const questions: Array<{ name: string; instructions: string }> =
-            provider === 'openai'
-              ? body.questions
-              : Object.entries(body.questions).map(([name, question]) => ({
-                  name,
-                  ...Object(question),
-                }));
-          assert.equal(questions.length, 12);
-          const named = (name: string) => {
-            const question = questions.find((question) => question.name === name);
-            assert.ok(question);
-            return question;
-          };
-          assert.doesNotMatch(named('trust').instructions, /Complete permission policy/);
-          assert.match(named('permission').instructions, /Complete permission policy/);
-          assert.doesNotMatch(named('preparation').instructions, /Complete permission policy/);
+          const questions = provider === 'openai' ? body.questions : Object.values(body.questions);
+          assert.equal(questions.length, 11);
+          assert.doesNotMatch(questions[0].instructions, /Complete permission policy/);
+          assert.match(questions[2].instructions, /Complete permission policy/);
+          assert.doesNotMatch(questions[1].instructions, /Complete permission policy/);
           const answers = [
             {
               name: 'trust',
@@ -1052,7 +1033,6 @@ test('batched trust validates all answers, records one request, and refuses conf
               probabilities: { true: conflict ? 0 : 1, false: conflict ? 1 : 0 },
             },
             ...[
-              'messageReview',
               'scope',
               'constraints',
               'time',
@@ -1067,7 +1047,7 @@ test('batched trust validates all answers, records one request, and refuses conf
               choice: provider === 'openai' ? false : 'false',
               probabilities: { true: 0, false: 1 },
             })),
-          ].slice(0, missing ? 1 : 12);
+          ].slice(0, missing ? 1 : 11);
           return Response.json({
             answers:
               provider === 'openai'
@@ -1141,7 +1121,7 @@ test('pure decision checks bind the evaluated model, preserve target checks and 
     }),
     fetch: async (_url, init) => {
       const request = JSON.parse(String(init?.body));
-      assert.equal(Object.keys(request.questions).length, 12);
+      assert.equal(Object.keys(request.questions).length, 11);
       assert.deepEqual(request.state.action, input.action);
       assert.deepEqual(request.state.userMessages, input.userMessages);
       assert.equal(request.provider.allow_fallbacks, false);
@@ -1211,14 +1191,10 @@ test('pure decision checks bind the evaluated model, preserve target checks and 
   source = 'message:0';
   input.action.name = 'send_email';
   probabilities = {};
-  for (const returnedModel of ['perplexity/pplx-decider-v1.3', undefined]) {
-    served = returnedModel;
-    await assert.rejects(allowed(), {
-      code: 'decision_model_mismatch',
-      reviewRequired: true,
-      reviewUnavailable: true,
-    });
-  }
+  served = 'perplexity/pplx-decider-v1.3';
+  assert.equal(await allowed(), undefined);
+  served = undefined;
+  assert.equal(await allowed(), undefined);
   served = 'perplexity/pplx-decider-v1.2-20261016';
   omit = 'targets';
   await assert.rejects(allowed());
@@ -1962,6 +1938,7 @@ describe('account routes', () => {
     key?: string,
     onboardingMissing?: () => Promise<'brain' | 'email' | null>,
     model?: Parameters<typeof createAccountSession>[0]['model'],
+    extra: Partial<Parameters<typeof createAccountSession>[0]> = {},
   ) {
     let record: AccountSettings = {
       theme: 'system',
@@ -2021,6 +1998,7 @@ describe('account routes', () => {
       onTraces,
       onboardingMissing,
       model,
+      ...extra,
     }).register(app);
     await app.ready();
     return { app, calls, activity, record: () => record };
@@ -2068,6 +2046,43 @@ describe('account routes', () => {
     });
     assert.ok(reopened.statusCode >= 400);
     assert.equal(f.record().onboardingCompleted, true);
+  });
+
+  test('setup failures keep their reason without secrets and are logged', async (t) => {
+    const reason = 'The local computer could not start: Docker daemon is not running';
+    const failure = new Error(`${reason} (Bearer synthetic-secret-token-0123456789)`);
+    const preparing = await fixture(undefined, undefined, undefined, async () => null, undefined, {
+      async prepare() {
+        throw failure;
+      },
+    });
+    const verifying = await fixture(undefined, undefined, undefined, async () => {
+      throw failure;
+    });
+    t.after(() => Promise.all([preparing.app.close(), verifying.app.close()]));
+    const logged = t.mock.method(console, 'error', () => {});
+    const send = (f: typeof preparing, method: 'PATCH' | 'POST', url: string, payload: object) =>
+      f.app.inject({ method, url, headers: { origin }, payload });
+    const responses = [
+      await send(preparing, 'PATCH', '/api/account', { onboardingCompleted: true }),
+      await send(preparing, 'POST', '/api/account/prepare', {}),
+      await send(verifying, 'PATCH', '/api/account', { onboardingCompleted: true }),
+    ];
+    assert.deepEqual(
+      responses.map((response) => [response.statusCode, response.json().error]),
+      [
+        [503, `Setup could not be completed. ${reason} ([redacted])`],
+        [503, `Setup could not be completed. ${reason} ([redacted])`],
+        [503, `Could not verify setup. ${reason} ([redacted])`],
+      ],
+    );
+    assert.deepEqual(
+      logged.mock.calls.map((call) => JSON.parse(String(call.arguments[0])).event),
+      ['setup_failed', 'setup_failed', 'setup_failed'],
+    );
+    const written = JSON.stringify(logged.mock.calls.map((call) => call.arguments));
+    assert.doesNotMatch(written, /synthetic-secret-token|Docker daemon/);
+    assert.equal(verifying.record().onboardingCompleted, false);
   });
 
   test('usage data stays off until the owner opts in and the environment switch always wins', async (t) => {
@@ -3184,6 +3199,37 @@ test('server model credentials reject invalid destinations and cloud accounts be
     }).credentials.compatible,
     { type: 'endpoint', url: 'http://192.168.1.5:8080/v1', key },
   );
+});
+
+test('adding a model key keeps the service reason and removes the key', async () => {
+  const { createModelService } = await import('../src/server/models.ts');
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const key = 'fixture-add-key-reason';
+  const secret = randomBytes(32);
+  for (const [provider, status] of [
+    ['openrouter', 429],
+    ['mistral', 503],
+  ] as const) {
+    const service = createModelService({
+      database: {} as pg.Pool,
+      ownerId: 'fixture-add-key-owner',
+      keyStore: { id: 'fixture', configured: true, getKey: async () => secret },
+      backend: createPiModelBackend({
+        fetch: async () =>
+          Response.json(
+            { message: `Synthetic ${key}` },
+            { status, headers: { 'content-type': 'application/json' } },
+          ),
+      }),
+      origin: 'http://127.0.0.1:4310',
+    });
+    await assert.rejects(service.addKey(provider, key), (error: Error) => {
+      assert.ok(!error.message.includes(key));
+      assert.ok(error.message.includes(`HTTP ${status}`));
+      assert.match(error.message, /Synthetic \[redacted\]/);
+      return true;
+    });
+  }
 });
 
 test('secret redaction finishes for long malformed Basic credentials', async () => {
@@ -6262,6 +6308,28 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       'reconnect',
     );
     assert.equal(duplicated.configured, false);
+  });
+});
+
+test('API errors keep the server reason or else the status, never a response body', async (t) => {
+  const { responseError } = await import('../src/web/lib/api.ts');
+  const { downloadExport } = await import('../src/web/lib/download.ts');
+  const failure = (body: string, status: number, type: string) =>
+    responseError(new Response(body, { status, headers: { 'Content-Type': type } }));
+  const json = await failure('{"message":"Disk is full"}', 500, 'application/json');
+  assert.equal(json.message, 'Disk is full');
+  assert.equal(json.status, 500);
+  const preferred = await failure('{"error":"Too large","message":"x"}', 413, 'application/json');
+  assert.equal(preferred.message, 'Too large');
+  const proxy = await failure('<html>PRIVATE_BODY_CANARY</html>', 502, 'text/html');
+  assert.equal(proxy.message, 'The request could not be completed (HTTP 502).');
+  assert.equal(proxy.status, 502);
+  t.mock.method(globalThis, 'fetch', async () =>
+    Response.json({ error: 'The export is too large.' }, { status: 413 }),
+  );
+  await assert.rejects(downloadExport('/api/memory/export', 'memory.md'), {
+    message: 'The export is too large.',
+    status: 413,
   });
 });
 

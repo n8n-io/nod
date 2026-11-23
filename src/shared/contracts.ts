@@ -17,7 +17,7 @@ export type AgentReactionResult =
   | { status: 'updated' | 'unchanged' }
   | {
       status: 'skipped';
-      reason: 'cooldown' | 'already_reacted' | 'unavailable' | 'unsupported' | 'delivery_failed';
+      reason: 'already_reacted' | 'unavailable' | 'unsupported' | 'delivery_failed';
     };
 export interface Message {
   id: string;
@@ -40,7 +40,7 @@ export interface Message {
   choiceAnswer?: { choiceIds: string[]; text?: string };
   approval?: MessageApproval;
   cardAnswer?: true;
-  work?: { kind: 'task' | 'schedule'; id: string; title: string };
+  work?: { kind: 'task' | 'schedule'; id: string; title: string; turnId?: string };
 }
 export type ApprovalState = 'pending' | 'working' | 'done' | 'declined' | 'expired' | 'uncertain';
 export interface MessageApproval {
@@ -48,11 +48,13 @@ export interface MessageApproval {
   state: ApprovalState;
   failure?: string;
   title: string;
+  decline?: string;
   app: string;
   slug: string;
   fields?: Array<{ label: string; value: string }>;
   body?: string;
   bodyCut?: true;
+  cardQuestion?: string;
 }
 export interface SubmitMessageResponse {
   threadId: string;
@@ -289,7 +291,7 @@ export interface MessageHistoryPage {
   hasMore: boolean;
 }
 export interface CurrentBrowser {
-  threadId: string;
+  browserId: string;
   title: string;
   status: string;
   lastActivityAt: string;

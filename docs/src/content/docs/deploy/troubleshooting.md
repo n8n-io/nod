@@ -145,7 +145,7 @@ Return to **Apps** and select **Connect** again. Keep the sign-in page and any w
 
 If the connection service refuses the request, the sign-in page names its reason and HTTP status, such as `public_budget_exceeded` and `HTTP 429`. If the connection service is unavailable or reports a limit, try again later. If the problem persists, [report a bug with a diagnostic report](/deploy/troubleshooting/#report-a-bug-with-a-diagnostic-report).
 
-A sign-in link expires after 10 minutes. The diagnostic report then records the step where the sign-in stopped: opening the sign-in page, starting the sign-in, approving access in the app, or returning to Nod. A sign-in that returns after its link expired is recorded as a timeout.
+A sign-in link expires after 10 minutes. The diagnostic report then records the step where the sign-in stopped: opening the sign-in page, starting the sign-in, pairing the browser with the connection service, or signing in and approving access in the app. On a server you host, the last two are recorded as one step. A sign-in that expires while Nod is running, or returns after its link expired, is recorded once as a timeout.
 
 ### An app tool fails with HTTP 403
 

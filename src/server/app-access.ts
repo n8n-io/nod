@@ -4,6 +4,7 @@ import {
   appCliArgvSchema,
   appApiKeyHeaderSchema,
   appOAuthMetadataSchema,
+  appScopeMaxLength,
 } from '../shared/app-definitions.ts';
 
 const remoteSpec = String.raw`(?:https|git\+https):\/\/[^\s]+`;
@@ -54,7 +55,7 @@ export const appAccessSchema = z.discriminatedUnion('kind', [
       testMethod: z.enum(['GET', 'POST']).optional(),
       testBody: z.json().optional(),
       apiKeyHeader: appApiKeyHeaderSchema.optional(),
-      scope: z.string().min(1).max(500).optional(),
+      scope: z.string().min(1).max(appScopeMaxLength).optional(),
       clientIdRequired: z.boolean().optional(),
       oauth: appOAuthMetadataSchema.optional(),
     })
@@ -70,7 +71,7 @@ export const appAccessSchema = z.discriminatedUnion('kind', [
     endpoint: z.url().max(2048),
     auth: z.enum(['bearer', 'x-api-key', 'oauth']).default('bearer'),
     testPath: z.string().max(500).optional(),
-    scope: z.string().trim().min(1).max(500).optional(),
+    scope: z.string().trim().min(1).max(appScopeMaxLength).optional(),
     clientIdRequired: z.boolean().optional(),
   }),
   z.object({

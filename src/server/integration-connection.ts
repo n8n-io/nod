@@ -54,10 +54,10 @@ export async function verifyIntegrationCompletion(options: {
     options.ownerId,
     pending.verifyOwner || query.pendingAccountId ? { verifyOwner: true } : undefined,
   );
-  if (!remote.active || remote.service !== pending.service)
-    throw new IntegrationError('App sign-in is incomplete. Connect again.', 409);
   if (query.pendingAccountId && query.pendingAccountId !== query.accountId)
     options.verifiedAccount?.(query.accountId);
+  if (!remote.active || remote.service !== pending.service)
+    throw new IntegrationError('App sign-in is incomplete. Connect again.', 409);
   if (
     (pending.originalEmail !== undefined &&
       (!pending.originalEmail ||

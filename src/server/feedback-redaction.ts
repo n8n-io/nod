@@ -139,7 +139,7 @@ export function createFeedbackRedactor(options: { secrets: string[]; profile: Pe
       if (
         !domain.isIcann &&
         !domain.isPrivate &&
-        !/\.(?:internal|local|localhost|test|invalid)$/i.test(match[1])
+        !/\.(?:helsinki|internal|local|localhost|test|invalid)$/i.test(match[1])
       )
         return;
       const tailPattern = new RegExp(linkTail);

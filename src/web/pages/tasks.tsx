@@ -196,6 +196,7 @@ export function TaskCard({
       ? task.now || 'Waiting for your answer'
       : taskHeadline(task);
   const showLive = live && (task.status === 'working' || task.status === 'queued') ? live : null;
+  const shownInChat = inChat && ['needs_you', 'done', 'cancelled'].includes(task.status);
   return (
     <article
       ref={card}
@@ -235,7 +236,7 @@ export function TaskCard({
             </span>
             {chevron}
           </span>
-          {!showLive && (
+          {!showLive && !shownInChat && (
             <span className="task-preview-line">
               <Markdown allowedElements={[]} unwrapDisallowed>
                 {line}

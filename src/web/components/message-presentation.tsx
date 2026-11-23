@@ -200,11 +200,22 @@ function Diagram({ visual }: { visual: Visual<'diagram'> }) {
   for (const level of levels) {
     const ids = [...rows].filter(([, row]) => row === level).map(([id]) => id);
     ids.forEach((id, index) =>
-      points.set(id, { x: 40 + ((index + 0.5) * (width - 80)) / ids.length, y: level * 116 + 56 }),
+      points.set(id, { x: 40 + ((index + 0.5) * (width - 80)) / ids.length, y: level * 140 + 64 }),
     );
   }
   const scale = availableWidth ? Math.min(1, availableWidth / width) : 1;
-  const height = levels.length * 116;
+  const height = levels.length * 140;
+  const edgeLabels: Array<{ key: number; text: string; x: number; y: number }> = [];
+  const railTargets = [
+    ...new Set(
+      visual.edges
+        .filter(
+          (edge) =>
+            edge.from !== edge.to && points.get(edge.to)!.y - points.get(edge.from)!.y !== 140,
+        )
+        .map((edge) => edge.to),
+    ),
+  ];
   const node = selected ? nodes.get(selected) : undefined;
   const connections = visual.edges.filter((edge) => edge.from === selected || edge.to === selected);
   return (
@@ -229,15 +240,31 @@ function Diagram({ visual }: { visual: Visual<'diagram'> }) {
               {visual.edges.map((edge, index) => {
                 const a = points.get(edge.from)!,
                   b = points.get(edge.to)!;
-                const y1 = a.y + 34,
-                  y2 = b.y - 36;
-                const rail = width - 12 - (index % 6) * 5;
-                const path =
-                  edge.from === edge.to
-                    ? `M ${a.x + 78} ${a.y - 14} H ${a.x + 98} V ${a.y + 50} H ${a.x} V ${a.y + 36}`
-                    : b.y - a.y === 116
-                      ? `M ${a.x} ${y1} C ${a.x} ${(y1 + y2) / 2}, ${b.x} ${(y1 + y2) / 2}, ${b.x} ${y2}`
-                      : `M ${a.x} ${y1} V ${y1 + 16} H ${rail} V ${y2 - 16} H ${b.x} V ${y2}`;
+                const y1 = a.y + 42,
+                  y2 = b.y - 44;
+                const slot = railTargets.indexOf(edge.to);
+                const rail = width - 12 - (slot % 6) * 6;
+                const loop = edge.from === edge.to;
+                const direct = b.y - a.y === 140;
+                const path = loop
+                  ? `M ${a.x + 78} ${a.y - 14} H ${a.x + 98} V ${a.y + 58} H ${a.x} V ${a.y + 44}`
+                  : direct
+                    ? `M ${a.x} ${y1} C ${a.x} ${(y1 + y2) / 2}, ${b.x} ${(y1 + y2) / 2}, ${b.x} ${y2}`
+                    : `M ${a.x} ${y1} V ${y1 + 16} H ${rail} V ${y2 - 16 - (slot % 4) * 6} H ${b.x} V ${y2}`;
+                const crowded = (key: 'from' | 'to', id: string) =>
+                  visual.edges.filter(
+                    (other) =>
+                      other[key] === id &&
+                      points.get(other.to)!.y - points.get(other.from)!.y === 140,
+                  ).length > 1;
+                const along = crowded('to', edge.to) ? (crowded('from', edge.from) ? 0 : 0.3) : 0.7;
+                if (edge.label && direct && along)
+                  edgeLabels.push({
+                    key: index,
+                    text: edge.label,
+                    x: a.x + (b.x - a.x) * along,
+                    y: (y1 + y2) / 2,
+                  });
                 return (
                   <path
                     key={index}
@@ -248,6 +275,15 @@ function Diagram({ visual }: { visual: Visual<'diagram'> }) {
                 );
               })}
             </svg>
+            {edgeLabels.map((label) => (
+              <span
+                key={label.key}
+                className="diagram-edge-label"
+                style={{ left: label.x, top: label.y }}
+              >
+                {label.text}
+              </span>
+            ))}
             {visual.nodes.map((item) => {
               const point = points.get(item.id)!;
               return (
@@ -255,12 +291,13 @@ function Diagram({ visual }: { visual: Visual<'diagram'> }) {
                   key={item.id}
                   type="button"
                   className="diagram-node"
-                  style={{ left: point.x - 78, top: point.y - 34 }}
+                  style={{ left: point.x - 78, top: point.y - 42 }}
                   aria-pressed={item.id === selected}
                   title={item.label}
                   onClick={() => setSelected(item.id)}
                 >
                   <span>{item.label}</span>
+                  {item.detail && <small>{item.detail}</small>}
                 </button>
               );
             })}

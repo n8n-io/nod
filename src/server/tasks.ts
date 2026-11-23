@@ -792,6 +792,8 @@ export function createTasks(options: {
       CREATE INDEX IF NOT EXISTS tasks_owner ON tasks(owner_id,state,updated_at DESC);
       ALTER TABLE turns ADD COLUMN IF NOT EXISTS task_id uuid REFERENCES tasks(id);
       CREATE INDEX IF NOT EXISTS turns_task ON turns(task_id) WHERE task_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS turns_task_message ON turns(message_id) WHERE task_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS tasks_message ON tasks(owner_id,message_id);
     `);
   }
 

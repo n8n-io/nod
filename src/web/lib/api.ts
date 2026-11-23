@@ -167,10 +167,10 @@ async function request<T>(
   }
 }
 
-async function requireOk(response: Response, signal?: AbortSignal) {
-  if (response.ok) return;
+export async function responseError(response: Response, signal?: AbortSignal) {
   const body = (await response.json().catch(() => null)) as {
     error?: unknown;
+    message?: unknown;
     step?: unknown;
     workspaces?: unknown;
   } | null;
@@ -188,12 +188,19 @@ async function requireOk(response: Response, signal?: AbortSignal) {
     )
       ? body.workspaces.map(({ id, name }) => ({ id, name }))
       : undefined;
-  throw new ApiError(
-    typeof body?.error === 'string' ? body.error : 'The request could not be completed. Try again.',
+  const reason = [body?.error, body?.message].find(
+    (value): value is string => typeof value === 'string' && !!value.trim(),
+  );
+  return new ApiError(
+    reason ?? `The request could not be completed (HTTP ${response.status}).`,
     response.status,
     typeof body?.step === 'string' ? body.step : undefined,
     workspaces,
   );
+}
+
+async function requireOk(response: Response, signal?: AbortSignal) {
+  if (!response.ok) throw await responseError(response, signal);
 }
 
 export function api<T>(path: string, options: RequestInit = {}): Promise<T> {

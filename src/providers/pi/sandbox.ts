@@ -6,8 +6,6 @@ import { basename, posix } from 'node:path';
 import {
   createBashToolDefinition,
   createEditToolDefinition,
-  createFindToolDefinition,
-  createLsToolDefinition,
   createReadToolDefinition,
   createWriteToolDefinition,
   type ToolDefinition,
@@ -28,9 +26,6 @@ const imageTypes: Record<string, string> = {
   '.webp': 'image/webp',
   '.bmp': 'image/bmp',
 };
-
-const listProgram =
-  "import os,sys\nfor e in os.scandir(sys.argv[1]): sys.stdout.write(e.name+'\\0'+('d' if e.is_dir() else 'f')+'\\0')";
 
 function quote(value: string) {
   return `'${value.replaceAll("'", `'\\''`)}'`;
@@ -220,7 +215,6 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
   }
   const writeBytes = (path: string, bytes: Buffer) =>
     writeWorkspaceFile(workspace, workspacePath(path), bytes);
-  const directories = new Map<string, boolean>();
   async function bash(
     command: string,
     cwd: string,
@@ -274,37 +268,6 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
     if (timedOut) throw new Error(`timeout:${seconds}`);
     return { exitCode };
   }
-  const glob = async (
-    pattern: string,
-    root: string,
-    options: { ignore: string[]; limit: number },
-  ) => {
-    root = workspacePath(root);
-    const program = [
-      'import os,sys,fnmatch,json',
-      'root,pattern,limit=sys.argv[1],sys.argv[2],int(sys.argv[3])',
-      "patterns=[pattern] if '/' in pattern else ['**/'+pattern]",
-      "patterns+=[p.replace('**/','') for p in patterns]",
-      'ignore=json.loads(sys.argv[4])',
-      "ignore+=[p.replace('**/','') for p in ignore]",
-      'at=lambda base,name: os.path.relpath(os.path.join(base,name),root)',
-      'skip=lambda path: any(fnmatch.fnmatchcase(path,p) for p in ignore)',
-      'found=0',
-      'for base,dirs,files in os.walk(root):',
-      " dirs[:]=[d for d in dirs if not skip(at(base,d)+'/')]",
-      ' for name in dirs+[f for f in files if not skip(at(base,f))]:',
-      '  rel=at(base,name)',
-      '  if any(fnmatch.fnmatchcase(rel,p) for p in patterns):',
-      "   sys.stdout.write(rel+('/' if name in dirs else '')+'\\0'); found+=1",
-      '   if found>=limit: sys.exit(0)',
-    ].join('\n');
-    const { exitCode, output } = await run(
-      workspace,
-      `/usr/bin/python3 -I -c ${quote(program)} ${quote(root)} ${quote(pattern)} ${options.limit} ${quote(JSON.stringify(options.ignore))}`,
-    );
-    if (exitCode) throw new Error(`Could not search ${root}.`);
-    return output.toString('utf8').split('\0').filter(Boolean);
-  };
   const cwd = workspace.path;
   const tools = [
     createReadToolDefinition(cwd, {
@@ -336,41 +299,12 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
         },
       },
     }),
-    createFindToolDefinition(cwd, {
-      operations: { exists: (path) => check(`[ -e ${quote(workspacePath(path))} ]`), glob },
-    }),
-    createLsToolDefinition(cwd, {
-      operations: {
-        exists: (path) => check(`[ -e ${quote(workspacePath(path))} ]`),
-        stat: async (path) => {
-          path = workspacePath(path);
-          const directory = directories.get(path) ?? (await check(`[ -d ${quote(path)} ]`));
-          directories.delete(path);
-          return { isDirectory: () => directory };
-        },
-        readdir: async (path) => {
-          path = workspacePath(path);
-          const { exitCode, output } = await run(
-            workspace,
-            `/usr/bin/python3 -I -c ${quote(listProgram)} ${quote(path)}`,
-          );
-          if (exitCode) throw new Error(`Cannot read directory: ${path}`);
-          const parts = output.toString('utf8').split('\0');
-          const names: string[] = [];
-          for (let index = 0; index + 1 < parts.length; index += 2) {
-            names.push(parts[index]);
-            directories.set(posix.join(path, parts[index]), parts[index + 1] === 'd');
-          }
-          return names;
-        },
-      },
-    }),
   ] as ToolDefinition[];
   return tools.map((definition): ToolDefinition => ({
     ...definition,
     ...(definition.name === 'bash'
       ? {
-          description: `${definition.description}\nSupported simple commands automatically use RTK for compact output. Prefer bash with rtk ls, rtk read and rtk grep for exploration; use native read for exact edit context. Use rtk test or rtk err around scripts to compact their output, and rtk proxy for unfiltered output. Shell data flows and explicit machine-output formats stay raw.\nTrust sees the command text, folder and time limit. It does not read named script files. If a Trust refusal confirms that a filename-only command did not run, inspect the full program. Use an inline form only if the program contains no secrets or private data and does not depend on its file name, path, shebang or script-relative resources. Put its full text in a new checked command without command substitution. For a here-document, quote the delimiter and choose one that is not a complete line of the program. Use the same interpreter, flags, folder, inputs and outputs. If the text form can change its effects, do not run it. Command records keep a redacted prefix of up to 4,000 characters. All permission checks still apply.`,
+          description: `${definition.description}\nSimple commands run through RTK for compact output; use rtk proxy <command> for raw output.`,
         }
       : {}),
     execute: async (id, params, signal, onUpdate, context) => {

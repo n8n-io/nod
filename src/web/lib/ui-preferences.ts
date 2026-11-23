@@ -1,6 +1,5 @@
 type UiPreference =
   | 'nod.sidebar'
-  | 'nod.sidebar-width'
   | 'nod.chat-layout'
   | 'nod.artifact-width'
   | `nod.feedback.discovery.${string}`

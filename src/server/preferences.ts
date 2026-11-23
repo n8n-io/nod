@@ -69,7 +69,7 @@ function canonicalLocale(value: string) {
 }
 const columns =
   'speech_voice AS "speechVoice",speech_reply AS "speechReply",notification_rule AS "notificationRule",rules,time_zone AS "timeZone",locale,hour_cycle AS "hourCycle",quiet_hours_enabled AS "quietHoursEnabled",quiet_start AS "quietStart",quiet_end AS "quietEnd",proactive_paused AS "proactivePaused",local_files_enabled AS "localFilesEnabled"';
-function ianaTimeZone(value: string) {
+export function ianaTimeZone(value: string) {
   try {
     new Intl.DateTimeFormat('en', { timeZone: value });
     return !/^[+-]/.test(value);

@@ -142,10 +142,4 @@ contextBridge.exposeInMainWorld('nodDesktop', {
     ipcRenderer.on('nod:preferences', receive);
     return () => ipcRenderer.removeListener('nod:preferences', receive);
   },
-  getFullScreen: () => invoke('nod:fullscreen:get'),
-  onFullScreen: (listener) => {
-    const receive = (_event, value) => listener(value === true);
-    ipcRenderer.on('nod:fullscreen', receive);
-    return () => ipcRenderer.removeListener('nod:fullscreen', receive);
-  },
 });

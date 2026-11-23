@@ -23,7 +23,7 @@ Nod can use every tool these servers offer, so it can read and change pages, iss
 
 ## n8n
 
-Nod builds, tests and changes n8n workflows and n8n Agents through your n8n instance's MCP server. Open **Apps**, select **Connect** on n8n and enter your n8n address, such as `https://you.app.n8n.cloud` or `localhost:5678`. Nod opens n8n's own sign-in and consent page. To use an access token instead, open **Use an access token instead** and paste the token from n8n under **Settings**, **Instance-level MCP**.
+Nod builds, tests and changes n8n workflows and n8n Agents through your n8n instance's MCP server. Open **Apps**, select **Connect** on n8n and enter your n8n address, such as `https://you.app.n8n.cloud` or `localhost:5678`. Nod opens n8n's own sign-in and consent page. To use an access token instead, open **Use an access token instead** and paste the token from n8n under **Settings**, **Instance-level MCP**. This is the instance-level MCP token. An n8n API key doesn't work here.
 
 If n8n answers at `http://localhost:5678` from Nod's server, the form opens with that address filled in. Nod checks only that address when the form opens, and connects only when you select **Connect n8n**.
 
@@ -49,11 +49,11 @@ A failed tool request keeps the server's status and reason. Nod does not retry i
 
 Ask Nod to connect a service it can't find in the app catalog. Nod proposes a way in, called an access path, and sends you a link to a private setup page. There, you paste a token or sign in. The model never sees the token.
 
-| Access path | What Nod calls                                                 | How it signs in                       |
-| ----------- | -------------------------------------------------------------- | ------------------------------------- |
-| MCP server  | Tools on a public HTTPS MCP server, or a private one you enter | A token in a header, or OAuth sign-in |
-| HTTP API    | A method and path on the API                                   | A token in a header                   |
-| CLI         | A command with arguments                                       | Tokens in environment variables       |
+| Access path | What Nod calls                                                 | How it signs in                                    |
+| ----------- | -------------------------------------------------------------- | -------------------------------------------------- |
+| MCP server  | Tools on a public HTTPS MCP server, or a private one you enter | A token in a header, or OAuth sign-in              |
+| HTTP API    | A method and path on the API                                   | A token in a header, or OAuth sign-in              |
+| CLI         | A command with arguments                                       | Tokens and other settings in environment variables |
 
 Some services give each region or workspace its own MCP address, such as a separate EU address, each with its own sign-in. On those services, an account can only sign in through its own address. Nod picks the address from a workspace address you give it, or asks for your workspace address or region before it proposes a connection. If sign-in ends on the service's home page instead of returning to Nod, tell Nod your workspace address and start again, or select **Connect MCP** and enter the address for your region.
 
@@ -69,9 +69,9 @@ A CLI path declares where to install the tool from:
 - a PyPI package, installed with `pipx`, or
 - an HTTPS download of a release program or archive, with an optional `sha256` checksum.
 
-It also names the environment variables the tool reads its credentials from, such as `GITHUB_TOKEN`, or `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Each name must end in `TOKEN`, `KEY`, `SECRET`, `PASSWORD`, `_ID` or `_SID`, so it can't be a variable that loads code, such as `LD_PRELOAD`. A tool with several variables is its own connection.
+It also names the environment variables the tool reads its credentials from, such as `GITHUB_TOKEN`, or `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Each name must end in `TOKEN`, `KEY`, `SECRET`, `PASSWORD`, `URL`, `_ID`, `_SID`, `USERNAME`, `USER` or `EMAIL`, so it can't be a variable that loads code, such as `LD_PRELOAD`. A tool with several variables is its own connection.
 
-The setup page shows the source and one field per variable, so you can check it before you paste anything. A command runs for up to 59 minutes unless Nod asks for longer.
+The setup page shows the source and one field per variable, so you can check it before you paste anything. A command runs for up to 59 minutes unless Nod asks for longer. Installing a missing CLI has its own 10-minute limit before that. When an install runs longer, the error says "The connected CLI install ran longer than its 600-second limit."
 
 ```mermaid
 flowchart LR

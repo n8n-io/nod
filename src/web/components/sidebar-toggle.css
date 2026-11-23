@@ -1,134 +1,127 @@
-.sidebar-toggle.button {
-  position: fixed;
-  --toggle-rest: 14px;
-  top: calc(var(--page-top) + (var(--side-header) - 28px) / 2);
-  left: max(var(--toggle-rest), calc(var(--desktop-sidebar-width) - 36px));
-  z-index: 22;
-  width: 28px;
-  height: 28px;
-  color: var(--text-secondary);
+.sidebar-edge {
+  position: absolute;
+  inset: 0 auto 0 -22px;
+  z-index: 16;
+  width: 44px;
+  pointer-events: none;
+}
+.sidebar-edge::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 calc(50% - 1px);
+  width: 1px;
+  background: color-mix(in srgb, var(--border) 45%, transparent);
+  transition: background 160ms ease;
+}
+.sidebar-edge[data-revealed]::before {
+  background: color-mix(in srgb, var(--border) 75%, transparent);
+}
+.sidebar-edge-toggle.button {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  transform: translateY(-50%);
+  pointer-events: none;
   -webkit-app-region: no-drag;
 }
-:root[data-desktop='true'] .sidebar-toggle.button {
-  --toggle-rest: 12px;
-  top: calc((var(--desktop-titlebar-height) - 28px) / 2);
-  /* Position with left, not transform: the window-drag cut-out only follows layout. */
-  left: var(--toggle-rest);
+.sidebar-edge-toggle.button:hover:not(:disabled),
+.sidebar-edge-toggle.button:active:not(:disabled) {
+  background: transparent;
+}
+.sidebar-edge-face {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 14%, var(--surface));
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text-secondary);
+  box-shadow:
+    0 1px 3px #0000000d,
+    0 3px 10px #00000005;
+  opacity: 0;
+  transform: scale(0.94);
   transition:
-    left 200ms var(--ease-enter),
-    background 140ms,
-    color 140ms;
+    opacity 140ms ease,
+    transform 140ms ease,
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
-:root[data-desktop='true'] .sidebar-toggle.button[data-lights] {
-  --toggle-rest: 88px;
+:root[data-theme='dark'] .sidebar-edge-face {
+  box-shadow:
+    0 1px 3px #00000033,
+    0 3px 10px #0000001a;
 }
-:root[data-fullscreen='true'] .sidebar-toggle.button[data-lights] {
-  --toggle-rest: 20px;
+.sidebar-edge[data-revealed] .sidebar-edge-toggle,
+.sidebar-edge-toggle:focus-visible {
+  pointer-events: auto;
 }
-.sidebar-toggle.button:active:not(:disabled) {
-  background: color-mix(in srgb, var(--foreground) 16%, transparent);
+.sidebar-edge[data-revealed] .sidebar-edge-face,
+.sidebar-edge-toggle:focus-visible .sidebar-edge-face {
+  opacity: 1;
+  transform: scale(1);
 }
-.sidebar-toggle-symbol {
+.sidebar-edge-toggle:hover .sidebar-edge-face {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
+  background: color-mix(in srgb, var(--primary) 14%, var(--surface));
+  color: var(--accent);
+}
+.sidebar-edge-toggle:active .sidebar-edge-face {
+  background: color-mix(in srgb, var(--primary) 25%, var(--surface));
+  box-shadow: 0 1px 2px #0000000a;
+  transform: scale(0.97);
+}
+.sidebar-edge-toggle:focus-visible {
+  outline-offset: -2px;
+}
+.sidebar-edge-symbol {
   overflow: visible;
   stroke: currentColor;
   stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.sidebar-toggle[aria-expanded='false'] .sidebar-toggle-divider {
+.sidebar-edge-symbol-divider {
+  transition: transform 180ms var(--ease-reveal);
+}
+.sidebar-edge-toggle[aria-expanded='false'] .sidebar-edge-symbol-divider {
   transform: translateX(-2.5px);
 }
-.sidebar-toggle-dot {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-full);
-  background: var(--primary);
-  box-shadow: 0 0 0 2px var(--canvas);
-}
-.sidebar-resizer {
-  position: absolute;
-  inset: 0 auto 0 -6px;
-  z-index: 16;
-  width: 12px;
-  cursor: col-resize;
-  touch-action: none;
-  outline: none;
-  -webkit-app-region: no-drag;
-}
-.sidebar-resizer::before {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 calc(50% - 1px);
-  width: 1px;
-  background: color-mix(in srgb, var(--border) 45%, transparent);
-}
-.sidebar-resizer::after {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 calc(50% - 1px);
-  width: 1px;
-  background: var(--accent);
-  opacity: 0;
-}
-.sidebar-hidden .sidebar-resizer {
-  inset-inline-start: 0;
-}
-.sidebar-hidden .sidebar-resizer::before {
-  background: transparent;
-}
-.app-shell[data-sliding] .sidebar-resizer::before {
-  background: color-mix(in srgb, var(--border) 45%, transparent);
-}
-.sidebar-hidden .sidebar-resizer::after {
-  inset-inline-start: 0;
-}
-:root[data-focus-input='keyboard'] .sidebar-resizer:focus-visible::after,
-.sidebar-resizer[data-dragging]::after {
-  opacity: 0.7;
-}
-@media (hover: hover) and (pointer: fine) {
-  .sidebar-resizer:hover::after {
-    opacity: 0.4;
-    transition: opacity 150ms ease 80ms;
+@media (any-pointer: coarse), (hover: none) {
+  .sidebar-edge-toggle.button {
+    pointer-events: auto;
   }
-  .sidebar-resizer[data-dragging]:hover::after {
-    opacity: 0.7;
-    transition: opacity 120ms ease;
+  .sidebar-edge-face {
+    opacity: 1;
+    transform: none;
   }
-}
-@media (prefers-reduced-motion: reduce) {
-  :root[data-desktop='true'] .sidebar-toggle.button {
-    transition:
-      background 140ms,
-      color 140ms;
-  }
-}
-@media (pointer: coarse) {
-  .sidebar-resizer {
-    inset-inline-start: -22px;
-    width: 44px;
-  }
-}
-.app-shell:has(.sidebar-resizer[data-dragging]) {
-  user-select: none;
 }
 @media (max-width: 800px) {
-  :root:not([data-desktop='true']) .app-shell:not(.sidebar-hidden) {
-    --desktop-sidebar-width: var(--side-rail-width);
-  }
-  :root:not([data-desktop='true']) .app-shell:not(.sidebar-hidden) .sidebar-toggle.button {
-    left: calc((var(--side-rail-width) - 28px) / 2);
-  }
-  :root:not([data-desktop='true']) .sidebar-resizer {
+  :root:not([data-desktop='true']) .sidebar-edge {
     display: none;
   }
 }
 @media (max-width: 640px) {
-  .sidebar-toggle.button,
-  .sidebar-resizer {
+  .sidebar-edge {
     display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-edge .sidebar-edge-toggle .sidebar-edge-face {
+    transform: none;
+  }
+  .sidebar-edge-symbol-divider {
+    transition: none;
   }
 }

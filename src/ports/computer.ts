@@ -64,21 +64,11 @@ export interface BrowserAction {
   expectOrigin?: string;
   expectUrl?: string;
   expectTarget?: string;
-  expectSelections?: string;
   readOnly?: boolean;
 }
 export interface BrowserControl {
   role: string;
   name: string;
-}
-export interface BrowserSelection {
-  role: string;
-  name: string;
-  value?: string;
-  checked?: 'true' | 'false' | 'mixed';
-  selected?: boolean;
-  selectedCount?: number;
-  group?: string;
 }
 export interface BrowserObservation {
   text: string;
@@ -92,7 +82,6 @@ export interface BrowserDownloadInput {
   expectOrigin?: string;
   expectUrl?: string;
   expectTarget?: string;
-  expectSelections?: string;
 }
 export interface BrowserDownload {
   bytes: Buffer;
@@ -106,7 +95,6 @@ export interface BrowserUploadInput {
   expectOrigin?: string;
   expectUrl?: string;
   expectTarget?: string;
-  expectSelections?: string;
 }
 export type CredentialKind = 'identifier' | 'password' | 'otp';
 export interface BrowserPage {
@@ -117,11 +105,6 @@ export interface BrowserPage {
   submits?: { method: string; to: string } | 'unknown';
   dropTarget?: BrowserControl[];
   dialog?: string;
-  currentSelections?: {
-    binding?: string;
-    values: BrowserSelection[];
-    incomplete?: string;
-  };
 }
 export interface CredentialInput {
   threadId: string;
@@ -195,7 +178,7 @@ export interface Computer {
     fields: CardFields,
   ): Promise<{ document: string; destinations: Partial<Record<keyof CardFields, string>> }>;
   checkoutImage(threadId: string): Promise<Uint8Array>;
-  currentPage(threadId: string, step?: BrowserAction, signal?: AbortSignal): Promise<BrowserPage>;
+  currentPage(threadId: string, step?: BrowserAction): Promise<BrowserPage>;
   signInMethods?(
     threadId: string,
     origin: string,

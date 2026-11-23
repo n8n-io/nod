@@ -9,13 +9,18 @@ import type {
 } from '@earendil-works/pi-ai';
 import type { ModelTrace } from '../../ports/traces.ts';
 import { piUsageMetrics } from './usage.ts';
-import { untrustedParts } from '../../shared/untrusted.ts';
+import { memoryEvidenceSource, untrustedParts } from '../../shared/untrusted.ts';
 import { modelQuotaFailure } from '../../shared/model-quota.ts';
 
 const omitted = '[owner context omitted]';
+const memoryEvidence = new RegExp(
+  `<untrusted_tool_result source=\\\\?"${memoryEvidenceSource}\\\\?">[\\s\\S]*?</untrusted_tool_result>`,
+  'g',
+);
 const learnedSkill = untrustedParts('learned skill').open;
 const memory = (name: string, args: Record<string, unknown> | undefined) =>
-  name === 'manage_personal_context' && String(args?.action).startsWith('memory_');
+  (name === 'memory' || name === 'manage_personal_context') &&
+  String(args?.action).startsWith('memory_');
 const privateCall = (name: string, args?: Record<string, unknown>) =>
   name === 'codemode' || memory(name, args);
 
@@ -201,7 +206,9 @@ export function piModelTrace(
     ].map((message) =>
       header && message.role === 'user' && message.content.startsWith(header)
         ? { ...message, content: omitted }
-        : message,
+        : message.role === 'user'
+          ? { ...message, content: message.content.replace(memoryEvidence, '[memory omitted]') }
+          : message,
     ),
     tools: (call.context.tools ?? []).map((tool) => tool.name),
     output: chat(

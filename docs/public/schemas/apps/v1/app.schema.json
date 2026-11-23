@@ -10,7 +10,14 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 80,
-      "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+      "allOf": [
+        {
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+        },
+        {
+          "pattern": "^[^\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]+$"
+        }
+      ]
     },
     "icon": {
       "type": "string",

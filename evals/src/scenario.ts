@@ -63,7 +63,7 @@ export interface Answer {
 
 export interface UserScript {
   answers?: Answer[];
-  approve?: boolean | ((action: string, args: unknown) => boolean);
+  approve?: boolean | ((action: string, args: unknown, shown?: unknown) => boolean);
   approvalReplies?: string[];
   secrets?:
     | string[]

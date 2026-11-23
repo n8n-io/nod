@@ -1,9 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { AccountUpdate, AccountUser, SessionResponse } from '../shared/account.ts';
+import { logFailure } from '../ports/failure-log.ts';
 import type { AccountStore } from './account-store.ts';
 import { analyticsModel, snapshotAnalytics, type Analytics } from './analytics.ts';
 import { captureSettingChanges } from './analytics-settings.ts';
+import { redactSecretText } from './redaction.ts';
 
 const surveyActiveDays = 3;
 
@@ -156,14 +158,20 @@ export function createAccountSession(options: {
       reply.raw.off('close', abort);
     }
   }
+  function setupFailed(reply: FastifyReply, error: unknown, what: string) {
+    logFailure('setup_failed', error);
+    const reason =
+      error instanceof Error ? redactSecretText(error.message).trim().slice(0, 500) : '';
+    return reply.code(503).send({ error: reason ? `${what} ${reason}` : what });
+  }
   async function start(reply: FastifyReply, complete?: () => Promise<unknown>) {
     try {
       await prepare(reply);
       await options.start?.();
       await complete?.();
       return true;
-    } catch {
-      reply.code(503).send({ error: 'Setup could not be completed. Try again.' });
+    } catch (error) {
+      setupFailed(reply, error, 'Setup could not be completed.');
       return false;
     }
   }
@@ -178,7 +186,11 @@ export function createAccountSession(options: {
         .strict()
         .parse(request.body ?? {});
       reply.header('cache-control', 'no-store');
-      await prepare(reply);
+      try {
+        await prepare(reply);
+      } catch (error) {
+        return setupFailed(reply, error, 'Setup could not be completed.');
+      }
       return { ok: true };
     });
     app.post('/api/account/model-setup', async (request, reply) => {
@@ -223,8 +235,8 @@ export function createAccountSession(options: {
                     : 'Connect Gmail before finishing setup.',
                 step,
               });
-          } catch {
-            return reply.code(503).send({ error: 'Could not verify setup. Try again.' });
+          } catch (error) {
+            return setupFailed(reply, error, 'Could not verify setup.');
           }
         }
         if (

@@ -70,6 +70,17 @@ const telegramReaction = z.object({
     .array(z.object({ type: z.string(), emoji: z.string().min(1).max(64).optional() }))
     .max(10),
 });
+function telegramRefusal(status: number, data: unknown) {
+  const body = z
+    .object({ error_code: z.number().int().optional(), description: z.string().optional() })
+    .catch({})
+    .parse(data);
+  const code = body.error_code ?? status;
+  return code >= 400 && code < 500 && ![401, 403, 404, 429].includes(code)
+    ? body.description || `Telegram refused it with status ${code}.`
+    : undefined;
+}
+
 class TelegramMarkdown extends TelegramFormatConverter {
   override fromMarkdown(markdown: string) {
     return telegramText(markdown);
@@ -102,6 +113,18 @@ class Telegram extends TelegramAdapter {
     );
   }
 
+  protected override throwTelegramApiError(
+    method: string,
+    status: number,
+    data: { ok: boolean; error_code?: number; description?: string },
+  ): never {
+    try {
+      return super.throwTelegramApiError(method, status, data);
+    } catch (cause) {
+      throw Object.assign(cause as Error, { refusal: telegramRefusal(status, data) });
+    }
+  }
+
   fits(text: string, limit: number) {
     return [
       text,
@@ -126,7 +149,12 @@ class Telegram extends TelegramAdapter {
     );
   }
 
-  async postApproval(threadId: string, markdown: string, replyToMessageId?: string) {
+  async postApproval(
+    threadId: string,
+    markdown: string,
+    labels: { approve: string; decline: string },
+    replyToMessageId?: string,
+  ) {
     const thread = this.decodeThreadId(threadId);
     const { text, plainText } = this.renderMessageBodies({ markdown }, null, 'MarkdownV2');
     const sent = await this.sendRegularMessage(
@@ -137,8 +165,8 @@ class Telegram extends TelegramAdapter {
       {
         inline_keyboard: [
           [
-            { text: 'Approve', callback_data: approveData },
-            { text: 'Cancel', callback_data: declineData },
+            { text: labels.approve, callback_data: approveData },
+            { text: labels.decline, callback_data: declineData },
           ],
         ],
       },
@@ -146,6 +174,10 @@ class Telegram extends TelegramAdapter {
       this.buildReplyParameters(replyToMessageId, thread.chatId),
     );
     return this.encodeMessageId(thread.chatId, sent.message_id);
+  }
+
+  replyParameters(replyToMessageId: string | undefined, chatId: string) {
+    return this.buildReplyParameters(replyToMessageId, chatId);
   }
 
   typing(threadId: string, signal?: AbortSignal) {
@@ -213,7 +245,9 @@ class WhatsApp extends WhatsAppAdapter {
   }
 
   chunks(text: string) {
-    return splitMessage(convertEmojiPlaceholders(whatsappText(text), 'whatsapp'));
+    return splitMessage(convertEmojiPlaceholders(whatsappText(text), 'whatsapp')).filter((part) =>
+      part.trim(),
+    );
   }
 
   async typing(messageId: string) {
@@ -889,6 +923,7 @@ export function createChatSdkTransport(
           const id = await telegram.postApproval(
             input.threadId,
             telegramParts[0]!,
+            input.approval,
             input.replyToMessageId,
           );
           return { id, ids: [id], approvalButtons: true };
@@ -941,6 +976,15 @@ export function createChatSdkTransport(
           });
         }
       }
+      const refusals = new Map<(typeof attachments)[number], string>();
+      const sendCaption = async () => {
+        if (caption)
+          for (const part of telegram!.chunks(input.text)) {
+            const sent = await post({ markdown: part });
+            id ||= sent.id;
+            ids.push(sent.id);
+          }
+      };
       for (const file of attachments) {
         if (unsent.includes(file)) continue;
         if (input.channelId === 'telegram' && /^audio\/(ogg|mpeg|mp4)$/.test(file.mimeType)) {
@@ -949,11 +993,8 @@ export function createChatSdkTransport(
           body.set('chat_id', decoded.chatId);
           if (decoded.messageThreadId)
             body.set('message_thread_id', String(decoded.messageThreadId));
-          if (input.replyToMessageId)
-            body.set(
-              'reply_parameters',
-              JSON.stringify({ message_id: Number(input.replyToMessageId.split(':').at(-1)) }),
-            );
+          const replyParameters = telegram!.replyParameters(input.replyToMessageId, decoded.chatId);
+          if (replyParameters) body.set('reply_parameters', JSON.stringify(replyParameters));
           let bytes: Uint8Array;
           try {
             bytes = await file.read();
@@ -966,7 +1007,16 @@ export function createChatSdkTransport(
             `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendVoice`,
             { method: 'POST', body, signal: AbortSignal.timeout(60_000), redirect: 'error' },
           );
-          if (!response.ok) throw new Error('Voice delivery was not confirmed.');
+          if (!response.ok) {
+            const refusal = telegramRefusal(
+              response.status,
+              await response.json().catch(() => undefined),
+            );
+            if (!refusal) throw new Error('Voice delivery was not confirmed.');
+            refusals.set(file, refusal);
+            unsent.push(file);
+            continue;
+          }
           const sent = z
             .object({
               ok: z.literal(true),
@@ -982,12 +1032,7 @@ export function createChatSdkTransport(
         try {
           bytes = await file.read();
         } catch {
-          if (caption)
-            for (const part of telegram!.chunks(input.text)) {
-              const sent = await post({ markdown: part });
-              id ||= sent.id;
-              ids.push(sent.id);
-            }
+          await sendCaption();
           unsent.push(file);
           continue;
         }
@@ -1083,13 +1128,10 @@ export function createChatSdkTransport(
                   ...(decoded.messageThreadId
                     ? { message_thread_id: decoded.messageThreadId }
                     : {}),
-                  ...(input.replyToMessageId
-                    ? {
-                        reply_parameters: {
-                          message_id: Number(input.replyToMessageId.split(':').at(-1)),
-                        },
-                      }
-                    : {}),
+                  reply_parameters: telegram!.replyParameters(
+                    input.replyToMessageId,
+                    decoded.chatId,
+                  ),
                   ...message.data,
                 }),
                 signal: AbortSignal.timeout(60_000),
@@ -1097,8 +1139,14 @@ export function createChatSdkTransport(
               },
             );
             if (!response.ok) {
-              await response.body?.cancel().catch(() => {});
-              throw new Error('Message delivery was not confirmed.');
+              const refusal = telegramRefusal(
+                response.status,
+                await response.json().catch(() => undefined),
+              );
+              if (!refusal) throw new Error('Message delivery was not confirmed.');
+              refusals.set(file, refusal);
+              unsent.push(file);
+              break;
             }
             const sent = z
               .object({
@@ -1134,15 +1182,21 @@ export function createChatSdkTransport(
             id ||= sent.id;
             ids.push(sent.id);
           },
-          () => {
-            if (caption) throw new Error('Media delivery was not confirmed.');
+          async (cause: { refusal?: string } | undefined) => {
+            if (caption) {
+              if (!cause?.refusal) throw new Error('Media delivery was not confirmed.');
+              await sendCaption();
+            }
+            if (cause?.refusal) refusals.set(file, cause.refusal);
             unsent.push(file);
           },
         );
       }
       if (unsent.length) {
         const notice = await input
-          .attachmentFailure?.(unsent.map((file) => file.name))
+          .attachmentFailure?.(
+            unsent.map((file) => ({ name: file.name, reason: refusals.get(file) })),
+          )
           .catch(() => undefined);
         const notices =
           input.channelId === 'telegram'

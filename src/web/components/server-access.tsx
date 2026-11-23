@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { apiResponse } from '../lib/api';
+import { apiResponse, responseError } from '../lib/api';
 import { NodGlyph } from './motion';
 import { Button, Field, Input, Notice } from './ui';
 
@@ -19,10 +19,11 @@ export function ServerAccess({ onConnected }: { onConnected(): Promise<boolean> 
         body: JSON.stringify({ key: key.trim() }),
       });
       if (!response.ok) {
+        const { message } = await responseError(response);
         setError(
           response.status === 401
             ? 'Check your token and try again.'
-            : 'Could not connect. Try again.',
+            : `Could not connect (HTTP ${response.status}): ${message.length > 200 ? `${message.slice(0, 199)}…` : message}`,
         );
         return;
       }

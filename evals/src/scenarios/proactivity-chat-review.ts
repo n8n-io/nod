@@ -75,7 +75,7 @@ export default scenario({
       check('chat-reads-the-prepared-result', (run) =>
         run.tools.some(
           (call) =>
-            call.name === 'manage_personal_context' &&
+            ['manage_personal_context', 'memory', 'nod'].includes(call.name) &&
             call.input.action === 'prepared_list' &&
             Boolean(
               call.input.id || call.input.query || call.input.args?.id || call.input.args?.query,

@@ -4,7 +4,10 @@ export type Observation = RuntimeObservation | ModelUsageObservation;
 
 export function redactedInput(name: string, input: unknown) {
   const action = (input as { action?: unknown } | null)?.action;
-  if (name === 'manage_personal_context' && String(action).startsWith('memory_'))
+  if (
+    ['manage_personal_context', 'memory', 'nod'].includes(name) &&
+    String(action).startsWith('memory_')
+  )
     return { action, args: '[private memory omitted]' };
   if (!input || typeof input !== 'object') return input;
   if (name === 'browser' && ['fill', 'type', 'accept_dialog'].includes(String(action)))
@@ -29,7 +32,7 @@ export function createCapture(proactiveBaseline = false) {
       if (event.type === 'tool_start') {
         if (
           event.name === 'sign_in' ||
-          (event.name === 'manage_personal_context' &&
+          (['manage_personal_context', 'memory', 'nod'].includes(event.name) &&
             String((event.input as { action?: unknown } | null)?.action).startsWith('memory_'))
         )
           privateOutputs.add(id);

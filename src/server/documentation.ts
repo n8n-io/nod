@@ -30,8 +30,14 @@ function words(text: string) {
 }
 
 function text(node: unknown): string {
-  const value = node as { value?: string; children?: unknown[] };
-  return value.value ?? value.children?.map(text).join('') ?? '';
+  const value = node as { type?: string; value?: string; children?: unknown[] };
+  return (
+    value.value ??
+    value.children
+      ?.map(text)
+      .join(['root', 'list', 'listItem', 'blockquote'].includes(value.type!) ? ' ' : '') ??
+    ''
+  );
 }
 
 async function files(directory: string): Promise<string[]> {

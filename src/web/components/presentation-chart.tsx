@@ -77,6 +77,13 @@ function Reading({
   );
 }
 
+function measure(visual: ChartVisual) {
+  const label = visual.yLabel?.trim();
+  const unit = visual.unit?.trim();
+  if (!label || !unit) return label || unit;
+  return label.endsWith(')') || label.endsWith(` ${unit}`) ? label : `${label} (${unit})`;
+}
+
 function CartesianChart({ visual }: { visual: ChartVisual }) {
   const canvas = useRef<SVGSVGElement>(null);
   const [width, setWidth] = useState(560);
@@ -153,10 +160,9 @@ function CartesianChart({ visual }: { visual: ChartVisual }) {
             ),
           )}
         </div>
-        {(visual.yLabel || visual.unit) && (
+        {(visual.chart === 'line' ? measure(visual) : visual.xLabel) && (
           <span className="chart-measure">
-            {visual.yLabel}
-            {visual.unit && (visual.yLabel ? ` (${visual.unit})` : visual.unit)}
+            {visual.chart === 'line' ? measure(visual) : visual.xLabel}
           </span>
         )}
       </div>
@@ -387,7 +393,11 @@ function CartesianChart({ visual }: { visual: ChartVisual }) {
           </div>
         )}
       </div>
-      {visual.xLabel && <p className="chart-axis-label">{visual.xLabel}</p>}
+      {(visual.chart === 'line' ? visual.xLabel : measure(visual)) && (
+        <p className="chart-axis-label">
+          {visual.chart === 'line' ? visual.xLabel : measure(visual)}
+        </p>
+      )}
       <div className="sr-only">
         <table>
           <caption>{visual.title}</caption>

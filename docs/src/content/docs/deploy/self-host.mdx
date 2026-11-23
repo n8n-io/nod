@@ -31,15 +31,17 @@ Choose a [cloud server](/deploy/providers/) or prepare a [Mac mini](/deploy/mac-
 
 ## Install a prebuilt bundle
 
-Download a `server-<commit>` release from the private [Nod releases](https://github.com/n8n-io/nod/releases), when one is available. Choose `amd64` for Intel or AMD servers, or `arm64` for Apple Silicon and ARM servers. The Docker Engine must use Linux containers.
+Download a prebuilt bundle from a successful **Self-host bundle** [workflow run](https://github.com/n8n-io/nod/actions/workflows/self-host-bundle.yml). Open the run and check that the `nod-server-linux-<architecture>-<commit>` artifact is still listed. Workflow artifacts expire after 14 days. If none is available, [build from source](#build-from-source). The Self-host bundle workflow builds and validates each architecture natively before uploading its artifact. Its private server release job runs only after both architecture jobs succeed. Keep the downloaded bundle with your backups.
 
-For a revision without a server release, use a successful **Self-host bundle** [workflow run](https://github.com/n8n-io/nod/actions/workflows/self-host-bundle.yml). Workflow artifacts expire after 14 days; approved release assets remain available beyond that window. Both paths check each architecture natively and validate its standalone installer. Keep the downloaded bundle with your backups.
+The public [Releases](https://github.com/n8n-io/nod/releases) page lists only desktop `nod-v*` releases, not server bundles. Maintainers can also [prepare a private server release](/deploy/server-operations/#prepare-a-private-server-release), whose files don't expire.
 
-Check the full source commit in the release tag or workflow run before downloading. Download only from authenticated GitHub; the bundle's checksums detect transfer corruption. Repository access is needed on the computer downloading the files. Maintainers can [prepare a private server release](/deploy/server-operations/#prepare-a-private-server-release) after approval; this does not make the repository public.
+Choose `amd64` for Intel or AMD servers, or `arm64` for Apple Silicon and ARM servers. The Docker Engine must use Linux containers.
+
+Check the full source commit in the workflow run or release tag before downloading. Download only from GitHub while signed in. The bundle's checksums detect transfer corruption.
 
 <Steps>
 
-1. Download the `.tar.gz` bundle and matching `.sha256` file from the server release. If you use a workflow run, download the artifact named `nod-server-linux-<architecture>-<commit>` and extract its ZIP to get those two files.
+1. Download the artifact named `nod-server-linux-<architecture>-<commit>` and extract its ZIP to get the `.tar.gz` bundle and its `.sha256` file. From a private server release, download those two files directly.
 2. Transfer those two files to your server using SCP, SFTP, or your provider's file transfer. On a Mac mini, copy them to the Mac.
 3. Check the archive and unpack it. Replace the placeholders with the downloaded filename.
 

@@ -9,15 +9,13 @@ export interface DecisionQuestion {
   choices: Array<{ value: string | boolean; description: string }>;
 }
 
-export type ModelReview = ((
+export type ModelReview = (
   instructions: string,
   input: object,
   signal?: AbortSignal,
   question?: DecisionQuestion,
   responseSchema?: Record<string, unknown>,
-) => Promise<unknown>) & {
-  select?(signal?: AbortSignal): Promise<ModelReview>;
-};
+) => Promise<unknown>;
 
 export interface DecisionRequest {
   instructions: string;

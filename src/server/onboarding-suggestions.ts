@@ -133,9 +133,9 @@ function senderApps(addresses: string[], own: string[]) {
   return found;
 }
 
-function masked(text: string) {
+export function masked(text: string) {
   return text
-    .replace(/https?:\/\/\S+/g, '[link]')
+    .replace(/https?:\/\/(?:[^\s"\\]|\\["\\/])+/g, '[link]')
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,}/gi, '[email]')
     .replace(/\bsk-[A-Za-z0-9_-]{12,}/g, '[key]')
     .replace(/\b(?:\d[ -]?){13,18}\d\b|\b\d{6,}\b/g, '[number]');

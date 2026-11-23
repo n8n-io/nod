@@ -164,7 +164,7 @@ const bySlug = (a: Entry, b: Entry) => a.slug.localeCompare(b.slug);
 export const locate = (tree: Tree, target: string) =>
   tree.entries.find((entry) => pathOf(entry) === target);
 export const fold = (value: string) =>
-  value.normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').toLowerCase();
+  value.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').toLowerCase();
 export const foldQuote = (value: string) =>
   fold(value.replace(/[“”«»„‟]/g, '"').replace(/[‘’‚‛‹›]/g, "'"));
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'word' });

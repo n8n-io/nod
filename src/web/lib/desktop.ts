@@ -121,8 +121,6 @@ type DesktopWindow = Window & {
     onFeedbackRequested?(listener: () => void): () => void;
     setTheme(theme: DesktopPreferences['theme']): Promise<DesktopPreferences>;
     onPreferences(listener: (preferences: DesktopPreferences) => void): () => void;
-    getFullScreen?(): Promise<boolean>;
-    onFullScreen?(listener: (fullScreen: boolean) => void): () => void;
     onFocusMessage?(
       listener: (target: { threadId: string; messageId: string } | null) => void,
     ): () => void;
@@ -130,18 +128,6 @@ type DesktopWindow = Window & {
     setChatReadCursor?(ownerId: string, threadId: string, cursor: ChatReadCursor): Promise<void>;
   };
 };
-
-export function initializeDesktopFullScreen() {
-  const bridge = (window as DesktopWindow).nodDesktop;
-  const apply = (fullScreen: boolean) => {
-    document.documentElement.dataset.fullscreen = String(fullScreen);
-  };
-  bridge?.onFullScreen?.(apply);
-  void bridge
-    ?.getFullScreen?.()
-    .then(apply)
-    .catch(() => {});
-}
 
 export function desktopRendererReady() {
   void (window as DesktopWindow).nodDesktop?.ready?.();

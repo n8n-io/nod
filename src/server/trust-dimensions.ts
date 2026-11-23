@@ -1,28 +1,7 @@
 import type { DecisionQuestion } from '../ports/decisions.ts';
-import { messageReviewPolicy } from './owner-instructions.ts';
 
 export function trustDimensions(policy: string): DecisionQuestion[] {
   return [
-    {
-      name: 'messageReview',
-      minProbability: 0.99,
-      uncertainValue: true,
-      instructions:
-        messageReviewPolicy +
-        ' Does this action still require review of the complete current message before it can send, publish or share that message?',
-      choices: [
-        {
-          value: true,
-          description:
-            'The complete current message still needs owner review, or that requirement is uncertain.',
-        },
-        {
-          value: false,
-          description:
-            'No relevant message review step is missing, including private preparation or an explicit owner removal of that step.',
-        },
-      ],
-    },
     {
       name: 'preparation',
       minProbability: 0.99,

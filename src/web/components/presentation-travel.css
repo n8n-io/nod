@@ -401,36 +401,15 @@
   flex: 0 0 auto;
   color: var(--muted-foreground);
 }
-.seat-context > div > span {
-  margin-left: auto;
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
 .seat-context p {
   margin: 0;
   color: var(--text-secondary);
   font-size: 13px;
 }
 .seat-coverage {
-  display: grid;
-  gap: 6px;
-  margin: 0 16px 14px;
-}
-.seat-coverage > div {
-  display: flex;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 12px;
-  font-size: 13px;
-}
-.seat-coverage > div > span,
-.seat-coverage p {
+  margin: 0 16px 12px;
   color: var(--muted-foreground);
   font-size: 12px;
-}
-.seat-coverage p {
-  margin: 0;
 }
 .seat-section-controls {
   display: flex;
@@ -474,7 +453,8 @@
   scrollbar-gutter: stable;
 }
 .seat-plan {
-  min-width: max-content;
+  width: max-content;
+  margin-inline: auto;
 }
 .seat-section + .seat-section {
   margin-top: 28px;
@@ -497,13 +477,9 @@
   font-size: inherit;
   font-weight: 600;
 }
-.seat-section-header > span,
-.seat-section-header > small {
+.seat-section-header > span {
   color: var(--muted-foreground);
   font-size: 12px;
-}
-.seat-section-header > small {
-  margin-left: auto;
 }
 .seat-rows {
   display: grid;
@@ -576,6 +552,28 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+.seat.has-note::before,
+.seat-legend i.has-note {
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.seat.has-note::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 6px;
+  height: 6px;
+}
+.seat[aria-pressed='true'].has-note::before {
+  background: var(--primary-foreground);
+}
+.seat-legend i.has-note {
+  width: 6px;
+  height: 6px;
+  margin-inline: 3px;
+}
 .seat[aria-pressed='true'] {
   border-color: var(--accent);
   background: var(--primary);
@@ -598,23 +596,19 @@
 }
 .seat-inspector {
   display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: 12px 24px;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 16px;
   padding: 16px;
   border-top: 1px solid var(--border);
   background: var(--surface);
 }
-.seat-inspector-main,
 .seat-inspector-facts {
   display: grid;
   align-content: start;
   justify-items: start;
-  gap: 5px;
+  gap: 3px;
   min-width: 0;
-}
-.seat-inspector .presentation-eyebrow {
-  color: var(--muted-foreground);
-  font-size: 12px;
 }
 .seat-number {
   font-size: 30px;
@@ -707,9 +701,6 @@
   .seat-section-controls,
   .seat-legend {
     padding-inline: 16px;
-  }
-  .seat-inspector {
-    gap: 12px 16px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

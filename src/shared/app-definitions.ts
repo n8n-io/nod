@@ -11,6 +11,11 @@ const text = (max: number) =>
     .min(1)
     .max(max)
     .regex(/^\S(?:[\s\S]*\S)?$/, 'Remove leading and trailing whitespace.');
+const name = (max: number) =>
+  text(max).regex(
+    /^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u,
+    'Use one line without control or format characters.',
+  );
 const fixedServer = { type: z.literal('mcp'), server: text(80) };
 const hints = <const Field extends string>(...fields: Field[]) =>
   z.partialRecord(z.enum(fields), text(200)).optional();
@@ -119,11 +124,21 @@ export const appOAuthMetadataSchema = z.strictObject({
 });
 export type AppOAuthMetadata = z.output<typeof appOAuthMetadataSchema>;
 
+export const appScopeMaxLength = 500;
+const oauthScopes = z
+  .array(text(100))
+  .max(30)
+  .refine(
+    (scopes) => scopes.join(' ').length <= appScopeMaxLength,
+    `Keep the scopes to ${appScopeMaxLength} characters or fewer when joined with spaces.`,
+  )
+  .optional();
+
 export const appConnectionSchema = z.union([
   z.strictObject({
     ...fixedServer,
     authentication: z.tuple([z.literal('oauth2')]),
-    scopes: z.array(text(100)).max(30).optional(),
+    scopes: oauthScopes,
   }),
   z.strictObject({
     ...fixedServer,
@@ -143,7 +158,7 @@ export const appConnectionSchema = z.union([
     type: z.literal('http'),
     url: httpsUrl,
     authentication: z.tuple([z.literal('oauth2')]),
-    scopes: z.array(text(100)).max(30).optional(),
+    scopes: oauthScopes,
     oauth: appOAuthMetadataSchema.optional(),
     clientIdRequired: z.boolean().optional(),
     hints: hints('clientId'),
@@ -176,7 +191,7 @@ export const appConnectionSchema = z.union([
 
 export const appDefinitionSchema = z.strictObject({
   $schema: z.literal(appSchemaId),
-  displayName: text(80),
+  displayName: name(80),
   icon: z
     .string()
     .regex(/^\.\/io\.n8n\.nod\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+\.(?:svg|png|webp)$/)

@@ -1,4 +1,14 @@
-import { posix } from 'node:path';
+const percentEscape = /%([0-9a-f]{2})/gi;
+
+function leavesPath(pathname: string) {
+  for (let text = pathname, previous = ''; text !== previous;) {
+    if (text.includes('\\') || text.split(/[/?#;]/).some((part) => part === '.' || part === '..'))
+      return true;
+    previous = text;
+    text = text.replace(percentEscape, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+  }
+  return false;
+}
 
 export function appRequestUrl(endpoint: string, relative: string) {
   if (
@@ -14,13 +24,18 @@ export function appRequestUrl(endpoint: string, relative: string) {
     relative.startsWith('/') ? `.${relative}` : relative,
     base.href.endsWith('/') ? base : `${base.href}/`,
   );
-  if (/%(?:2e|2f|5c|25)/i.test(url.pathname) || /%(?:2e|2f|5c|25)/i.test(base.pathname))
-    throw new Error('The request must stay in the saved API address.');
-  const saved = posix.normalize(decodeURIComponent(base.pathname));
-  const requested = posix.normalize(decodeURIComponent(url.pathname));
+  try {
+    decodeURIComponent(url.pathname);
+  } catch {
+    throw new Error('The API path has an invalid % escape.');
+  }
+  if (leavesPath(relative.split('?')[0]) || leavesPath(url.pathname))
+    throw new Error(
+      'The request must stay in the saved API address, so its path cannot contain a . or .. segment or a backslash, even percent-encoded.',
+    );
   if (
     url.origin !== base.origin ||
-    !requested.startsWith(saved.endsWith('/') ? saved : `${saved}/`)
+    !url.pathname.startsWith(base.pathname.endsWith('/') ? base.pathname : `${base.pathname}/`)
   )
     throw new Error('The request must stay in the saved API address.');
   return url.href;

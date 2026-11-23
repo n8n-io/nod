@@ -158,7 +158,7 @@ export function createSession(options: {
   async function pendingFor(turn: { id: string; waiting_reason: string }, text: string) {
     const approval = (
       await pool.query(
-        `SELECT id,action,args,confirmation_message_id FROM approvals WHERE turn_id=$1 AND status='pending' ORDER BY ${await approvalOrder(pool)} DESC LIMIT 1`,
+        `SELECT id,action,args,details - 'reason' AS shown,confirmation_message_id FROM approvals WHERE turn_id=$1 AND status='pending' ORDER BY ${await approvalOrder(pool)} DESC LIMIT 1`,
         [turn.id],
       )
     ).rows[0];
@@ -226,8 +226,10 @@ export function createSession(options: {
     };
   }
 
-  function approves(action: string, args: unknown) {
-    return typeof user.approve === 'function' ? user.approve(action, args) : (user.approve ?? true);
+  function approves(action: string, args: unknown, shown?: unknown) {
+    return typeof user.approve === 'function'
+      ? user.approve(action, args, shown)
+      : (user.approve ?? true);
   }
 
   async function respond(scheduled = false): Promise<boolean> {
@@ -238,7 +240,7 @@ export function createSession(options: {
     if (pending.kind === 'approval') {
       const reply = user.approvalReplies
         ? user.approvalReplies[approvalIndex++]
-        : approves(pending.approval.action, pending.approval.args)
+        : approves(pending.approval.action, pending.approval.args, pending.approval.shown)
           ? 'Yes'
           : 'No';
       if (reply === undefined) {

@@ -12,7 +12,7 @@ This page gives a security or IT team what it needs to assess Nod: where it runs
 
 |                     | Local desktop assistant                                            | Local source install                                   | Self-hosted server                              |
 | ------------------- | ------------------------------------------------------------------ | ------------------------------------------------------ | ----------------------------------------------- |
-| Runs on             | The user's Mac, Windows PC or Linux x64 computer (Flatpak preview) | A macOS or Linux machine                               | A machine with Docker Compose                   |
+| Runs on             | The user's Mac, Windows PC or Linux x64 computer (Flatpak preview) | A macOS, Linux or Windows machine                      | A machine with Docker Compose                   |
 | Data stored         | On the device, in a private VM                                     | `.local/` and Docker volumes                           | Persistent Docker volumes                       |
 | Encryption key held | macOS Keychain, Windows DPAPI or Linux Secret Service              | Keychain, private Linux profile key or `NOD_VAULT_KEY` | `NOD_VAULT_KEY` in the private environment file |
 | Network exposure    | Loopback only, per-launch token                                    | Loopback by default, owner access key                  | Access token and HTTPS for network access       |

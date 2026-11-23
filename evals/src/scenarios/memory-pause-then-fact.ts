@@ -15,7 +15,9 @@ interface Memory {
 const memory = (run: Run): Memory => JSON.parse(run.memory);
 const controls = (run: Run) =>
   run.tools.filter(
-    (call) => call.name === 'manage_personal_context' && call.input?.action === 'memory_control',
+    (call) =>
+      ['manage_personal_context', 'memory', 'nod'].includes(call.name) &&
+      call.input?.action === 'memory_control',
   );
 
 function replyTo(run: Run, text: string) {

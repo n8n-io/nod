@@ -68,21 +68,11 @@ export function createAgentReactionService(dependencies: {
         } else if (message.assistant_reacted_at || message.assistant_reaction) {
           result = { status: 'skipped', reason: 'already_reacted' };
         } else {
-          const recent = await client.query(
-            `SELECT m.id FROM messages m
-             WHERE m.owner_id=$1 AND m.thread_id=$2
-               AND m.assistant_reacted_at > clock_timestamp()-interval '5 minutes'
-             LIMIT 1`,
-            [dependencies.ownerId, thread.id],
+          await client.query(
+            'UPDATE messages SET assistant_reaction=$2,assistant_reacted_at=clock_timestamp() WHERE id=$1',
+            [input.messageId, reactionEmoji(input.reaction)],
           );
-          if (recent.rowCount) result = { status: 'skipped', reason: 'cooldown' };
-          else {
-            await client.query(
-              'UPDATE messages SET assistant_reaction=$2,assistant_reacted_at=clock_timestamp() WHERE id=$1',
-              [input.messageId, reactionEmoji(input.reaction)],
-            );
-            result = { status: 'updated' };
-          }
+          result = { status: 'updated' };
         }
       }
       input.signal?.throwIfAborted();

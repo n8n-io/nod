@@ -60,7 +60,8 @@ export default scenario({
         (run) =>
           !run.tools.some(
             (tool) =>
-              tool.name === 'manage_personal_context' && tool.input?.action === 'memory_learn',
+              ['manage_personal_context', 'memory', 'nod'].includes(tool.name) &&
+              tool.input?.action === 'memory_learn',
           ),
         { failure: 'scope' },
       ),

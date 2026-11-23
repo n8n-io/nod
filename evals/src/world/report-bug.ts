@@ -6,7 +6,7 @@ const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' }
 const bugReportCall = (run: Run, action: string, succeeded = false) =>
   run.tools.some(
     (tool) =>
-      tool.name === 'manage_personal_context' &&
+      ['manage_personal_context', 'memory', 'nod'].includes(tool.name) &&
       tool.input.action === action &&
       !(succeeded && tool.isError),
   );

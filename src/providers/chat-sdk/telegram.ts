@@ -171,7 +171,14 @@ export function telegramAttachments(
           `https://api.telegram.org/file/bot${token}/${segments.map(encodeURIComponent).join('/')}`,
           { signal: operation, redirect: 'error' },
         );
-        if (!response.ok || !response.body) throw new Error('The Telegram file is unavailable.');
+        if (!response.ok)
+          throw await modelServiceError(
+            response,
+            'Telegram file download',
+            [token, encodeURIComponent(token)],
+            ['description', 'error_code'],
+          );
+        if (!response.body) throw new Error('The Telegram file is unavailable.');
         if (Number(response.headers.get('content-length') ?? 0) > 20 * 1024 * 1024) {
           await response.body.cancel().catch(() => {});
           throw new MessagingAttachmentError(20 * 1024 * 1024);

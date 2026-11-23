@@ -108,11 +108,11 @@ export interface MessagingTransport {
     accountId: string;
     threadId: string;
     text: string;
-    approval?: true;
+    approval?: { approve: string; decline: string };
     attachments?: MessagingAttachment[];
     replyToMessageId?: string;
     replyToText?: string;
-    attachmentFailure?: (names: string[]) => Promise<string | undefined>;
+    attachmentFailure?: (files: { name: string; reason?: string }[]) => Promise<string | undefined>;
   }): Promise<{ id: string; ids?: string[]; approvalButtons?: true }>;
   react?(input: {
     channelId: string;

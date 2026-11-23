@@ -796,8 +796,8 @@ export async function createDiscoveredConnections(
     const { token: entered, accountName } = z
       .object({
         token: z.union([
-          z.string().min(1).max(8192),
-          z.record(envName, z.string().min(1).max(8192)),
+          z.string().trim().min(1).max(8192),
+          z.record(envName, z.string().trim().min(1).max(8192)),
         ]),
         accountName: z.string().trim().min(1).max(200),
       })
@@ -1580,7 +1580,15 @@ export async function createDiscoveredConnections(
       if (path.kind !== 'cli') throw error('Choose a CLI access path.');
       if (!path.source || !path.env)
         throw error('Propose this CLI again with its install source and connectionId.', 409);
-      const argv = z.array(z.string().min(1)).min(1).parse(args.argv);
+      const argv = z
+        .array(
+          z
+            .string()
+            .min(1)
+            .refine((value) => !value.includes('\0')),
+        )
+        .min(1)
+        .parse(args.argv);
       const timeoutSeconds = z.number().int().min(1).optional().parse(args.timeoutSeconds);
       return { row, call: { kind: 'cli' as const, path, argv, timeoutSeconds } };
     }

@@ -26,7 +26,7 @@ Notes come only from your own messages and what you write or paste in **Settings
 - **When you tell it.** Say "remember that I'm vegetarian" or state a lasting fact, and Nod saves it as a short note, such as **Diet: vegetarian**. When you ask it to remember something, it tells you briefly what it saved; a fact you mention in passing is saved without a reply about it. It can be something you said a little earlier: "remember that address" saves the address from your last few messages. Each note keeps a reference to its source message, and Nod is told to keep your names and numbers exactly as you wrote them. Messages longer than 4,000 characters can't be saved this way; add a shorter note yourself.
 - **In the background.** About once an hour, Nod looks through your recent messages for what you said about your life: people, places, plans, things you bought, events with their dates and what you like. It skips messages with attachments, messages over 4,000 characters, and messages from requests you stopped or that failed at the model provider.
 
-Background saves and facts you mention in passing are silent: Nod doesn't post a notice in chat. Only an explicit request to remember gets a short confirmation.
+Background saves and facts you mention in passing are silent: Nod doesn't post a notice in chat. When your message only gives context, Nod reacts to it with an emoji instead of sending an acknowledgement. Only an explicit request to remember gets a short confirmation.
 
 When you ask Nod to save a note or a skill, the memory model can continue while that request is active. A slow reply does not stop at 45 seconds. **Stop** cancels preparation and prevents a late reply from saving anything. The model service still has its own request limits.
 

@@ -136,7 +136,7 @@ When Nod drafts a bug report, reply "send" to share its summary. A diagnostic re
 
 Ask Nod for a voice reply to get the answer as audio. On the WhatsApp QR connection, OpenAI voices arrive as a voice note and OpenRouter or ElevenLabs voices as an audio message. WhatsApp can't play WAV in the chat, so free local voices and other audio formats arrive as a file you can open. Choose a voice in **Settings → Voice & audio**, using a connected OpenAI, OpenRouter or ElevenLabs account, or downloaded free voices. `TTS_MODEL` and `TTS_VOICE` set the default OpenAI speech model and voice. Speech calls have usage records. Voice replies stop at the monthly spending limit; transcribing your own voice message doesn't, so you can still ask Nod to change the limit by voice. OpenRouter reports the transcription cost. Where OpenAI returns supported usage, Nod calculates an API-price estimate. A speech response without a known price shows **No price** in Usage.
 
-Nod sends files up to 50 MB each. Large or unavailable files stay available in Nod. Long replies are split into messages. Nod shows typing status while work runs.
+Nod sends files up to 50 MB each. Large, unavailable or refused files stay available in Nod, and the reply text still arrives. When Telegram refuses a file, the notice includes Telegram's reason. Long replies are split into messages. Nod shows typing status while work runs.
 
 For a short reply with one image, video or document, the text is its caption. Longer replies, voice replies and replies with several files send the text in a separate message.
 
@@ -156,7 +156,7 @@ The Channels page checks status every five seconds while visible. During Telegra
 
 ## Answer approval questions
 
-In Telegram, tap **Approve** or **Cancel** below a new approval question. If the question appears without buttons, reply directly to it with yes or no. If it spans more than one message, reply to one of them, including the reply guidance. In WhatsApp, reply directly to the question. See [how approvals work](/trust/approvals/).
+In Telegram, tap one of the two buttons below a new approval question: the action or the refusal, in the question's language. If the question appears without buttons, reply directly to it with yes or no. If it spans more than one message, reply to one of them, including the reply guidance. In WhatsApp, reply directly to the question. See [how approvals work](/trust/approvals/).
 
 Approval buttons work automatically in Telegram polling mode. If you set up a Telegram webhook in Nod before buttons were available, open **Channels** and select **Reconnect**. For a webhook you registered yourself, [update the Telegram webhook registration](/deploy/configuration/#telegram-webhooks).
 
@@ -188,7 +188,7 @@ Taking over [Nod's browser](/use/browser/) also needs the Nod app, because chat 
 
 While Nod works on something you asked for in this chat, including a task it started for you, you see **typing…**.
 
-- **Telegram** adds a quoted progress section when a task's first message or chat's opening message arrives as one short text message. Named steps use your conversation language. Without a named step, a running labeled tool appears as **Using Gmail**, **Using Slack**, or **Using local files**. The same fallback applies to other apps, websites, and MCP servers. Known tools without a label, such as code, commands and web searches, appear by their kind of work, such as **Running code** or **Searching the web**. These fallbacks, and the note shown while Nod retries a failed model request, are in English. The section updates quietly in place and disappears when work stops. The answer arrives separately. You can keep typing and sending messages, or reply to the first message to correct the task. Long or split messages, attachments, visual cards, files and private sign-in or payment links keep typing status only.
+- **Telegram** adds a quoted progress section when a task's first message or chat's opening message arrives as one short text message. Named steps use your conversation language. Without a named step, a running labeled tool appears as **Using Gmail**, **Using Slack**, or **Using local files**. The same fallback applies to other apps, websites, and MCP servers. Known tools without a label, such as code and commands, appear by their kind of work, such as **Running code**. A web search appears as **Searching** and its first query, or **Searching the web** without one, and a page read as **Reading** and its site. These fallbacks, and the note shown while Nod retries a failed model request, are in English. The section updates quietly in place and disappears when work stops. The answer arrives separately. You can keep typing and sending messages, or reply to the first message to correct the task. Long or split messages, attachments, visual cards, files and private sign-in or payment links keep typing status only.
 - **WhatsApp** shows **typing…** while connected. The Meta Cloud API also marks your latest message as read and stops typing after its 24-hour reply window closes. The QR connection has no reply window.
 - **A message you send while Nod works** gets a 👀 reaction in both apps until Nod reads it, so you know it's queued. Nod leaves its own reaction to that message alone.
 

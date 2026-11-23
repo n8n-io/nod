@@ -1,12 +1,4 @@
-import {
-  type CSSProperties,
-  type ReactNode,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft } from './components/icons';
 import { Chat } from './pages/chat';
 import { Usage } from './pages/usage';
@@ -27,14 +19,7 @@ import { ServerAccess } from './components/server-access';
 import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
 import { DesktopUpdateToast } from './components/desktop-update-toast';
-import {
-  SidebarResizer,
-  SidebarToggle,
-  readSidebarState,
-  stopSidebarSlide,
-  toggleSidebarState,
-  writeSidebarState,
-} from './components/sidebar-toggle';
+import { SidebarToggle } from './components/sidebar-toggle';
 import { FeedbackDialog } from './components/feedback';
 import { createFeedbackCapture } from './lib/feedback-capture';
 import { navigate, replaceNavigation, sidebarItems, subscribeNavigation } from './lib/navigation';
@@ -128,7 +113,7 @@ function Workspace({
   useBrowserNotifications(session.user!.id, state);
   useSavedDateFormat();
   useBrowserTimeZone();
-  const [sidebar, setSidebar] = useState(readSidebarState);
+  const [collapsed, setCollapsed] = useState(() => readUiPreference('nod.sidebar') !== 'expanded');
   const [toolbarActions, setToolbarActions] = useState<HTMLDivElement | null>(null);
   const [mobileActions, setMobileActions] = useState<HTMLDivElement | null>(null);
   const [mobileHeader, setMobileHeader] = useState(
@@ -200,20 +185,14 @@ function Workspace({
     ]);
   }, []);
   useEffect(() => {
-    writeSidebarState(sidebar);
-  }, [sidebar]);
-  useLayoutEffect(() => {
-    stopSidebarSlide();
-    if (sidebar.hidden && document.activeElement?.closest('.sidebar'))
-      document.querySelector<HTMLElement>('.sidebar-toggle')?.focus();
-  }, [sidebar.hidden]);
+    writeUiPreference('nod.sidebar', collapsed ? 'collapsed' : 'expanded');
+  }, [collapsed]);
   function toggleSidebar() {
-    setSidebar(toggleSidebarState);
+    setCollapsed((value) => !value);
   }
   return (
     <div
-      className={`app-shell ${sidebar.hidden ? 'sidebar-hidden' : ''} ${entering ? 'shell-entering' : ''} ${settingsPage(path) ? 'settings-open' : ''}`}
-      style={{ '--sidebar-width': `${sidebar.width}px` } as CSSProperties}
+      className={`app-shell ${collapsed ? 'sidebar-collapsed' : ''} ${entering ? 'shell-entering' : ''} ${settingsPage(path) ? 'settings-open' : ''}`}
     >
       <a href="#workspace" className="skip-link">
         Skip to content
@@ -241,14 +220,7 @@ function Workspace({
         />
       )}
       <div className="workspace-frame">
-        {!settingsPage(path) && (
-          <SidebarToggle
-            hidden={sidebar.hidden}
-            unread={unread.count > 0}
-            onToggle={toggleSidebar}
-          />
-        )}
-        {!settingsPage(path) && <SidebarResizer {...sidebar} onResize={setSidebar} />}
+        {!settingsPage(path) && <SidebarToggle collapsed={collapsed} onToggle={toggleSidebar} />}
         <div className="workspace-body">
           <main id="workspace" className="main-workspace" tabIndex={-1}>
             <div className="chat-route" hidden={path !== '/'}>

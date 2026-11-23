@@ -195,7 +195,7 @@ for index,(args,child_env,seconds) in enumerate(steps):
   output('stderr',b'The connected CLI install is not sealed. Propose it again.\\n')
   finish({'type':'exit','code':126,'reason':None})
  try: p=subprocess.Popen(args,stdin=subprocess.PIPE if last else subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True,env=child_env,cwd=home)
- except OSError as error:
+ except (OSError,ValueError) as error:
   output('stderr',(str(error)+'\\n').encode())
   finish({'type':'exit','code':127,'reason':None})
  sel.register(p.stdout,selectors.EVENT_READ,'stdout')
@@ -205,7 +205,7 @@ for index,(args,child_env,seconds) in enumerate(steps):
  deadline=time.monotonic()+seconds
  while True:
   now=time.monotonic()
-  if now>=deadline: cancel('timeout')
+  if now>=deadline: cancel('timeout' if last else 'install')
   if reason and not killed and now-stopping>=2:
    kill(signal.SIGKILL)
    killed=True
@@ -281,6 +281,13 @@ while True:
   except OSError as error: sys.exit('Nod could not stop process %d: %s.'%(pid,error))
  time.sleep(0.1)
 `;
+
+const byteSize = (bytes: number) =>
+  bytes % 1048576 === 0
+    ? `${bytes / 1048576} MB`
+    : bytes % 1024 === 0
+      ? `${bytes / 1024} KB`
+      : `${bytes}-byte`;
 
 export class WorkspaceCommandError extends Error {
   stop?: () => Promise<void>;
@@ -408,8 +415,12 @@ function runSupervisedCommand(options: {
     let cancelling = false;
     let response: { code: number; reason: string | null } | undefined;
     let drain: ReturnType<typeof setTimeout> | undefined;
+    let exceeded: 'timeout' | 'limit' | undefined;
     const timer = setTimeout(
-      () => cancel(),
+      () => {
+        exceeded ??= 'timeout';
+        cancel();
+      },
       Math.min(
         transportGraceMs + timeoutMs + (options.cli ? cliInstallTimeoutMs : 0) + 1000,
         2 ** 31 - 1,
@@ -463,7 +474,7 @@ function runSupervisedCommand(options: {
             frame.type === 'exit' &&
             Number.isInteger(frame.code) &&
             (frame.reason === null ||
-              ['cancelled', 'timeout', 'limit', 'connection'].includes(frame.reason))
+              ['cancelled', 'timeout', 'install', 'limit', 'connection'].includes(frame.reason))
           ) {
             response = { code: frame.code, reason: frame.reason };
           } else if (
@@ -474,8 +485,10 @@ function runSupervisedCommand(options: {
           ) {
             const bytes = Buffer.from(frame.data, 'base64');
             size += bytes.length;
-            if (size > maxBytes) cancel();
-            else if (options.onData) options.onData(bytes);
+            if (size > maxBytes) {
+              exceeded ??= 'limit';
+              cancel();
+            } else if (options.onData) options.onData(bytes);
             else (frame.type === 'stdout' ? output : errors).push(bytes);
           } else throw new Error();
         } catch {
@@ -497,11 +510,24 @@ function runSupervisedCommand(options: {
       }
       settled = true;
       cleanup();
-      if (options.signal?.aborted || response.reason === 'cancelled')
+      const reason =
+        response.reason && response.reason !== 'cancelled'
+          ? response.reason
+          : (exceeded ?? response.reason);
+      if (options.signal?.aborted || reason === 'cancelled')
         return reject(new WorkspaceCommandError(false, 'Task cancelled.'));
-      if (cancelling || response.reason)
+      if (reason)
         return reject(
-          new WorkspaceCommandError(false, 'Workspace command exceeded its time or output limit.'),
+          new WorkspaceCommandError(
+            false,
+            reason === 'timeout'
+              ? `Workspace command ran longer than its ${timeoutMs / 1000}-second limit.`
+              : reason === 'install'
+                ? `The connected CLI install ran longer than its ${cliInstallTimeoutMs / 1000}-second limit.`
+                : reason === 'limit'
+                  ? `Workspace command output passed its ${byteSize(maxBytes)} limit.`
+                  : 'Workspace command stopped because its connection to Nod closed.',
+          ),
         );
       resolve({
         stdout: Buffer.concat(output),

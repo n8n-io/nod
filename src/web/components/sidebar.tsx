@@ -264,7 +264,7 @@ export function Sidebar({
                     }}
                   >
                     <span className="nav-icon">
-                      <Icon solid={path === item.path} aria-hidden="true" />
+                      <Icon size={20} solid={path === item.path} aria-hidden="true" />
                       {item.path === '/' && unreadBadge}
                       {item.path === '/' && statusDot}
                     </span>
@@ -385,7 +385,7 @@ export function Sidebar({
               aria-label={themeLabel}
               onClick={toggleTheme}
             >
-              <ThemeIcon aria-hidden="true" />
+              <ThemeIcon size={20} aria-hidden="true" />
               <span className="nav-label">{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span>
             </button>
           </Tooltip>
@@ -405,7 +405,7 @@ export function Sidebar({
               aria-keyshortcuts={desktop ? `${mac ? 'Meta' : 'Control'}+,` : undefined}
               onClick={(event) => account.onSettings('General', event.currentTarget)}
             >
-              <Settings solid={path.startsWith('/settings')} aria-hidden="true" />
+              <Settings size={20} solid={path.startsWith('/settings')} aria-hidden="true" />
               <span className="nav-label">Settings</span>
             </button>
           </Tooltip>

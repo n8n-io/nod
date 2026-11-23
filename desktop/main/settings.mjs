@@ -49,6 +49,13 @@ export function serverOrigin(value) {
   }
 }
 
+export function serverToken(value) {
+  const token = typeof value === 'string' ? value.trim() : '';
+  if (!/^[A-Za-z0-9_-]{43,}$/.test(token))
+    throw new Error('Enter the authentication token configured on your server.');
+  return token;
+}
+
 export function createSettingsStore(path, encryption, platform = process.platform) {
   let current;
   let unsynced = false;
@@ -289,13 +296,12 @@ export function createSettingsStore(path, encryption, platform = process.platfor
             !input ||
             typeof input !== 'object' ||
             Array.isArray(input) ||
-            Object.keys(input).some((field) => !['url', 'token'].includes(field)) ||
-            typeof input.token !== 'string' ||
-            !/^[A-Za-z0-9_-]{43,}$/.test(input.token)
+            Object.keys(input).some((field) => !['url', 'token'].includes(field))
           )
             throw new Error('Enter the authentication token configured on your server.');
+          const token = serverToken(input.token);
           value.serverUrl = serverOrigin(input.url);
-          value.secrets.serverToken = await protect(input.token);
+          value.secrets.serverToken = await protect(token);
         }
         await write(value);
         return redacted(value);

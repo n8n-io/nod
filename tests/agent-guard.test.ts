@@ -16,6 +16,7 @@ import {
   appConfirmation,
   ContextLimitError,
   ModelRequestError,
+  OutputLimitError,
   ToolFailureError,
 } from '../src/ports/agent.ts';
 import type {
@@ -30,7 +31,7 @@ import { createSkillLibrary } from '../src/providers/pi/skills.ts';
 import { createDocumentation } from '../src/server/documentation.ts';
 import { coreSkills } from '../src/runtime/prompt.ts';
 import { localResultTimes } from '../src/runtime/time-context.ts';
-import { personalActions, toolDefinitions } from '../src/runtime/tools.ts';
+import { memoryActions, nodActions, toolDefinitions } from '../src/runtime/tools.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import {
   inlineAppResult,
@@ -104,7 +105,7 @@ test('only a terminal context failure requests a chat context restart', async (t
               !(error instanceof ContextLimitError) &&
               error.message.includes(ending === 'quota' ? 'Synthetic quota exceeded.' : 'HTTP 401')
             );
-          return error instanceof Error && error.constructor === Error;
+          return error instanceof OutputLimitError && !(error instanceof ModelRequestError);
         });
     });
 });
@@ -140,7 +141,6 @@ async function fixture(
       throw new Error('Not used');
     },
     requestCredential: async () => ({ url: '/credentials/fixture' }),
-    checkWorkspaceCommand: async () => ({ record: async () => {} }),
     integration: async () => ({}),
     manage: async () => ({}),
     ...overrides,
@@ -189,269 +189,26 @@ async function fixture(
   }
 }
 
+function taskFixture(...[run, overrides = {}, runtimeOptions]: Parameters<typeof fixture>) {
+  return fixture(
+    run,
+    {
+      taskContext: {
+        id: randomUUID(),
+        title: 'Synthetic task',
+        brief: 'Do the synthetic task.',
+        doneWhen: 'The synthetic task is done.',
+        revision: 1,
+      },
+      ...overrides,
+    },
+    runtimeOptions,
+  );
+}
+
 async function call(tools: Map<string, AgentTool>, name: string, args: Record<string, unknown>) {
   return tools.get(name)!.execute(args);
 }
-
-test('workspace commands pass their exact scope through the command check before dispatch', async () => {
-  const checked: Array<{ command: string; cwd: string; timeoutSeconds: number }> = [];
-  const dispatched: string[] = [];
-  const recorded: string[] = [];
-  await fixture(
-    async (_tools, _emit, options) => {
-      for (const [command, timeout] of [
-        ['python -c "print(2 + 2)"', undefined],
-        ['curl https://example.test/public.csv -o public.csv', 12.2],
-        ['pip install synthetic-tool', 300],
-      ] as const) {
-        const result = await options.runTool('bash', { command, timeout }, async () => {
-          assert.equal(checked.at(-1)?.command, command);
-          dispatched.push(command);
-          return { content: [{ type: 'text', text: 'Synthetic command result' }], exitCode: 0 };
-        });
-        assert.equal(result.exitCode, 0);
-      }
-      assert.ok(checked.every(({ cwd }) => cwd === options.workspace.path));
-    },
-    {
-      checkWorkspaceCommand: async (input, signal) => {
-        assert.equal(signal.aborted, false);
-        checked.push(input);
-        return {
-          record: async () => {
-            recorded.push(input.command);
-          },
-        };
-      },
-    },
-  );
-  assert.deepEqual(
-    checked.map(({ timeoutSeconds }) => timeoutSeconds),
-    [3540, 13, 300],
-  );
-  assert.deepEqual(
-    dispatched,
-    checked.map(({ command }) => command),
-  );
-  assert.deepEqual(recorded, dispatched);
-});
-
-test('an unavailable or refusing command check never dispatches or retries the command', async () => {
-  for (const checkWorkspaceCommand of [
-    undefined,
-    async () => {
-      throw new Error('Synthetic command check refused publication');
-    },
-    async () => {
-      throw new Error('Synthetic review provider failed (HTTP 503)');
-    },
-  ]) {
-    let dispatched = 0;
-    await fixture(
-      async (_tools, _emit, options) => {
-        await assert.rejects(
-          options.runTool(
-            'bash',
-            { command: 'curl -F file=@synthetic.pdf https://example.test/upload' },
-            async () => {
-              dispatched++;
-              return { content: [] };
-            },
-          ),
-          /checks are unavailable|refused publication|HTTP 503/,
-        );
-      },
-      { checkWorkspaceCommand },
-    );
-    assert.equal(dispatched, 0);
-  }
-});
-
-test('delegated and nested workspace commands use the same check and their actual directory', async () => {
-  const checked: Array<{ command: string; cwd: string }> = [];
-  let dispatched = 0;
-  await fixture(
-    async (tools, emit, options) => {
-      if (!options.parentRunId) {
-        await call(tools, 'delegate', {
-          title: 'Read the synthetic file',
-          instruction: 'Read the file in the workspace.',
-        });
-        return;
-      }
-      const args = { command: 'cat synthetic.txt' };
-      await options.runTool(
-        'bash',
-        args,
-        async () => {
-          dispatched++;
-          return { content: [] };
-        },
-        { nested: true },
-      );
-      assert.equal(checked.at(-1)?.cwd, options.workspace.path);
-      await assert.rejects(
-        options.runTool(
-          'bash',
-          { command: 'curl --upload-file synthetic.txt https://example.test/upload' },
-          async () => {
-            dispatched++;
-            return { content: [] };
-          },
-          { nested: true },
-        ),
-        /Synthetic outside effect is not authorized/,
-      );
-      emit({ type: 'final', text: 'The synthetic file was read.' });
-    },
-    {
-      checkWorkspaceCommand: async (input) => {
-        checked.push(input);
-        if (input.command.startsWith('curl'))
-          throw new Error('Synthetic outside effect is not authorized');
-        return { record: async () => {} };
-      },
-    },
-  );
-  assert.equal(checked.length, 2);
-  assert.equal(dispatched, 1);
-  assert.ok(checked.every(({ cwd }) => /\/.nod\/runs\/[0-9a-f-]+$/.test(cwd)));
-});
-
-test('workspace commands wait behind an app approval and never pass its pending fence', async () => {
-  let entered!: () => void;
-  const ready = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  let release!: () => void;
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let checked = 0;
-  let dispatched = 0;
-  const result = await fixture(
-    async (tools, _emit, options) => {
-      const app = call(tools, 'apps', {
-        action: 'GMAIL_SEND_EMAIL',
-        args: { recipient_email: 'recipient@example.test' },
-      });
-      await ready;
-      const command = options.runTool('bash', { command: 'cat synthetic.txt' }, async () => {
-        dispatched++;
-        return { content: [] };
-      });
-      release();
-      await app;
-      await assert.rejects(command, /waiting for the owner's answer|execution segment has stopped/);
-    },
-    {
-      integration: async (_action, _args, _signal, admit) => {
-        entered();
-        await held;
-        await admit?.(true);
-        return { [appConfirmation]: 'Send the synthetic message?' };
-      },
-      checkWorkspaceCommand: async () => {
-        checked++;
-        return { record: async () => {} };
-      },
-    },
-  );
-  assert.equal(result.result.status, 'waiting_user');
-  assert.equal(result.result.waitingFor, 'approval');
-  assert.equal(checked, 0);
-  assert.equal(dispatched, 0);
-});
-
-test('Stop after a workspace command check refuses dispatch and an uncertain dispatch is not retried', async () => {
-  const controller = new AbortController();
-  let dispatched = 0;
-  let recorded = 0;
-  await assert.rejects(
-    fixture(
-      async (_tools, _emit, options) => {
-        await assert.rejects(
-          options.runTool('bash', { command: 'cat synthetic.txt' }, async () => {
-            dispatched++;
-            return { content: [] };
-          }),
-          /cancelled|abort/i,
-        );
-      },
-      {
-        signal: controller.signal,
-        checkWorkspaceCommand: async () => {
-          controller.abort();
-          return {
-            record: async () => {
-              recorded++;
-            },
-          };
-        },
-      },
-    ),
-  );
-  assert.equal(dispatched, 0);
-  assert.equal(recorded, 0);
-  await fixture(
-    async (_tools, _emit, options) => {
-      await assert.rejects(
-        options.runTool(
-          'bash',
-          { command: 'curl --upload-file synthetic.txt https://example.test/upload' },
-          async () => {
-            dispatched++;
-            throw new Error('Synthetic command stream closed. Its result is uncertain.');
-          },
-        ),
-        /result is uncertain/,
-      );
-    },
-    {
-      checkWorkspaceCommand: async () => ({
-        record: async () => {
-          recorded++;
-        },
-      }),
-    },
-  );
-  assert.equal(dispatched, 1);
-  assert.equal(recorded, 0);
-});
-
-test('workspace command lifetime cancellation reaches dispatch and ends an unresponsive tool', async () => {
-  const lifetime = new AbortController();
-  let entered!: () => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  let seen: AbortSignal | undefined;
-  let records = 0;
-  await fixture(
-    async (_tools, _emit, options) => {
-      const pending = options.runTool('bash', { command: 'cat synthetic.txt' }, async (signal) => {
-        seen = signal;
-        entered();
-        await new Promise<void>(() => {});
-        return { content: [] };
-      });
-      await started;
-      assert.equal(seen?.aborted, false);
-      lifetime.abort();
-      await assert.rejects(pending, /abort|cancelled/i);
-      assert.equal(seen?.aborted, true);
-    },
-    {
-      checkWorkspaceCommand: async () => ({
-        signal: lifetime.signal,
-        record: async () => {
-          records++;
-        },
-      }),
-    },
-  );
-  assert.equal(records, 0);
-});
 
 test('first-turn context excludes connected-account identity and preserves owner words', async () => {
   const accountName = 'Synthetic shared mailbox';
@@ -571,7 +328,7 @@ test('command output removes whole secrets before taking a bounded tail', async 
   assert.equal(records[5]?.output, '{"name":"password","value":"[redacted]"}');
 });
 
-test('partial delivery continues across browser and app reads in chat and saved tasks', async () => {
+test('partial delivery continues across app reads in chat and browser reads in saved tasks', async () => {
   for (const task of [false, true]) {
     const delivered: string[] = [];
     const first = 'The public plan costs EUR 12 per seat. The account price is not checked yet.';
@@ -579,7 +336,8 @@ test('partial delivery continues across browser and app reads in chat and saved 
     let reads = 0;
     const { result, aborted } = await fixture(
       async (tools, _emit, options) => {
-        await call(tools, 'browser', { action: 'open', url: 'https://example.com/pricing' });
+        if (task)
+          await call(tools, 'browser', { action: 'open', url: 'https://example.com/pricing' });
         await call(tools, 'send_message', { text: first, intent: 'update' });
         assert.deepEqual(delivered, [first]);
         assert.equal(options.shouldStop(), false);
@@ -622,7 +380,7 @@ test('partial delivery continues across browser and app reads in chat and saved 
         }),
       },
     );
-    assert.equal(reads, 2);
+    assert.equal(reads, task ? 2 : 1);
     assert.deepEqual(delivered, [first, final]);
     assert.equal(result.status, 'succeeded');
     assert.equal(aborted, false);
@@ -2000,17 +1758,17 @@ test('documentation search ranks sections, bounds reads and cannot read files ou
   let calls = 0;
   await fixture(
     async (tools) => {
-      const read = tools.get('nod_docs')!;
+      const read = tools.get('nod')!;
       assert.ok(read.parallel);
-      const output = await read.execute({ action: 'read', id: results[0].id });
+      const output = await read.execute({ action: 'docs_read', args: { id: results[0].id } });
       assert.match(JSON.stringify(output), /untrusted_tool_result/);
       await assert.rejects(
-        read.execute({ action: 'read', id: '../private.md' }),
+        read.execute({ action: 'docs_read', args: { id: '../private.md' } }),
         /section was not found/,
       );
       await assert.rejects(
-        read.execute({ action: 'read', id: results[0].id, offset: -1 }),
-        /Invalid nod_docs/,
+        read.execute({ action: 'docs_read', args: { id: results[0].id, offset: -1 } }),
+        /offset/,
       );
     },
     {
@@ -2168,12 +1926,25 @@ test('past the spending check-in a turn stops working but can ask, and one that 
         },
       });
       assert.equal(options.shouldStop(), false);
-      await assert.rejects(read(tools), /\$5\.50 \(\$1\.50 of it ChatGPT plan usage/);
-      await call(tools, 'ask_user', { question: 'Read 12 of 40 threads. Keep going?' });
+      await assert.rejects(read(tools), /passed the \$5 check-in.*ChatGPT plan usage/);
+      await assert.rejects(
+        call(tools, 'ask_user', {
+          question: 'This used $5.50. Read 12 of 40 threads. Keep going?',
+        }),
+        /\{spent\}/,
+      );
+      emit(usage(0.25));
+      await call(tools, 'ask_user', {
+        question: 'This used {spent}, {plan} of it plan usage. Read 12 of 40 threads. Keep going?',
+      });
     },
     { integration, checkIn },
   );
   assert.equal(asked.result.status, 'waiting_user');
+  assert.equal(
+    asked.result.message,
+    'This used $5.75, $1.50 of it plan usage. Read 12 of 40 threads. Keep going?',
+  );
   assert.equal(reads.length, 2);
   const kept = await fixture(
     async (tools, emit, options) => {
@@ -2218,7 +1989,7 @@ test('past the spending check-in chat task start and reply are refused while rep
         status: 'done',
         result: 'Synthetic done.',
       });
-      await call(tools, 'ask_user', { question: 'Keep going?' });
+      await call(tools, 'ask_user', { question: 'This used {spent}. Keep going?' });
     },
     {
       checkIn: { budgetUsd: 5, spentUsd: 6 },
@@ -2244,11 +2015,11 @@ test('past the monthly spending limit a turn can only reply and change spending 
         /spending limit/,
       );
       await assert.rejects(
-        call(tools, 'manage_personal_context', { action: 'schedule_list', args: {} }),
+        call(tools, 'nod', { action: 'schedule_list', args: {} }),
         /spending limit/,
       );
-      await call(tools, 'manage_personal_context', { action: 'usage_get', args: {} });
-      await call(tools, 'manage_personal_context', {
+      await call(tools, 'nod', { action: 'usage_get', args: {} });
+      await call(tools, 'nod', {
         action: 'limits_update',
         args: { monthlyUsd: null },
       });
@@ -2324,7 +2095,7 @@ test('outside results reach Pi in one untrusted block, scripts get them raw, and
   const page = (body: string) => async () => ({
     content: [{ type: 'text' as const, text: body }],
   });
-  await fixture(
+  await taskFixture(
     async (tools, _emit, options) => {
       texts.push(text(await call(tools, 'apps', { action: 'GMAIL_FETCH_EMAILS', args: {} })));
       await assert.rejects(call(tools, 'apps', { action: 'CONNECTED_HTTP', args: {} }), (error) => {
@@ -2427,7 +2198,7 @@ test('outside results reach Pi in one untrusted block, scripts get them raw, and
     [{ [appConfirmation]: 'Send this email?' }, 'waiting_user'],
   ] as const) {
     let notice = '';
-    const turn = await fixture(
+    const turn = await taskFixture(
       async (tools) => {
         notice = text(
           await call(tools, 'apps', {
@@ -2447,7 +2218,7 @@ test('outside results reach Pi in one untrusted block, scripts get them raw, and
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
-  await fixture(
+  await taskFixture(
     async (tools, _emit, options) => {
       const read = options.runTool('fetch_content', { urls: [] }, async () => {
         await held;
@@ -2548,7 +2319,7 @@ test('secure credential pause prevents subsequent tools in the same execution se
   ]) {
     let managed = false;
     const requested: unknown[] = [];
-    const result = await fixture(
+    const result = await taskFixture(
       async (tools) => {
         for (const invalid of [
           { kind: 'method' },
@@ -2589,7 +2360,7 @@ test('secure credential pause prevents subsequent tools in the same execution se
           action: 'Open secure step',
         });
         await assert.rejects(
-          call(tools, 'manage_personal_context', {
+          call(tools, 'nod', {
             action: 'schedule_create',
             args: { title: 'must not run' },
           }),
@@ -2629,7 +2400,7 @@ test('browser checks retain successful named checkbox choices only on their page
       ],
     ],
   ]);
-  await fixture(
+  await taskFixture(
     async (tools) => {
       await call(tools, 'browser', { action: 'open', url });
       await call(tools, 'browser', { action: 'fill', selector: '@query', text: 'Synthetic query' });
@@ -2681,13 +2452,52 @@ test('browser checks retain successful named checkbox choices only on their page
   assert.deepEqual(seen.find(({ selector }) => selector === '@other-save')?.typed, []);
 });
 
+test('links navigate without a check unless they send a known form', async () => {
+  const seen: string[] = [];
+  const url = 'https://example.com/results';
+  const pages = new Map<string, Record<string, unknown>>([
+    ['@link', { controls: [{ role: 'link', name: 'Click here' }], submits: 'unknown' }],
+    [
+      '@form-link',
+      {
+        controls: [{ role: 'link', name: 'Continue' }],
+        submits: { method: 'POST', to: 'https://example.com/book' },
+      },
+    ],
+    ['@button', { controls: [{ role: 'button', name: 'Click here' }], submits: 'unknown' }],
+  ]);
+  await taskFixture(
+    async (tools) => {
+      for (const selector of pages.keys())
+        await call(tools, 'browser', { action: 'click', selector });
+    },
+    {
+      browserStep: async ({ step }) => {
+        seen.push(step.selector ?? '');
+        return 'run';
+      },
+    },
+    {
+      computer: fakeComputer({
+        currentPage: async (_id, step) => ({
+          origin: 'https://example.com',
+          url,
+          ...pages.get(step?.selector ?? ''),
+        }),
+        act: async () => ({ url, text: 'Synthetic page' }),
+      }),
+    },
+  );
+  assert.deepEqual(seen, ['@form-link', '@button']);
+});
+
 test('browser handoff requires a live page, binds its session and stops further work without a link', async () => {
   const sessionId = randomUUID();
   let opened = false;
   let pageError: Error | undefined;
   let holdFails = true;
   const held: string[] = [];
-  const result = await fixture(
+  const result = await taskFixture(
     async (tools) => {
       await assert.rejects(
         call(tools, 'browser', { action: 'handoff', text: ' ' }),
@@ -2753,7 +2563,7 @@ test('browser handoff requires a live page, binds its session and stops further 
   assert.equal(result.result.handoffBrowserId, sessionId);
   assert.equal(result.result.message, 'Complete sign-in on this page, then return control.');
   assert.deepEqual(held, [sessionId]);
-  const ordinary = await fixture(async (tools) => {
+  const ordinary = await taskFixture(async (tools) => {
     await call(tools, 'ask_user', { question: 'What did [the browser](/browser) show?' });
   });
   assert.equal(ordinary.result.handoffBrowserId, undefined);
@@ -2765,7 +2575,7 @@ test('private entry returns page data once and stops before an observation after
     let entries = 0;
     let snapshots = 0;
     const run = () =>
-      fixture(
+      taskFixture(
         async (tools) => {
           const result = await call(tools, 'sign_in', {
             origin: 'https://example.com',
@@ -2813,7 +2623,7 @@ test('private entry returns page data once and stops before an observation after
 
 test('a subagent cannot hand over its browser to the owner', async () => {
   let refused = false;
-  const result = await fixture(async (tools, emit, execution) => {
+  const result = await taskFixture(async (tools, emit, execution) => {
     if (execution.parentRunId) {
       assert.equal(tools.has('create_audio'), false);
       await assert.rejects(
@@ -2939,17 +2749,14 @@ test('bug report actions stay out of background work without a task', async () =
   const draft = { action: 'bug_report_draft', args: { summary: 'Synthetic failure.' } };
   await fixture(
     async (tools) => {
-      await assert.rejects(
-        call(tools, 'manage_personal_context', draft),
-        /only for work the owner follows/,
-      );
+      await assert.rejects(call(tools, 'nod', draft), /only for work the owner follows/);
     },
     { background: true, manage },
   );
   assert.deepEqual(managed, []);
   await fixture(
     async (tools) => {
-      await call(tools, 'manage_personal_context', draft);
+      await call(tools, 'nod', draft);
     },
     {
       background: true,
@@ -2976,7 +2783,7 @@ test('proactive work has no write routes and cannot send model text', async () =
       assert.equal(options.restricted, true);
       assert.deepEqual([...tools.keys()].sort(), [
         'ask_user',
-        'manage_personal_context',
+        'memory',
         'proactive_issue',
         'read_source',
         'task',
@@ -3002,8 +2809,7 @@ test('proactive work has no write routes and cannot send model text', async () =
       ]);
       for (const nested of [false, true]) {
         for (const name of names) {
-          if (['read_source', 'proactive_issue', 'manage_personal_context', 'task'].includes(name))
-            continue;
+          if (['read_source', 'proactive_issue', 'memory', 'task'].includes(name)) continue;
           await assert.rejects(
             options.runTool(
               name,
@@ -3017,11 +2823,11 @@ test('proactive work has no write routes and cannot send model text', async () =
             /unavailable in proactive/,
           );
         }
-        for (const action of personalActions) {
+        for (const action of [...memoryActions, ...nodActions]) {
           if (reads.includes(action)) continue;
           await assert.rejects(
             options.runTool(
-              'manage_personal_context',
+              'memory',
               { action, args: { approved: true } },
               async () => {
                 forbidden++;
@@ -3033,7 +2839,7 @@ test('proactive work has no write routes and cannot send model text', async () =
           );
         }
         for (const action of reads)
-          await call(tools, 'manage_personal_context', {
+          await call(tools, 'memory', {
             action,
             args: { path: 'preferences', query: 'Synthetic preference' },
           });
@@ -3107,7 +2913,9 @@ test('a spending check-in stops the observer from starting more tasks', async ()
         }),
         /check-in/,
       );
-      await call(tools, 'ask_user', { question: 'Continue the synthetic observer?' });
+      await call(tools, 'ask_user', {
+        question: 'This used {spent}. Continue the synthetic observer?',
+      });
     },
     {
       background: true,
@@ -3654,12 +3462,9 @@ test(
           let preparationStartedAt = 0;
           let agentStartedAt: number | undefined;
           const { result, replies } = await fixture(
-            async (_tools, emit, options) => {
+            async (_tools, emit, _options, request) => {
               if (explicit)
-                assert.ok(
-                  options.ownerContext?.includes(fact),
-                  'Explicit recall must reach the main agent.',
-                );
+                assert.ok(request.includes(fact), 'Explicit recall must reach the main agent.');
               emit({ type: 'final', text: 'Synthetic answer.' });
             },
             {
@@ -3803,10 +3608,7 @@ test('repeated input, sign-in and action review failures stop while source text 
       'sign_in',
       'Nod could not confirm it was still on the page and control it checked, so nothing was done.',
     ],
-    [
-      'manage_personal_context',
-      'The action review model is unavailable. Synthetic provider failure.',
-    ],
+    ['nod', 'The action review model is unavailable. Synthetic provider failure.'],
     ['apps', 'Nod could not write an accurate confirmation for this action, so it did not run.'],
     [
       'bash',

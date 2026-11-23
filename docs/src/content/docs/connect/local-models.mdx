@@ -151,7 +151,7 @@ If the server offers Ollama model details, Nod uses its capability list to filte
 | Background work     | Memory upkeep and other background work use your selected model. [Automatic preparation](/use/spending/#automatic-preparation-allowance) needs a known price, so it doesn't run on a local or otherwise unpriced model.                                                                         |
 | Slow replies        | A slow first reply is normal. After a quiet minute, the chat shows **Waiting for** and your model's name, with how long it has been quiet. If the server sends nothing at all for 30 minutes, Nod sends the request again, up to three times, and then says it failed. **Stop** ends it sooner. |
 | Where requests go   | Chat and confirmation wording requests go to the address you enter. Trust requests go to the checker connection. Web search, websites, apps and chat channels work as before. See [Your data and privacy](/trust/privacy/).                                                                     |
-| Where your key goes | Keys saved in **Models** are encrypted. Keys from `.env` stay in server configuration and memory. The server adds the key to requests. See [Where your keys go](/connect/models/#where-your-keys-go).                                                                                           |
+| Where your key goes | Keys saved in **Models** are encrypted. Keys from `.env` stay in server configuration and memory. The server adds the key to requests and sends your server key only to the address you entered. See [Where your keys go](/connect/models/#where-your-keys-go).                                 |
 
 ## Troubleshooting
 
@@ -161,8 +161,8 @@ If the server offers Ollama model details, Nod uses its capability list to filte
 | **This server has no models Nod can use**                     | Nod skips models whose Ollama capability list has no tool support. Pull or load a model with tool support, then try again.                               |
 | Nod ignores your request, forgets its tools or repeats itself | The context is too small. Raise it to 65,536 or more and reload the model.                                                                               |
 | A new model doesn't appear on a server added in Settings      | Open **Manage** next to the connection, choose **Add connection**, then enter the same server address and API key, if used. This updates its model list. |
-| **Can’t load its models** next to a server set in `.env`      | Start the server, open **Manage** next to the connection, then choose **Load models** or **Try again**.                                                  |
-| **Remove it and add the server again**                        | Nod can't read the connection's saved settings. Remove the connection, then add the server again in **Models**.                                          |
+| **Needs attention** next to a server set in `.env`            | Start the server, open **Manage** next to the connection, then choose **Load models** or **Try again**.                                                  |
+| **Needs attention** next to a server added in Settings        | Nod can't read the connection's saved settings. Open **Manage**, remove the connection, then add the server again.                                       |
 | Nod asks before almost everything, or acts without asking     | Check the separate Trust connection and its mode. A failed check requires confirmation in chat and tasks.                                                |
 
 ## Related resources

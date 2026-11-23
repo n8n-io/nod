@@ -41,6 +41,7 @@ Nod excludes:
 - Checks of emails that may give access to an account.
 - Requests to decision services.
 - Separate requests to the models that write your memory, writing style or learned skills.
+- The request to a small model that writes the short line about your request in the chat's status line.
 - Attention and review tasks.
 - Codemode scripts and results.
 - Usage events, which have their own switch.
@@ -134,7 +135,7 @@ Nod removes what it can recognize. A trace can still contain private content in 
 - **Session metadata.** Nod removes its original session ID from trace metadata and replaces its turn and run IDs with keyed hashes. Account or device IDs in conversation text or app results can remain.
 - **Stable conversation IDs.** A conversation is one saved chat, task, or background session. Its `thread_id` is a keyed hash of the private session ID. When the private key loads, it stays the same across idle gaps, days, and restarts. It links traces from that saved session over time. A new session, such as a reset chat or a separate schedule fire, gets a different ID. Work without a saved session gets a new auxiliary ID for each job. The key stays in the runtime profile's private `trace-key` file. Deleting or replacing that key changes conversation IDs. Earlier releases used IDs that changed after 30 idle minutes or a restart; these earlier IDs cannot be joined to the new IDs.
 - **Other execution IDs.** Turn and agent run IDs, and IDs inside messages and tool results, keep their existing keyed hashes. These hashes change daily and on restart. One active turn keeps its trace IDs until it ends. Repeated hashes can link records within the same runtime and UTC day. Other content can also connect traces, such as a website address or an account handle.
-- **No owner context.** Nod replaces your saved memory, learned skills and format preferences with `[owner context omitted]`, including memory notes and learned skills it reads with a tool. Those reads keep only their action, such as `memory_read`, not the note path, search words or skill name. The attention and review tasks that read your saved memory are not traced at all, and a codemode step keeps neither its script nor its result, because a script can read memory or a connected account.
+- **No owner context.** Nod replaces your saved memory, learned skills and format preferences with `[owner context omitted]`, including memory notes and learned skills it reads with a tool. Memory selected for a request is replaced with `[memory omitted]`. Those reads keep only their action, such as `memory_read`, not the note path, search words or skill name. The attention and review tasks that read your saved memory are not traced at all, and a codemode step keeps neither its script nor its result, because a script can read memory or a connected account.
 - **No images.** Images are replaced with `[image]`.
 
 These steps reduce private content. Traces are pseudonymised, not anonymous. The shared analytics ID and details in a conversation can identify you.

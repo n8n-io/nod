@@ -26,7 +26,7 @@ export function assistantNotificationPreview(message, secrets = []) {
       .replace(/^\s*\[[^\]\n]+\]:[^\n]*$/gm, '')
       .replace(/!?\[([^\]\n]*)\]\([^\n)]*\)/g, '$1')
       .replace(/!?\[([^\]\n]+)\]\[[^\]\n]*\]/g, '$1')
-      .replace(/<[^>]*>/g, '')
+      .replace(/<[A-Za-z/!?][^>]*>/g, '')
       .replace(/\bhttps?:\/\/[^\s<>()]+/gi, (url) => {
         try {
           return new URL(url).hostname;
@@ -35,7 +35,8 @@ export function assistantNotificationPreview(message, secrets = []) {
         }
       })
       .replace(/^\s{0,3}(?:#{1,6}\s+|>\s*|[-+*]\s+|\d+[.)]\s+)/gm, '')
-      .replace(/(\*{1,3}|_{1,3}|~~)(?=\S)([\s\S]*?\S)\1/g, '$2')
+      .replace(/(\*{1,3}|~~)(?=\S)([\s\S]*?\S)\1/g, '$2')
+      .replace(/(?<![\p{L}\p{N}_])(_{1,3})(?=\S)([\s\S]*?\S)\1(?![\p{L}\p{N}_])/gu, '$2')
       .replace(/`([^`]+)`/g, '$1')
       .replace(/\\([\\`*_{}\[\]()#+.!-])/g, '$1')
       .replace(

@@ -123,7 +123,7 @@ export default scenario({
   stance: 'regression',
   seconds: 900,
   user: {
-    approve: (_action, args) => /sorriso/i.test(JSON.stringify(args) ?? ''),
+    approve: (_action, args, shown) => /sorriso/i.test(JSON.stringify({ args, shown })),
     answers: [
       {
         when: /\b(?:inbox|mailbox|gmail)\b|\b(?:email|mail) account\b|\bpersonal (?:email|mail|account)\b/i,

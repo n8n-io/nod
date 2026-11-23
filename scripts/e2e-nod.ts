@@ -8,6 +8,7 @@ import {
   mkdtemp,
   readFile,
   realpath,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -140,6 +141,7 @@ process.env.NOD_PUBLIC_URL = baseUrl;
 process.env.NODE_ENV = 'production';
 if (provider === 'anthropic') process.env.ANTHROPIC_API_KEY = apiKey;
 else process.env.OPENAI_API_KEY = apiKey;
+await symlink(join(repository, 'node_modules'), join(directory, 'node_modules'));
 process.chdir(directory);
 const logPath = join(directory, 'timings.jsonl');
 await writeFile(logPath, '', { mode: 0o600 });
@@ -197,14 +199,16 @@ try {
         '{{.Id}}',
       ])
     : await runProcess('docker', ['inspect', 'nod-workspace', '--format', '{{.Image}}']);
-  const network = await runProcess('docker', [
-    'inspect',
-    'nod-workspace',
-    '--format',
-    '{{json .NetworkSettings.Networks}}',
-  ]);
+  const network = environment.NOD_E2E_NETWORK
+    ? { exitCode: 0, stdout: '' }
+    : await runProcess('docker', [
+        'inspect',
+        'nod-workspace',
+        '--format',
+        '{{json .NetworkSettings.Networks}}',
+      ]);
   if (image.exitCode || network.exitCode) throw new Error('Start the Nod Docker workspace first.');
-  const networkName = workspaceNetwork(network.stdout);
+  const networkName = environment.NOD_E2E_NETWORK || workspaceNetwork(network.stdout);
   const started = await runProcess('docker', [
     'run',
     '-d',
@@ -372,6 +376,7 @@ try {
     { createContainerBrowserComputer },
     { createDockerWorkspace },
     { createPublicLinkPreviewProvider },
+    { createGoogleFlights },
     { events },
   ] = await Promise.all([
     import('../src/server/composition.ts'),
@@ -381,6 +386,7 @@ try {
     import('../src/providers/container-browser/index.ts'),
     import('../src/providers/docker/index.ts'),
     import('../src/providers/public-web/link-preview.ts'),
+    import('../src/providers/google-flights.ts'),
     import('../src/server/events.ts'),
   ]);
   databasePool = pool;
@@ -410,6 +416,7 @@ try {
     },
     keyStore: { id: 'isolated-memory', configured: true, getKey: async () => vaultKey },
     linkPreviews: createPublicLinkPreviewProvider(),
+    flights: createGoogleFlights(),
     model: { provider, name: model, configured: true },
   });
   const { app } = application;

@@ -243,12 +243,6 @@ export async function checkJevTrust(
       throw new Error('The trust features are incomplete.');
     scores[name] = value.choice ? value.probability : 1 - value.probability;
   }
-  if (scores.message_review > 0.010000001)
-    return {
-      run: false,
-      reviewRequired: true,
-      ...(scores.message_review < 0.99 ? { reviewUnavailable: true } : {}),
-    };
   const action = input.action;
   const ownSettings = settings.has(action?.name ?? '');
   const signIn = signIns.has(action?.name ?? '');
@@ -628,8 +622,5 @@ export async function checkJevTrust(
   const run = !hard && (read ? privateAllowed : score >= model.threshold && Boolean(quote));
   return run
     ? { run: true, because: read ? 'read' : quote, ...(!read ? { source: source?.source } : {}) }
-    : {
-        run: false,
-        ...(source?.rule ? { rule: true } : {}),
-      };
+    : { run: false, ...(source?.rule ? { rule: true } : {}) };
 }

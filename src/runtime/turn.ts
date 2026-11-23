@@ -25,6 +25,7 @@ export interface Turn {
     message?: string,
     answerChoices?: AnswerChoices,
   ): Promise<void>;
+  checkInCost?(): { spent: string; plan: string } | undefined;
   confirm(result: unknown): Promise<unknown>;
   visited(browserId: string, url: string): void;
   delegate?(title: string, instruction: string): Promise<string>;

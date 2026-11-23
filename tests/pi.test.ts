@@ -1,4 +1,4 @@
-import type { ModelSelection } from '../src/shared/models.ts';
+import { lightestEffort, type ModelSelection } from '../src/shared/models.ts';
 import type { Context } from '@earendil-works/pi-ai';
 import type { ModelAccess } from '../src/ports/models.ts';
 import { createPiModelBackend, createPiModelRuntime } from '../src/providers/pi/models.ts';
@@ -188,9 +188,9 @@ test('models and routers complete tool discovery inside the endpoint context', a
       const calls =
         id === 'fixture-docs-small'
           ? ([
-              ['nod_tool_search', { query: 'nod_docs', limit: 1 }],
-              ['nod_docs', { action: 'search', query: 'Composio zero data retention' }],
-              ['nod_docs', { action: 'read', id: docsSection!.id }],
+              ['nod_tool_search', { query: 'nod', limit: 1 }],
+              ['nod', { action: 'docs_search', args: { query: 'Composio zero data retention' } }],
+              ['nod', { action: 'docs_read', args: { id: docsSection!.id } }],
               ['nod_tool_search', { query: 'share_file', limit: 1 }],
               ['share_file', { path: 'report.txt' }],
             ] as const)
@@ -450,7 +450,7 @@ test('models and routers complete tool discovery inside the endpoint context', a
       assert.deepEqual(
         started,
         id === 'fixture-docs-small'
-          ? ['tool_search', 'nod_docs', 'nod_docs', 'tool_search', 'share_file']
+          ? ['tool_search', 'nod', 'nod', 'tool_search', 'share_file']
           : id === 'fixture-background'
             ? ['tool_search', 'skills', 'send_message']
             : ['tool_search', 'skills', 'tool_search', 'share_file'],
@@ -1546,9 +1546,9 @@ test('a context restart drops old model input once and keeps later turns through
 });
 
 test('real Pi sessions persist a credential pause and resume without replaying chat history', async (t) => {
-  for (const kind of ['chat', 'background', 'task'] as const)
+  for (const kind of ['background', 'task'] as const)
     await t.test(`${kind} session`, async () => {
-      const background = kind !== 'chat';
+      const background = true;
       const directory = await mkdtemp(join(tmpdir(), 'nod-pi-'));
       const id = 'test-' + randomUUID();
       const replies: string[] = [];
@@ -1629,7 +1629,7 @@ test('real Pi sessions persist a credential pause and resume without replaying c
                     {
                       type: 'toolCall',
                       id: 'later-call',
-                      name: 'manage_personal_context',
+                      name: 'nod',
                       arguments: {
                         action: 'schedule_create',
                         args: { title: 'This should not execute' },
@@ -2015,7 +2015,7 @@ test('fresh scheduled sessions put their stable first request on a one-hour Anth
   );
   assert.equal(stable[0].length, 2);
   assert.match(stable[0][0].text, /^Owner context/);
-  assert.match(stable[0][1].text, /^Respond to currentInstruction/);
+  assert.match(stable[0][1].text, /^Request data \(JSON\)/);
   assert.deepEqual(
     stable[0].map((block: any) => block.text),
     stable[1].map((block: any) => block.text),
@@ -2294,9 +2294,9 @@ test('Pi sessions use native tools on the sandbox workspace plus Nod tools', asy
     });
     assert.equal(captured!.noTools, 'builtin');
     const before = scripts.length;
-    const ls = captured!.customTools!.find((tool) => tool.name === 'ls')!;
-    await ls.execute('call', {}, undefined, undefined, undefined as never);
-    assert.deepEqual(ran, ['ls']);
+    const bash = captured!.customTools!.find((tool) => tool.name === 'bash')!;
+    await bash.execute('call', { command: 'true' }, undefined, undefined, undefined as never);
+    assert.deepEqual(ran, ['bash']);
     assert.ok(scripts.length > before);
     assert.ok(scripts.slice(before).every((script) => script.includes(workspace.path)));
     const extension = captured!
@@ -2310,7 +2310,7 @@ test('Pi sessions use native tools on the sandbox workspace plus Nod tools', asy
       undefined,
       undefined as never,
     );
-    assert.deepEqual(ran, ['ls', 'get_search_content']);
+    assert.deepEqual(ran, ['bash', 'get_search_content']);
     const webSearch = extension.tools.get('web_search')!;
     await webSearch.definition.execute(
       'call',
@@ -2319,7 +2319,7 @@ test('Pi sessions use native tools on the sandbox workspace plus Nod tools', asy
       undefined,
       undefined as never,
     );
-    assert.deepEqual(ran, ['ls', 'get_search_content', 'web_search']);
+    assert.deepEqual(ran, ['bash', 'get_search_content', 'web_search']);
     const fetchContent = extension.tools.get('fetch_content')!;
     await writeFile(join(directory, 'host.mp4'), 'synthetic host video');
     const hostFile = async (name: string) =>
@@ -2577,12 +2577,9 @@ test('native Pi tools run only through workspace exec on sandbox paths that do n
   assert.equal(await run('read', { path: 'notes/a.txt' }), 'alpha\nbeta\n');
   await run('edit', { path: 'notes/a.txt', edits: [{ oldText: 'beta', newText: 'gamma' }] });
   assert.equal(await run('read', { path: `${prefix}/workspace/notes/a.txt` }), 'alpha\ngamma\n');
-  assert.equal(await run('ls', {}), 'notes/');
-  assert.equal(await run('ls', { path: 'notes' }), 'a.txt');
-  assert.equal(await run('find', { pattern: '*.txt' }), 'notes/a.txt');
   assert.equal((await run('bash', { command: 'pwd' })).trim(), `${prefix}/workspace`);
   await assert.rejects(run('read', { path: 'missing.txt' }));
-  assert.ok(calls.length >= 8);
+  assert.ok(calls.length >= 5);
   assert.equal(existsSync(prefix), false);
 });
 
@@ -2611,9 +2608,6 @@ test('native Pi tools use Linux workspace paths on a Windows host', async (t) =>
     await execute('read', { path: `${prefix}/workspace/notes/a.txt` }),
     'alpha\ngamma\n',
   );
-  assert.equal(await execute('ls', {}), 'notes/');
-  assert.equal(await execute('ls', { path: 'notes' }), 'a.txt');
-  assert.equal(await execute('find', { pattern: '*.txt' }), 'notes/a.txt');
   assert.equal((await execute('bash', { command: 'pwd' })).trim(), `${prefix}/workspace`);
   assert.deepEqual(
     calls.filter((command) => command.includes('C:') || command.includes('\\workspace')),
@@ -2761,7 +2755,6 @@ function context(directory: string): RuntimeContext {
       url: '/api/artifacts/fixture',
     }),
     requestCredential: async () => ({ filled: true }),
-    checkWorkspaceCommand: async () => ({ record: async () => {} }),
     integration: async () => ({}),
     manage: async () => ({}),
   };
@@ -2792,7 +2785,7 @@ test('a turn posts its opening line and final reply, shows the lines between as 
                 .execute({ text: 'There are three.' });
             else
               await input.tools
-                .find((item) => item.name === 'manage_personal_context')!
+                .find((item) => item.name === 'memory')!
                 .execute({ action: 'memory_find', args: { query: 'synthetic' } });
             continued.push(...((await input.nextMessages?.()) ?? []).map((item) => item.text));
           }
@@ -4489,8 +4482,14 @@ test('each model call yields one chat-format trace without image data', async ()
               {
                 type: 'toolCall',
                 id: 'memory',
-                name: 'manage_personal_context',
+                name: 'memory',
                 arguments: { action: 'memory_read', path: 'about/sizes' },
+              },
+              {
+                type: 'toolCall',
+                id: 'legacy-memory',
+                name: 'manage_personal_context',
+                arguments: { action: 'memory_find', query: 'synthetic legacy query' },
               },
               {
                 type: 'toolCall',
@@ -4512,7 +4511,8 @@ test('each model call yields one chat-format trace without image data', async ()
               },
             ],
           },
-          result('memory', 'manage_personal_context', 'Synthetic saved note'),
+          result('memory', 'memory', 'Synthetic saved note'),
+          result('legacy-memory', 'manage_personal_context', 'Synthetic legacy note'),
           result('learned', 'skills', untrustedBlock('learned skill', 'Synthetic learned flow')),
           result('guide', 'skills', 'Synthetic built-in guide'),
           result('code', 'codemode', 'Synthetic codemode note'),
@@ -4524,6 +4524,8 @@ test('each model call yields one chat-format trace without image data', async ()
   const sent = JSON.stringify(reads.messages);
   for (const value of [
     'Synthetic saved note',
+    'Synthetic legacy note',
+    'synthetic legacy query',
     'Synthetic learned flow',
     'about/sizes',
     'synthetic-flow',
@@ -4574,8 +4576,8 @@ test('each model call yields one chat-format trace without image data', async ()
       ],
     },
   };
+  assert.ok(firstInstruction(selectedContext, false, new Set()).includes(privateFact));
   for (const owned of [ownerContext(selectedContext), compactOwnerContext(selectedContext)]) {
-    assert.ok(owned.includes(privateFact));
     const selectedTrace = piModelTrace(
       {
         ...calls[0],
@@ -5974,7 +5976,11 @@ test('loaded tools stay available across turns until they are removed', async (t
               {
                 name: 'synthetic_lookup',
                 description: 'Look up the synthetic record.',
-                deferred: { namespace: 'synthetic', description: 'Synthetic tools.' },
+                deferred: {
+                  namespace: 'synthetic',
+                  description: 'Synthetic tools.',
+                  guide: 'Synthetic server guide.',
+                },
                 parameters: Type.Object({}),
                 execute: async () => {
                   lookups++;
@@ -5995,6 +6001,8 @@ test('loaded tools stay available across turns until they are removed', async (t
   assert.ok(declared(bodies[3]!).includes('synthetic_lookup'));
   assert.ok(!declared(bodies[4]!).includes('synthetic_lookup'));
   assert.ok(JSON.stringify(bodies[4]!.messages).includes('synthetic_lookup'));
+  assert.ok(!JSON.stringify(bodies[0]!.messages).includes('Synthetic server guide.'));
+  assert.equal(JSON.stringify(bodies[4]!.messages).split('Synthetic server guide.').length, 2);
 });
 
 test('a failed request cannot remain inside a compaction checkpoint', async (t) => {
@@ -6981,16 +6989,28 @@ test('a discovered tool schema reduces the room for its next result', async (t) 
   );
 });
 
-test('opening a website with any browser tool makes private sign-in available', async (t) => {
+test('a browser tool or a guide loads the tools that go with it', async (t) => {
   const { toolDefinitions } = await import('../src/runtime/tools.ts');
+  const { createSkillLibrary } = await import('../src/providers/pi/skills.ts');
+  const { coreSkills } = await import('../src/runtime/prompt.ts');
+  const library = createSkillLibrary(join(process.cwd(), 'src/runtime/skills'), coreSkills);
   const browserTools = ['browser', 'browser_session', 'sign_in', 'pay'] as const;
   const url = 'https://people.example.test/in/synthetic';
-  for (const calls of [
-    [['nod_browser', { action: 'open', url }]],
-    [
-      ['nod_tool_search', { query: 'browser_session', limit: 1 }],
-      ['browser_session', { action: 'connect', url }],
-    ],
+  const browsing = { tools: browserTools, loads: ['sign_in', 'pay'] };
+  for (const { calls, tools, loads } of [
+    { ...browsing, calls: [['nod_browser', { action: 'open', url }]] },
+    {
+      ...browsing,
+      calls: [
+        ['nod_tool_search', { query: 'browser_session', limit: 1 }],
+        ['browser_session', { action: 'connect', url }],
+      ],
+    },
+    {
+      tools: ['skills', 'flights'],
+      loads: ['flights'],
+      calls: [['skills', { action: 'read', name: 'travel' }]],
+    },
   ] as const) {
     const opener = calls.at(-1)![0];
     await t.test(opener, async () => {
@@ -7033,8 +7053,14 @@ test('opening a website with any browser tool makes private sign-in available', 
         systemPrompt: 'Synthetic fixture instructions.',
         workspace: recordingWorkspace().workspace,
         runTool: async (_name, _params, run) => run(),
-        tools: browserTools.map((name) => ({
+        tools: tools.map((name) => ({
           ...toolDefinitions[name],
+          ...(name === 'skills'
+            ? {
+                companions: (args: Record<string, unknown>) =>
+                  library.tools?.(String(args.name)) ?? [],
+              }
+            : {}),
           parameters: toolDefinitions[name].parameters as Record<string, unknown>,
           execute: async () => ({
             content: [{ type: 'text' as const, text: 'Synthetic sign-in page.' }],
@@ -7046,7 +7072,7 @@ test('opening a website with any browser tool makes private sign-in available', 
       await session.prompt('Use my saved login to open the synthetic profile.', []);
       await session.dispose();
       assert.equal(active.length, calls.length + 1);
-      for (const companion of ['sign_in', 'pay']) {
+      for (const companion of loads) {
         assert.ok(!active.at(-2)!.includes(companion));
         assert.ok(
           active.at(-1)!.includes(companion),
@@ -8861,7 +8887,8 @@ test('native provider discovery uses owned keys, bounded Google pagination and t
   await assert.rejects(
     backend.catalog('google', 'api_key', { type: 'api_key', key: 'fixture-rejected-key' }),
     (error: Error) =>
-      /didn’t accept/.test(error.message) && !error.message.includes('fixture-rejected-key'),
+      /Google Gemini model discovery failed.*HTTP 400/.test(error.message) &&
+      !/didn’t accept|fixture-rejected-key/.test(error.message),
   );
   assert.equal(new URL(calls[1]).searchParams.get('private'), null);
   const before = calls.length;
@@ -8883,6 +8910,63 @@ test('native provider discovery uses owned keys, bounded Google pagination and t
     repeating.catalog('google', 'api_key', { type: 'api_key', key: 'fixture-google-key' }),
   );
   assert.equal(pages, 2);
+});
+
+test('model discovery names why it failed instead of a generic retry message', async () => {
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const refused = () =>
+    Object.assign(new TypeError('fetch failed'), {
+      cause: Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:8080'), {
+        code: 'ECONNREFUSED',
+      }),
+    });
+  const native = (fetch: typeof globalThis.fetch) =>
+    createPiModelBackend({ fetch }).catalog('xai', 'api_key', {
+      type: 'api_key',
+      key: 'fixture-xai-key',
+    });
+  await assert.rejects(
+    native(async () => {
+      throw new DOMException('The operation timed out.', 'TimeoutError');
+    }),
+    /xAI couldn’t load its models: the request timed out\./,
+  );
+  await assert.rejects(
+    native(async () => {
+      throw refused();
+    }),
+    /xAI couldn’t load its models: the connection failed \(ECONNREFUSED\)\./,
+  );
+  await assert.rejects(
+    native(async () => {
+      throw new TypeError('fetch failed', {
+        cause: new Error('Synthetic name lookup failed. fixture-xai-key'),
+      });
+    }),
+    (error: Error) =>
+      /Synthetic name lookup failed/.test(error.message) &&
+      !error.message.includes('fixture-xai-key'),
+  );
+  await assert.rejects(
+    native(async () => new Response('<html>challenge</html>', { status: 200 })),
+    /xAI couldn’t load its models: it returned an invalid model list\./,
+  );
+  await assert.rejects(
+    native(async () => Response.json({ models: [] })),
+    /xAI couldn’t load its models: it returned an invalid model list\./,
+  );
+  await assert.rejects(
+    native(async () =>
+      Response.json(
+        { error: { message: 'Access is restricted to a private network. fixture-xai-key' } },
+        { status: 403 },
+      ),
+    ),
+    (error: Error) =>
+      /xAI model discovery failed.*HTTP 403.*Access is restricted to a private network/s.test(
+        error.message,
+      ) && !/didn’t accept|fixture-xai-key/.test(error.message),
+  );
 });
 
 test('native account catalogs never send a provider key to a different service or accept a failed listing', async () => {
@@ -9240,6 +9324,13 @@ test('cloud connections list only the account’s models and send each key only 
       requests.push(url);
       assert.equal(init?.redirect, 'error');
       if (url.startsWith('https://bedrock.eu-west-1.amazonaws.com/')) {
+        if (headers.get('authorization') === 'Bearer fixture-bedrock-expired')
+          return Response.json(
+            { message: 'The security token fixture-bedrock-expired is expired' },
+            { status: 403 },
+          );
+        if (headers.get('authorization') === 'Bearer fixture-bedrock-malformed')
+          return Response.json({ message: 'Malformed input request' }, { status: 400 });
         if (headers.get('authorization') !== 'Bearer fixture-bedrock-key')
           return Response.json({ message: 'Synthetic denial' }, { status: 403 });
         if (url.includes('/foundation-models?'))
@@ -9264,10 +9355,40 @@ test('cloud connections list only the account’s models and send each key only 
       }
       if (url === 'https://down.openai.azure.com/openai/v1/models')
         return Response.json({ error: { message: 'Synthetic outage' } }, { status: 503 });
-      if (url.startsWith('https://aiplatform.googleapis.com/v1/publishers/google/models/'))
+      if (url === 'https://private.openai.azure.com/openai/v1/models')
+        return Response.json(
+          { error: { code: '403', message: 'Public access is disabled.' } },
+          { status: 403 },
+        );
+      if (url === 'https://gone.openai.azure.com/openai/v1/models')
+        return Response.json({ error: { message: 'Resource not found' } }, { status: 404 });
+      if (url.startsWith('https://aiplatform.googleapis.com/v1/publishers/google/models/')) {
+        if (headers.get('x-goog-api-key') === 'fixture-vertex-busy')
+          return Response.json(
+            {
+              error: {
+                code: 429,
+                message: 'Synthetic fixture-vertex-busy',
+                status: 'RESOURCE_EXHAUSTED',
+              },
+            },
+            { status: 429 },
+          );
+        if (headers.get('x-goog-api-key') === 'fixture-vertex-disabled')
+          return Response.json(
+            {
+              error: {
+                code: 403,
+                message: 'Vertex AI API is disabled.',
+                status: 'PERMISSION_DENIED',
+              },
+            },
+            { status: 403 },
+          );
         return new Response(null, {
           status: headers.get('x-goog-api-key') === 'fixture-vertex-key' ? 200 : 400,
         });
+      }
       if (url === 'https://fixture.openai.azure.com/openai/v1/models') {
         assert.equal(headers.get('api-key'), 'fixture-azure-key');
         return Response.json({ data: [] });
@@ -9290,7 +9411,21 @@ test('cloud connections list only the account’s models and send each key only 
       key: 'fixture-wrong-key',
       region: 'eu-west-1',
     }),
-    /didn’t accept this key/,
+    /Amazon Bedrock model discovery failed \(HTTP 403\).*Synthetic denial/,
+  );
+  const bedrockFailure = (key: string) =>
+    backend.catalog('amazon-bedrock', 'api_key', { type: 'bedrock', key, region: 'eu-west-1' });
+  await assert.rejects(
+    bedrockFailure('fixture-bedrock-expired'),
+    (error: Error) =>
+      /Amazon Bedrock model discovery failed \(HTTP 403\).*security token \[redacted\] is expired/.test(
+        error.message,
+      ) && !error.message.includes('fixture-bedrock-expired'),
+  );
+  await assert.rejects(bedrockFailure('fixture-bedrock-malformed'), (error: Error) =>
+    /Amazon Bedrock model discovery failed \(HTTP 400\).*Malformed input request/.test(
+      error.message,
+    ),
   );
   const sent = requests.length;
   await assert.rejects(
@@ -9308,7 +9443,21 @@ test('cloud connections list only the account’s models and send each key only 
   assert.ok(vertex.length > 1);
   await assert.rejects(
     backend.catalog('google-vertex', 'api_key', { type: 'api_key', key: 'fixture-wrong-key' }),
-    /didn’t accept this API key/,
+    /Google Vertex AI model discovery failed \(HTTP 400\)/,
+  );
+  await assert.rejects(
+    backend.catalog('google-vertex', 'api_key', {
+      type: 'api_key',
+      key: 'fixture-vertex-disabled',
+    }),
+    /Google Vertex AI model discovery failed \(HTTP 403\).*Vertex AI API is disabled/,
+  );
+  await assert.rejects(
+    backend.catalog('google-vertex', 'api_key', { type: 'api_key', key: 'fixture-vertex-busy' }),
+    (error: Error) =>
+      error.message.includes('HTTP 429') &&
+      error.message.includes('Synthetic [redacted]') &&
+      !error.message.includes('fixture-vertex-busy'),
   );
   const azure = await backend.catalog('azure', 'api_key', {
     type: 'azure',
@@ -9321,6 +9470,20 @@ test('cloud connections list only the account’s models and send each key only 
     azure.map(({ choice }) => choice.id),
     ['gpt-6.1-sol'],
   );
+  for (const [host, pattern] of [
+    ['private', /Azure OpenAI model discovery failed \(HTTP 403\).*Public access is disabled/],
+    ['gone', /Azure OpenAI model discovery failed \(HTTP 404\).*Resource not found/],
+  ] as const)
+    await assert.rejects(
+      backend.catalog('azure', 'api_key', {
+        type: 'azure',
+        url: `https://${host}.openai.azure.com/openai/v1`,
+        key: 'fixture-azure-key',
+        model: 'gpt-6.1-sol',
+        deployment: 'fixture-deployment',
+      }),
+      (error: Error) => pattern.test(error.message) && !error.message.includes('didn’t accept'),
+    );
   await assert.rejects(
     backend.catalog('azure', 'api_key', {
       type: 'azure',
@@ -10354,25 +10517,6 @@ test('OpenAI review output schemas constrain both key and subscription requests 
       await curator.curate({ task: 'review', instructions: 'Review the action.', input: {} });
       assert.deepEqual(payloads[1], { text: { verbosity: 'low' } });
     });
-});
-
-test('an unconfigured curator does not resolve a model selection', async () => {
-  let configured = false;
-  let resolutions = 0;
-  const curator = createPiMemoryCurator({
-    provider: 'openai',
-    configured: () => configured,
-    resolve: async () => {
-      resolutions++;
-      return undefined;
-    },
-  });
-  assert.equal(await curator.select!(), curator);
-  assert.equal(resolutions, 0);
-  assert.equal(curator.configured, false);
-  configured = true;
-  await assert.rejects(curator.select!(), /selected model is unavailable/);
-  assert.equal(resolutions, 1);
 });
 
 test('an unavailable classification resolver never loads a fallback model', async () => {
@@ -11535,7 +11679,9 @@ test('Anthropic workspace discovery offers named choices and separates retryable
     ...[400, 401, 403, 404].map((status) => ({
       name: `discovery status ${status}`,
       manual: true,
-      response: () => Response.json({ error: { message: key } }, { status }),
+      status,
+      response: () =>
+        Response.json({ error: { message: `Synthetic workspace denial ${key}` } }, { status }),
     })),
     ...[429, 500, 503].map((status) => ({
       name: `discovery status ${status}`,
@@ -11579,11 +11725,12 @@ test('Anthropic workspace discovery offers named choices and separates retryable
             assert.ok(!(error instanceof ModelWorkspaceSelectionError));
           } else {
             assert.ok(!(error instanceof ModelAuthError));
-            assert.ok(error.cause instanceof Error);
-            if (scenario.status) {
-              assert.ok(error.cause.message.includes(String(scenario.status)));
-              assert.ok(!error.message.includes(String(scenario.status)));
-            }
+            if (scenario.status) assert.ok(error.message.includes(`HTTP ${scenario.status}`));
+            else assert.ok(error.cause instanceof Error);
+          }
+          if (scenario.status) {
+            assert.ok(error.message.includes(`HTTP ${scenario.status}`));
+            if (scenario.manual) assert.match(error.message, /Synthetic workspace denial/);
           }
           assert.ok(!error.message.includes(key));
           assert.ok(!JSON.stringify(error).includes(key));
@@ -11735,59 +11882,6 @@ async function access(provider: ModelAccess['provider'], id: string): Promise<Mo
     read: async () => ({ type: 'api_key', key: 'fixture-model-key' }),
   };
 }
-
-test('a selected Trust curator keeps its model and records both requests', async (t) => {
-  const originalFetch = globalThis.fetch;
-  t.after(() => (globalThis.fetch = originalFetch));
-  let current = smallContextAccess('compatible', 'fixture-trust-original', 32768);
-  let selections = 0;
-  const models: string[] = [];
-  const usage: Array<{ id: string; model?: string }> = [];
-  globalThis.fetch = async (input, init) => {
-    const request = new Request(input, init);
-    assert.equal(new URL(request.url).hostname, '127.0.0.1');
-    models.push(String((await request.json()).model));
-    return reply({ role: 'assistant', content: '{"review":"clear"}' });
-  };
-  const curator = createPiMemoryCurator({
-    provider: current.provider,
-    configured: () => true,
-    resolve: async () => {
-      selections++;
-      return current;
-    },
-  });
-  const selected = await curator.select!();
-  current = smallContextAccess('compatible', 'fixture-trust-replacement', 32768);
-  const signal = new AbortController().signal;
-  await Promise.all(
-    ['grant', 'restriction'].map((purpose) =>
-      selected.curate(
-        { task: 'review', instructions: 'Return synthetic JSON.', input: { purpose } },
-        signal,
-        (value) => usage.push(value),
-      ),
-    ),
-  );
-  assert.equal(selections, 1);
-  assert.deepEqual(models, ['fixture-trust-original', 'fixture-trust-original']);
-  assert.equal(usage.length, 2);
-  assert.notEqual(usage[0].id, usage[1].id);
-  assert.deepEqual(
-    usage.map((value) => value.model),
-    models,
-  );
-  const stopped = new AbortController();
-  stopped.abort();
-  await assert.rejects(
-    selected.curate({ task: 'review', instructions: '', input: {} }, stopped.signal),
-    { name: 'AbortError' },
-  );
-  await assert.rejects(curator.select!(stopped.signal), { name: 'AbortError' });
-  assert.equal(selections, 1);
-  assert.equal(models.length, 2);
-  assert.equal(usage.length, 2);
-});
 
 function reply(content: Record<string, unknown>, finish = 'stop') {
   const chunk = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
@@ -11999,12 +12093,12 @@ test('OpenRouter free routing can prepare a task when reasoning cannot be disabl
   assert.equal(calls, 1);
 });
 
-test('Ollama models with on or off thinking complete tasks without a named effort', async (t) => {
+test('new and saved Ollama models keep the effort value the server reads', async (t) => {
   const original = globalThis.fetch;
   t.after(() => (globalThis.fetch = original));
   for (const thinking of [undefined, { values: [false, true] }, { values: [true] }]) {
     const onlyOn = thinking?.values.length === 1;
-    const enabled: Array<boolean | undefined> = [];
+    const efforts: Array<string | undefined> = [];
     globalThis.fetch = async (input, init) => {
       const request = new Request(input, init);
       const path = new URL(request.url).pathname;
@@ -12018,10 +12112,14 @@ test('Ollama models with on or off thinking complete tasks without a named effor
           thinking,
         });
       assert.equal(path, '/v1/chat/completions');
-      const body = (await request.json()) as { reasoning_effort?: string; think?: boolean };
-      assert.equal(body.reasoning_effort, undefined);
-      assert.equal(typeof body.think, thinking ? 'boolean' : 'undefined');
-      enabled.push(body.think);
+      const body = (await request.json()) as { reasoning_effort?: string; think?: unknown };
+      assert.equal(body.think, undefined);
+      efforts.push(body.reasoning_effort);
+      if (body.reasoning_effort === 'true')
+        return Response.json(
+          { error: { message: 'invalid reasoning value: "true"' } },
+          { status: 400 },
+        );
       return reply({ role: 'assistant', content: 'The synthetic task is complete.' });
     };
     const credential = { type: 'endpoint' as const, url: 'http://127.0.0.1:1/v1' };
@@ -12031,22 +12129,82 @@ test('Ollama models with on or off thinking complete tasks without a named effor
       definition.choice.efforts,
       thinking ? (onlyOn ? ['high'] : ['off', 'high']) : ['off'],
     );
-    const { runtime, model } = await createPiModelRuntime({
+    for (const saved of thinking ? [false, true] : [false]) {
+      const loaded = structuredClone(definition);
+      if (saved) (loaded.spec.thinkingLevelMap as Record<string, unknown>).high = 'true';
+      const { runtime, model } = await createPiModelRuntime({
+        provider: 'compatible',
+        method: 'api_key',
+        definition: loaded,
+        effort: 'high',
+        read: async () => credential,
+      });
+      for (const reasoning of ['high', 'off'] as const) {
+        const result = await runtime.completeSimple(
+          model,
+          { messages: [{ role: 'user', content: 'Finish the synthetic task.', timestamp: 1 }] },
+          { reasoning: reasoning === 'off' ? undefined : reasoning },
+        );
+        assert.equal(result.stopReason, 'stop');
+      }
+      assert.deepEqual(
+        efforts.splice(0),
+        !thinking ? [undefined, undefined] : onlyOn ? ['high', undefined] : ['high', 'none'],
+      );
+    }
+  }
+});
+
+test('selected-model checks use the lightest advertised Ollama effort without retrying', async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => (globalThis.fetch = original));
+  for (const values of [[false, true], [true]]) {
+    const efforts: Array<string | undefined> = [];
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      const path = new URL(request.url).pathname;
+      if (path === '/v1/models') return Response.json({ data: [{ id: 'qwen3:8b' }] });
+      if (path === '/api/version') return Response.json({ version: '0.40.16' });
+      if (path === '/api/v1/models') return new Response(null, { status: 404 });
+      if (path === '/api/show')
+        return Response.json({
+          capabilities: ['completion', 'tools', 'thinking'],
+          model_info: { 'qwen3.context_length': 65536 },
+          thinking: { values, default: true },
+        });
+      assert.equal(path, '/v1/chat/completions');
+      const body = (await request.json()) as { reasoning_effort?: string };
+      efforts.push(body.reasoning_effort);
+      return body.reasoning_effort === 'none'
+        ? reply({ role: 'assistant', content: '{"ok":true}' })
+        : reply({ role: 'assistant', content: '' }, 'length');
+    };
+    const credential = { type: 'endpoint' as const, url: 'http://127.0.0.1:1/v1' };
+    const [definition] = await createPiModelBackend({ fetch: globalThis.fetch }).catalog(
+      'compatible',
+      'api_key',
+      credential,
+    );
+    const canDisable = values.includes(false);
+    assert.deepEqual(definition.choice.efforts, canDisable ? ['off', 'high'] : ['high']);
+    const selected: ModelAccess = {
       provider: 'compatible',
       method: 'api_key',
       definition,
-      effort: 'high',
+      effort: lightestEffort(definition.choice.efforts),
       read: async () => credential,
+    };
+    const curator = createPiMemoryCurator({
+      provider: 'compatible',
+      resolve: async () => selected,
     });
-    for (const reasoning of ['high', 'off'] as const) {
-      const result = await runtime.completeSimple(
-        model,
-        { messages: [{ role: 'user', content: 'Finish the synthetic task.', timestamp: 1 }] },
-        { reasoning: reasoning === 'off' ? undefined : reasoning },
-      );
-      assert.equal(result.stopReason, 'stop');
-    }
-    assert.deepEqual(enabled, thinking ? [true, onlyOn] : [undefined, undefined]);
+    const result = curator.curate(
+      { task: 'check', instructions: 'Return only {"ok":true}.', input: {}, automatic: false },
+      AbortSignal.timeout(30_000),
+    );
+    if (canDisable) assert.deepEqual(await result, { ok: true });
+    else await assert.rejects(result, /The reply stopped at the token limit/);
+    assert.deepEqual(efforts, [canDisable ? 'none' : 'high']);
   }
 });
 
@@ -12197,6 +12355,7 @@ test('invalid tool calls stop before another model request and a valid repair re
       const run = () =>
         runtime.runTurn({
           ...context(directory),
+          ...(toolName === 'sign_in' ? { background: true } : {}),
           turnId: randomUUID(),
           task: async () => {
             writes++;

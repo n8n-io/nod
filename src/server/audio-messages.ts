@@ -15,6 +15,7 @@ import { appPages } from '../shared/app-links.ts';
 import { classifyVerificationReply, securityCodeIn } from '../shared/verification-code.ts';
 import { questionAnswerSchema } from '../shared/answer-choices.ts';
 import { messageTextLimit, messageTooLongError } from '../shared/message-limits.ts';
+import { validateRequestText } from './request-text.ts';
 
 const audioMessageOptions = { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } };
 
@@ -117,6 +118,7 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
         }
       }
       if (!recording) throw invalid('Choose an audio recording.');
+      validateRequestText(rawMessage);
       const input = messageInput
         .extend({ clientMessageId: z.uuid(), threadId: z.uuid() })
         .refine((value) => !value.approvalAnswer)

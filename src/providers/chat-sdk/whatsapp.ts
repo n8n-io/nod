@@ -790,7 +790,7 @@ export function createWhatsAppLinkedTransport(options: {
           for (const part of splitMessage(text))
             if (part.trim())
               ids.push(await send(input.threadId, { text: part, linkPreview: null }, quote));
-        const notice = await input.attachmentFailure?.(unsent);
+        const notice = await input.attachmentFailure?.(unsent.map((name) => ({ name })));
         for (const part of splitMessage(whatsappText(notice ?? '')))
           if (part.trim())
             ids.push(await send(input.threadId, { text: part, linkPreview: null }, quote));

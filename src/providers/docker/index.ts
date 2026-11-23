@@ -103,7 +103,7 @@ export function createDockerWorkspace(options: {
   return createCommandWorkspace({
     workspaceRoot: options.workspaceRoot,
     instructions:
-      'Use IPv4 for internet access from your Linux workspace. Node, Python (with pdfplumber and pillow_heif), pipx, git, curl, ripgrep, jq, ffmpeg, yt-dlp, poppler-utils, qpdf, Ghostscript and Tesseract OCR are installed. Python also has pypdf, openpyxl, python-docx and python-pptx, and LibreOffice (soffice) converts office files. Install trusted Python libraries with pip install <package>, trusted CLIs with npm install -g <package> or pipx install <package>; /home/node persists across tasks and restarts. A connected app CLI never runs from here: Nod installs its own copy from the source you propose. You run as an unprivileged user without sudo or a graphical display; use a CLI or browser web app. Keep outputs in this workspace and install tools here, not on the user’s device.',
+      'Installed: Node, Python (pypdf, pdfplumber, pillow_heif, openpyxl, python-docx, python-pptx), LibreOffice (soffice), ffmpeg, yt-dlp, poppler-utils, qpdf, Ghostscript, Tesseract OCR, git, curl, ripgrep, jq and pipx. Install trusted Python libraries with pip install <package>, trusted CLIs with npm install -g <package> or pipx install <package>; /home/node persists across tasks and restarts. You have no sudo or display, so use a CLI or a web app in the browser, and IPv4 for internet access. Keep outputs in this workspace and never install on the owner\u2019s device.',
     runCommand: (id, args, input) =>
       runWorkspaceCommand({
         container: options.container,

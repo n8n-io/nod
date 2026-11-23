@@ -34,6 +34,7 @@ export async function transaction<T>(
     }),
   ]).finally(() => signal?.removeEventListener('abort', onAbort));
   let stopped = false;
+  let commitStarted = false;
   const stop = () => {
     stopped = true;
     client.release(true);
@@ -42,6 +43,13 @@ export async function transaction<T>(
   if (signal?.aborted) stop();
   const callbacks: Array<() => void> = [];
   const rollbackCallbacks: Array<() => void> = [];
+  const runRollback = () => {
+    for (const callback of rollbackCallbacks) {
+      try {
+        callback();
+      } catch {}
+    }
+  };
   try {
     signal?.throwIfAborted();
     await client.query(
@@ -51,8 +59,11 @@ export async function transaction<T>(
     reverted.set(client, rollbackCallbacks);
     const value = await fn(client);
     signal?.throwIfAborted();
+    commitStarted = true;
     await client.query('COMMIT');
+    signal?.removeEventListener('abort', stop);
     committed.delete(client);
+    reverted.delete(client);
     for (const callback of callbacks) {
       try {
         callback();
@@ -62,15 +73,13 @@ export async function transaction<T>(
   } catch (error) {
     if (!stopped)
       await client.query('ROLLBACK').then(
+        () => runRollback(),
         () => {
-          for (const callback of rollbackCallbacks) {
-            try {
-              callback();
-            } catch {}
-          }
+          if (!stopped) stop();
+          if (!commitStarted) runRollback();
         },
-        () => {},
       );
+    else if (!commitStarted) runRollback();
     throw error;
   } finally {
     committed.delete(client);

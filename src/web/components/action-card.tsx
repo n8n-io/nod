@@ -173,8 +173,8 @@ interface ApprovalProps {
   children: ReactNode;
 }
 
-function declineLabel(title: string) {
-  return /^cancel\b/i.test(title) ? 'No' : 'Cancel';
+function declineLabel(approval: MessageApproval) {
+  return approval.decline ?? (/^cancel\b/i.test(approval.title) ? 'No' : 'Cancel');
 }
 
 export function ApprovalChoiceCard({
@@ -185,7 +185,7 @@ export function ApprovalChoiceCard({
 }: ApprovalProps) {
   const id = useId();
   const { state, locked, error, answer } = useApproval(approval, disabled, onAnswer);
-  const rows = [approval.title, declineLabel(approval.title)];
+  const rows = [approval.title, declineLabel(approval)];
   const chosen = state === 'declined' ? 1 : 0;
   return (
     <section
@@ -248,7 +248,7 @@ export function ApprovalChoiceCard({
 export function ApprovalCard({ approval, disabled = false, onAnswer, children }: ApprovalProps) {
   const { state, locked, error, answer } = useApproval(approval, disabled, onAnswer);
   const verb = approval.title.split(' ')[0] || 'Approve';
-  const refusal = declineLabel(approval.title);
+  const refusal = declineLabel(approval);
   return (
     <ActionCard
       label={approval.app ? `${approval.app}: ${approval.title}` : approval.title}

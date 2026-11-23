@@ -374,7 +374,7 @@ export function AccountSettings({
                       onTabChange?.(label);
                     }}
                   >
-                    <Icon solid={section === key} aria-hidden="true" />
+                    <Icon size={20} aria-hidden="true" />
                     <span>{label}</span>
                     {changed.some((draft) => draft.id.toLowerCase().startsWith(key)) && (
                       <span className="settings-dirty-dot" aria-label="Unsaved changes" />

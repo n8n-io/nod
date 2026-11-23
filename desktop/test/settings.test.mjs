@@ -38,6 +38,7 @@ import {
   createSettingsStore,
   desktopContentPolicy,
   serverOrigin,
+  serverToken,
   setupResource,
 } from '../main/settings.mjs';
 import { createDesktopAnalytics } from '../main/analytics.mjs';
@@ -741,6 +742,7 @@ async function runningDesktop(
     createSettingsStore: () => storage.store,
     createMacEncryption,
     serverOrigin,
+    serverToken,
     setupResource,
     desktopContentPolicy,
     createHash,
@@ -967,7 +969,10 @@ async function runningDesktop(
         this.bounds = { ...bounds };
       }
       setBackgroundColor() {}
-      setTitleBarOverlay() {}
+      setTitleBarOverlay(overlay) {
+        if (!this.options.titleBarOverlay) throw new Error('Titlebar overlay is not enabled');
+        this.overlay = overlay;
+      }
       destroy() {
         this.destroyed = true;
         this.visible = false;
@@ -4058,6 +4063,8 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
     paymentURL,
   );
   assert.equal(window.webContents.openWindow({ url: 'file:///synthetic' }).action, 'deny');
+  const popup = new window.constructor({ show: false });
+  window.webContents.emit('did-create-window', popup);
   const event = { sender: window.webContents, senderFrame: frame };
   const invoke = (channel, target, ...args) =>
     Promise.resolve().then(() => f.handlers.get(channel)(target, ...args));
@@ -4101,6 +4108,9 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
   assert.equal(serialized.includes(vaultCiphertext), false);
   await save({ theme: 'dark', launchAtLogin: true });
   assert.equal((await f.storage.store.get()).launchAtLogin, true);
+  assert.ok(window.overlay);
+  assert.equal(popup.overlay, undefined);
+  assert.ok(popup.sent.some(([channel]) => channel === 'nod:preferences'));
   await invoke('nod:preferences:theme', event, 'light');
   assert.equal((await f.storage.store.get()).theme, 'light');
   await invoke('nod:external', event, 'https://example.test/');
@@ -4799,6 +4809,11 @@ test('server connections encrypt their token, preserve local keys, and never rev
   ])
     await assert.rejects(f.store.saveConnection({ url, token }));
   assert.equal((await f.store.connection()).url, 'https://assistant.example.test');
+  await f.store.saveConnection({ url: 'https://assistant.example.test', token: `  ${token}\n` });
+  assert.deepEqual(await f.reopen().connection(), { url: 'https://assistant.example.test', token });
+  await assert.rejects(
+    f.store.saveConnection({ url: 'https://assistant.example.test', token: '  ' }),
+  );
   f.encryption.isEncryptionAvailable = () => false;
   await assert.rejects(f.store.saveConnection({ url: 'https://other.example.test', token }));
   await assert.rejects(f.reopen().connection());
@@ -4872,8 +4887,9 @@ test('verified server connections use the desktop ID and require both sharing ga
       const token = randomBytes(32).toString('base64url');
       const f = await runningDesktop(
         t,
-        async () =>
-          Response.json({
+        async (_resource, init) => {
+          assert.equal(new Headers(init.headers).get('authorization'), `Bearer ${token}`);
+          return Response.json({
             user: { id: 'server-owner' },
             settings: {
               onboardingCompleted: true,
@@ -4881,7 +4897,8 @@ test('verified server connections use the desktop ID and require both sharing ga
               ...(scenario.olderServer ? {} : { usageDataRevision: '1' }),
             },
             analytics: { enabled: scenario.serverAnalytics },
-          }),
+          });
+        },
         {
           initialState: 'fresh',
           packaged: true,
@@ -4900,7 +4917,8 @@ test('verified server connections use the desktop ID and require both sharing ga
           },
           { attempts: 40, interval: 10 },
         );
-        await f.checkRemoteConnection({ url, token });
+        const connection = await f.checkRemoteConnection({ url, token: `  ${token}\n` });
+        assert.equal(connection.token, token);
         assert.equal(
           f.nativeAnalytics.filter((item) => item.event === 'server_connection_verified').length,
           0,
@@ -5697,6 +5715,66 @@ test('server token recovery distinguishes a locked store from unreadable ciphert
         await f.close();
       }
     });
+});
+
+test('remote connection verification keeps the cause of a failed connection and never shows the token or address', async (t) => {
+  const token = randomBytes(32).toString('base64url');
+  const failed = (code, message) =>
+    new TypeError('fetch failed', {
+      cause: Object.assign(new Error(message), { code, hostname: 'assistant.example.test' }),
+    });
+  const causes = [
+    [failed('ENOTFOUND', 'getaddrinfo ENOTFOUND assistant.example.test'), 'ENOTFOUND'],
+    [failed('EAI_AGAIN', 'getaddrinfo EAI_AGAIN assistant.example.test'), 'EAI_AGAIN'],
+    [
+      failed(
+        'ERR_TLS_CERT_ALTNAME_INVALID',
+        "Hostname/IP does not match certificate's altnames: Host: assistant.example.test. is not in the cert's altnames",
+      ),
+      'ERR_TLS_CERT_ALTNAME_INVALID',
+    ],
+    [new DOMException('The operation timed out.', 'TimeoutError'), undefined],
+    [failed(`Bearer ${token}`, `assistant.example.test rejected Bearer ${token}`), undefined],
+  ];
+  const seen = new Set();
+  for (const [cause, code] of causes) {
+    const f = await runningDesktop(
+      t,
+      async () => {
+        throw cause;
+      },
+      { initialState: 'fresh' },
+    );
+    const error = await f
+      .checkRemoteConnection({ url: 'https://assistant.example.test', token })
+      .catch((failure) => failure);
+    assert.equal(typeof error?.message, 'string');
+    if (code) assert.ok(error.message.includes(code), error.message);
+    assert.ok(!error.message.includes(token));
+    assert.ok(!error.message.includes('assistant.example.test'));
+    seen.add(error.message);
+    await f.close();
+  }
+  assert.equal(seen.size, causes.length);
+});
+
+test('remote connection verification names the status of a server that answers without a session', async (t) => {
+  const token = randomBytes(32).toString('base64url');
+  const seen = new Set();
+  for (const status of [404, 500, 502]) {
+    const f = await runningDesktop(t, async () => new Response('<html></html>', { status }), {
+      initialState: 'fresh',
+    });
+    const error = await f
+      .checkRemoteConnection({ url: 'https://assistant.example.test', token })
+      .catch((failure) => failure);
+    assert.equal(typeof error?.message, 'string');
+    assert.ok(error.message.includes(String(status)), error.message);
+    assert.ok(!error.message.includes(token));
+    seen.add(error.message);
+    await f.close();
+  }
+  assert.equal(seen.size, 3);
 });
 
 test('remote connection verification rejects redirects before a second server receives the token', async (t) => {

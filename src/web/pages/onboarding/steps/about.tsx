@@ -192,6 +192,7 @@ function Other({
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event: KeyboardEvent) => {
           if (event.key === 'Enter') {
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
             event.preventDefault();
             onEnter();
           }

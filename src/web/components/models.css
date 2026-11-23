@@ -188,6 +188,7 @@
 }
 .model-connection {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   min-height: 62px;
@@ -199,9 +200,12 @@
 .model-connection-label {
   display: flex;
   align-items: center;
-  flex: 1;
+  flex: 1 1 15rem;
   gap: 12px;
   min-width: 0;
+}
+.model-connection > .model-service-actions {
+  margin-left: auto;
 }
 .model-connection-avatar {
   display: grid;
@@ -502,14 +506,6 @@
   }
   .model-picker-footer {
     flex-wrap: wrap;
-  }
-}
-@media (max-width: 420px) {
-  .model-connection {
-    flex-wrap: wrap;
-  }
-  .model-connection > .model-service-actions {
-    margin-left: auto;
   }
 }
 @media (pointer: coarse) {

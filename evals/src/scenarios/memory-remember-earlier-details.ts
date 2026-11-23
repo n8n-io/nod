@@ -83,7 +83,7 @@ export default scenario({
         (run: Run) => {
           const refused = run.tools.filter(
             (call) =>
-              call.name === 'manage_personal_context' &&
+              ['manage_personal_context', 'memory', 'nod'].includes(call.name) &&
               call.input?.action === 'memory_learn' &&
               call.input?.args?.messages?.length &&
               call.isError &&

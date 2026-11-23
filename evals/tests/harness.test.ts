@@ -1927,41 +1927,24 @@ test('scenario API calls use authenticated local transport and refuse outside ta
   assert.equal(started, 1);
 });
 
-test('approval language grading distinguishes refusal from an unresolved decision', async () => {
-  for (const [name, expected, wrong] of [
-    ['pt-pt', 'declined', 'expired'],
-    ['es', 'expired', 'declined'],
-  ]) {
-    const definition = approvalLanguageScenario(name!);
+test('approval language grading accepts an answered card or question and refuses neither', async () => {
+  for (const name of ['pt-pt', 'es']) {
+    const definition = approvalLanguageScenario(name);
     const world = definition.world({ now: Date.now });
-    const state = definition.expect(world).find((item) => item.id === 'approval-answer-state')!;
     const exercised = definition
       .expect(world)
-      .find((item) => item.id === 'server-confirmation-and-scripted-answer-exercised')!;
-    assert.equal(state.kind, 'check');
-    assert.equal(exercised.kind, 'check');
-    if (state.kind !== 'check' || exercised.kind !== 'check') throw new Error('Missing check.');
-    const run = (status?: string, action = 'GMAIL_SEND_EMAIL') =>
+      .find((item) => item.id === 'confirmation-asked-and-answered')!;
+    if (exercised.kind !== 'check') throw new Error('Missing check.');
+    const reply = definition.user?.approvalReplies?.[0];
+    const run = (kind?: 'approval' | 'question', answer = reply) =>
       ({
-        approvals: status ? [{ action, status, args: {} }] : [],
-        interactions: [],
+        approvals: [],
+        interactions: kind ? [{ kind, text: 'Synthetic confirmation', reply: answer, at: 1 }] : [],
       }) as unknown as Run;
-    for (const action of ['GMAIL_SEND_EMAIL', 'GMAIL_REPLY_TO_THREAD']) {
-      const observed = run(expected, action);
-      assert.equal((await state.check(observed)).pass, true);
-      observed.interactions.push({
-        kind: 'approval',
-        text: 'Synthetic confirmation',
-        reply: definition.user?.approvalReplies?.[0],
-        action,
-        at: 1,
-      });
-      assert.equal((await exercised.check(observed)).pass, true);
-    }
-    assert.equal((await state.check(run(expected, 'GMAIL_CREATE_EMAIL_DRAFT'))).pass, false);
-    assert.equal((await state.check(run(wrong))).pass, false);
-    assert.equal((await state.check(run())).pass, false);
-    assert.equal((await exercised.check(run(expected))).pass, false);
+    assert.equal((await exercised.check(run('approval'))).pass, true);
+    assert.equal((await exercised.check(run('question'))).pass, true);
+    assert.equal((await exercised.check(run('question', 'Something else'))).pass, false);
+    assert.equal((await exercised.check(run())).pass, false);
   }
   const definition = approvalLanguageScenario('en');
   const checks = definition.expect(definition.world({ now: Date.now }));
@@ -2008,72 +1991,18 @@ test('approval language grading distinguishes refusal from an unresolved decisio
   assert.equal((await completion.check(run)).pass, false);
 });
 
-test('approval language completion accepts only the expired approval turn and its settled follow-up', async () => {
+test('approval language completion needs no failed or unfinished turn', async () => {
   const definition = approvalLanguageScenario('es');
   const completion = definition.completion!(definition.world({ now: Date.now }));
   if (completion.kind !== 'check') throw new Error('Missing completion check.');
-  const observed = () =>
-    ({
-      turns: [
-        { id: 'approval', status: 'cancelled', source: 'user', background: false },
-        { id: 'followup', status: 'succeeded', source: 'user', background: false },
-      ],
-      approvals: [
-        {
-          turnId: 'approval',
-          action: 'GMAIL_SEND_EMAIL',
-          status: 'expired',
-          args: {},
-        },
-      ],
-      messages: [
-        {
-          role: 'user',
-          turnId: 'followup',
-          text: definition.user.approvalReplies![0],
-          at: 1,
-        },
-      ],
-    }) as unknown as Run;
-  for (const action of ['GMAIL_SEND_EMAIL', 'GMAIL_REPLY_TO_THREAD']) {
-    for (const status of ['succeeded', 'waiting']) {
-      const run = observed();
-      run.approvals[0].action = action;
-      run.turns[1].status = status;
-      assert.equal((await completion.check(run)).pass, true);
-    }
-  }
-  const rejected: Array<(run: Run) => void> = [
-    (run) => (run.turns[0].status = 'failed'),
-    (run) => (run.turns[1].status = 'failed'),
-    (run) => (run.turns[1].status = 'cancelled'),
-    (run) => run.turns.push({ ...run.turns[0], id: 'unrelated' }),
-    (run) => (run.approvals[0].turnId = 'unrelated'),
-    (run) => (run.approvals[0].status = 'declined'),
-    (run) => (run.approvals[0].action = 'GMAIL_CREATE_EMAIL_DRAFT'),
-    (run) => (run.approvals = []),
-    (run) => run.turns.pop(),
-    (run) => run.turns.reverse(),
-    (run) => (run.messages[0].turnId = 'unrelated'),
-    (run) => (run.messages[0].text = 'A different request.'),
-    (run) => (run.turns[1].background = true),
-    (run) => (run.turns[1].source = 'schedule'),
-    (run) => (run.turns = []),
-  ];
-  for (const change of rejected) {
-    const run = observed();
-    change(run);
-    assert.equal((await completion.check(run)).pass, false);
-  }
-  for (const name of ['en', 'pt-pt']) {
-    const other = approvalLanguageScenario(name);
-    const check = other.completion!(other.world({ now: Date.now }));
-    if (check.kind !== 'check') throw new Error('Missing completion check.');
-    assert.equal((await check.check(observed())).pass, false);
-    const run = observed();
-    run.turns[0].status = 'waiting';
-    assert.equal((await check.check(run)).pass, true);
-  }
+  const run = (...statuses: string[]) =>
+    ({ turns: statuses.map((status, index) => ({ id: `t${index}`, status })) }) as unknown as Run;
+  assert.equal((await completion.check(run('waiting', 'succeeded'))).pass, true);
+  assert.equal((await completion.check(run('succeeded'))).pass, true);
+  assert.equal((await completion.check(run('waiting', 'failed'))).pass, false);
+  assert.equal((await completion.check(run('cancelled', 'succeeded'))).pass, true);
+  assert.equal((await completion.check(run('running'))).pass, false);
+  assert.equal((await completion.check(run())).pass, false);
 });
 
 test('the stop case rejects a task that finished before Stop', async () => {
@@ -3025,7 +2954,7 @@ test('the stack records tool calls, model usage and the main prompts of every tu
           options.onEvent(usage('main'));
           await tool('apps').execute({ action: 'GMAIL_FETCH_EMAILS', args: {} });
           await tool('browser').execute({ action: 'fill', selector: '@e1', text: 'private' });
-          await tool('manage_personal_context').execute({
+          await tool('memory').execute({
             action: 'memory_find',
             args: { query: 'private' },
           });
@@ -3045,6 +2974,7 @@ test('the stack records tool calls, model usage and the main prompts of every tu
     sessionId: 'capture-fixture',
     turnId: 'capture-fixture',
     prompt: 'Inspect the synthetic receipt.',
+    background: true,
     history: [],
     workspacePath: directory,
     signal: t.signal,
@@ -3084,12 +3014,8 @@ test('the stack records tool calls, model usage and the main prompts of every tu
     ['tool_end', 'apps', 'succeeded', { messages: ['Receipt'] }],
     ['tool_start', 'browser', { action: 'fill', selector: '@e1', text: '[redacted]' }],
     ['tool_end', 'browser', 'succeeded', 'URL: https://example.com\nFixture page'],
-    [
-      'tool_start',
-      'manage_personal_context',
-      { action: 'memory_find', args: '[private memory omitted]' },
-    ],
-    ['tool_end', 'manage_personal_context', 'succeeded', '-'],
+    ['tool_start', 'memory', { action: 'memory_find', args: '[private memory omitted]' }],
+    ['tool_end', 'memory', 'succeeded', '-'],
     ['tool_start', 'delegate', { title: 'Part', instruction: 'Do one part.' }],
     ['model_usage', 'child'],
     ['tool_end', 'delegate', 'succeeded', 'The subagent finished without an answer.'],
@@ -3719,6 +3645,23 @@ test('only calibrated scenarios that passed every one of at least five attempts 
   await write('again', calibrated, ['pass', 'pass', 'pass', 'pass', 'fail']);
   assert.deepEqual(Object.keys(await promote(root, ['again'], file)), []);
   await rm(root, { recursive: true, force: true });
+});
+
+test('every gate scenario still matches the version that earned its place', async () => {
+  const members = JSON.parse(
+    await readFile(new URL('../gate.json', import.meta.url), 'utf8'),
+  ) as Record<string, { fingerprint: string }>;
+  const stale = Object.entries(members)
+    .filter(
+      ([id, member]) =>
+        !scenarios.some((item) => item.id === id) || fingerprint(id) !== member.fingerprint,
+    )
+    .map(([id]) => id);
+  assert.deepEqual(
+    stale,
+    [],
+    `These gate scenarios changed since they were proven, so the gate would skip them: ${stale.join(', ')}. Run them at least five times and promote the run, or remove them from evals/gate.json in this change.`,
+  );
 });
 
 test('local file checks fail a missing move and any change or trash of the owner files', async () => {

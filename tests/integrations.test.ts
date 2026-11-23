@@ -198,7 +198,7 @@ test('app folders reject escaped paths, incomplete contracts, and unsupported se
       (value) => {
         value.mcpServers.linear = { type: 'stdio', command: 'node' };
       },
-      /streamable-http/,
+      /selected server must use streamable-http/,
     ],
     [
       'server',
@@ -206,7 +206,7 @@ test('app folders reject escaped paths, incomplete contracts, and unsupported se
       (value) => {
         value.connection.server = 'missing';
       },
-      /selected server/,
+      /mcp\.json has no server named missing\./,
     ],
     [
       'placeholder',
@@ -301,6 +301,14 @@ test('app scaffolding refuses replacement and requires contributors to complete 
     JSON.stringify(bundledApps.get('linear')!.contract),
   );
   await checkAppContract(loadAppCatalog(directory).get('synthetic-app')!);
+  app.connection.scopes = Array.from(
+    { length: 11 },
+    (_, index) => `https://www.googleapis.com/auth/synthetic${index}.readonly`,
+  );
+  await writeFile(appPath, JSON.stringify(app));
+  assert.throws(() => loadAppCatalog(directory), {
+    message: /^App synthetic-app: invalid app\.json: [\s\S]*500 characters/,
+  });
 });
 
 const communityAccessCases: Array<{
@@ -502,8 +510,37 @@ test('app access paths reject inconsistent API reads and more than 16 CLI fields
     '/x:y/../../z',
     'http://evil.synthetic-nod.dev/x',
     '//evil.synthetic-nod.dev/x',
+    '..%2fx',
+    '%2e%2e%2fx',
+    'a/%2e%2e%2f%2e%2e%2fx',
+    'a%2F..%2F..%2Fx',
+    '%252e%252e/x',
+    '%252e%252e%252fx',
+    '%25%32%65%25%32%65/x',
+    '%25252e%25252e/x',
+    '..%5cx',
+    '%5c..%5cx',
+    'a%255c..%255cx',
+    '../v1%2Fx',
+    '%2e%2e/v1%2fx',
+    'a/%2e%2e/x',
+    'a/.%2e/x',
+    '..;/x',
+    '..%3f/x',
+    '..%23/x',
   ])
     assert.throws(() => appRequestUrl(path.endpoint, escape), /saved API address/);
+  for (const encoded of [
+    'projects/my-group%2Fmy-project/issues',
+    '@scope%2fname',
+    'items/50%25off',
+    'search;v=1',
+  ])
+    assert.equal(
+      appRequestUrl(path.endpoint, encoded),
+      `https://api.synthetic-nod.dev/v1/${encoded}`,
+    );
+  assert.throws(() => appRequestUrl(path.endpoint, 'files/100%'), /invalid % escape/);
 });
 
 test(
@@ -1049,6 +1086,15 @@ test('published app schemas reject unsupported definitions with the runtime vali
       value.displayName = ' Leading space';
     },
     (value: any) => {
+      value.displayName = 'Fixture\nApp';
+    },
+    (value: any) => {
+      value.displayName = 'Fixture\u202eApp';
+    },
+    (value: any) => {
+      value.displayName = 'Fixture\u2028App';
+    },
+    (value: any) => {
       value.requirements = ['   '];
     },
     (value: any) => {
@@ -1482,6 +1528,96 @@ test('remote MCP falls back to HTTP+SSE only when the server refuses Streamable 
   await transport.listTools(endpoint, legacy);
   assert.deepEqual(streams, ['legacy', 'legacy', 'legacy']);
 });
+
+test(
+  'a stopped remote MCP call ends alone and leaves other calls on the shared connection running',
+  { timeout: 10_000 },
+  async (t) => {
+    const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
+    const { StreamableHTTPServerTransport } =
+      await import('@modelcontextprotocol/sdk/server/streamableHttp.js');
+    const { isInitializeRequest } = await import('@modelcontextprotocol/sdk/types.js');
+    const sessions = new Map<string, InstanceType<typeof StreamableHTTPServerTransport>>();
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => (finish = resolve));
+    let started!: () => void;
+    const silentStarted = new Promise<void>((resolve) => (started = resolve));
+    const open = new Set<object>();
+    const server = createServer(async (request, response) => {
+      if (request.method === 'POST') {
+        open.add(response);
+        response.on('close', () => open.delete(response));
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk as Buffer);
+      const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : undefined;
+      if (body?.method === 'tools/call' && body.params?.name === 'server-error') {
+        response.writeHead(200, { 'content-type': 'application/json' }).end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: body.id,
+            error: { code: -32000, message: 'Synthetic server error.' },
+          }),
+        );
+        return;
+      }
+      const existing = sessions.get(String(request.headers['mcp-session-id']));
+      if (existing) {
+        await existing.handleRequest(request, response, body);
+        return;
+      }
+      if (!isInitializeRequest(body)) {
+        response.writeHead(404).end();
+        return;
+      }
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (id) => void sessions.set(id, transport),
+      });
+      const mcp = new McpServer({ name: 'synthetic-shared', version: '1' });
+      mcp.registerTool('long-report', { description: 'Long' }, async () => {
+        await finished;
+        return { content: [{ type: 'text', text: 'synthetic long report' }] };
+      });
+      mcp.registerTool('silent', { description: 'Silent' }, async (extra) => {
+        started();
+        await new Promise((resolve) => extra.signal.addEventListener('abort', resolve));
+        return { content: [] };
+      });
+      await mcp.connect(transport);
+      await transport.handleRequest(request, response, body);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    t.after(async () => {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+    const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const endpoint = `${origin}/mcp`;
+    const transport = createDiscoveredTransport(ownerFetch(origin), async (value) => value);
+    const headers = { authorization: 'Bearer synthetic-shared-token' };
+    const long = transport.callTool(endpoint, headers, 'long-report', {});
+    long.catch(() => {});
+    const stop = new AbortController();
+    const silent = transport.callTool(endpoint, headers, 'silent', {}, stop.signal);
+    await silentStarted;
+    await assert.rejects(
+      transport.callTool(endpoint, headers, 'server-error', {}),
+      /Synthetic server error\./,
+    );
+    stop.abort(new Error('Synthetic stop.'));
+    await assert.rejects(silent, /Synthetic stop\./);
+    finish();
+    assert.deepEqual(await long, {
+      content: [{ type: 'text', text: 'synthetic long report' }],
+    });
+    for (let wait = 0; open.size && wait < 100; wait++) await delay(10);
+    assert.equal(open.size, 0);
+    assert.deepEqual(await transport.callTool(endpoint, headers, 'long-report', {}), {
+      content: [{ type: 'text', text: 'synthetic long report' }],
+    });
+  },
+);
 
 test(
   'installation identity checkpoints prevent replacement after file loss and recover interrupted first initialization',
@@ -3118,6 +3254,94 @@ test('hosted connection attempts fail closed after expiry or invalid startup', a
   }
 });
 
+test(
+  'a sign-in that expires without returning records one timeout',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    for (const ending of [
+      'returns late',
+      'returns during expiry',
+      'cancelled late',
+      'returns late after a restart',
+      'cancelled late after a restart',
+      'connected',
+    ] as const)
+      await t.test(ending, async (t) => {
+        const expiries: Array<() => Promise<unknown>> = [];
+        const schedule = globalThis.setTimeout;
+        t.mock.method(globalThis, 'setTimeout', ((
+          callback: () => Promise<unknown>,
+          delay?: number,
+          ...rest: unknown[]
+        ) =>
+          delay === 601_000
+            ? (expiries.push(callback), { unref() {} })
+            : schedule(callback, delay, ...rest)) as unknown as typeof setTimeout);
+        const captured: import('../src/server/analytics.ts').AnalyticsEvent[] = [];
+        const changes = () =>
+          captured.flatMap((entry) =>
+            entry.event === 'connection_changed'
+              ? [[entry.properties.status, entry.properties.failure_reason]]
+              : [],
+          );
+        const f = await appsFixture(t, {}, { analytics: (event) => captured.push(event) });
+        let app: Pick<typeof f.app, 'inject'> = f.app;
+        const started = await f.app.inject({
+          method: 'POST',
+          url: '/api/apps/gmail/connect',
+          payload: { returnTo: 'window' },
+        });
+        assert.equal(started.statusCode, 200, started.body);
+        assert.equal(expiries.length, 1);
+        const callback = new URL(f.callbacks.at(-1)!);
+        callback.searchParams.set('account', [...f.accounts.keys()].at(-1)!);
+        const finish = () => app.inject({ url: callback.pathname + callback.search });
+        if (ending === 'connected') {
+          assert.equal(
+            new URL((await finish()).headers.location!).searchParams.get('connection'),
+            'connected',
+          );
+          await expiries[0]!();
+          assert.deepEqual(changes(), [
+            ['started', undefined],
+            ['connected', undefined],
+          ]);
+          return;
+        }
+        await f.pool.query("UPDATE app_connections SET callback_expires=now()-interval '1 second'");
+        const recording = expiries[0]!();
+        const expired = [
+          ['started', undefined],
+          ['failed', 'timeout'],
+        ];
+        if (ending !== 'returns during expiry') {
+          await recording;
+          assert.deepEqual(changes(), expired);
+        }
+        if (ending.endsWith('after a restart')) app = await f.restart();
+        if (ending.startsWith('cancelled late'))
+          assert.equal(
+            (
+              await app.inject({
+                method: 'POST',
+                url: '/api/apps/setup-cancel',
+                payload: {
+                  hash: createHash('sha256').update(new URL(started.json().url).href).digest('hex'),
+                },
+              })
+            ).statusCode,
+            200,
+          );
+        assert.equal(
+          new URL((await finish()).headers.location!).searchParams.get('connection'),
+          'expired',
+        );
+        await recording;
+        assert.deepEqual(changes(), expired);
+      });
+  },
+);
+
 test('connection bridges record the step where an expired attempt stopped', async (t) => {
   const brokerOrigin = 'https://proxy.example.test';
   const pair = `${brokerOrigin}/v2/connect/pair?ticket=synthetic-expiry`;
@@ -3147,8 +3371,8 @@ test('connection bridges record the step where an expired attempt stopped', asyn
     for (const [step, reached] of [
       ['open', 0],
       ['start', 1],
-      ['consent', 2],
-      ['callback', 3],
+      ['pair', 2],
+      ['consent', 3],
       [undefined, 4],
     ] as const) {
       const id = randomBytes(32).toString('base64url');
@@ -4300,6 +4524,7 @@ test(
       'authorize-failure',
       'wrong-email',
       'wrong-owner',
+      'inactive',
       'unknown-identity',
       'foreign-target',
       'superseded',
@@ -4496,7 +4721,7 @@ test(
             completedTokens.add(query.state);
             const account = remote.get(query.account_ref);
             assert.ok(account);
-            if (query.outcome === 'ok') account.active = true;
+            if (query.outcome === 'ok' && variant !== 'inactive') account.active = true;
             if (
               ['restart-during-callback', 'claim-during-start'].includes(variant) &&
               !holdingParse
@@ -4777,7 +5002,7 @@ test(
             ),
             false,
           );
-        if (['wrong-email', 'disconnected'].includes(variant))
+        if (['wrong-email', 'disconnected', 'inactive'].includes(variant))
           assert.equal(remote.has('new-account-1'), false);
         if (variant === 'wrong-owner') assert.equal(removed.includes('new-account-1'), false);
         assert.ok(removed.every((id) => !id.startsWith('old-')));
@@ -5194,7 +5419,7 @@ async function appsFixture(
       return JSON.parse(String(body));
     },
   };
-  const service = await createIntegrations(pool, {
+  const options: Parameters<typeof createIntegrations>[1] = {
     mailCheck: async (emails) => emails.map(() => false),
     ...listing,
     ownerId: 'local-development',
@@ -5206,8 +5431,15 @@ async function appsFixture(
         wakes.push(id);
       }),
     settle: async () => settles++,
-  });
+  };
+  const service = await createIntegrations(pool, options);
   service.registerRoutes(app);
+  async function restart() {
+    const restarted = Fastify();
+    (await createIntegrations(pool, options)).registerRoutes(restarted);
+    t.after(() => restarted.close());
+    return restarted;
+  }
   t.after(async () => {
     await app.close();
     await pool.end();
@@ -5244,6 +5476,7 @@ async function appsFixture(
     wakes,
     settles: () => settles,
     callbacks,
+    restart,
   };
 }
 
@@ -10041,6 +10274,7 @@ test(
       let cliCalls = 0;
       let cliExitCode: number | undefined;
       const cliRuns: unknown[] = [];
+      const authorizations: string[] = [];
       let blocked: 'http' | 'listTools' | 'callTool' | 'cli' | undefined;
       let entered = () => {};
       const waitForAbort = async (method: typeof blocked, signal?: AbortSignal) => {
@@ -10058,8 +10292,9 @@ test(
         grantVault,
         transport: {
           validateEndpoint: async (endpoint) => endpoint,
-          http: async (_endpoint, _headers, method, _body, signal) => {
+          http: async (_endpoint, headers, method, _body, signal) => {
             await waitForAbort('http', signal);
+            authorizations.push(headers.Authorization);
             assert.equal(method, 'GET');
             return { status: 200, body: { items: [] } };
           },
@@ -10478,6 +10713,15 @@ test(
         ),
         /install source/,
       );
+      await assert.rejects(
+        discovered.execute(
+          'CONNECTED_CLI',
+          { connectionId, pathId: cliPath, argv: ['list', 'synthetic\u0000value'] },
+          ref,
+          new AbortController().signal,
+        ),
+        { name: 'ZodError' },
+      );
       await assert.rejects(discovered.reconnect('legacy-cli', legacyId), /set up this CLI again/);
       assert.equal(cliCalls, 1);
       await discovered.disconnect(legacyId, 'legacy-cli');
@@ -10508,7 +10752,7 @@ test(
         app.inject({
           method: 'POST',
           url: `/api/apps/discovery/${proposalId}/complete`,
-          payload: { token: 'synthetic-new-token', accountName: 'Replacement account' },
+          payload: { token: ' synthetic-new-token\n', accountName: 'Replacement account' },
         });
       const account = async () =>
         (await integrations.connectedApps(owner, true)).find(
@@ -10517,6 +10761,7 @@ test(
       const replacedAccount = await account();
       assert.ok(replacedAccount);
       assert.equal((await complete()).statusCode, 200);
+      assert.equal(authorizations.at(-1), 'Bearer synthetic-new-token');
       assert.equal((await complete()).statusCode, 404);
       assert.equal((await grantVault.read(connectionId)).value, 'synthetic-new-token');
       assert.notEqual(await account(), replacedAccount);
@@ -11234,6 +11479,15 @@ test(
         }),
         { name: 'ZodError' },
       );
+      for (const name of [
+        'Fixture\ncloud',
+        'Fixture\u202ecloud',
+        'Fixture\u0007cloud',
+        'Fixture\u2029cloud',
+      ])
+        await assert.rejects(discovered.propose({ service: 'fixture-cloud', name, paths: [cli] }), {
+          name: 'ZodError',
+        });
       const proposal = await discovered.propose({
         service: 'fixture-cloud',
         name: 'Fixture cloud',
@@ -11252,7 +11506,15 @@ test(
         FIXTURE_ACCESS_KEY_ID: 'synthetic-key-id',
         FIXTURE_SECRET_ACCESS_KEY: 'synthetic-secret-key',
       };
-      assert.equal((await complete(values)).statusCode, 200);
+      assert.equal(
+        (
+          await complete({
+            FIXTURE_ACCESS_KEY_ID: ' synthetic-key-id',
+            FIXTURE_SECRET_ACCESS_KEY: 'synthetic-secret-key\n',
+          })
+        ).statusCode,
+        200,
+      );
       const saved = await pool.query<{ id: string; paths: Array<{ id: string }> }>(
         'SELECT id,paths FROM discovered_connections WHERE owner_id=$1',
         [owner],
@@ -11276,7 +11538,7 @@ test(
           await app.inject({
             method: 'POST',
             url: `/api/apps/discovery/${singleId}/complete`,
-            payload: { token: { FIXTURE_TOKEN: 'synthetic-tool-token' }, accountName: 'Tool' },
+            payload: { token: { FIXTURE_TOKEN: '\tsynthetic-tool-token ' }, accountName: 'Tool' },
           })
         ).statusCode,
         200,
@@ -11353,6 +11615,18 @@ test(
         return new Response(Buffer.from(`echo ${mixedCaseEncoded}`), {
           headers: { 'content-type': 'application/octet-stream' },
         });
+      if (String(input) === 'https://fixture.example/api/items/1/archive') {
+        const type = new Headers(init?.headers).get('content-type');
+        return init?.body === undefined && type
+          ? Response.json(
+              {
+                code: 'FST_ERR_CTP_EMPTY_JSON_BODY',
+                message: `Body cannot be empty when content-type is set to '${type}'`,
+              },
+              { status: 400 },
+            )
+          : Response.json({ archived: true, type, body: init?.body ?? null });
+      }
       if (init?.method === 'GET') return new Response(null, { status: 405 });
       const message = JSON.parse(String(init?.body));
       if (message.id === undefined) return new Response(null, { status: 202 });
@@ -11461,6 +11735,29 @@ test(
         error: 'The file was withheld because it contains the connection credential.',
       },
     });
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'])
+      assert.deepEqual(
+        await discovered.execute('CONNECTED_HTTP', {
+          connectionId,
+          pathId: httpPath,
+          method,
+          path: 'items/1/archive',
+        }),
+        { status: 200, body: { archived: true, type: null, body: null } },
+      );
+    assert.deepEqual(
+      await discovered.execute('CONNECTED_HTTP', {
+        connectionId,
+        pathId: httpPath,
+        method: 'POST',
+        path: 'items/1/archive',
+        body: { reason: 'done' },
+      }),
+      {
+        status: 200,
+        body: { archived: true, type: 'application/json', body: '{"reason":"done"}' },
+      },
+    );
     const input = {
       query: 'roadmap',
       page_url: 'https://www.notion.so/team/synthetic-page',
@@ -12839,6 +13136,25 @@ test('connection service refusals pause the install from Retry-After or a growin
   stale.open(1);
   assert.deepEqual(await Promise.all(before), ['refused', 'refused']);
   assert.equal(waited(), 60);
+});
+
+test('a refused file upload keeps the connection service reason in the pause', async (t) => {
+  const service = await connectionServiceFixture(t);
+  service.reply(() => Response.json({ error: 'installation_busy' }, { status: 503 }));
+  const session = await service.provider.createSession('fixture-owner', {
+    gmail: 'ca_fixture_wait',
+  });
+  await assert.rejects(
+    session.upload!(
+      'GMAIL_SEND_EMAIL',
+      { name: 'synthetic.bin', mimeType: 'application/octet-stream', bytes: Uint8Array.of(1) },
+      undefined,
+      'ca_fixture_wait',
+    ),
+    /installation_busy\. HTTP 503\./,
+  );
+  assert.equal(service.provider.connectionBackoff!()?.status, 503);
+  assert.equal(service.provider.connectionBackoff!()?.code, 'installation_busy');
 });
 
 test(

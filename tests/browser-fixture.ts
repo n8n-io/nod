@@ -242,10 +242,6 @@ export type DevtoolsModel = {
   masked?: boolean;
   failMasks?: boolean;
   steal?: { after: number; field: string };
-  selections?: Record<string, unknown[]>;
-  selectionError?: string;
-  holdSelections?: boolean;
-  onSelections?(): void;
 };
 
 export async function fakeDevtools(model: DevtoolsModel) {
@@ -330,17 +326,6 @@ export async function fakeDevtools(model: DevtoolsModel) {
       const frames = model.frames.filter((frame) => frame.session === session);
       const reply = (result: unknown) => send({ id: message.id, result, sessionId: session });
       if (message.method === 'Network.enable') return reply({});
-      if (message.method === 'Accessibility.getFullAXTree') {
-        model.onSelections?.();
-        if (model.holdSelections) return;
-        if (model.selectionError)
-          return send({
-            id: message.id,
-            error: { message: model.selectionError },
-            sessionId: session,
-          });
-        return reply({ nodes: model.selections?.[String(message.params.frameId)] ?? [] });
-      }
       if (message.method === 'DOM.getDocument') return reply({ root: { backendNodeId: 1 } });
       if (message.method === 'Runtime.releaseObjectGroup') return reply({});
       if (message.method === 'Target.attachToTarget') return reply({ sessionId: 'page' });
@@ -365,11 +350,11 @@ export async function fakeDevtools(model: DevtoolsModel) {
             frame: {
               id: frames[0]!.id,
               securityOrigin: frames[0]!.origin,
-              loaderId: model.document,
+              ...(session === 'page' ? { loaderId: model.document } : {}),
             },
-            childFrames: frames.slice(1).map((frame) => ({
-              frame: { id: frame.id, securityOrigin: frame.origin, loaderId: model.document },
-            })),
+            childFrames: frames
+              .slice(1)
+              .map((frame) => ({ frame: { id: frame.id, securityOrigin: frame.origin } })),
           },
         });
       if (message.method === 'Page.getNavigationHistory')
@@ -432,7 +417,6 @@ export async function fakeDevtools(model: DevtoolsModel) {
   const { port } = server.address() as { port: number };
   return {
     url: `ws://127.0.0.1:${port}/devtools/browser/fixture`,
-    connections: () => sockets.size,
     async close() {
       for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));

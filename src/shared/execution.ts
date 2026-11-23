@@ -17,6 +17,7 @@ export interface ExecutionEvent {
   execution: ExecutionScope;
   callId?: string;
   site?: string;
+  detail?: string;
   command?: WorkspaceCommandRecord;
 }
 

@@ -75,7 +75,8 @@ export default scenario({
         (run: Run) => {
           const calls = run.tools.filter(
             (call) =>
-              call.name === 'manage_personal_context' && call.input?.action === 'memory_learn',
+              ['manage_personal_context', 'memory', 'nod'].includes(call.name) &&
+              call.input?.action === 'memory_learn',
           );
           const empty = calls.filter(
             (call) => call.isError || /"saved":\s*\[\s*\]/.test(call.output ?? ''),

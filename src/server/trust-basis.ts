@@ -20,13 +20,6 @@ export interface TrustWords {
   timeZone?: string;
   standingInstruction?: string;
   userRules?: string;
-  messageDrafts?: Array<{
-    draftId: string | null;
-    connectionId: string;
-    target: Record<string, unknown>;
-    messages: Array<{ at: string; text: string; canAuthorize: false }>;
-    unavailable: boolean;
-  }>;
 }
 
 export function trustDecision(words: TrustWords) {

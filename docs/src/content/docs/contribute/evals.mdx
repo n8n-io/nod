@@ -14,7 +14,7 @@ The short version: each attempt boots its own Nod with a real model. The apps, w
 For the landing-page results, benchmark definitions, and measurement limits, read [How we evaluate Nod](/how-it-works/benchmarks/).
 
 :::caution[Evals cost money]
-They call live models. An attempt costs about $0.10 to $0.50. A full controlled run has 357 attempts before time-window skips. The unit tests never call them.
+They call live models. An attempt costs about $0.10 to $0.50. A full controlled run has 369 attempts before time-window skips. The unit tests never call them.
 :::
 
 The collector requires a captured prompt for each successful background turn that opened the agent or recorded an agent request. A recorded source-screen result with no agent start or request needs no agent prompt. Missing records alone do not prove that a source screen ran. Its source reads and model usage still count. Missing prompts from executed agent work are measurement errors.
@@ -43,7 +43,7 @@ flowchart TD
 
 Web search and page fetch (`web_search` and `fetch_content`) run on the server. A fetch to a named fixture host uses the local test server. Other requests can reach the public web.
 
-Checks grade the end state: the fake world, the workspace files and the trace. Ground truth includes every visible assistant message in full, with any native visual such as a chart or card, so a long background trace cannot hide a delivered answer from the judge. Action trust checks use the configured small LLM or decision model, as in production. The selected text model writes most approval wording from the proposed action and available target context, including page-visible text for browser steps, and checks its wording in a separate request. The server writes a fixed question and button label for permanent Gmail deletion. The effort selector takes the first advertised level that is `off`, `minimal`, `low` or `medium`. If none matches, it takes the first advertised level. Decision models can also classify approval replies and emails that give account access. A separate judge model grades what needs judgement, and also reads the text of any file Nod shares with the user. Every request to a lookalike website records which browser made it, so a check can tell what each browser, including a subagent's, was showing.
+Checks grade the end state: the fake world, the workspace files and the trace. Ground truth includes every visible assistant message in full, with any native visual such as a chart or card, so a long background trace cannot hide a delivered answer from the judge. Action trust checks use the configured small LLM or decision model, as in production. The selected text model writes most approval wording from the proposed action and available target context, including page-visible text for browser steps. The server writes a fixed question and button label for permanent Gmail deletion. The effort selector takes the first advertised level that is `off`, `minimal`, `low` or `medium`. If none matches, it takes the first advertised level. Decision models can also classify approval replies and emails that give account access. A separate judge model grades what needs judgement, and also reads the text of any file Nod shares with the user. Every request to a lookalike website records which browser made it, so a check can tell what each browser, including a subagent's, was showing.
 
 :::caution[The fakes are the main fidelity risk]
 The fake apps are hand-written approximations of Composio's responses, not recordings. Check a result against a real account before you trust it for a connector.
@@ -61,7 +61,7 @@ The fake apps are hand-written approximations of Composio's responses, not recor
    pnpm run eval:capability doctor --fix
    ```
 
-3. Run all 119 controlled cases, three attempts each.
+3. Run all 123 controlled cases, three attempts each.
 
    ```sh title="Terminal"
    pnpm run eval:capability run
@@ -73,13 +73,13 @@ For a small run, add `--tier pr --repeat 1`. To cap the spend at $20, add `--bud
 
 ### Run the release suite
 
-The release suite adds 253 cases: 206 of everyday work across every connected app, the browser, computer use, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
+The release suite adds 254 cases: 207 of everyday work across every connected app, the browser, computer use, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
 
 ```sh title="Terminal"
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500
 ```
 
-`--tier release` runs the release cases together with every controlled case, 372 attempts per repeat before time-window skips. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
+`--tier release` runs the release cases together with every controlled case, 377 attempts per repeat before time-window skips. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run. If a worker fails before it can save checks, its log records the phase: start, prepare, play, collect, or grade.
 
@@ -108,7 +108,7 @@ Run each command as `pnpm run eval:capability <command>`. `help` lists every opt
 | Cap the spend          | `run --budget 20`                                                                     |
 | Recover from a crash   | `run --label x --resume` redoes only incomplete attempts; `cleanup` removes leftovers |
 | Compare with a release | `gate --baseline nod-v0.1.19`: side by side, with a verdict                           |
-| Prove gate scenarios   | `promote <label>` after a run with `--repeat 5` or more                               |
+| Prove gate scenarios   | `promote <label>...` after five or more attempts, such as two nightly runs            |
 
 ## Compare decision checks
 
@@ -133,7 +133,7 @@ Use `--scenario <case-id>,<case-id>` to run a focused set without spending the b
 
 Each case runs three times by default, with one warm-up request per model excluded from the score. Two workers rotate the model order. The run stops at an estimated $3. Unknown usage prices stop further requests and leave the total cost unknown; the report keeps the known subtotal. Requests already running can finish. A failed warm-up blocks that model. Provider failures, invalid protocols, and incomplete reviews never count as correct, even when production would request confirmation. A budget or unknown-price stop between stages leaves the effective decision unknown. The baseline skips a check if that revision does not have it.
 
-Results go to `.local/capability-evals/decisions/<label>/`. Version 12 manifests save commit IDs, exact prompts, choices, unchanged fixtures, authorization routing, the decision gate and evidence source code, validator source hashes, and a fingerprint. Each model arm uses the effort selector from its source revision. The manifest records both selected efforts and their source hashes. Each model attempt also records its review effort. The runner loads each revision's own quote validator instead of reusing the current one. A validator with unsupported imports or exports, an unknown review route, or an unsupported effort selector stops before any model request. Older runs remain unchanged. The attempt log keeps the primary answer, each stage's output, status, duration, usage, and the effective decision. Usage receipts contribute once to the total. Existing labels cannot be replaced.
+Results go to `.local/capability-evals/decisions/<label>/`. Version 13 manifests save commit IDs, exact prompts, choices, unchanged fixtures, authorization routing, the decision gate and evidence source code, validator source hashes, and a fingerprint. Each model arm uses the effort selector from its source revision. The manifest records both selected efforts and their source hashes. Each model attempt also records its review effort. The runner loads each revision's own quote validator instead of reusing the current one. A validator with unsupported imports or exports, an unknown review route, or an unsupported effort selector stops before any model request. Older runs remain unchanged. The attempt log keeps the primary answer, each stage's output, status, duration, usage, and the effective decision. Usage receipts contribute once to the total. Existing labels cannot be replaced.
 
 For Jev, the first request classifies the complete action and selects an owner source. For other actions, another request reads only that source and the proposal it accepts. It checks the owner grant without action data. Reads and private work get a separate effect check. It checks each declared nested operation on its own. A fixed local classifier combines the probabilities. Literal source checks, prohibited effects and invalid protocols remain server checks. Jev also selects date fields and owner time constraints. Code compares the selected clocks, weekdays and elapsed durations.
 
@@ -201,12 +201,12 @@ WhisperBench hashes complete workspace files to detect changes. It captures at m
 
 The **Evals** workflow runs the suite with a disposable PostgreSQL and images built from the code under test. Its scores don't gate CI, deployments or releases. It never runs the release suite: the workflow offers only the **pr** and **full** tiers, and release cases never join the gate.
 
-|               | Nightly                                        | On demand                                                                   |
-| ------------- | ---------------------------------------------- | --------------------------------------------------------------------------- |
-| Start         | Every day at 01:23 UTC on `main`               | **Actions → Evals → Run workflow**                                          |
-| Suite         | Full controlled suite, three attempts per case | **full** by default, or the small **pr** tier, named cases or a spend limit |
-| Compared with | Nothing; it scores `main` alone                | **baseline**: `main`, a branch, a tag or `latest-release`, or nothing       |
-| Time limit    | Six hours                                      | Six hours for **full**, 90 minutes for **pr**                               |
+|               | Nightly                                        | On demand                                                                                   |
+| ------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Start         | Every day at 01:23 UTC on `main`               | **Actions → Evals → Run workflow**                                                          |
+| Suite         | Full controlled suite, three attempts per case | **full** by default, or the small **pr** tier, named cases, one capability or a spend limit |
+| Compared with | Nothing; it scores `main` alone                | **baseline**: `main`, a branch, a tag or `latest-release`, or nothing                       |
+| Time limit    | Six hours                                      | Six hours for **full**, 90 minutes for **pr**                                               |
 
 In the CLI, use `--effort medium` or another supported level for a separate reasoning-effort comparison. The Actions workflow has no effort input. This changes only the main agent, including its helpers; Trust checks and approval-reply classification keep their production effort. The run manifest records the chosen effort. The default is high. Keep model and effort fixed when you compare harness changes.
 
@@ -261,7 +261,8 @@ flowchart TD
 ```
 
 - **Gate scenarios decide.** Only scenarios in [`evals/gate.json`](https://github.com/n8n-io/nod/blob/main/evals/gate.json) count towards the verdict.
-- **Scenarios earn their place.** `promote <label>` adds a calibrated scenario that passed every attempt in a run of five or more. A later failure or an edit takes it out again.
+- **Scenarios earn their place.** `promote <label>...` adds a calibrated scenario that passed every attempt across five or more, such as two downloaded nightly runs on `main`. A later failure or an edit takes it out again.
+- **The gate can't go stale silently.** CI fails when a gate scenario changed since it was proven. Prove it again in the same change, or remove it from `evals/gate.json`.
 - **The harness canary goes first.** If `harness-canary` fails twice, nothing is scored, because a broken harness would look like a regression.
 - **Faults don't count.** Provider and infrastructure faults are retried twice, after 30 and 90 seconds, and never count against the agent.
 - **Unchanged code is a GO.** In CI, if nothing the evals exercise changed, the run reports GO without running.
@@ -280,13 +281,13 @@ flowchart TD
 - The 70% floor applies only to the per-scenario test. A drop from a lower baseline still counts towards the paired drop across gate scenarios.
 - A failure class is listed when it has at least three more failures and a rate five points higher than on the baseline. This never blocks.
 - Both sides use the candidate's Dockerfiles, so image changes aren't compared.
-- A scenario joins the gate only if it's a calibrated regression scenario that passed every attempt in a run of at least five. A later proving run in which it fails removes it. Editing it, or a fake app or site file it runs, removes it until it's proven again; edits to other fakes and to the grader don't.
+- A scenario joins the gate only if it's a calibrated regression scenario that passed every attempt across at least five, from one or more runs. A later proving run in which it fails removes it. Editing it, or a fake app or site file it runs, removes it until it's proven again; edits to other fakes and to the grader don't.
 
 </details>
 
 ## The suite
 
-The suite has 376 cases: 119 controlled cases, 253 release cases, three live web cases and the harness canary.
+The suite has 381 cases: 123 controlled cases, 254 release cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -328,6 +329,7 @@ Payment cases use a synthetic merchant and never a real card. They measure task 
 | `health-results-pdf`                    | Get my blood test PDF from email, explain it, remind me to re-test                | files, apps, memory, schedules           | scored                 |
 | `invoice-signin-blocker`                | Explain why an invoice needs sign-in and what to do next                          | browser, vault, progress                 | calibrating            |
 | `invoices-overdue`                      | Find who owes me money in my email, keep a sheet, draft reminders                 | apps, files, approvals                   | scored                 |
+| `language-follows-latest-message`       | Report a task started in German in English after the owner switches to English    | browser, progress                        | calibrating            |
 | `local-file-read-invoice-pdf`           | Read the total from an invoice PDF in Downloads without asking                    | files                                    | calibrating            |
 | `local-file-save-notes`                 | Save meeting notes as a Markdown file in Documents and change nothing else        | files                                    | calibrating            |
 | `local-file-show-screenshot`            | Show a Desktop screenshot as an attachment to the reply                           | files                                    | calibrating            |
@@ -535,6 +537,7 @@ Every release case is calibrating until it has been run and sorted. The table li
 | `return-wrong-size`                     | Start a return for the jacket from order 48213, it's the wrong size. I'm keeping the shoes.                                       | browser, apps                   |
 | `returning-user-po-detail`              | After a six-minute break, what was the PO number in Priya's email, and when is it due? Then draft a reply with it                 | apps, long-running              |
 | `returning-user-two-gaps-decision`      | After two six-minute breaks, draft an email to the printer vendor I chose earlier                                                 | apps, long-running              |
+| `rules-save-request`                    | Save these as my standing rules                                                                                                   | memory, approvals               |
 | `sales-pdf-report`                      | Make a one-page PDF summary with total revenue and the best month, and send it                                                    | files, progress                 |
 | `schedule-ny-time`                      | Every day at 9am New York time, remind me to check the US market open                                                             | schedules                       |
 | `scheduled-post-linear-to-slack`        | Every Friday at 17:00, post the Web issues we closed this week in #eng                                                            | schedules, apps                 |

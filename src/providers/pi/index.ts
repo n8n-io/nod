@@ -738,7 +738,11 @@ export function createPiAgent(options: {
           executionMode: tool.parallel ? 'parallel' : 'sequential',
           execute: async (id, args, signal) => {
             const active = activation?.getActiveTools() ?? [];
-            const missing = (budget.compact ? [] : (tool.companions ?? [])).filter(
+            const companions =
+              typeof tool.companions === 'function'
+                ? tool.companions(args as Record<string, unknown>)
+                : tool.companions;
+            const missing = (budget.compact ? [] : (companions ?? [])).filter(
               (name) => !active.includes(name) && input.tools.some((item) => item.name === name),
             );
             if (missing.length) activation?.setActiveTools([...active, ...missing]);
@@ -757,6 +761,7 @@ export function createPiAgent(options: {
           },
         })),
       ];
+      const guided = new Set<string>();
       const deferred =
         !input.restricted || budget.compact || input.tools.some((tool) => tool.deferred);
       const settings = SettingsManager.inMemory({
@@ -809,13 +814,23 @@ export function createPiAgent(options: {
                           );
                           const loaded = (result.details as { loaded?: string[] } | undefined)
                             ?.loaded;
-                          return budget.compact && loaded?.length
-                            ? {
-                                ...result,
-                                content: [
-                                  { type: 'text' as const, text: `Loaded: ${loaded.join(', ')}` },
-                                ],
-                              }
+                          if (budget.compact && loaded?.length)
+                            return {
+                              ...result,
+                              content: [
+                                { type: 'text' as const, text: `Loaded: ${loaded.join(', ')}` },
+                              ],
+                            };
+                          const guides = (loaded ?? []).flatMap((name) => {
+                            const deferred = input.tools.find(
+                              (tool) => tool.name === name,
+                            )?.deferred;
+                            if (!deferred?.guide || guided.has(deferred.namespace)) return [];
+                            guided.add(deferred.namespace);
+                            return [{ type: 'text' as const, text: deferred.guide }];
+                          });
+                          return guides.length
+                            ? { ...result, content: [...result.content, ...guides] }
                             : result;
                         },
                       }),

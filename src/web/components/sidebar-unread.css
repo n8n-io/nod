@@ -1,4 +1,5 @@
 .sidebar .nav-icon {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -6,9 +7,13 @@
 }
 .sidebar .chat-unread-badge {
   position: absolute;
+  top: -5px;
+  right: -6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  min-width: 18px;
+  height: 18px;
   padding: 0 4px;
   border-radius: var(--radius-full);
   background: var(--primary);
@@ -20,45 +25,12 @@
 }
 .sidebar .chat-status-dot {
   position: absolute;
+  right: -3px;
+  bottom: -2px;
   width: 8px;
   height: 8px;
   border-radius: var(--radius-full);
   background: var(--primary);
-}
-.mobile-top-bar .chat-unread-badge {
-  min-width: 18px;
-  height: 18px;
-}
-.mobile-chat-link .nav-icon {
-  position: relative;
-}
-.mobile-chat-link .chat-unread-badge {
-  top: -5px;
-  right: -6px;
-}
-.mobile-chat-link .chat-status-dot {
-  right: -3px;
-  bottom: -2px;
-}
-.nav-link .chat-unread-badge {
-  top: 50%;
-  right: var(--nav-row-inset);
-  min-width: 16px;
-  height: 16px;
-  transform: translateY(-50%);
-}
-.nav-link .chat-status-dot {
-  top: calc(50% + var(--nav-icon) / 2 - 6px);
-  left: calc(var(--nav-row-inset) + var(--nav-icon) - 5px);
-  box-shadow: 0 0 0 2px var(--sidebar);
-}
-@media (max-width: 800px) {
-  :root:not([data-desktop='true']) .nav-link .chat-unread-badge {
-    top: calc(50% - var(--nav-icon) / 2 - 8px);
-    right: auto;
-    left: calc(var(--nav-row-inset) + var(--nav-icon) - 8px);
-    transform: none;
-  }
 }
 .sidebar .chat-status-dot[data-state='working'] {
   background: var(--muted-foreground);

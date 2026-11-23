@@ -104,7 +104,8 @@ export async function registerFeedback(
     owner_id text NOT NULL, id uuid NOT NULL, request_hash text NOT NULL, payload_hash text NOT NULL,
     status text NOT NULL, issue_url text, created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(owner_id,id)
-  )`);
+  );
+  ALTER TABLE feedback_submissions ADD COLUMN IF NOT EXISTS attempt integer NOT NULL DEFAULT 0`);
   const reports = new Map<string, FeedbackReport>();
   const repairs = new Map<string, { envelope: FeedbackEnvelope; expiresAt: number }>();
   const pending = new Set<string>();
@@ -125,12 +126,12 @@ export async function registerFeedback(
     ...(row.issue_url && { issueUrl: row.issue_url }),
     ...(row.status === 'partial' && { canRetryAttachments: repairs.has(row.id) }),
   });
-  const save = async (value: FeedbackReceipt) => {
+  const save = async (value: FeedbackReceipt, attempt: number) => {
     const result = await options.pool.query(
       `UPDATE feedback_submissions SET status=CASE WHEN status='partial' AND $3<>'submitted' THEN 'partial' ELSE $3 END,
        issue_url=COALESCE($4,issue_url),updated_at=now()
-       WHERE owner_id=$1 AND id=$2 AND status<>'submitted' RETURNING id,status,issue_url`,
-      [options.ownerId, value.submissionId, value.status, value.issueUrl ?? null],
+       WHERE owner_id=$1 AND id=$2 AND attempt=$5 AND status<>'submitted' RETURNING id,status,issue_url`,
+      [options.ownerId, value.submissionId, value.status, value.issueUrl ?? null, attempt],
     );
     if (result.rows[0]?.status === 'submitted' || result.rows[0]?.status === 'rejected')
       repairs.delete(value.submissionId);
@@ -216,6 +217,7 @@ export async function registerFeedback(
   const deliver = async (
     input: z.infer<typeof submission>,
     abandoned: () => boolean = () => false,
+    retry = false,
   ): Promise<FeedbackReceipt> => {
     const capture = snapshotAnalytics(options.analytics);
     if (!options.delivery.configured) throw fail('Feedback sending is not configured yet.', 503);
@@ -224,7 +226,7 @@ export async function registerFeedback(
       'SELECT * FROM feedback_submissions WHERE owner_id=$1 AND id=$2',
       [options.ownerId, input.submissionId],
     );
-    if (previous.rows[0]) {
+    if (previous.rows[0] && !(retry && previous.rows[0].status === 'rejected')) {
       if (previous.rows[0].request_hash !== requestHash && !rejectionClaim(previous.rows[0]))
         throw fail('This submission already has different content.', 409);
       return receipt(previous.rows[0]);
@@ -264,7 +266,14 @@ export async function registerFeedback(
     };
     const inserted = await options.pool.query(
       `INSERT INTO feedback_submissions(owner_id,id,request_hash,payload_hash,status)
-       VALUES($1,$2,$3,$4,'unknown') ON CONFLICT DO NOTHING RETURNING id`,
+       VALUES($1,$2,$3,$4,'unknown') ON CONFLICT(owner_id,id) ${
+         retry
+           ? `DO UPDATE SET request_hash=EXCLUDED.request_hash,payload_hash=EXCLUDED.payload_hash,
+              status='unknown',issue_url=NULL,attempt=feedback_submissions.attempt+1,
+              created_at=now(),updated_at=now()
+              WHERE feedback_submissions.status='rejected'`
+           : 'DO NOTHING'
+       } RETURNING attempt`,
       [options.ownerId, input.submissionId, requestHash, envelope.payloadHash],
     );
     if (!inserted.rowCount) {
@@ -276,12 +285,14 @@ export async function registerFeedback(
         throw fail('This submission already has different content.', 409);
       return receipt(winner.rows[0]);
     }
+    const { attempt } = inserted.rows[0];
     pending.add(input.submissionId);
     if (repairs.size >= 5) repairs.delete(repairs.keys().next().value!);
     repairs.set(input.submissionId, { envelope, expiresAt: Date.now() + 3_600_000 });
     try {
-      if (abandoned()) return await save({ submissionId: input.submissionId, status: 'rejected' });
-      const delivered = await save(await options.delivery.submit(envelope));
+      if (abandoned())
+        return await save({ submissionId: input.submissionId, status: 'rejected' }, attempt);
+      const delivered = await save(await options.delivery.submit(envelope), attempt);
       if (delivered.status === 'submitted' || delivered.status === 'partial')
         capture?.({
           event: 'feedback_sent',
@@ -320,7 +331,7 @@ export async function registerFeedback(
         id,
       ])
     ).rows[0];
-    return row && !rejectionClaim(row) ? receipt(row) : null;
+    return row && row.status !== 'rejected' ? receipt(row) : null;
   };
   const sendDraft = async (
     id: string,
@@ -341,6 +352,7 @@ export async function registerFeedback(
         attachments: [],
       },
       abandoned,
+      true,
     );
   };
   const draftFor = async (threadId: string, sourceMessageId?: string | null) => {
@@ -360,7 +372,8 @@ export async function registerFeedback(
           ? `SELECT id,summary FROM feedback_drafts WHERE owner_id=$1 AND thread_id=$2 AND id=$3`
           : `SELECT d.id,d.summary FROM feedback_drafts d
              WHERE d.owner_id=$1 AND d.thread_id=$2 AND d.created_at > now() - interval '1 day'
-               AND NOT EXISTS (SELECT 1 FROM feedback_submissions s WHERE s.owner_id=$1 AND s.id=d.id)
+               AND NOT EXISTS (SELECT 1 FROM feedback_submissions s
+                 WHERE s.owner_id=$1 AND s.id=d.id AND s.status<>'rejected')
              ORDER BY d.created_at DESC LIMIT 1`,
         replied ? [options.ownerId, threadId, replied] : [options.ownerId, threadId],
       )
@@ -419,7 +432,7 @@ export async function registerFeedback(
       };
     if (!options.delivery.configured) return receipt(row);
     try {
-      return await save(await options.delivery.status(id, row.payload_hash));
+      return await save(await options.delivery.status(id, row.payload_hash), row.attempt);
     } catch {
       return receipt(row);
     }
@@ -448,7 +461,10 @@ export async function registerFeedback(
     if (!options.delivery.configured) throw fail('Feedback sending is not configured yet.', 503);
     pending.add(id);
     try {
-      return await save(await options.delivery.submit({ ...repair.envelope, action: 'repair' }));
+      return await save(
+        await options.delivery.submit({ ...repair.envelope, action: 'repair' }),
+        row.attempt,
+      );
     } catch {
       return receipt(row);
     } finally {

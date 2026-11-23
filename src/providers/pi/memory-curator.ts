@@ -129,24 +129,12 @@ export function createPiMemoryCurator(options: {
       requestFacts: undefined,
     };
   }
-  const curator: MemoryCurator = {
+  return {
     get id() {
       return options.provider;
     },
     get configured() {
       return options.configured?.() ?? Boolean(options.apiKey);
-    },
-    async select(signal) {
-      signal?.throwIfAborted();
-      if (!curator.configured || !options.resolve) return curator;
-      const access = await options.resolve();
-      signal?.throwIfAborted();
-      if (!access) throw new Error('The selected model is unavailable.');
-      return createPiMemoryCurator({
-        ...options,
-        provider: access.provider,
-        resolve: async () => access,
-      });
     },
     async curate(
       { task, instructions, input, responseSchema, images, automatic = true },
@@ -155,7 +143,8 @@ export function createPiMemoryCurator(options: {
     ) {
       signal?.throwIfAborted();
       const traceTurnId = crypto.randomUUID();
-      const bounded = task === 'classify' || task === 'attention' || task === 'check';
+      const bounded =
+        task === 'classify' || task === 'attention' || task === 'check' || task === 'activity';
       const turnBound =
         signal !== undefined && ['review', 'access', 'skill', 'remember'].includes(task);
       if (options.resolve) loaded = undefined;
@@ -314,7 +303,7 @@ export function createPiMemoryCurator(options: {
         const label =
           task === 'vision'
             ? 'The image model is unavailable.'
-            : task === 'classify' || task === 'attention'
+            : task === 'classify' || task === 'attention' || task === 'activity'
               ? 'The classification model is unavailable.'
               : task === 'review' || task === 'access'
                 ? 'The action review model is unavailable.'
@@ -338,5 +327,4 @@ export function createPiMemoryCurator(options: {
       );
     },
   };
-  return curator;
 }

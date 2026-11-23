@@ -207,8 +207,8 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
 
   function mouse(event: React.MouseEvent<HTMLImageElement>, kind: 'move' | 'down' | 'up') {
     const at = point(event);
-    const button = buttons[event.button] ?? 'left';
-    if (!at) return;
+    const button = buttons[event.button];
+    if (!at || (kind !== 'move' && !button)) return;
     if (kind === 'down') {
       screen.current?.focus();
       pressed.current = { ...at, button };

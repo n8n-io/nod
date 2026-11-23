@@ -1436,9 +1436,9 @@ export function createModelService(options: {
           const connected = await backend.connectKey(provider, value).catch((error) => {
             if (error instanceof ModelWorkspaceSelectionError) throw error;
             throw new ConnectionError(
-              error instanceof ModelAuthError
-                ? error.message
-                : 'The model list couldn’t be loaded. Try again.',
+              createTextRedactor([...secrets])(
+                error instanceof Error ? error.message : String(error),
+              ).slice(0, 2000),
             );
           });
           return save(provider, 'api_key', connected.credential, connected.models);

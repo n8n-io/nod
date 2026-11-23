@@ -51,7 +51,7 @@ Nod is designed to check with you before it sends, posts or deletes anything you
 |          | Local desktop assistant                                                                                                | Local source install                        | Self-hosted server                                              |
 | -------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------- |
 | Best for | Using Nod on your own computer                                                                                         | Running from source, or changing Nod's code | Reaching one assistant from several devices                     |
-| Runs on  | Mac (Apple silicon or Intel), Windows 11, Linux x64 preview                                                            | macOS or Linux with Docker                  | A machine with Docker Compose                                   |
+| Runs on  | Mac (Apple silicon or Intel), Windows 11, Linux x64 preview                                                            | macOS, Linux or Windows with Docker         | A machine with Docker Compose                                   |
 | You need | Mac: macOS 14 or later. Windows local: WSL 2 and virtualization. Linux: Flatpak and a secret store; KVM for local use. | Node.js, pnpm, Docker and Git               | [Server setup](/deploy/self-host/) and HTTPS for network access |
 | Updates  | Automatic on Mac and Windows; install the next bundle on Linux                                                         | `git pull` and restart                      | [Update the server](/deploy/server-operations/)                 |
 
@@ -78,7 +78,7 @@ Each assistant needs a [model connection](/connect/models/): a supported service
   <LinkCard
     title="Install from source"
     href="/get-started/install-from-source/"
-    description="Run Nod on macOS or Linux from its code."
+    description="Run Nod on macOS, Linux or Windows from its code."
   />
   <LinkCard
     title="Host your own server"

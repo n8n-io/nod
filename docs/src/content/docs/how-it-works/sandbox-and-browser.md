@@ -43,7 +43,7 @@ flowchart LR
 
 ## The workspace container
 
-Pi's native tools (`read`, `bash`, `edit`, `write`, `find` and `ls`) run inside the workspace through `WorkspaceSession.exec`. Each thread works in `/workspace/<thread ID>`. A source install mounts `NOD_DATA_ROOT/workspaces`; self-hosted and desktop runtimes use a persistent workspace volume. `/home/node` is a separate volume, so tools Pi installs persist.
+Pi's native tools (`read`, `bash`, `edit` and `write`) run inside the workspace through `WorkspaceSession.exec`. Each thread works in `/workspace/<thread ID>`. A source install mounts `NOD_DATA_ROOT/workspaces`; self-hosted and desktop runtimes use a persistent workspace volume. `/home/node` is a separate volume, so tools Pi installs persist.
 
 The tools use the thread's Linux workspace path on every host, including Windows. The runtime converts Windows file paths before it sends file operations to the container.
 
@@ -80,7 +80,7 @@ Every command goes through a small supervisor inside the container, in [`src/pro
 
 - It owns the command's session and signals every process in it, even ones that left the process group.
 - A command also ends the processes it detached, when the command itself ends, so work it left behind never outlives it. Stop ends the whole tree the same way, and escalates to `SIGKILL` for a process that ignores the first signal.
-- It enforces the timeout: 59 minutes for `bash` by default. The model can ask for longer.
+- It enforces the timeout: 59 minutes for `bash` by default. The model can ask for longer. It also enforces an output limit. A command stopped at either limit fails with an error that names the limit and its value, such as "Workspace command output passed its 16 MB limit."
 - It acknowledges when the command ends. If that acknowledgement is lost, the command fails as uncertain with the specific reason, such as the command stream closing early, and never runs again. The server cancels the other running commands, and new commands wait. From `/var/tmp`, a folder the command can't remove, a check then stops every process owned by the command's Linux user, `node` or the connected CLI's own user, including background processes earlier commands started. It spares only the container's init process, the check's own chain of parent processes, and, when init is `docker-init` or `tini`, the container's main process: the earliest started child of init. When the check confirms none remain, the workspace reopens. When it can't prove that, for example because it can't read a running process's owner or parent, the server fences the workspace with the reason: no more commands run until Nod restarts.
 
 ## Command output

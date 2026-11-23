@@ -42,7 +42,7 @@ The library combines task guides in [`src/runtime/skills`](https://github.com/n8
 | `learning-and-study`      | `sales-and-crm`         | `research`               |
 | `personal-finance`        | `software-and-websites` | `writing-and-content`    |
 | `privacy-and-accounts`    | `n8n`                   | `visual-replies`         |
-| `shopping`                |                         |                          |
+| `shopping`                | `nod`                   |                          |
 | `subscriptions-and-bills` |                         |                          |
 | `travel`                  |                         |                          |
 
@@ -63,7 +63,7 @@ The system prompt tells the model to pick a guide by the task's purpose, the use
 For an app-specific guide, use `src/apps/<app-id>/skills/<name>/SKILL.md`. See [Build an app for Nod](/contribute/apps/). General task guides use the path below.
 
 1. Create `src/runtime/skills/<name>/SKILL.md`, using a lowercase name with hyphens.
-2. Add front matter with `name`, which must match the folder, and `description`, which says when the model must use the guide.
+2. Add front matter with `name`, which must match the folder, and `description`, which says when the model must use the guide. Optional `tools` names Nod tools that load when the model reads the guide, such as `flights` for `travel`. The catalog in the prompt shows them beside the guide name.
 3. In the body, write the task decisions, the failure cases and the evidence needed to check the result.
 4. For a long procedure that applies only in one case, add `references/<name>.md`. Link it from the guide and state the condition.
 

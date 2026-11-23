@@ -114,7 +114,8 @@ export default scenario({
         run.tools
           .filter(
             (tool) =>
-              tool.name === 'manage_personal_context' && /^memory_/.test(tool.input?.action ?? ''),
+              ['manage_personal_context', 'memory', 'nod'].includes(tool.name) &&
+              /^memory_/.test(tool.input?.action ?? ''),
           )
           .map(
             (tool) => `${tool.input.action} ${JSON.stringify(tool.input.args ?? {}).slice(0, 160)}`,
@@ -134,7 +135,7 @@ export default scenario({
           const learned = run.tools
             .filter(
               (tool) =>
-                tool.name === 'manage_personal_context' &&
+                ['manage_personal_context', 'memory', 'nod'].includes(tool.name) &&
                 tool.input?.action === 'memory_learn' &&
                 !tool.isError,
             )
@@ -161,7 +162,7 @@ export default scenario({
         (run) => {
           const calls = run.tools.filter(
             (tool) =>
-              tool.name === 'manage_personal_context' &&
+              ['manage_personal_context', 'memory', 'nod'].includes(tool.name) &&
               (tool.input?.action === 'memory_forget' ||
                 (tool.input?.action === 'memory_control' &&
                   (tool.input?.args?.clear === true || tool.input?.args?.enabled === false))),

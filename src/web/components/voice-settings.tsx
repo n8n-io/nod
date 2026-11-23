@@ -78,6 +78,7 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
       audio.current.pause();
       audio.current.removeAttribute('src');
       audio.current.load();
+      audio.current.remove();
     }
     audio.current = null;
     if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
@@ -271,6 +272,9 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
       const url = URL.createObjectURL(blob);
       previewUrl.current = url;
       const player = new Audio(url);
+      player.hidden = true;
+      player.setAttribute('aria-hidden', 'true');
+      document.body.append(player);
       audio.current = player;
       player.onended = stop;
       player.onerror = () => {

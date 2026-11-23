@@ -13,6 +13,8 @@ Your requests go to the service you connect. Paid providers bill you for use. To
 
 Nod checks the selected model in the background. You can continue setup as soon as Nod saves the connection and selects a model. Chat shows a small status while the check runs. It disappears when the check succeeds. If the check fails, chat shows the service's reason and a link to **Models**.
 
+A model discovery failure shows the service name, HTTP status and service reason when available. Nod removes the connection key.
+
 ## Supported connections
 
 Select **Add connection** (or **Add** when you already have a connection), then search for a service. Regional and token-plan entries use the key issued for that particular service.
@@ -179,6 +181,8 @@ Nod lists the models and inference profiles Bedrock offers in that Region, such 
 
 The key needs to list models (`bedrock:ListFoundationModels` and `bedrock:ListInferenceProfiles`) and call them. Keys made in the Bedrock console get the `AmazonBedrockLimitedAccess` policy, which allows both. Nod doesn't use AWS access keys or profiles.
 
+If the model list loads but every chat fails with `http2 request did not get a response`, your network, such as a VPN or a TLS-inspecting proxy, may be blocking HTTP/2. Set `AWS_BEDROCK_FORCE_HTTP1=1` in the environment Nod starts from to send Bedrock requests over HTTP/1.1 instead. For the desktop app on macOS, run `launchctl setenv AWS_BEDROCK_FORCE_HTTP1 1`, then quit and reopen Nod. The setting lasts until you restart the Mac. On Windows, run `setx AWS_BEDROCK_FORCE_HTTP1 1`, then sign out and back in so Nod starts with it.
+
 </TabItem>
 <TabItem label="Google Vertex AI">
 
@@ -260,7 +264,7 @@ A change applies from the next turn; work that's already running keeps its model
 
 If a model request fails, Nod doesn't switch to another connection on its own; the notice above the chat box offers one when you have it. Nod retries a temporary provider error up to three times, waiting 4, 8 and 16 seconds. Temporary errors include an overload, a rate limit, and, for hosted providers, a request that gets no response within 90 seconds of being sent, cache warming included. Requests to a model server you run have no such limit, because local models can take minutes to start answering.
 
-Background work, such as memory upkeep, uses a smaller model from the same connection when it has one, such as `gpt-6-luna` or `claude-haiku-5-5`. Otherwise it uses your model or, for an audio model, its text companion. Background work and checks use the lightest reasoning their model offers: off, minimal, low or medium in that order, or the model's first effort level if it offers none of these.
+Background work, such as memory upkeep, uses a smaller model from the same connection when it has one, such as `gpt-6-luna` or `claude-haiku-5-5`. Otherwise it uses your model or, for an audio model, its text companion. The short line about your request in the app's chat status line uses only that smaller model. Without one, or without a known price for it, Nod skips the line. Background work and checks use the lightest reasoning their model offers: off, minimal, low or medium in that order, or the model's first effort level if it offers none of these.
 
 ## Models with a small context window
 
@@ -276,11 +280,9 @@ To compare what each model declares with how it scores on computer use, tool sel
 
 ## Decision checks
 
-Nod can use a decision model to check action permission, read confirmation replies, and check emails that give account access. Your selected text model writes most confirmation questions and button labels in your conversation language. The same model checks its wording against the saved action and arguments in a separate request. For permanent Gmail deletion, Nod writes a fixed question and button label from verified target details in English, regardless of your conversation language, without a wording-model request. You can answer in any language. Nod selects each checker before its request. A failed check never switches models.
+Nod can use a decision model to check action permission, read confirmation replies, and check emails that give account access. Your selected text model writes most confirmation questions and button labels in your conversation language. For permanent Gmail deletion, Nod writes a fixed question and button label from verified target details in English, regardless of your conversation language, without a wording-model request. You can answer in any language. Nod selects each checker before its request. A failed check never switches models.
 
 ### Select the action checker
-
-For Perplexity Decider 1.2, Nod checks that the provider and requested model match its selection. The response must also identify version `perplexity/pplx-decider-v1.2-20261016`. These checks must pass before Nod uses an answer for action permission, an app read check or a confirmation reply. A missing or different value fails the check.
 
 Set `NOD_TRUST_MODEL` in the server configuration, then [apply the change](/deploy/configuration/#how-settings-work).
 
@@ -440,7 +442,7 @@ flowchart LR
 - Nod encrypts saved keys and sign-ins with the Vault key. macOS uses Keychain, the Windows app uses Windows DPAPI, and the Linux Flatpak uses Secret Service. Linux source installs use a private file. The self-hosting stack generates `NOD_VAULT_KEY` in its private `.env`. See [Vault configuration](/deploy/configuration/#vault).
 - Nod checks credential storage before starting a connection. If storage is unavailable, check the Vault configuration, permissions and database connection, then try again.
 - Keys from `.env` stay in server memory and aren't copied into the database.
-- Each key goes only to its own service: Amazon Bedrock in the Region you entered, Google Vertex AI, or the Azure OpenAI endpoint you entered.
+- Each key goes only to its own service: Amazon Bedrock in the Region you entered, Google Vertex AI, the Azure OpenAI endpoint you entered, or the OpenAI-compatible server address you entered.
 - Your browser doesn't store the key, and Nod removes it from provider errors.
 
 ## Related resources

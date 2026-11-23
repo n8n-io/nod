@@ -9,13 +9,14 @@ import {
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer, request } from 'node:http';
+import type { LookupOptions } from 'node:dns';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { createBrowserProxy } from '../src/providers/agent-browser/network.ts';
+import { createBrowserProxy, publicLookup } from '../src/providers/agent-browser/network.ts';
 import {
   createPublicLinkPreviewProvider,
   requestPublicPreview,
@@ -542,6 +543,37 @@ test('the browser proxy refuses private network destinations, including names th
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+test('connection lookups refuse a name with any private answer, whichever family is requested', async () => {
+  const lookup = (answers: Array<{ address: string; family: number }>, options: LookupOptions) =>
+    new Promise<{ error: Error | null; address: unknown; family: unknown }>((resolve) =>
+      publicLookup(async () => answers)('rebind.example', options, (error, address, family) =>
+        resolve({ error, address, family }),
+      ),
+    );
+  const publicV4 = { address: '93.184.216.34', family: 4 };
+  const publicV6 = { address: '2606:4700:4700::1111', family: 6 };
+  const privateV4 = { address: '10.0.0.5', family: 4 };
+  for (const [answers, options] of [
+    [[privateV4], {}],
+    [[publicV4, privateV4], {}],
+    [[publicV4, privateV4], { all: true }],
+    [[publicV6, privateV4], { family: 6 }],
+    [[{ address: '::1', family: 6 }], {}],
+  ] as const)
+    assert.match(
+      (await lookup([...answers], options)).error?.message ?? '',
+      /Private network/,
+      JSON.stringify([answers, options]),
+    );
+  const single = await lookup([publicV4], {});
+  assert.equal(single.error, null);
+  assert.deepEqual([single.address, single.family], [publicV4.address, 4]);
+  assert.deepEqual((await lookup([publicV4, publicV6], { all: true })).address, [
+    publicV4,
+    publicV6,
+  ]);
 });
 
 test('chat presentations reject unsafe URLs, executable shapes and inconsistent references', () => {
@@ -1308,4 +1340,65 @@ test('charts accept signed finite data and reject ambiguous series or excessive 
     { ...chart, formula: 'fetch("https://example.com")' },
   ])
     assert.equal(presentationSchema.safeParse(value).success, false);
+});
+
+test('the browser proxy refuses a WebSocket upgrade to a private destination', async () => {
+  let reached = 0;
+  const sockets = new Set<import('node:stream').Duplex>();
+  const server = createServer(() => {
+    reached++;
+  });
+  server.on('upgrade', (_request, socket) => {
+    reached++;
+    sockets.add(socket);
+    socket.write(
+      'HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n',
+    );
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const port = (server.address() as { port: number }).port;
+  const guarded = createBrowserProxy({
+    resolver: async () => [{ address: '192.168.1.10', family: 4 }],
+  });
+  const open = createBrowserProxy({ privateNetwork: true });
+  const upgrade = async (proxy: ReturnType<typeof createBrowserProxy>, target: string) => {
+    const { hostname, port: proxyPort } = new URL(await proxy.url());
+    const sent = request({
+      host: hostname,
+      port: proxyPort,
+      method: 'GET',
+      path: target,
+      headers: { host: new URL(target).host, connection: 'Upgrade', upgrade: 'websocket' },
+    });
+    const answer = Promise.race([
+      once(sent, 'upgrade').then(([, socket]) => {
+        (socket as import('node:net').Socket).destroy();
+        return 101;
+      }),
+      once(sent, 'response').then(([reply]) => {
+        (reply as import('node:http').IncomingMessage).resume();
+        return (reply as import('node:http').IncomingMessage).statusCode;
+      }),
+    ]);
+    sent.end();
+    return answer;
+  };
+  try {
+    for (const target of [
+      `http://127.0.0.1:${port}/ws`,
+      `http://localhost:${port}/ws`,
+      `http://rebind.example:${port}/ws`,
+    ])
+      assert.equal(await upgrade(guarded, target), 400, target);
+    assert.equal(reached, 0);
+    assert.equal(await upgrade(open, `http://127.0.0.1:${port}/ws`), 101);
+    assert.equal(reached, 1);
+  } finally {
+    await guarded.dispose();
+    await open.dispose();
+    for (const socket of sockets) socket.destroy();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });

@@ -64,8 +64,7 @@ export function contactCards(text: string) {
   if (current) return [];
   const unescape = (value: string) =>
     value
-      .replace(/\\n/gi, '\n')
-      .replace(/\\([,;\\])/g, '$1')
+      .replace(/\\([nN,;\\])/g, (_, escaped: string) => (/n/i.test(escaped) ? '\n' : escaped))
       .trim();
   const parsed = cards.flatMap((vcard) => {
     const fields = vcard.split(/\r?\n/).flatMap((line) => {

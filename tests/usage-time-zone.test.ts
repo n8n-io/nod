@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import test from 'node:test';
+import pg from 'pg';
 import { createElement, act } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { VaultActivity } from '../src/shared/contracts.ts';
@@ -152,3 +154,77 @@ test('Usage uses the computer time zone for activity and opened logs', async (t)
   assert.equal(step?.textContent, formatTime(at, local, { seconds: true }));
   assert.notEqual(step?.textContent, formatTime(at, saved, { seconds: true }));
 });
+
+test(
+  'the usage month counts the current local day after a spring-forward change',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async () => {
+    const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
+    const schema = `test_usage_dst_${suffix}`;
+    const bossSchema = `test_usage_dst_boss_${suffix}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const databaseUrl = new URL(process.env.TEST_DATABASE_URL!);
+    databaseUrl.searchParams.set('options', `-c search_path=${schema}`);
+    process.env.DATABASE_URL = databaseUrl.href;
+    process.env.PGBOSS_SCHEMA = bossSchema;
+    const db = await import('../src/server/db.ts');
+    const thread = await import('../src/server/thread.ts');
+    const { createLedger } = await import('../src/server/ledger.ts');
+    const ownerId = 'local-development';
+    let at = '';
+    const pool = new Proxy(db.pool, {
+      get(target, property) {
+        if (property === 'query')
+          return (text: unknown, values?: unknown[]) =>
+            (target.query as (text: unknown, values?: unknown[]) => unknown)(
+              typeof text === 'string' && at
+                ? text.replaceAll('now()', `'${at}'::timestamptz`)
+                : text,
+              values,
+            );
+        const value = Reflect.get(target, property) as unknown;
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    try {
+      await db.initializeDatabase();
+      await thread.initializeThreads();
+      const { createTasks } = await import('../src/server/tasks.ts');
+      const { createPersonalService } = await import('../src/server/personal.ts');
+      await createTasks({ pool: db.pool, ownerId }).initialize();
+      await createPersonalService({
+        pool: db.pool,
+        ownerId,
+        scheduler: thread.boss,
+        enqueueTurn: thread.enqueueTurn,
+        refresh() {},
+      }).initialize({ workers: false });
+      await db.pool.query(
+        `INSERT INTO preferences(owner_id,time_zone) VALUES($1,'America/New_York')
+         ON CONFLICT(owner_id) DO UPDATE SET time_zone='America/New_York'`,
+        [ownerId],
+      );
+      const ledger = createLedger({ pool, ownerId, pricingThresholds: () => [] });
+      await ledger.initialize();
+      await db.pool.query(
+        `INSERT INTO model_usage(id,owner_id,cost_usd,created_at,details)
+         VALUES($1,$2,1,'2027-03-20T04:30:00Z','{"category":"agent"}')`,
+        [randomUUID(), ownerId],
+      );
+      for (const now of ['2027-03-20T04:45:00Z', '2027-03-20T05:30:00Z']) {
+        at = now;
+        const { month } = await ledger.read();
+        assert.equal(month.daily.length, 20, now);
+        assert.equal(month.daily[19], 1, now);
+        assert.equal(month.spentUsd, 1, now);
+      }
+    } finally {
+      await thread.boss.stop?.().catch(() => {});
+      await db.pool.end().catch(() => {});
+      await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      await admin.query(`DROP SCHEMA IF EXISTS ${bossSchema} CASCADE`);
+      await admin.end();
+    }
+  },
+);

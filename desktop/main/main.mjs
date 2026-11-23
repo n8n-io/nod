@@ -32,6 +32,7 @@ import {
   createSettingsStore,
   desktopContentPolicy,
   serverOrigin,
+  serverToken,
   setupResource,
 } from './settings.mjs';
 import { createDesktopAnalytics } from './analytics.mjs';
@@ -290,6 +291,7 @@ const startupFeedback = createStartupFeedbackClient({
   },
 });
 const engineWindows = new Set();
+const overlayWindows = new WeakSet();
 const zoomStates = new WeakMap();
 let lastZoomWindow;
 let zoomPersistence = Promise.resolve();
@@ -519,7 +521,7 @@ function publishPreferences() {
   for (const window of [setupWindow, ...engineWindows]) {
     if (!window || window.isDestroyed()) continue;
     window.setBackgroundColor(value.resolvedTheme === 'dark' ? '#191919' : '#fafafa');
-    if (process.platform === 'win32')
+    if (overlayWindows.has(window))
       window.setTitleBarOverlay(windowsTitleBar(value.resolvedTheme === 'dark').titleBarOverlay);
     window.webContents.send('nod:preferences', value);
   }
@@ -941,14 +943,6 @@ async function openExternal(value) {
 
 function protectWindow(window, origin) {
   if (origin) trackZoomFactor(window);
-  if (origin)
-    for (const [name, fullScreen] of [
-      ['enter-full-screen', true],
-      ['leave-full-screen', false],
-    ])
-      window.on(name, () => {
-        if (!window.isDestroyed()) window.webContents.send('nod:fullscreen', fullScreen);
-      });
   window.on('focus', updateReadinessNotice);
   for (const event of ['blur', 'hide', 'closed'])
     window.on(event, () => setTimeout(updateReadinessNotice, 100));
@@ -1064,6 +1058,7 @@ function showSettings(section = 'general', loading = false) {
       partition: 'nod-settings',
     },
   });
+  if (process.platform === 'win32') overlayWindows.add(setupWindow);
   const window = setupWindow;
   let presented;
   const ready = new Promise((resolve) => {
@@ -1205,6 +1200,7 @@ function showEngine({ focus = true } = {}) {
     },
   });
   engineWindows.add(engineWindow);
+  if (process.platform === 'win32') overlayWindows.add(engineWindow);
   protectWindow(engineWindow, engineOrigin);
   const window = engineWindow;
   window.webContents.on('render-process-gone', (_event, details) => {
@@ -1409,6 +1405,7 @@ function baseEnvironment() {
       'NOD_TRACES_TOKEN',
       'NOD_ONBOARDING_EMAIL_URL',
       'OTEL_EXPORTER_OTLP_ENDPOINT',
+      'AWS_BEDROCK_FORCE_HTTP1',
     ]
       .filter((key) => typeof process.env[key] === 'string')
       .map((key) => [key, process.env[key]]),
@@ -1778,27 +1775,40 @@ function showConnectionSettings() {
 
 async function checkRemoteConnection(connection) {
   const url = serverOrigin(connection.url);
-  if (typeof connection.token !== 'string' || !/^[A-Za-z0-9_-]{43,}$/.test(connection.token))
-    throw new Error('Enter the authentication token configured on your server.');
-  knownSecrets.add(connection.token);
+  const token = serverToken(connection.token);
+  knownSecrets.add(token);
   let response;
   try {
     response = await fetch(`${url}/api/session`, {
-      headers: { Authorization: `Bearer ${connection.token}` },
+      headers: { Authorization: `Bearer ${token}` },
       redirect: 'error',
       signal: AbortSignal.timeout(10000),
     });
-  } catch {
-    throw new Error('Could not reach your server. Check its address and HTTPS certificate.');
+  } catch (error) {
+    if (error?.name === 'TimeoutError')
+      throw new Error(
+        'Could not reach your server: no answer in 10 seconds. Check the address and that the server is running.',
+      );
+    const code = [error?.cause?.code, error?.code].find(
+      (value) => typeof value === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/.test(value),
+    );
+    throw new Error(
+      `Could not reach your server${code ? ` (${code})` : ''}. Check its address and HTTPS certificate.`,
+    );
   }
-  if (response.status === 401 || response.status === 403)
-    throw new Error('Your server rejected this token. Check its address and authentication token.');
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error(
+      response.status === 401 || response.status === 403
+        ? 'Your server rejected this token. Check its address and authentication token.'
+        : `This address did not respond as a Nod server (HTTP ${response.status}).`,
+    );
+  }
   let account;
   try {
     account = await response.json();
   } catch {}
   if (
-    !response.ok ||
     !account ||
     typeof account.user?.id !== 'string' ||
     !account.user.id ||
@@ -1811,7 +1821,7 @@ async function checkRemoteConnection(connection) {
     typeof revision === 'string' && /^(?:0|[1-9]\d{0,18})$/.test(revision) ? revision : null;
   return {
     url,
-    token: connection.token,
+    token,
     owner: account.user.id,
     usageDataRevision,
     analyticsAllowed:
@@ -1888,7 +1898,8 @@ async function saveConnection(input) {
   if (input !== null) {
     if (!input || typeof input !== 'object' || Array.isArray(input))
       throw new Error('Enter your server address and authentication token.');
-    await checkRemoteConnection(input);
+    const connection = await checkRemoteConnection(input);
+    input = { ...input, token: connection.token };
   }
   if (!(await confirmRestart())) return;
   await settings.saveConnection(input);
@@ -1957,7 +1968,13 @@ async function transferWelcome() {
         headers: { 'Content-Type': 'application/json', Origin: engineOrigin },
         body: JSON.stringify({ usageData: saved.welcome.usageData }),
       });
-      if (!response.ok) throw new Error('Nod could not save your choice. Try again.');
+      if (!response.ok) {
+        const failure = await response.json().catch(() => undefined);
+        const reason = typeof failure?.error === 'string' ? failure.error.trim() : '';
+        throw new Error(
+          `Nod could not save your choice (HTTP ${response.status})${reason ? `: ${reason.replace(/[.\s]+$/, '')}` : ''}. Try again.`,
+        );
+      }
       const result = await response.json();
       if (result.settings?.usageData !== saved.welcome.usageData)
         throw new Error('Nod could not confirm your choice. Try again.');
@@ -3449,10 +3466,6 @@ else {
           appUIOpenings.set(distinctId, opening);
         }
         return opening;
-      });
-      ipcMain.handle('nod:fullscreen:get', (event) => {
-        if (!isEngine(event)) throw new Error('This action is unavailable.');
-        return BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false;
       });
       ipcMain.handle('nod:preferences:get', (event) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');

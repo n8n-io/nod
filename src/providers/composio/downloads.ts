@@ -51,7 +51,8 @@ export function createComposioFiles(
         current = new URL(response.headers.location, resolved.url).href;
         continue;
       }
-      if (response.status !== 200) throw new Error('The file response is unavailable.');
+      if (response.status !== 200)
+        throw new Error(`The file response is unavailable (HTTP ${response.status}).`);
       return response.body;
     }
     throw new Error('Too many file redirects.');

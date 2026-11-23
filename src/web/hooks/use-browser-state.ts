@@ -32,9 +32,9 @@ export function useBrowserState() {
       clearTimeout(timer);
     };
   }, []);
-  function browserStopped(threadId: string) {
+  function browserStopped(browserId: string) {
     setData((current) =>
-      current?.currentBrowser?.threadId === threadId
+      current?.currentBrowser?.browserId === browserId
         ? { currentBrowser: { ...current.currentBrowser, status: 'cancelled' } }
         : current,
     );

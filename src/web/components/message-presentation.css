@@ -213,11 +213,14 @@
 }
 .diagram-node {
   position: absolute;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
   width: 156px;
-  height: 68px;
-  padding: 8px 12px;
+  height: 84px;
+  padding: 8px 10px;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--control-radius);
@@ -232,11 +235,43 @@
   color: var(--accent);
   background: var(--accent-soft);
 }
-.diagram-node > span {
+.diagram-node > span,
+.diagram-node > small {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   overflow: hidden;
+}
+.diagram-node > small {
+  -webkit-line-clamp: 2;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.3;
+}
+.diagram-node:has(> small) > span {
+  -webkit-line-clamp: 2;
+  font-weight: 550;
+}
+.diagram-node[aria-pressed='true'] > small {
+  color: inherit;
+}
+.diagram-edge-label {
+  position: absolute;
+  display: -webkit-box;
+  width: max-content;
+  max-width: 168px;
+  padding: 1px 6px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  background: var(--surface-subtle);
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: center;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }
 .diagram-detail {
   padding: 14px 20px;

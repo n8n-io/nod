@@ -1706,7 +1706,10 @@ test(
     const sent: Array<Parameters<MessagingTransport['post']>[0]> = [];
     transport.post = async (input) => {
       sent.push(input);
-      return { id: `provider-${sent.length}`, approvalButtons: input.approval };
+      return {
+        id: `provider-${sent.length}`,
+        ...(input.approval ? { approvalButtons: true as const } : {}),
+      };
     };
     const edits: string[] = [];
     let finishProgress = () => {};
@@ -1740,7 +1743,12 @@ test(
         },
       ],
     });
-    const accepted: Array<{ messageId: string; approvalId: string; approved: boolean }> = [];
+    const accepted: Array<{
+      messageId: string;
+      approvalId: string;
+      approved: boolean;
+      label?: string;
+    }> = [];
     const acceptedChannels: string[] = [];
     let work: LiveWork[] = [];
     let beforeCommit = async () => {};
@@ -1748,8 +1756,8 @@ test(
       activity: async () => work,
       messageAccepted: () => (provider) => acceptedChannels.push(provider),
       acceptApproval: async (client, input) => {
-        const { messageId, approvalId, approved } = input;
-        accepted.push({ messageId, approvalId, approved });
+        const { messageId, approvalId, approved, label } = input;
+        accepted.push({ messageId, approvalId, approved, label });
         await client.query("UPDATE approvals SET status='confirmed' WHERE id=$1", [approvalId]);
         await beforeCommit();
       },
@@ -1769,11 +1777,12 @@ test(
       await pool.query("UPDATE turns SET status='running' WHERE id=$1", [turnId]);
       await pool.query(`CREATE TABLE approvals(
         id uuid PRIMARY KEY, owner_id text NOT NULL, turn_id uuid NOT NULL, thread_id uuid NOT NULL,
-        confirmation_message_id uuid NOT NULL, status text NOT NULL, action text NOT NULL
+        confirmation_message_id uuid NOT NULL, status text NOT NULL, action text NOT NULL,
+        title text, decline text
       )`);
       await pool.query(
-        `INSERT INTO approvals(id,owner_id,turn_id,thread_id,confirmation_message_id,status,action)
-         VALUES($1,'local-development',$2,$3,$4,'pending','NOD_browser')`,
+        `INSERT INTO approvals(id,owner_id,turn_id,thread_id,confirmation_message_id,status,action,title,decline)
+         VALUES($1,'local-development',$2,$3,$4,'pending','NOD_browser','Formular senden','Abbrechen')`,
         [approvalId, turnId, threadId, messageId],
       );
       await channels.drain();
@@ -1830,7 +1839,9 @@ test(
       await tap();
       approved = false;
       await tap();
-      assert.deepEqual(accepted, [{ messageId, approvalId, approved: true }]);
+      assert.deepEqual(accepted, [
+        { messageId, approvalId, approved: true, label: 'Formular senden' },
+      ]);
       assert.deepEqual(acknowledgements, [
         'retry',
         'retry',
@@ -1841,7 +1852,7 @@ test(
         'unavailable',
       ]);
       assert.equal(sent[0]?.text, question);
-      assert.equal(sent[0]?.approval, true);
+      assert.deepEqual(sent[0]?.approval, { approve: 'Formular senden', decline: 'Abbrechen' });
       assert.equal(sent[1]?.approval, undefined);
 
       const nextMessage = randomUUID();
@@ -3735,6 +3746,7 @@ test(
     const texts: string[] = [];
     const native: { method: string; data: Record<string, unknown> }[] = [];
     let failDocument = false;
+    let refuseDocument = false;
     t.mock.method(
       globalThis,
       'fetch',
@@ -3775,6 +3787,11 @@ test(
           body.get('photo') ?? body.get('document') ?? body.get('video') ?? body.get('voice');
         assert.ok(media instanceof File);
         const method = target.split('/').at(-1)!;
+        if (method === 'sendDocument' && refuseDocument)
+          return Response.json(
+            { ok: false, error_code: 400, description: 'Bad Request: fixture refusal' },
+            { status: 400 },
+          );
         sent.push({
           method,
           file: new Uint8Array(await media.arrayBuffer()),
@@ -4106,6 +4123,14 @@ test(
       assert.deepEqual(await state(foreign), { state: 'sent', reason: null });
       assert.equal(sent.length, failedCount);
       await pool.query('UPDATE artifacts SET owner_id=$2 WHERE id=$1', [image.id, ownerId]);
+      refuseDocument = true;
+      const refused = await addReply(turnId, [document], 'Document result');
+      const beforeRefused = texts.length;
+      await channels.drain();
+      assert.deepEqual(await state(refused), { state: 'sent', reason: null });
+      assert.equal(texts.length, beforeRefused + 2);
+      assert.match(texts.at(-1)!, /\n\nresult\.txt: Bad Request: fixture refusal$/);
+      refuseDocument = false;
 
       const outside = join(dataRoot, `media-fixture-${randomUUID()}`);
       filePaths.push(outside);
@@ -4526,7 +4551,7 @@ test(
     const { createActivity } = await import('../src/server/activity.ts');
     const { pool, threadId, receive, turnOf, reply, create } = await outboxFixture(t);
     await pool.query(`CREATE TABLE tasks(id uuid,owner_id text,session_id uuid,title text,now_text text,message_id uuid,created_at timestamptz);
-      CREATE TABLE turn_events(id uuid DEFAULT gen_random_uuid(),turn_id uuid,type text,summary text,site text,call_id uuid,run_id uuid,created_at timestamptz DEFAULT clock_timestamp());`);
+      CREATE TABLE turn_events(id uuid DEFAULT gen_random_uuid(),turn_id uuid,type text,summary text,site text,detail text,call_id uuid,run_id uuid,created_at timestamptz DEFAULT clock_timestamp());`);
     const channels = await create();
     const activity = createActivity({ pool, ownerId: 'local-development' });
     const emit = (turnId: string, type: string, summary = '') =>

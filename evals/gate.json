@@ -1,58 +1,82 @@
 {
   "book-dinner": {
-    "fingerprint": "e5e067822070",
-    "proof": "main-2bc71c2: 5/5"
+    "fingerprint": "3023cf190417",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
   },
   "cancel-subscription": {
-    "fingerprint": "ea93d50f95dc",
-    "proof": "main-2bc71c2: 5/5"
+    "fingerprint": "ccdc97462ba3",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
   },
   "cart-from-recipes": {
-    "fingerprint": "caac6e3eaa12",
-    "proof": "main-2bc71c2: 5/5"
+    "fingerprint": "f2a7762b4b92",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
+  },
+  "competitor-digest": {
+    "fingerprint": "3b8c4964ff94",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
   },
   "finance-sheet": {
-    "fingerprint": "243c4c5b552d",
-    "proof": "main-2bc71c2: 5/5"
+    "fingerprint": "ccf9a8dc28cc",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
+  },
+  "health-results-pdf": {
+    "fingerprint": "5417090dbbd8",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
   },
   "invoices-overdue": {
-    "fingerprint": "15a9ca1fc3ef",
-    "proof": "main-2bc71c2: 5/5"
+    "fingerprint": "2ebf9089bfbb",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
+  },
+  "latest-email": {
+    "fingerprint": "6ef253146c68",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
   },
   "login-2fa-metrics": {
-    "fingerprint": "33be5f45c89a",
-    "proof": "main-2bc71c2: 5/5"
+    "fingerprint": "b1fe33f3c1f7",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
   },
   "metrics-week-over-week": {
-    "fingerprint": "9a20c6b68264",
-    "proof": "main-2bc71c2: 5/5"
+    "fingerprint": "28c2f5ed7094",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
+  },
+  "onboarding-connected-calendar-elapsed": {
+    "fingerprint": "e9ef39cf8d28",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
+  },
+  "onboarding-connected-calendar-offset": {
+    "fingerprint": "bd9e36a4bd9b",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
+  },
+  "onboarding-connected-calendar-past-only": {
+    "fingerprint": "e9afd27691fa",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
   },
   "portal-account-choice": {
-    "fingerprint": "5b63658aaf40",
-    "proof": "main-2bc71c2: 5/5"
+    "fingerprint": "2a174ac0a900",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
   },
   "portal-nif-signin": {
-    "fingerprint": "5e49dabcc7d3",
-    "proof": "main-2bc71c2: 5/5"
+    "fingerprint": "bccbe63ea70c",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
   },
-  "price-watch": {
-    "fingerprint": "325ccbe5cfd1",
-    "proof": "main-2bc71c2: 5/5"
+  "proactivity-backlog-silent": {
+    "fingerprint": "3451683ab0cf",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
   },
   "purchase-within-limit": {
-    "fingerprint": "3595df77c836",
-    "proof": "main-2bc71c2: 5/5"
-  },
-  "reply-drafts": {
-    "fingerprint": "013b9e5c2c68",
-    "proof": "main-2bc71c2: 5/5"
+    "fingerprint": "f99cd798bcf6",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
   },
   "schedule-meeting-invite": {
-    "fingerprint": "e0f6d9bee70d",
-    "proof": "main-2bc71c2: 5/5"
+    "fingerprint": "6e905e7a2244",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
   },
   "slack-catchup": {
-    "fingerprint": "97ae7da8eb3e",
-    "proof": "main-2bc71c2: 5/5"
+    "fingerprint": "2ef52ba19ce3",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
+  },
+  "standing-instruction-acts": {
+    "fingerprint": "9c54dbf01d36",
+    "proof": "main-f724033 + main-d7649a6: 6/6"
   }
 }

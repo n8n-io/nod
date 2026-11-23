@@ -50,6 +50,10 @@
   background: var(--success-soft);
   color: var(--success);
 }
+.booking-status.is-option {
+  background: var(--control);
+  color: var(--text-secondary);
+}
 .booking-status.is-pending {
   background: var(--warning-soft);
   color: var(--warning);
@@ -232,14 +236,11 @@
   display: grid;
   gap: 6px;
   margin: 0;
-  padding-left: 16px;
+  padding: 0;
+  list-style: none;
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.5;
-}
-.booking-notes ul:has(> li:only-child) {
-  list-style: none;
-  padding-left: 0;
 }
 .booking-actions {
   position: relative;
@@ -247,7 +248,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin: -4px -4px -4px;
+  margin: -4px -8px;
 }
 .message-presentation .booking-link {
   display: flex;

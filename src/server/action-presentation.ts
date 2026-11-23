@@ -356,7 +356,6 @@ function plainText(html: string) {
 export function approvalContent(
   action: string,
   args: unknown,
-  bodyInQuestion = false,
 ): { fields?: Array<{ label: string; value: string }>; body?: string; bodyCut?: true } {
   if (
     /^(NOD_|CONNECTED_|mcp__)/.test(action) ||
@@ -371,7 +370,6 @@ export function approvalContent(
     return value ? [{ label, value }] : [];
   });
   if (!fields.length) return {};
-  if (bodyInQuestion) return { fields };
   const raw = bodyKeys
     .map((key) => input[key])
     .find((value) => typeof value === 'string' && value.trim());
@@ -400,6 +398,7 @@ const tools: Record<string, string> = {
   'get search content': 'Read search results',
   'source check': 'Checked a source',
   'read source': 'Read a source',
+  flights: 'Searched flights',
   browser: 'Used the browser',
   'sign in': 'Signed in',
   pay: 'Entered a card',
@@ -477,6 +476,21 @@ const quoted = (text: string) => `â€œ${text.length > 80 ? `${text.slice(0, 79)}â
 
 const dollarsOrNone = (value: unknown, label: string) =>
   value === null ? `no ${label}` : `${label} $${String(value)}`;
+
+export function objectIds(value: unknown, key = 'id') {
+  const ids = new Set<string>();
+  const pending: Array<[unknown, number]> = [[value, 0]];
+  for (let visited = 0; pending.length && visited < 500 && ids.size < 20; visited++) {
+    const [item, depth] = pending.pop()!;
+    if (!item || typeof item !== 'object' || depth > 4) continue;
+    for (const [name, child] of Object.entries(item)) {
+      const text = typeof child === 'string' || typeof child === 'number' ? String(child) : '';
+      if ((!key || name === key) && /^[^\s]{4,200}$/.test(text)) ids.add(text);
+      else if (child && typeof child === 'object') pending.push([child, depth + 1]);
+    }
+  }
+  return [...ids];
+}
 
 export function recordedTitle(action: string) {
   if (action === 'NOD_browser') return 'Browser';

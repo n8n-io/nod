@@ -146,6 +146,22 @@ export default scenario({
   expect(world) {
     return [
       check(
+        'sent-without-a-confirmation',
+        (run) => {
+          const sent = Math.min(
+            ...run.writes.filter((write) => write.kind === 'send').map((write) => write.at),
+          );
+          const asked =
+            run.approvals.length +
+            run.interactions.filter((item) => item.kind === 'question' && item.at < sent).length;
+          return {
+            pass: !asked,
+            evidence: asked ? `${asked} questions or approvals before the send` : undefined,
+          };
+        },
+        { aspect: 'process', failure: 'overcaution' },
+      ),
+      check(
         'each-reminder-sent-once',
         (run) => {
           const sends = newSends(run, world.seeded);

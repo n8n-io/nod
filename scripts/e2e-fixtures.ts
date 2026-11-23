@@ -3,6 +3,7 @@ import {
   createServer,
   request as httpRequest,
   type IncomingMessage,
+  type Server,
   type ServerResponse,
 } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
@@ -432,89 +433,83 @@ export async function createFixtureProxy(
     sockets.add(socket);
     socket.once('close', () => sockets.delete(socket));
   };
-  let upstream: URL | undefined;
-  const proxy = createServer((request, response) => {
-    if (!upstream) return void response.writeHead(503).end();
-    const forward = httpRequest(
-      upstream,
-      { method: request.method, path: request.url, headers: request.headers },
-      (result) => {
-        response.writeHead(result.statusCode || 502, result.headers);
-        result.pipe(response);
-      },
-    );
-    forward.on('error', () => response.destroy());
-    request.pipe(forward);
-  });
-  proxy.on('connection', track);
-  proxy.on('connect', (request, socket, head) => {
-    if (request.url === 'example.com:443' || request.url === 'pay.example.com:443') {
-      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-      if (head.length) socket.unshift(head);
-      https.emit('connection', socket);
-      return;
-    }
-    if (!upstream) return socket.destroy();
-    const forward = httpRequest(upstream, {
-      method: 'CONNECT',
-      path: request.url,
-      headers: { host: request.url || '' },
-    });
-    forward.on('socket', track);
-    socket.on('close', () => forward.destroy());
-    socket.on('error', () => forward.destroy());
-    forward.on('connect', (response, remote, remoteHead) => {
-      socket.write(
-        `HTTP/1.1 ${response.statusCode || 502} ${response.statusMessage || ''}\r\n\r\n`,
+  const forwarders = new Map<string, Promise<{ url: string; proxy: Server }>>();
+  async function forwarder(upstream: URL) {
+    const proxy = createServer((request, response) => {
+      const forward = httpRequest(
+        upstream,
+        { method: request.method, path: request.url, headers: request.headers },
+        (result) => {
+          response.writeHead(result.statusCode || 502, result.headers);
+          result.pipe(response);
+        },
       );
-      if (response.statusCode !== 200) {
-        remote.destroy();
-        socket.destroy();
+      forward.on('error', () => response.destroy());
+      request.pipe(forward);
+    });
+    proxy.on('connection', track);
+    proxy.on('connect', (request, socket, head) => {
+      if (request.url === 'example.com:443' || request.url === 'pay.example.com:443') {
+        socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        if (head.length) socket.unshift(head);
+        https.emit('connection', socket);
         return;
       }
-      if (remoteHead.length) socket.write(remoteHead);
-      if (head.length) remote.write(head);
-      remote.on('error', () => socket.destroy());
-      remote.on('close', () => {
-        if (!remote.readableEnded) socket.destroy();
+      const forward = httpRequest(upstream, {
+        method: 'CONNECT',
+        path: request.url,
+        headers: { host: request.url || '' },
       });
-      socket.on('error', () => remote.destroy());
-      socket.on('close', () => remote.destroy());
-      remote.pipe(socket).pipe(remote);
+      forward.on('socket', track);
+      socket.on('close', () => forward.destroy());
+      socket.on('error', () => forward.destroy());
+      forward.on('connect', (response, remote, remoteHead) => {
+        socket.write(
+          `HTTP/1.1 ${response.statusCode || 502} ${response.statusMessage || ''}\r\n\r\n`,
+        );
+        if (response.statusCode !== 200) {
+          remote.destroy();
+          socket.destroy();
+          return;
+        }
+        if (remoteHead.length) socket.write(remoteHead);
+        if (head.length) remote.write(head);
+        remote.on('error', () => socket.destroy());
+        remote.on('close', () => {
+          if (!remote.readableEnded) socket.destroy();
+        });
+        socket.on('error', () => remote.destroy());
+        socket.on('close', () => remote.destroy());
+        remote.pipe(socket).pipe(remote);
+      });
+      forward.on('error', () => socket.destroy());
+      forward.end();
     });
-    forward.on('error', () => socket.destroy());
-    forward.end();
-  });
-  await new Promise<void>((resolve, reject) => {
-    proxy.once('error', reject);
-    proxy.listen(0, '127.0.0.1', resolve);
-  });
-  const proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
-  function upstreamProxy(value: string) {
+    await new Promise<void>((resolve, reject) => {
+      proxy.once('error', reject);
+      proxy.listen(0, '127.0.0.1', resolve);
+    });
+    return { url: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`, proxy };
+  }
+  async function upstreamProxy(value: string) {
     const target = new URL(value);
     if (target.protocol !== 'http:' || target.hostname !== '127.0.0.1')
       throw new Error('Fixture proxy requires the production loopback guard.');
-    if (upstream && upstream.href !== target.href)
-      throw new Error('The fixture guard changed unexpectedly.');
-    upstream = target;
-    return proxyUrl;
+    let entry = forwarders.get(target.href);
+    if (!entry) {
+      entry = forwarder(target);
+      forwarders.set(target.href, entry);
+      entry.catch(() => forwarders.delete(target.href));
+    }
+    return (await entry).url;
   }
   return {
-    proxyUrl,
     certificate,
-    nativeArgs(args: string[]) {
-      const proxyIndex = args.findIndex((arg) => arg.startsWith('--proxy-server='));
-      if (proxyIndex < 0) throw new Error('Fixture browser proxy was missing.');
-      const values = [...args];
-      values[proxyIndex] = `--proxy-server=${upstreamProxy(values[proxyIndex].slice(15))}`;
-      values.splice(values.length - 1, 0, `--ignore-certificate-errors-spki-list=${fingerprint}`);
-      return values;
-    },
     run: (async (command, args, options) => {
       const values = [...args];
       const proxyIndex = values.indexOf('--proxy');
       if (proxyIndex >= 0) {
-        values[proxyIndex + 1] = upstreamProxy(values[proxyIndex + 1]);
+        values[proxyIndex + 1] = await upstreamProxy(values[proxyIndex + 1]);
         const flags = values.indexOf('--args');
         if (flags < 0) throw new Error('Fixture browser arguments were missing.');
         values[flags + 1] += `,--ignore-certificate-errors-spki-list=${fingerprint}`;
@@ -523,7 +518,12 @@ export async function createFixtureProxy(
     }) satisfies typeof runProcess,
     close: async () => {
       for (const socket of sockets) socket.destroy();
-      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+      await Promise.all(
+        [...forwarders.values()].map(async (entry) => {
+          const { proxy } = await entry.catch(() => ({ proxy: undefined }));
+          if (proxy) await new Promise<void>((resolve) => proxy.close(() => resolve()));
+        }),
+      );
       https.close();
     },
   };
@@ -1042,12 +1042,14 @@ export function createIntegrationFixture(
         },
         async search() {
           return {
-            tools: realistic
-              ? toolDefinitions.map((tool) => ({
-                  ...tool,
-                  description: tool.description.replace(/synthetic /gi, ''),
-                }))
-              : toolDefinitions,
+            tools: Object.fromEntries(
+              toolDefinitions.map(({ name, ...tool }) => [
+                name,
+                realistic
+                  ? { ...tool, description: tool.description.replace(/synthetic /gi, '') }
+                  : tool,
+              ]),
+            ),
             suggestions: [
               {
                 useCase: realistic
