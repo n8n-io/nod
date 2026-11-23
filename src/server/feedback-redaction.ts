@@ -405,7 +405,10 @@ export function createFeedbackRedactor(options: { secrets: string[]; profile: Pe
             ? labelViews(first.value)
             : undefined;
         const privateTuple =
-          first && (!('value' in first) || names === null || names?.some(secretField));
+          typeof length === 'number' &&
+          length > 1 &&
+          first &&
+          (!('value' in first) || names === null || names?.some(secretField));
         if (privateTuple)
           return [
             first && 'value' in first && names !== null
