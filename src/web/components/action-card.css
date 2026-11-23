@@ -139,7 +139,8 @@
   margin: 0;
   font-weight: 400;
 }
-.choice-card-title .message-text strong {
+.choice-card-title .message-text strong,
+.chat-page .message .choice-card-title .message-text strong {
   font-weight: 600;
 }
 .choice-card-list {

@@ -800,7 +800,7 @@ test('confirmation keeps copied page links visible without making them active', 
 
 test('confirmation keeps bold on checked values and escapes every other Markdown', async () => {
   const question =
-    'Buy a one-way ticket for **EC 279** on **2 December, 11:37**? _Note_ # [review](https://outside.example.test) ** loose';
+    'Buy a one-way ticket for **EC 279** on **2 December, 11:37** at **https://train.example.test** for **jane@example.test**? _Note_ # [review](https://outside.example.test) ** loose';
   const communication = createCommunication({
     pool: { query: async () => ({ rows: [] }) } as unknown as pg.Pool,
     ownerId: 'synthetic-owner',
@@ -822,7 +822,16 @@ test('confirmation keeps bold on checked values and escapes every other Markdown
     .map((node) =>
       (node.children as Array<{ value?: string }>).map((child) => child.value).join(''),
     );
-  assert.deepEqual(strong, ['EC 279', '2 December, 11:37']);
+  assert.deepEqual(strong, [
+    'EC 279',
+    '2 December, 11:37',
+    'https://train.example.test',
+    'jane@example.test',
+  ]);
+  assert.deepEqual(
+    nodes.filter((node) => node.type === 'inlineCode').map((node) => node.value),
+    ['https://train.example.test', 'jane@example.test', 'https://outside.example.test'],
+  );
   assert.match(
     visibleMarkdownText(result.question),
     /_Note_ # review \(https:\/\/outside\.example\.test\) \*\* loose/,

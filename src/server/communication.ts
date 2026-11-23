@@ -111,26 +111,15 @@ function confirmationQuestion(value: string, data: unknown, bold = false) {
     .replace(/^[ \t]+/gm, '');
   const escape = (part: string) =>
     part.replace(/\\/g, '\\\\').replace(/([`*_{}\[\]()#+\-.!|<>~])/g, '\\$1');
-  const format = (part: string) => {
-    if (!bold) return escape(part);
-    let formatted = '';
-    let at = 0;
-    for (const span of part.matchAll(/\*\*(?=[^\s*])([^*\n]{1,160}?)(?<=[^\s*])\*\*/g)) {
-      formatted += `${escape(part.slice(at, span.index))}**${escape(span[1]!)}**`;
-      at = span.index + span[0].length;
-    }
-    return formatted + escape(part.slice(at));
-  };
   const linkLike = /(?:https?:\/\/|www\.)[^\s<>]+|[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi;
-  let result = '';
-  let from = 0;
+  const links: { start: number; end: number }[] = [];
   for (const match of text.matchAll(linkLike)) {
-    const index = match.index ?? 0;
-    result += format(text.slice(from, index));
     const exact = urls.find(
-      (url) => match[0].startsWith(url) && sentencePunctuation.test(match[0].slice(url.length)),
+      (url) =>
+        match[0].startsWith(url) &&
+        sentencePunctuation.test(match[0].slice(url.length).replace(/^\*\*/, '')),
     );
-    let literal = exact ?? match[0];
+    let literal = exact ?? match[0].replace(/\*+$/, '');
     if (!exact) {
       let depth = 0;
       for (const bracket of literal.matchAll(/[\p{Ps}\p{Pe}]/gu)) {
@@ -142,11 +131,33 @@ function confirmationQuestion(value: string, data: unknown, bold = false) {
         }
       }
     }
-    result += markdownValue(literal);
-    result += escape(match[0].slice(literal.length));
-    from = index + match[0].length;
+    links.push({ start: match.index, end: match.index + literal.length });
   }
-  return result + format(text.slice(from));
+  const plain = (from: number, to: number) => {
+    let result = '';
+    let at = from;
+    for (const link of links) {
+      if (link.start < from || link.start >= to) continue;
+      result +=
+        escape(text.slice(at, link.start)) + markdownValue(text.slice(link.start, link.end));
+      at = link.end;
+    }
+    return result + escape(text.slice(at, to));
+  };
+  const outside = (at: number) => links.every((link) => at + 2 <= link.start || at >= link.end);
+  const spans = bold
+    ? [...text.matchAll(/\*\*(?=[^\s*])([^*\n]{1,160}?)(?<=[^\s*])\*\*/g)].filter(
+        (span) => outside(span.index) && outside(span.index + span[0].length - 2),
+      )
+    : [];
+  let result = '';
+  let at = 0;
+  for (const span of spans) {
+    const end = span.index + span[0].length;
+    result += `${plain(at, span.index)}**${plain(span.index + 2, end - 2)}**`;
+    at = end;
+  }
+  return result + plain(at, text.length);
 }
 
 function scheduleConfirmation(data: unknown) {
