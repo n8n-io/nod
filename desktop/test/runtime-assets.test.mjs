@@ -5056,13 +5056,17 @@ state = json.load(original_open(state_path))
 manifest = json.load(original_open(os.path.join(root, 'manifest.json')))
 def mapped(path):
     path = os.fspath(path)
-    for prefix in ['/opt/nod-assets/', '/var/lib/nod/']:
+    for prefix in ['/opt/nod-assets/', '/var/lib/nod/', '/var/log/']:
         if path.startswith(prefix): return os.path.join(root, path[len(prefix):])
     if path == '/var/lib/nod': return root
     raise RuntimeError('Unexpected fixture path')
 def run(args, **kwargs):
     state['commands'].append(args[1:])
-    if args[1:] == ['info']: return subprocess.CompletedProcess(args, 0)
+    if args[1:] == ['info']:
+        if state.get('stuck'):
+            state['stuck'] = False
+            raise subprocess.TimeoutExpired(args, kwargs['timeout'])
+        return subprocess.CompletedProcess(args, 0)
     if args[1:3] == ['image', 'inspect']:
         value = state['images'].get(args[-1])
         result = subprocess.CompletedProcess(args, 0 if value else 1, stdout=value or '')
@@ -5079,6 +5083,7 @@ def makedirs(path, **kwargs):
     assert mapped(path) == root
 os.makedirs = makedirs
 subprocess.run = run
+subprocess.Popen = lambda *args, **kwargs: state['commands'].append(['dockerd'])
 sys.argv = [source, command]
 try:
     exec(compile(source_code, source, 'exec'), {'__name__': '__main__'})
@@ -5094,6 +5099,10 @@ finally:
     async wrong(name) {
       const state = JSON.parse(await readFile(join(root, 'state.json'), 'utf8'));
       await writeFile(join(root, 'state.json'), JSON.stringify({ ...state, wrong: name }));
+    },
+    async stuck() {
+      const state = JSON.parse(await readFile(join(root, 'state.json'), 'utf8'));
+      await writeFile(join(root, 'state.json'), JSON.stringify({ ...state, stuck: true }));
     },
     run(command, name) {
       return execFileSync(
@@ -5112,6 +5121,13 @@ finally:
     },
   };
 }
+
+test('the Windows guest starts Docker and keeps waiting when a readiness check hangs', async (t) => {
+  const windows = await windowsImageFixture(t);
+  await windows.stuck();
+  windows.run('start');
+  assert.deepEqual((await windows.read()).commands, [['info'], ['dockerd'], ['info']]);
+});
 
 test('runtime hands off verified storage before browser readiness and fences failed or aborted handoffs', async (t) => {
   const { finishRuntime } = await import('../runtime/index.mjs');

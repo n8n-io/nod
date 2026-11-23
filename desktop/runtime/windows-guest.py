@@ -31,11 +31,17 @@ if os.path.exists(identity):
 else:
     with open(identity, 'x') as file:
         file.write(config['identity'])
-if subprocess.run([docker, 'info'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+def ready():
+    try:
+        return subprocess.run([docker, 'info'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20).returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
+if not ready():
     with open('/var/log/nod-docker.log', 'ab') as log:
         subprocess.Popen(['/usr/local/bin/dockerd', '--config-file=/etc/docker/daemon.json', '--host=unix:///var/run/docker.sock'], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
-for attempt in range(120):
-    if subprocess.run([docker, 'info'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+deadline = time.monotonic() + 300
+while time.monotonic() < deadline:
+    if ready():
         break
     time.sleep(0.5)
 else:
