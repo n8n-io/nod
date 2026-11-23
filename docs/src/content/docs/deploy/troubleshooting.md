@@ -111,7 +111,9 @@ An interrupted Mac setup from an older version can lack that record. If retry st
 
 The background service reports each startup step, and the startup log records each step with the time since the service started. Loading its code can take up to ten minutes on a slow or busy computer. Each later step can take two minutes. If a step takes longer, Nod stops waiting, and the log records the elapsed wait, the last health check failure, the last startup step and whether the service reported its port. An unexpected service exit has a separate log entry.
 
-On Windows, an interrupted first setup can leave the private computer half installed. The next attempt removes that unfinished registration and imports the computer into a new, empty disk folder. This avoids a location conflict with an older disk or another WSL registration. Other files and computers that completed setup are kept. A failed setup keeps its verified download, so **Try again** does not download it again.
+On Windows, Nod replaces only a recorded, unfinished import. The next attempt removes that unfinished registration and imports the computer into a new, empty disk folder. This avoids a location conflict with an older disk or another WSL registration. A failed setup keeps its verified download, so **Try again** does not download it again.
+
+If the saved configuration is missing or invalid, setup stops and keeps the existing computer. The same applies when a completed computer loses its registration or WSL does not report it as ready. Restart Windows, then try again. If the problem continues, keep the files and report the failure. An older unfinished import can also need this recovery because it has no setup record.
 
 On a Mac, setup keeps runtime files that passed their checks, even if a later download fails. **Try again** checks and reuses those files. It does not remove a verified image while the private computer loads it.
 
@@ -122,6 +124,8 @@ On a Mac, **Technical details** and the startup log also show the cause of a run
 Quit Nod and open it again. If the error continues, restart Windows. Keep your app data. WSL setup errors also include the original Windows error.
 
 To start over, select **Remove all data…** in the **Nod** menu. Nod deletes your profile and private computer, then restarts and opens setup. See [Remove Nod](/get-started/install-desktop/#remove-nod) for what it keeps.
+
+On Windows, removal stops if WSL cannot list or remove the private computer. Nod keeps the profile so you can restore WSL and retry.
 
 ### Windows setup says Nod needs more free disk space
 

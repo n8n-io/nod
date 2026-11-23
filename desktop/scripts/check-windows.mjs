@@ -208,6 +208,17 @@ if (process.env.WORKSPACE_CONTAINER) {
     const otherRegistration = `HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss\\{${randomUUID()}}`;
     await mkdir(occupied, { recursive: true });
     await writeFile(join(occupied, 'ext4.vhdx'), 'synthetic existing computer');
+    const configPath = join(profile, 'desktop-runtime', 'state.json');
+    await mkdir(dirname(configPath), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        distribution,
+        password: randomBytes(32).toString('hex'),
+        initializing: true,
+      }),
+    );
     let prepared;
     try {
       await run(
@@ -304,6 +315,32 @@ if (process.env.WORKSPACE_CONTAINER) {
       receipt.browser = true;
       receipt.workspaceFiles = true;
       console.log('Windows application, browser and workspace verified.');
+      console.log('Checking that missing or invalid configuration keeps the saved computer.');
+      const originalState = await readFile(configPath, 'utf8');
+      for (const content of [
+        undefined,
+        JSON.stringify({ ...JSON.parse(originalState), version: 2, initializing: true }),
+      ]) {
+        try {
+          if (content === undefined) await rm(configPath);
+          else await writeFile(configPath, content);
+          await assert.rejects(
+            runtime.prepareWindowsRuntime({ dataRoot: profile, resourcesPath: engine }, () => {
+              assert.fail('An uncertain computer must stay unchanged.');
+            }),
+          );
+          assert.match(
+            await run(wsl, ['--list', '--quiet', '--all'], {
+              env: { ...process.env, WSL_UTF8: '1' },
+            }),
+            new RegExp(distribution),
+          );
+          assert.ok((await stat(join(saved.computerPath, 'ext4.vhdx'))).size);
+        } finally {
+          await writeFile(configPath, originalState);
+        }
+      }
+      receipt.savedComputer = true;
       console.log('Checking a relaunch without admin rights after the PC went off.');
       await run(wsl, ['--terminate', prepared.env.NOD_WSL_DISTRIBUTION]);
       await run(join(process.env.SYSTEMROOT, 'System32/WindowsPowerShell/v1.0/powershell.exe'), [
