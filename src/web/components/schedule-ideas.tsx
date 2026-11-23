@@ -22,7 +22,14 @@ const ideas: Array<{ title: string; when: string; app?: string }> = [
 
 export function ScheduleIdeas({ first, onAsk }: { first: boolean; onAsk(text: string): void }) {
   const { data: connections } = usePageData<Connection[]>('/api/apps');
-  const [order] = useState(() => [...ideas].sort(() => Math.random() - 0.5));
+  const [order] = useState(() => {
+    const list = [...ideas];
+    for (let index = list.length - 1; index > 0; index--) {
+      const other = Math.floor(Math.random() * (index + 1));
+      [list[index], list[other]] = [list[other]!, list[index]!];
+    }
+    return list;
+  });
   const connected = new Set(
     (connections ?? []).filter((item) => item.status === 'connected').map((item) => item.slug),
   );

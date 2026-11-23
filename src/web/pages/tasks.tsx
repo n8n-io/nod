@@ -567,6 +567,7 @@ export function Scheduled({
                     schedule={schedule}
                     activity={activity}
                     onAsk={onAsk}
+                    defaultOpen={!upcoming.length && inactive.length === 1}
                   />
                 ))}
               </div>

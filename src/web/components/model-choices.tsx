@@ -307,12 +307,12 @@ export function ScheduleModel({ schedule }: { schedule: Schedule }) {
   const data = models.data;
   if (!data) return null;
   const current = routeModel(data, 'schedule', { schedule: schedule.model });
-  if (!current) return null;
+  if (!data.connections.some((item) => item.status === 'connected')) return null;
   return (
     <ModelPicker
       manageConnections={false}
       target={scheduleTarget(data, schedule, usage.data?.schedules[schedule.id])}
-      label={modelOf(data, current.selection) ? undefined : 'Model unavailable'}
+      label={current && !modelOf(data, current.selection) ? 'Model unavailable' : undefined}
     />
   );
 }

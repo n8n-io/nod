@@ -22,13 +22,13 @@ Nod uses your time zone, saved from your browser the first time you use Nod. Cha
 
 ## Change, pause or delete a schedule
 
-Open **Scheduled**. Select **New schedule** to start a conversation with Nod, which asks one question at a time about what to do and when. Each schedule is one row with its timing, next run, model and what it costs a month. When two or more active schedules have a monthly price and none is missing one, a total for the month shows below them.
+Open **Scheduled**. Select **New schedule** to start a conversation with Nod, which asks one question at a time about what to do and when. Each schedule is one row with its timing, next run, model and what it costs a month. When two or more recurring schedules are active and each has a monthly price, a total for the month shows below them.
 
 When you have fewer than three active schedules, **Scheduled** also shows three ideas to start from. They follow the apps you've connected and change each time you open the page. Select one to ask Nod in chat to set it up.
 
 - Use the switch to pause or resume it.
 - Select its model to give this schedule a different one. See [Choose a model for a schedule](#choose-a-model-for-a-schedule).
-- Select its name to read the instruction, any saved baseline, and that schedule's runs. When only one schedule is active, it's already open when you open the page.
+- Select its name to read the instruction, any saved baseline, and that schedule's runs. When you have only one schedule, or only one active schedule, it's already open when you open the page.
 - Select **Run now** to start one run and follow it in its runs.
 - Select **Edit schedule** to change its name, instructions or timing.
 - Select **Ask Nod** to change it in your own words.
