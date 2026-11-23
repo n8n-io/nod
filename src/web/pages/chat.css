@@ -1319,9 +1319,7 @@ button.message-work:is(:hover, :focus-visible) {
   right: 0;
   bottom: calc(100% + 6px);
   z-index: 30;
-}
-.task-line-pop:focus {
-  outline: none;
+  border-radius: 16px;
 }
 .task-line-pop > * {
   max-height: inherit;

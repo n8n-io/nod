@@ -23,7 +23,7 @@ Tasks share one [workspace](/use/workspace/#one-workspace-for-all-tasks) and own
 
 ## Scheduled work
 
-Open **Scheduled** to review tasks and upcoming schedules. Open tasks appear first, each with a live line of what it is doing. Expand **Finished** for tasks that are done or stopped, and **Inactive** for paused schedules. Open a schedule’s **See details → Runs** for its history. See [Schedules](/use/schedules/).
+Open **Scheduled** to review tasks and upcoming schedules. Open tasks appear first, and a working task shows a live line of what it is doing. Expand **Finished** for tasks that are done or stopped, and **Inactive** for paused schedules. Open a schedule’s **See details → Runs** for its history. See [Schedules](/use/schedules/).
 
 ![The Scheduled page with a working task and a task that needs you above two recurring schedules.](../../../assets/screens/scheduled-open-tasks.png)
 
@@ -99,7 +99,7 @@ Nod previews Markdown files up to 4 MB. For a larger file, select **Download**.
 
 ![A task result open in the panel next to the chat, showing a Markdown document with a comparison table and assumptions.](../../../assets/screens/task-sessions-document.png)
 
-On **Scheduled**, a finished task's card has **Schedule task**, which turns the same work into a [schedule](/use/schedules/). Open [Usage](/use/spending/) to review the task's cost and recorded app actions.
+On **Scheduled**, the card of a task that is done has **Schedule task**, which turns the same work into a [schedule](/use/schedules/). Open [Usage](/use/spending/) to review the task's cost and recorded app actions.
 
 ## Use tasks on mobile
 
