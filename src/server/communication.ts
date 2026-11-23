@@ -112,52 +112,58 @@ function confirmationQuestion(value: string, data: unknown, bold = false) {
   const escape = (part: string) =>
     part.replace(/\\/g, '\\\\').replace(/([`*_{}\[\]()#+\-.!|<>~])/g, '\\$1');
   const linkLike = /(?:https?:\/\/|www\.)[^\s<>]+|[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi;
-  const links: { start: number; end: number }[] = [];
-  for (const match of text.matchAll(linkLike)) {
-    const exact = urls.find(
-      (url) =>
-        match[0].startsWith(url) &&
-        sentencePunctuation.test(match[0].slice(url.length).replace(/^\*\*/, '')),
-    );
-    let literal = exact ?? match[0].replace(/\*+$/, '');
-    if (!exact) {
-      let depth = 0;
-      for (const bracket of literal.matchAll(/[\p{Ps}\p{Pe}]/gu)) {
-        if (/\p{Ps}/u.test(bracket[0])) depth++;
-        else if (depth) depth--;
-        else if (sentencePunctuation.test(literal.slice(bracket.index))) {
-          literal = literal.slice(0, bracket.index);
-          break;
+  const plain = (part: string) => {
+    let result = '';
+    let from = 0;
+    for (const match of part.matchAll(linkLike)) {
+      result += escape(part.slice(from, match.index));
+      const exact = urls.find(
+        (url) => match[0].startsWith(url) && sentencePunctuation.test(match[0].slice(url.length)),
+      );
+      let literal = exact ?? match[0];
+      if (!exact) {
+        let depth = 0;
+        for (const bracket of literal.matchAll(/[\p{Ps}\p{Pe}]/gu)) {
+          if (/\p{Ps}/u.test(bracket[0])) depth++;
+          else if (depth) depth--;
+          else if (sentencePunctuation.test(literal.slice(bracket.index))) {
+            literal = literal.slice(0, bracket.index);
+            break;
+          }
         }
       }
+      result += markdownValue(literal);
+      result += escape(match[0].slice(literal.length));
+      from = match.index + match[0].length;
     }
-    links.push({ start: match.index, end: match.index + literal.length });
-  }
-  const plain = (from: number, to: number) => {
-    let result = '';
-    let at = from;
-    for (const link of links) {
-      if (link.start < from || link.start >= to) continue;
-      result +=
-        escape(text.slice(at, link.start)) + markdownValue(text.slice(link.start, link.end));
-      at = link.end;
-    }
-    return result + escape(text.slice(at, to));
+    return result + escape(part.slice(from));
   };
-  const outside = (at: number) => links.every((link) => at + 2 <= link.start || at >= link.end);
-  const spans = bold
-    ? [...text.matchAll(/\*\*(?=[^\s*])([^*\n]{1,160}?)(?<=[^\s*])\*\*/g)].filter(
-        (span) => outside(span.index) && outside(span.index + span[0].length - 2),
-      )
-    : [];
+  if (!bold) return plain(text);
+  const links = Array.from(text.matchAll(linkLike), (match) => ({
+    from: match.index,
+    to: match.index + match[0].length,
+  }));
+  const boundary = /[\s\p{P}]/u;
   let result = '';
   let at = 0;
-  for (const span of spans) {
+  for (const span of text.matchAll(/\*\*(?=[^\s*])([^*\n]{1,160}?)(?<=[^\s*])\*\*/g)) {
     const end = span.index + span[0].length;
-    result += `${plain(at, span.index)}**${plain(span.index + 2, end - 2)}**`;
+    const splitsLink = links.some(
+      ({ from, to }) =>
+        from < end &&
+        to > span.index &&
+        (from < span.index + 2 || (to > end - 2 && !sentencePunctuation.test(text.slice(end, to)))),
+    );
+    if (splitsLink) continue;
+    result += plain(text.slice(at, span.index));
+    const value = plain(span[1]!);
+    const renders =
+      (!result || boundary.test(result.at(-1)!)) &&
+      (end === text.length || boundary.test(text[end]!));
+    result += renders ? `**${value}**` : value;
     at = end;
   }
-  return result + plain(at, text.length);
+  return result + plain(text.slice(at));
 }
 
 function scheduleConfirmation(data: unknown) {

@@ -26,6 +26,7 @@ import { unified } from 'unified';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { IntegrationConnectionError } from '../src/ports/integrations.ts';
+import { telegramText, whatsappText } from '../src/providers/chat-sdk/format.ts';
 import { createAnalytics, snapshotAnalytics } from '../src/server/analytics.ts';
 import {
   accessCookie,
@@ -799,8 +800,13 @@ test('confirmation keeps copied page links visible without making them active', 
 });
 
 test('confirmation keeps bold on checked values and escapes every other Markdown', async () => {
-  const question =
-    'Buy a one-way ticket for **EC 279** on **2 December, 11:37** at **https://train.example.test** for **jane@example.test**? _Note_ # [review](https://outside.example.test) ** loose';
+  const strange = 'https://train.example.test/a**b**c';
+  const question = [
+    'Buy **EC 279** on **2 December, 11:37** for **jane@example.test** at **https://train.example.test/buy**?',
+    `Open ${strange} then **https://unlisted.example.test/pay**, and **https://safe.example.test**@other.example.test/** now?`,
+    '次の**12月2日**の便ですか？',
+    '_Note_ # [review](https://outside.example.test) ** loose',
+  ].join('\n\n');
   const communication = createCommunication({
     pool: { query: async () => ({ rows: [] }) } as unknown as pg.Pool,
     ownerId: 'synthetic-owner',
@@ -810,7 +816,7 @@ test('confirmation keeps bold on checked values and escapes every other Markdown
     turn: { threadId: 'synthetic-thread', turnId: 'synthetic-turn' },
     action: 'NOD_browser',
     args: {
-      website: 'https://train.example.test',
+      website: 'https://train.example.test/buy',
       step: 'click',
       control: [{ role: 'button', name: 'Buy' }],
     },
@@ -825,21 +831,24 @@ test('confirmation keeps bold on checked values and escapes every other Markdown
   assert.deepEqual(strong, [
     'EC 279',
     '2 December, 11:37',
-    'https://train.example.test',
     'jane@example.test',
+    'https://train.example.test/buy',
+    'https://unlisted.example.test/pay',
   ]);
-  assert.deepEqual(
-    nodes.filter((node) => node.type === 'inlineCode').map((node) => node.value),
-    ['https://train.example.test', 'jane@example.test', 'https://outside.example.test'],
-  );
-  assert.match(
-    visibleMarkdownText(result.question),
-    /_Note_ # review \(https:\/\/outside\.example\.test\) \*\* loose/,
-  );
+  const code = nodes.filter((node) => node.type === 'inlineCode').map((node) => node.value);
+  assert.ok(code.includes(strange));
+  assert.ok(code.includes('https://safe.example.test**@other.example.test/**'));
+  const visible = visibleMarkdownText(result.question);
+  assert.match(visible, /次の12月2日の便ですか？/);
+  assert.match(visible, /_Note_ # review \(https:\/\/outside\.example\.test\) \*\* loose/);
   assert.equal(
     nodes.some((node) => ['emphasis', 'heading', 'link', 'html'].includes(node.type)),
     false,
   );
+  for (const text of [telegramText(result.question), whatsappText(result.question)]) {
+    assert.match(text, /\*EC 279\* on \*2 December, 11:37\* for \*`jane@example\.test`\*/);
+    assert.match(text, /次の12月2日の便ですか？/);
+  }
 });
 
 test('Gmail deletion names verified identity without model wording', async () => {
