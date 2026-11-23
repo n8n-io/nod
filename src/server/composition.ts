@@ -1382,12 +1382,9 @@ async function initializeApplication(
     curator,
     learning: () => memory.enabled(),
     blocked: async () =>
-      (await ledger.reachedLimit()) ? 'the monthly spending limit is reached' : preparationPause(),
+      (await ledger.reachedLimit()) ? 'the monthly spending limit is reached' : undefined,
     apps: async () => (await integrations.connectedApps()).map((app) => app.slug),
-    run: (work) =>
-      analytics.withSystemWork(ownerId, 'schedule_ideas', () =>
-        ledger.withPreparation(randomUUID(), work),
-      ),
+    run: (work) => analytics.withSystemWork(ownerId, 'schedule_ideas', work),
   });
   await scheduleIdeas.initialize();
   vault = await createVault(pool, {
