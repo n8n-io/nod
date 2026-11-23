@@ -22,11 +22,14 @@ Nod uses your time zone, saved from your browser the first time you use Nod. Cha
 
 ## Change, pause or delete a schedule
 
-Open **Scheduled**. Select **New schedule** to start a conversation with Nod, which asks one question at a time about what to do and when. Existing schedules show their timing and next run.
+Open **Scheduled**. Select **New schedule** to start a conversation with Nod, which asks one question at a time about what to do and when. Each schedule is one row with its timing, next run, model and what it costs a month. When two or more active schedules have a monthly price and none is missing one, a total for the month shows below them.
+
+When you have fewer than three active schedules, **Scheduled** also shows three ideas to start from. They follow the apps you've connected and change each time you open the page. Select one to ask Nod in chat to set it up.
 
 - Use the switch to pause or resume it.
-- Select **Run now** to start one run and open its history.
-- Select **See details** to read the instruction, any saved baseline, and that schedule's runs.
+- Select its model to give this schedule a different one. See [Choose a model for a schedule](#choose-a-model-for-a-schedule).
+- Select its name to read the instruction, any saved baseline, and that schedule's runs. When only one schedule is active, it's already open when you open the page.
+- Select **Run now** to start one run and follow it in its runs.
 - Select **Edit schedule** to change its name, instructions or timing.
 - Select **Ask Nod** to change it in your own words.
 - Select **Delete schedule**. Future runs stop, and past activity stays in [Usage](/use/spending/).
@@ -37,7 +40,7 @@ In chat, "stop the morning summary" asks Nod to pause the schedule. If Nod asks 
 
 ## Run a schedule now
 
-Open **Scheduled** and select **Run now** on a schedule. Nod opens its details so you can follow the run. The new result opens when it is available. A run that failed in chat offers **Run now** too. If you changed the schedule after that run failed, Nod refuses and asks you to review it first.
+Open **Scheduled**, select a schedule's name, then select **Run now**. Its runs stay open so you can follow the new one. The new result opens when it is available. A run that failed in chat offers **Run now** too. If you changed the schedule after that run failed, Nod refuses and asks you to review it first.
 
 The extra run uses the saved instruction and delivery channel and does its work now, even when the instruction names another day or time. The usual approval checks still apply, and the time named in the instruction never makes them ask. It does not change the next scheduled time or resume a paused schedule. You can also run a completed one-time schedule again.
 
@@ -72,7 +75,7 @@ flowchart TD
 - **One run at a time.** While a run is still queued, working or waiting for your answer, a recurring schedule skips its next runs. A one-time schedule waits for the active run to end. A run does its work itself and can't set up more schedules.
 - **Watches skip unchanged runs.** When a recurring check can only find something new after a change in your connected accounts, such as waiting for a reply, Nod saves which accounts it watches. Before each run, Nod checks those accounts for new mail, changed events or app activity without a model call, and skips the run when nothing changed since the last finished run. The first run, and the run after a failed or stopped one, always run. Reminders, digests, websites and checks tied to a time don't skip.
 
-Open a schedule's **See details** to read its runs, newest first. Select **Load earlier runs** for older results. Completed one-time schedules remain under **Inactive**, with their runs available to review.
+Select a schedule's name in **Scheduled** to read its runs, newest first. Select **Load earlier runs** for older results. Completed one-time schedules remain under **Inactive**, with their runs available to review.
 
 Each run shows its status. When a saved web reply is available, select **See details** on the result to read it within the schedule. When a run shares files, select **Show files in chat** to open them. Runs with complete API pricing also show their recorded cost. Subscription usage and runs with unavailable pricing show no cost amount. Review recorded app actions and activity from deleted schedules in [Usage](/use/spending/).
 
@@ -96,9 +99,11 @@ The first time Nod messages you about something on its own, such as a calendar c
 
 Select **Edit schedule** to review its name, instructions and timing together. Timing changes preview the next run without changing the saved schedule. **Save changes** applies only the fields you changed, so renaming a schedule keeps its next run. Editing the complete work instruction supplies a new complete instruction. A name or timing edit keeps the existing work and its permission limits. **Cancel** closes the editor without saving.
 
-A schedule uses the model for schedules from **Settings > Models**. To give one schedule its own model, open **See details** and select **Change** beside **Model**. When a recurring schedule shows a projected monthly cost, it prices the schedule's recent runs on that model. See [Models for each kind of work](/connect/models/#models-for-each-kind-of-work).
-
 **Undo** restores the previous values only if no newer change has replaced them. The Undo notice stays available while you hover over it, focus it, or switch away from Nod. If the schedule changes while you edit, your draft stays open so you can review it.
+
+### Choose a model for a schedule
+
+A schedule uses the model for schedules from **Settings > Models**. To give one schedule its own model, select the model on its row in **Scheduled**. When the schedule has priced usage in the last 30 days, the list shows what that work would have cost on each model; otherwise it shows each model's token prices. Choose **Same as schedules** to follow **Settings > Models** again. The change applies from the next turn, so a run that waits for your answer continues on the new model. When a recurring schedule shows a projected monthly cost, it prices the schedule's recent runs on that model. See [Models for each kind of work](/connect/models/#models-for-each-kind-of-work).
 
 ## Quiet hours
 

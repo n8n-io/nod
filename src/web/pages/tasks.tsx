@@ -36,6 +36,8 @@ import { captureAnalytics } from '../lib/analytics';
 import { formatDateTime, useDateFormat } from '../lib/date-format';
 import { post, errorMessage } from '../lib/api';
 import { ScheduleRow } from './schedule';
+import { ScheduleIdeas } from '../components/schedule-ideas';
+import { money } from '../lib/money';
 import { LiveLine } from '../components/live-line';
 import { WorkModel } from '../components/model-choices';
 
@@ -474,6 +476,8 @@ export function Scheduled({
     .filter((schedule) => schedule.enabled && schedule.nextRun)
     .sort((a, b) => a.nextRun!.localeCompare(b.nextRun!) || a.id.localeCompare(b.id));
   const inactive = (schedules.data ?? []).filter((schedule) => !upcoming.includes(schedule));
+  const recurring = upcoming.filter((schedule) => schedule.kind === 'recurring');
+  const priced = recurring.every((schedule) => schedule.monthlyUsd !== null) ? recurring : [];
   const inactiveGroup = useRef<HTMLDetailsElement>(null);
   const showInactiveByDefault = upcoming.length === 0;
   const hasActiveInactiveSchedule = inactive.some(
@@ -517,15 +521,22 @@ export function Scheduled({
       ) : (
         <>
           {upcoming.length ? (
-            <div className="saved-plan-list">
+            <div className="schedule-list">
               {upcoming.map((schedule) => (
                 <ScheduleRow
                   key={schedule.id}
                   schedule={schedule}
                   activity={activity}
                   onAsk={onAsk}
+                  defaultOpen={upcoming.length === 1}
                 />
               ))}
+              {priced.length > 1 && (
+                <p className="schedule-total">
+                  <b>≈{money(priced.reduce((sum, schedule) => sum + schedule.monthlyUsd!, 0))}</b> a
+                  month in total
+                </p>
+              )}
             </div>
           ) : empty ? (
             <section className="schedule-empty" aria-labelledby="schedule-empty-title">
@@ -549,7 +560,7 @@ export function Scheduled({
                 Inactive <span>{inactive.length}</span>
                 <ChevronDown size={16} aria-hidden="true" />
               </summary>
-              <div className="saved-plan-list">
+              <div className="schedule-list">
                 {inactive.map((schedule) => (
                   <ScheduleRow
                     key={schedule.id}
@@ -561,6 +572,7 @@ export function Scheduled({
               </div>
             </details>
           )}
+          {upcoming.length < 3 && <ScheduleIdeas first={empty} onAsk={onAsk} />}
         </>
       )}
     </div>

@@ -268,29 +268,17 @@ export function ModelSentences() {
   );
 }
 
-export function WorkModel({
-  schedule,
-  task,
-}: { schedule: Schedule; task?: undefined } | { task: Task; schedule?: undefined }) {
+export function WorkModel({ task }: { task: Task }) {
   const models = useModels();
   const usage = usePageData<WorkUsageResponse>(workUsagePath);
   const data = models.data;
-  if (!data) return null;
-  const kind = schedule ? 'schedule' : task.work;
-  if (!kind) return null;
-  const own = schedule ? schedule.model : task.model;
-  const current = routeModel(
-    data,
-    kind,
-    schedule ? { schedule: own } : { task: own, schedule: task.scheduleModel },
-  );
+  const kind = task.work;
+  if (!data || !kind) return null;
+  const current = routeModel(data, kind, { task: task.model, schedule: task.scheduleModel });
   if (!current) return null;
   const chosen = modelOf(data, current.selection);
-  const target = schedule
-    ? scheduleTarget(data, schedule, usage.data?.schedules[schedule.id])
-    : taskTarget(data, task as Task & { work: WorkKind }, usage.data?.tasks[task.id]);
   const follows =
-    current.follows === 'task' || (schedule && current.follows === 'schedule')
+    current.follows === 'task'
       ? 'its own choice'
       : current.follows === 'schedule'
         ? 'same as its schedule'
@@ -303,15 +291,28 @@ export function WorkModel({
       <span className="work-model-value">
         <strong>{chosen?.name ?? 'Model unavailable'}</strong> · {follows}
       </span>
-      <ModelPicker manageConnections={false} target={target} label="Change" appearance="quiet" />
+      <ModelPicker
+        manageConnections={false}
+        target={taskTarget(data, { ...task, work: kind }, usage.data?.tasks[task.id])}
+        label="Change"
+        appearance="quiet"
+      />
     </div>
   );
 }
 
-export function useOwnModel(model: ModelSelection | null | undefined, kind: WorkKind | undefined) {
+export function ScheduleModel({ schedule }: { schedule: Schedule }) {
   const models = useModels();
+  const usage = usePageData<WorkUsageResponse>(workUsagePath);
   const data = models.data;
-  if (!data || !kind || !model) return undefined;
-  if (!kept(data, model) || same(model, routeModel(data, kind)?.selection)) return undefined;
-  return modelOf(data, model)?.name ?? 'Model unavailable';
+  if (!data) return null;
+  const current = routeModel(data, 'schedule', { schedule: schedule.model });
+  if (!current) return null;
+  return (
+    <ModelPicker
+      manageConnections={false}
+      target={scheduleTarget(data, schedule, usage.data?.schedules[schedule.id])}
+      label={modelOf(data, current.selection) ? undefined : 'Model unavailable'}
+    />
+  );
 }
