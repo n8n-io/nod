@@ -222,6 +222,14 @@ export function redactBrowserUrl(value: string, secrets: Iterable<string>): stri
   return redactBrowserText(url.href, secrets);
 }
 
+function nativeBinary() {
+  if (process.platform === 'win32') return 'agent-browser-win32-x64.exe';
+  const report = process.report?.getReport() as
+    { header?: { glibcVersionRuntime?: string } } | undefined;
+  const musl = process.platform === 'linux' && !report?.header?.glibcVersionRuntime;
+  return `agent-browser-${process.platform}-${musl ? 'musl-' : ''}${process.arch}`;
+}
+
 export function createAgentBrowserComputer(options: {
   dataRoot: string;
   executable?: string;
@@ -257,12 +265,7 @@ export function createAgentBrowserComputer(options: {
     'g',
   );
   const executable =
-    options.executable ??
-    resolve(
-      process.cwd(),
-      'node_modules/agent-browser/bin',
-      `agent-browser-${process.platform}-${process.arch}${process.platform === 'win32' ? '.exe' : ''}`,
-    );
+    options.executable ?? resolve(process.cwd(), 'node_modules/agent-browser/bin', nativeBinary());
   const run = options.run ?? runProcess;
   const privateNetwork = options.privateNetwork;
   const requestDaemon = (...args: Parameters<typeof existingDaemonCommand>) =>
