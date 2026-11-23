@@ -4915,6 +4915,7 @@ else if (args[0] === '--list')
 if (args[0] === '--unregister') state.registered = state.ready = [];
 if (args[0] === '--import') {
   if (state.broken) {
+    writeFileSync(join(args[2], 'ext4.vhdx'), 'synthetic incomplete disk');
     const reason = state.broken === true
       ? "La machine virtuelle n’a pas pu être démarrée car une fonctionnalité requise n’est pas installée.\\r\\nCode d’erreur : Wsl/Service/RegisterDistro/CreateVm/HCS/HCS_E_SERVICE_NOT_AVAILABLE\\r\\n"
       : 'Synthetic WSL failure.\\r\\nError code: Wsl/Service/RegisterDistro/' + state.broken + '\\r\\n';
@@ -5014,6 +5015,11 @@ process.exit(code);
       `--import ${distribution}`,
     ]);
     assert.equal((await saved()).initializing, true);
+    const failedComputer = (await saved()).computerPath;
+    assert.equal(
+      await readFile(join(failedComputer, 'ext4.vhdx'), 'utf8'),
+      'synthetic incomplete disk',
+    );
     assert.equal(sha256(await readFile(kept)), sha256(archive));
 
     const elsewhere = join(root, 'another drive');
@@ -5038,6 +5044,7 @@ process.exit(code);
     ]);
     assert.equal(downloads, 1);
     assert.equal((await saved()).initializing, false);
+    await assert.rejects(stat(failedComputer), { code: 'ENOENT' });
     await assert.rejects(stat(kept), { code: 'ENOENT' });
     const computer = JSON.parse(await readFile(statePath, 'utf8')).imported;
     assert.notEqual(computer, occupied);
@@ -5062,6 +5069,11 @@ process.exit(code);
     for (const scenario of [
       { name: 'missing configuration', code: 'NOD_COMPUTER_CONFIGURATION_MISSING' },
       { name: 'null configuration', value: null, code: 'NOD_COMPUTER_CONFIGURATION_INVALID' },
+      {
+        name: 'relative computer path',
+        value: { ...JSON.parse(original), computerPath: 'relative', initializing: true },
+        code: 'NOD_COMPUTER_CONFIGURATION_INVALID',
+      },
       {
         name: 'invalid version',
         code: 'NOD_COMPUTER_CONFIGURATION_INVALID',
@@ -5148,6 +5160,7 @@ process.exit(code);
       'synthetic existing computer',
     );
     await rm(configPath);
+    let failedPath;
     for (const code of ['ERROR_FILE_EXISTS', 'E_ACCESSDENIED']) {
       await wsl({ ready: [], registered: [], broken: code });
       await assert.rejects(prepare(elsewhere), (error) => {
@@ -5158,6 +5171,8 @@ process.exit(code);
         assert.match(error.message, new RegExp(code));
         return true;
       });
+      if (failedPath) await assert.rejects(stat(failedPath), { code: 'ENOENT' });
+      failedPath = (await saved()).computerPath;
     }
   },
 );

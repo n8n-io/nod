@@ -113,6 +113,8 @@ The background service reports each startup step, and the startup log records ea
 
 On Windows, Nod replaces only a recorded, unfinished import. The next attempt removes that unfinished registration and imports the computer into a new, empty disk folder. This avoids a location conflict with an older disk or another WSL registration. A failed setup keeps its verified download, so **Try again** does not download it again.
 
+Before another import, Nod removes a partial disk only from a generated folder named in its valid unfinished-import record. Older and unknown folders are kept.
+
 If the saved configuration is missing or invalid, setup stops and keeps the existing computer. The same applies when a completed computer loses its registration or WSL does not report it as ready. Restart Windows, then try again. If the problem continues, keep the files and report the failure. An older unfinished import can also need this recovery because it has no setup record.
 
 On a Mac, setup keeps runtime files that passed their checks, even if a later download fails. **Try again** checks and reuses those files. It does not remove a verified image while the private computer loads it.

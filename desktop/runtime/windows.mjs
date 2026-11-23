@@ -14,7 +14,7 @@ import {
   statfs,
   writeFile,
 } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 import { Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
@@ -25,6 +25,11 @@ import { startupWslCode } from '../../src/shared/startup-feedback-facts.mjs';
 const holders = new Map();
 const distributionName = (root) =>
   `nod-${createHash('sha256').update(resolve(root).toLowerCase()).digest('hex').slice(0, 12)}`;
+const generatedComputerPath = (path, distribution) =>
+  typeof path === 'string' &&
+  isAbsolute(path) &&
+  resolve(path) === path &&
+  new RegExp(`^${distribution}-[a-zA-Z0-9]{6}$`).test(basename(path));
 export const windowsPublisher = Object.freeze({
   name: 'n8n GmbH',
   profile: '1.3.6.1.4.1.311.97.516399124.569093350.771684794.174905458',
@@ -80,6 +85,8 @@ async function readComputerState(path, distribution) {
     saved.version !== 1 ||
     saved.distribution !== distribution ||
     (saved.initializing !== undefined && typeof saved.initializing !== 'boolean') ||
+    (saved.computerPath !== undefined &&
+      (typeof saved.computerPath !== 'string' || !isAbsolute(saved.computerPath))) ||
     !/^[a-f0-9]{64}$/.test(saved.password)
   )
     throw Object.assign(new Error('The Nod computer configuration needs recovery.'), {
@@ -385,6 +392,8 @@ async function prepareWindows(options, onComputerStart, progress) {
     await host(['--unregister', distribution], { timeout: 300_000 });
     existing = false;
   }
+  if (saved?.initializing === true && generatedComputerPath(saved.computerPath, distribution))
+    await rm(saved.computerPath, { recursive: true, force: true });
   progress.step = 'assets';
   saved ??= {
     version: 1,
@@ -636,7 +645,7 @@ export async function removeWindowsComputer(dataRoot) {
     saved?.distribution === distribution &&
     typeof saved.computerPath === 'string' &&
     (basename(saved.computerPath) === distribution ||
-      new RegExp(`^${distribution}-[a-zA-Z0-9]{6}$`).test(basename(saved.computerPath)))
+      generatedComputerPath(saved.computerPath, distribution))
   )
     await rm(saved.computerPath, { recursive: true, force: true });
 }
