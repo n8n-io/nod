@@ -230,6 +230,8 @@ export function createAgentBrowserComputer(options: {
   platform?: NodeJS.Platform;
   headless?: boolean;
   evictIdleMs?: number;
+  submitReadyMs?: number;
+  clickReceiptMs?: number;
   maxLiveSessions?: number;
   viewport?: { width: number; height: number };
   run?: typeof runProcess;
@@ -1403,7 +1405,7 @@ export function createAgentBrowserComputer(options: {
               const control = selector(submitSelector);
               assertOpen();
               await devtools.blur();
-              const readyBy = performance.now() + 30_000;
+              const readyBy = performance.now() + (options.submitReadyMs ?? 30_000);
               for (;;) {
                 assertOpen();
                 if ((await devtools.document()) !== document)
@@ -1548,7 +1550,7 @@ export function createAgentBrowserComputer(options: {
       .parse((await command(state, { action: 'tab_list' }, { signal })).tabs)
       .find((item) => item.active);
     if (!tab) throw new Error('The checkout tab is no longer open.');
-    return openDevtools(cdpUrl, tab.targetId, signal);
+    return openDevtools(cdpUrl, tab.targetId, signal, options.clickReceiptMs);
   }
 
   async function focusField(

@@ -110,7 +110,12 @@ const maskScript = (on: boolean, secrets: string[], allFields: boolean, snapshot
     return '';
   })()`;
 
-export async function openDevtools(url: string, targetId: string, signal?: AbortSignal) {
+export async function openDevtools(
+  url: string,
+  targetId: string,
+  signal?: AbortSignal,
+  clickReceiptMs = 5000,
+) {
   const address = new URL(url);
   if (address.protocol !== 'ws:' || !['localhost', '127.0.0.1', '[::1]'].includes(address.hostname))
     throw new Error('The browser inspector must be local.');
@@ -1132,7 +1137,7 @@ export async function openDevtools(url: string, targetId: string, signal?: Abort
           session,
         );
         pressed = false;
-        timer = setTimeout(() => resolveClick(false), 5000);
+        timer = setTimeout(() => resolveClick(false), clickReceiptMs);
         if (!(await clicked)) {
           if (guardRefused())
             throw signInFailure('click_guard_changed', 'The sign-in control changed.');

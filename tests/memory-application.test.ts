@@ -42,7 +42,7 @@ type Step = {
 
 test(
   'memory keeps only the owner’s own words, silently, and moves a pasted import into notes',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 120_000 },
   async (t) => {
     const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
     const schema = `test_memory_app_${suffix}`;

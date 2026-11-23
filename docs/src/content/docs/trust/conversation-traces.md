@@ -7,6 +7,8 @@ sidebar:
 
 Conversation traces let the Nod team at n8n see how Nod handles real requests, so they can find and fix problems. They're off until you turn them on. Nod masks secret values of at least eight characters that it knows, known secret formats and personal details it recognizes before sending a trace. Short secret values and other private content can remain.
 
+Nod also masks values under recognized secret field names in text assignments, object fields and name/value arrays. Examples include `GITHUB_TOKEN`, `db_password` and `authToken`. Short names such as `pwd` and `otp` need a complete name or a word boundary, as in `db_pwd` and `authOTP`. A sentence such as "Enter your password" does not mark an array as a secret field. These checks use the original names before any values are masked.
+
 This page describes n8n's trace service, used by official desktop builds. A server operator can configure another receiver; that receiver controls access and retention.
 
 ![Settings → Privacy & data, with Share usage data and Share conversation traces turned on, and How Nod uses your data beside the heading.](../../../assets/screens/conversation-traces-setting.png)

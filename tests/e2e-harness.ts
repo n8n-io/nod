@@ -131,7 +131,12 @@ function scriptedReply(messages: Entry[]) {
   const answers = pending
     .filter((request) => !request.text.startsWith('task:'))
     .map((request) => `Answer: ${request.text}`);
-  return { text: answers.join('\n') };
+  return {
+    hold: pending.find(
+      (request) => request.text.startsWith('task:') && request.text.includes('linger:'),
+    )?.text,
+    text: answers.join('\n'),
+  };
 }
 
 async function waitForGate(path: string, signal?: AbortSignal) {
