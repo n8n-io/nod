@@ -120,6 +120,13 @@ const steps = new Set([
   'workspace',
   'browser',
   'ready',
+  'loading',
+  'loaded',
+  'database',
+  'threads',
+  'memory',
+  'apps',
+  'listening',
 ]);
 const codes = new Set([
   'NOD_WSL_REQUIRED',
@@ -221,6 +228,7 @@ export function startupEventFacts(event, details) {
   for (const [key, selected] of [
     ['phase', choice(phases, data(details, 'phase'))],
     ['stage', choice(stages, data(details, 'stage'))],
+    ['step', choice(steps, data(details, 'step'))],
     ['durationMs', integer(data(details, 'durationMs'), 0, 86400000)],
     ['count', integer(data(details, 'count'), 0, 1000000)],
     ['exitCode', integer(data(details, 'exitCode'), -2147483648, 4294967295)],

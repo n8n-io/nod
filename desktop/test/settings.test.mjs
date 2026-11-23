@@ -4497,7 +4497,7 @@ test('a background service health timeout records the last failure without priva
       const prepared = f.prepare();
       if (scenario.reportReady === false) {
         await waitFor(() => assert.equal(f.children.length, 1), { attempts: 100, interval: 5 });
-        clock += 120_001;
+        clock += 600_001;
       }
       const status = await prepared;
       assert.equal(status.phase, 'error');
@@ -4511,6 +4511,55 @@ test('a background service health timeout records the last failure without priva
         log,
       );
       assert.doesNotMatch(log, /synthetic-private-detail/);
+    });
+  }
+});
+
+test('a background service that keeps reporting startup steps gets time for each, and a stalled step is named', async (t) => {
+  for (const scenario of ['progressing', 'stalled', 'unknown']) {
+    await t.test(scenario, async (t) => {
+      let clock = Date.now();
+      const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+        allowStart: true,
+        reportReady: false,
+        now: () => clock,
+      });
+      f.crash();
+      const prepared = f.prepare();
+      await waitFor(() => assert.equal(f.children.length, 1), { attempts: 100, interval: 5 });
+      const [child] = f.children;
+      const report = async (step, elapsed) => {
+        child.emit('message', { type: 'nod-starting', step });
+        await new Promise((accept) => setTimeout(accept, 10));
+        clock += elapsed;
+        await new Promise((accept) => setTimeout(accept, 10));
+      };
+      if (scenario === 'unknown') {
+        await report('synthetic-private-step', 600_001);
+      } else {
+        await report('loading', 500_000);
+        await report('loaded', 110_000);
+        await report('database', scenario === 'stalled' ? 120_001 : 110_000);
+      }
+      if (scenario === 'progressing') {
+        await report('listening', 110_000);
+        child.emit('message', { type: 'nod-ready', port: Number(child.port) });
+      }
+      const status = await prepared;
+      const log = await readFile(join(f.profileRoot, 'logs/startup.log'), 'utf8');
+      assert.doesNotMatch(log, /synthetic-private-step/);
+      if (scenario === 'progressing') {
+        assert.equal(status.phase, 'ready');
+        assert.doesNotMatch(log, /health check timed out/);
+        assert.match(log, /Background service step: database after 6\d\d\.\ds\./);
+        return;
+      }
+      assert.equal(status.phase, 'error');
+      assert.match(status.error, /did not respond/);
+      assert.ok(
+        log.includes(`Last startup step: ${scenario === 'stalled' ? 'database' : 'none'}.`),
+        log,
+      );
     });
   }
 });
