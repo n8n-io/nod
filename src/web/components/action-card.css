@@ -126,7 +126,7 @@
 }
 .choice-card-title {
   font-size: 15px;
-  font-weight: 500;
+  font-weight: 400;
   line-height: 22px;
 }
 .choice-card-count {
@@ -137,7 +137,11 @@
 }
 .choice-card-title .message-text {
   margin: 0;
-  font-weight: 500;
+  font-weight: 400;
+}
+.choice-card-title .message-text strong,
+.chat-page .message .choice-card-title .message-text strong {
+  font-weight: 600;
 }
 .choice-card-list {
   display: flex;
