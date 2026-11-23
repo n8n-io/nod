@@ -37,17 +37,24 @@ function shuffled<T>(items: T[]) {
 
 export function ScheduleIdeas({ first, onAsk }: { first: boolean; onAsk(text: string): void }) {
   const { data: connections } = usePageData<Connection[]>('/api/apps');
+  const { data: personal } = usePageData<{ ideas: Idea[] }>('/api/schedules/ideas');
   const [order] = useState(() => shuffled(ideas));
   const connected = new Set(
     (connections ?? []).filter((item) => item.status === 'connected').map((item) => item.slug),
   );
+  const mined = (personal?.ideas ?? [])
+    .filter((idea) => !idea.app || connected.has(idea.app))
+    .slice(0, 2);
+  const titles = new Set(mined.map((idea) => idea.title.toLowerCase()));
+  const fixed = order.filter((idea) => !titles.has(idea.title.toLowerCase()));
   const missing = connections && invitations.find((app) => !connected.has(app));
-  const invite = missing ? order.find((idea) => idea.app === missing) : undefined;
+  const invite = missing ? fixed.find((idea) => idea.app === missing) : undefined;
   const shown = [
-    ...order
+    ...mined,
+    ...fixed
       .filter((idea) => !idea.app || connected.has(idea.app))
       .sort((a, b) => Number(Boolean(b.app)) - Number(Boolean(a.app)))
-      .slice(0, invite ? 2 : 3),
+      .slice(0, (invite ? 2 : 3) - mined.length),
     ...(invite ? [invite] : []),
   ];
   return (

@@ -111,7 +111,7 @@ You answer in chat. `prepared_list` shows a draft, and reading it in a turn you 
 
 ## Cost
 
-Automatic preparation has a $5 monthly allowance by default. Change it in **Usage**, or ask Nod to change it. It covers source reviews, email privacy checks, observer requests, and tasks the observer starts. Plan usage counts at its API-price estimate. Your own chat requests, schedules, and tasks have their normal limits.
+Automatic preparation has a $5 monthly allowance by default. Change it in **Usage**, or ask Nod to change it. It covers source reviews, email privacy checks, observer requests, tasks the observer starts, and the schedule ideas on **Scheduled**. Plan usage counts at its API-price estimate. Your own chat requests, schedules, and tasks have their normal limits.
 
 Before a model request, Nod reserves its estimated maximum cost under one owner lock. Parallel requests cannot spend the same remaining allowance. The final cost replaces the reservation. Pausing preparation blocks each new paid request, including in a check already running. If a request has no price, or does not fit, it does not run. While the model for Nod's own work, or the smaller model on your chat connection, has no price, the observer, background inbox polling and background email checks don't start at all. An unfinished request keeps its reservation until its recorded cost covers it. Speech generation waits for a request from you because it has no advance cost bound.
 

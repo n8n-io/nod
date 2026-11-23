@@ -27,6 +27,7 @@ const untraced = new Set([
   'review',
   'style',
   'skill',
+  'ideas',
   'classify',
   'check',
 ]);

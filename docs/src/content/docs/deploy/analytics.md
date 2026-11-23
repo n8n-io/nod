@@ -101,7 +101,7 @@ First desktop release: **v0.9.1**. Earlier events omit `thread_id` and `turn_id`
 
 Owner-authored messages in Tasks are owner-requested background work. Agent-created child tasks can also retain the original owner request, so `owner_requested=true` doesn't establish a new owner message. Work category and owner request are separate dimensions; autonomous event and schedule starts aren't owner-requested.
 
-Autonomous work outside a turn shares pseudonymous `thread_id` and `turn_id` fields with its traced curator calls. These IDs identify auxiliary work, not a saved turn. This work uses `work_type=background`, `owner_requested=false`, and `system_activity` (`memory_learning`, `onboarding`, or `writing_style`). It has no run ID. Model requests without an established context use `work_type=unclassified` so their usage remains visible; this doesn't mean they were owner-requested or free.
+Autonomous work outside a turn shares pseudonymous `thread_id` and `turn_id` fields with its traced curator calls. These IDs identify auxiliary work, not a saved turn. This work uses `work_type=background`, `owner_requested=false`, and `system_activity` (`memory_learning`, `onboarding`, `schedule_ideas`, or `writing_style`). It has no run ID. Model requests without an established context use `work_type=unclassified` so their usage remains visible; this doesn't mean they were owner-requested or free.
 
 Server events must pass a strict schema. UI events keep only allowed properties and values. Public provider and app names come from supported catalogs; custom connections report `custom`.
 

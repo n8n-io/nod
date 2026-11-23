@@ -24,7 +24,7 @@ Nod uses your time zone, saved from your browser the first time you use Nod. Cha
 
 Open **Scheduled**. Select **New schedule** to start a conversation with Nod, which asks one question at a time about what to do and when. Each schedule is one row with its timing, next run and model.
 
-Below your schedules, **Scheduled** always shows three ideas to start from, mostly about your day, your calendar and regular reminders. They follow the apps you've connected and change each time you open the page. When a common app such as Google Calendar isn't connected yet, one idea uses it and says so. Select an idea to ask Nod in chat to set it up, and to help you connect the app first when it needs one.
+Below your schedules, **Scheduled** always shows three ideas to start from, mostly about your day, your calendar and regular reminders. They follow the apps you've connected and change each time you open the page. When a common app such as Google Calendar isn't connected yet, one idea uses it and says so. Select an idea to ask Nod in chat to set it up, and to help you connect the app first when it needs one. Up to two ideas can come from [your own messages](#ideas-from-your-messages).
 
 - Use the switch to pause or resume it.
 - Select its model to give this schedule a different one. See [Choose a model for a schedule](#choose-a-model-for-a-schedule).
@@ -37,6 +37,14 @@ Below your schedules, **Scheduled** always shows three ideas to start from, most
 Pausing or deleting a schedule here removes any unanswered request to change or cancel it from Nod's chat. A request already sent to Telegram or WhatsApp remains there, but replying to it cannot change the schedule.
 
 In chat, "stop the morning summary" asks Nod to pause the schedule. If Nod asks for confirmation, it stays active until you approve. Once paused, you can resume it in **Scheduled**; use **Delete schedule** to remove it.
+
+### Ideas from your messages
+
+Up to two of the ideas on **Scheduled** can come from your own chat messages, such as a reminder for something you do every Friday. **Scheduled** shows the ideas Nod saved last time. When you open it, at most once a day and only when you've written since the last check, Nod reads up to 40 of your most recent messages and asks the smaller model it uses for memory upkeep for up to three new ideas. They replace the saved ones when ready.
+
+Nod reads the same messages memory learns from: your own words, at least 10 minutes old, without attachments, withdrawn requests or a task card you tapped. It never reads Nod's replies, app content or files. It replaces links, email addresses and long numbers first, and leaves out messages with a password, code or card number. It drops ideas your schedules already cover, sensitive topics such as health, religion and politics, and any idea with an email address, link, handle or phone number.
+
+These ideas are automatic preparation. A new check needs **Automatic preparation** on, quiet hours over, and room in the [preparation allowance](/use/spending/#automatic-preparation-allowance) and your monthly limit. Otherwise, or when a check fails, Nod keeps the ideas it saved, or shows only the common ones. Turning off **Save new notes** in **Settings → Memory** stops the checks and hides saved ideas. The request is never sent with [conversation traces](/trust/conversation-traces/).
 
 ## Run a schedule now
 
