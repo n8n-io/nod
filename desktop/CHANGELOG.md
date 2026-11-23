@@ -6,6 +6,7 @@ Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](ht
 
 ### Features
 
+- **schedules:** Choose each schedule's model on the Scheduled page, with compact rows and ideas. [#1441](https://github.com/n8n-io/nod/pull/1441) (3b20226)
 - **approvals:** Bold the few values to check in approval questions. [#1432](https://github.com/n8n-io/nod/pull/1432) (a9c1c0f)
 - **models:** Add Hostinger AI Router as a model provider. [commit](https://github.com/n8n-io/nod/commit/501d7a72158f2f3ce16e46c8ecb7c9c5ea503951) (501d7a7)
 - **tasks:** Show running tasks on Nod's status line instead of task previews in chat. [#1430](https://github.com/n8n-io/nod/pull/1430) (c7b0951)
@@ -14,6 +15,8 @@ Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](ht
 
 ### Fixes
 
+- **ci:** Install Nod in its usual folder in the Windows startup check. [#1445](https://github.com/n8n-io/nod/pull/1445) (552d017)
+- **models:** Don't treat a busy model check as a connection problem. [#1374](https://github.com/n8n-io/nod/pull/1374) (aee91e8)
 - **desktop:** Start reliably on Windows after an install, an update or a WSL failure. [#1440](https://github.com/n8n-io/nod/pull/1440) (812c047)
 - **chat:** Open Nod's status line to read a long step in full. [#1442](https://github.com/n8n-io/nod/pull/1442) (a6ca9ab)
 - **tasks:** Tasks line review fixes from #1430. [#1439](https://github.com/n8n-io/nod/pull/1439) (608e403)
@@ -45,6 +48,7 @@ Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](ht
 
 ### Documentation
 
+- **readme:** Link section titles to their sections. [#1272](https://github.com/n8n-io/nod/pull/1272) (33c0b8e)
 - **apps:** List every CLI environment name ending Nod accepts. [#1280](https://github.com/n8n-io/nod/pull/1280) (4ce8f23)
 
 <details>
@@ -78,12 +82,12 @@ Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](ht
 
 </details>
 
-[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.9.2...812c047be94411ac992933090132664991c6ea9e)
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.9.2...552d017fff511550f4b3a9f9151aa9ccc4d632c5)
 
 <details>
 <summary>Build details</summary>
 
-Source: `812c047be94411ac992933090132664991c6ea9e`
+Source: `552d017fff511550f4b3a9f9151aa9ccc4d632c5`
 Previous release: `nod-v0.9.2`
 
 </details>
