@@ -250,15 +250,65 @@
   gap: 8px;
   margin: -4px -8px;
 }
-.message-presentation .booking-link {
+.booking-buttons {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
-  min-height: 36px;
-  padding: 6px 8px;
+  min-width: 0;
+}
+.message-presentation .booking-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-full);
+  background: var(--surface);
   color: var(--foreground);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
+  text-decoration: none;
+  transition: border-color 200ms ease;
+}
+.message-presentation .booking-check:is(:hover, :focus-visible) {
+  border-color: var(--muted-foreground);
+  text-decoration: none;
+}
+.booking-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.booking-more:is(:hover, :focus-visible) {
+  background: var(--control-hover);
+  color: var(--foreground);
+}
+.booking-more > svg {
+  transition: transform 200ms ease;
+}
+.booking-more[aria-expanded='true'] > svg {
+  transform: rotate(180deg);
+}
+.booking-details {
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.booking-details .booking-notes {
+  padding-top: 0;
+  border-top: 0;
 }
 @container (min-width: 840px) {
   .booking-venues.is-comparison {
@@ -288,7 +338,6 @@
   }
 }
 @media (hover: hover) and (pointer: fine) {
-  .booking-link:hover,
   .booking-photo-picker button:hover {
     background: var(--control-hover);
     text-decoration: none;
@@ -299,13 +348,14 @@
   .booking-photo:is(:hover, :focus-visible) > span {
     opacity: 1;
   }
-  .booking-link:active:not(:focus-visible),
+  .booking-check:active:not(:focus-visible),
   .booking-photo-picker button:active:not(:focus-visible) {
     transform: translateY(1px);
   }
 }
 @media (pointer: coarse) {
-  .message-presentation .booking-link {
+  .message-presentation .booking-check,
+  .booking-more {
     min-height: 44px;
   }
 }
@@ -313,7 +363,7 @@
   .booking-photo > span {
     transition: none;
   }
-  .booking-link:active:not(:focus-visible),
+  .booking-check:active:not(:focus-visible),
   .booking-photo-picker button:active:not(:focus-visible) {
     transform: none;
   }

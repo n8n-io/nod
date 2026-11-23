@@ -1,7 +1,17 @@
-import { useState, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import type { Presentation } from '../../shared/presentation';
 import { useArtifactDrawer } from './artifact-context';
-import { ArrowUpRight, CalendarClock, ExternalLink, Maximize2 } from './icons';
+import { ArrowUpRight, CalendarClock, ChevronDown, ExternalLink, Maximize2 } from './icons';
+
+const priceLabel = /price|fare|cost|total|cena|preis|prix|precio|prezzo/i;
+
+function hostOf(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return null;
+  }
+}
 
 type BookingVisual = Extract<Presentation, { type: 'booking' }>;
 type Venue = Omit<
@@ -86,7 +96,14 @@ function VenuePhotos({
 }
 
 function VenueCard({ venue, action }: { venue: Venue; action?: ReactNode }) {
+  const detailsId = useId();
+  const [open, setOpen] = useState(false);
   const hasPhotos = Boolean(venue.photos?.length);
+  const price = venue.facts.findIndex((fact, index) => index > 1 && priceLabel.test(fact.label));
+  const summary = venue.facts.filter((_, index) => index < 2 || index === price);
+  const rest = venue.facts.filter((_, index) => index >= 2 && index !== price);
+  const more = rest.length > 0 || Boolean(venue.notes?.length) || Boolean(venue.rating);
+  const host = venue.url ? hostOf(venue.url) : null;
   const labels = {
     option: 'Not booked',
     pending: 'Pending confirmation',
@@ -110,7 +127,7 @@ function VenueCard({ venue, action }: { venue: Venue; action?: ReactNode }) {
         </div>
         <div className="booking-overview">
           <dl className="booking-facts">
-            {venue.facts.map((fact, index) => (
+            {summary.map((fact, index) => (
               <div key={index}>
                 <dt>{fact.label}</dt>
                 <dd>{fact.value}</dd>
@@ -126,60 +143,90 @@ function VenueCard({ venue, action }: { venue: Venue; action?: ReactNode }) {
             />
           )}
         </div>
-        {venue.rating && (
-          <div className="booking-review">
-            <a
-              href={venue.rating.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              referrerPolicy="no-referrer"
-            >
-              <span className="booking-rating">
-                <strong>{venue.rating.value}</strong>
-                <span>/{venue.rating.scale}</span>
-              </span>
-              <span className="booking-rating-source">
-                <strong>{venue.rating.sourceLabel}</strong>
-                {venue.rating.count !== undefined && (
-                  <span>
-                    {venue.rating.count.toLocaleString()}{' '}
-                    {venue.rating.count === 1 ? 'review' : 'reviews'}
-                  </span>
-                )}
-              </span>
-              <ExternalLink size={14} aria-hidden="true" />
-            </a>
-            {venue.rating.summary && (
-              <p className="booking-review-summary">{venue.rating.summary}</p>
+        {more && open && (
+          <div className="booking-details" id={detailsId}>
+            {rest.length > 0 && (
+              <dl className="booking-facts">
+                {rest.map((fact, index) => (
+                  <div key={index}>
+                    <dt>{fact.label}</dt>
+                    <dd>{fact.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+            {venue.rating && <Rating rating={venue.rating} />}
+            {venue.notes && venue.notes.length > 0 && (
+              <div className="booking-notes">
+                <ul aria-label="Booking notes">
+                  {venue.notes.map((note, index) => (
+                    <li key={index}>{note}</li>
+                  ))}
+                </ul>
+              </div>
             )}
           </div>
         )}
-        {venue.notes && venue.notes.length > 0 && (
-          <div className="booking-notes">
-            <ul aria-label="Booking notes">
-              {venue.notes.map((note, index) => (
-                <li key={index}>{note}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {venue.url && (
+        {(venue.url || more) && (
           <div className="booking-actions">
-            <a
-              className="booking-link"
-              href={venue.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              referrerPolicy="no-referrer"
-            >
-              {venue.status === 'option' ? 'View details' : 'View booking'}
-              <ArrowUpRight size={16} aria-hidden="true" />
-            </a>
-            {action}
+            <div className="booking-buttons">
+              {venue.url && (
+                <a
+                  className="booking-check"
+                  href={venue.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  referrerPolicy="no-referrer"
+                >
+                  {venue.status === 'option'
+                    ? host
+                      ? `Check on ${host}`
+                      : 'Check on the site'
+                    : 'View booking'}
+                  <ArrowUpRight size={16} aria-hidden="true" />
+                </a>
+              )}
+              {more && (
+                <button
+                  type="button"
+                  className="booking-more"
+                  aria-expanded={open}
+                  aria-controls={detailsId}
+                  onClick={() => setOpen(!open)}
+                >
+                  {open ? 'Hide details' : 'See details'}
+                  <ChevronDown size={14} aria-hidden="true" />
+                </button>
+              )}
+            </div>
+            {venue.url && action}
           </div>
         )}
       </div>
     </section>
+  );
+}
+
+function Rating({ rating }: { rating: NonNullable<Venue['rating']> }) {
+  return (
+    <div className="booking-review">
+      <a href={rating.url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">
+        <span className="booking-rating">
+          <strong>{rating.value}</strong>
+          <span>/{rating.scale}</span>
+        </span>
+        <span className="booking-rating-source">
+          <strong>{rating.sourceLabel}</strong>
+          {rating.count !== undefined && (
+            <span>
+              {rating.count.toLocaleString()} {rating.count === 1 ? 'review' : 'reviews'}
+            </span>
+          )}
+        </span>
+        <ExternalLink size={14} aria-hidden="true" />
+      </a>
+      {rating.summary && <p className="booking-review-summary">{rating.summary}</p>}
+    </div>
   );
 }
 

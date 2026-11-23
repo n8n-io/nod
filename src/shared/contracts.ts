@@ -389,6 +389,7 @@ export interface ScheduleRun {
   messageId: string | null;
   messagePreview: string | null;
   messageText: string | null;
+  attachmentMessageId: string | null;
   costUsd?: number | null;
 }
 export interface ScheduleHistory {

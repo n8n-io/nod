@@ -1169,7 +1169,7 @@ async function initializeApplication(
             adapters.models!.paused({ kind: 'schedule', schedule: model }),
         }
       : {}),
-    watchable: async (connectionIds) => integrations.watchable(connectionIds),
+    watchable: (connectionIds, client) => integrations.watchable(connectionIds, client),
     watchState: async (connectionIds) => integrations.watchState(connectionIds),
   });
   await personal.initialize({ workers: options.workers });
@@ -2896,7 +2896,12 @@ async function initializeApplication(
               Object.keys(args).length ? await activityLog.read(args, 200) : await ledger.read(),
             ),
           );
-        return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
+        const source = { ...provenance, turnId: turn.turnId };
+        if (action === 'schedule_record_observation')
+          return withTurnLock({ turnId: turn.turnId, signal }, (client) =>
+            personal.manage(action, args, source, { client }),
+          );
+        return personal.manage(action, args, source);
       },
       requestPayment: async (turn, input, show) => {
         const { image, ...result } = await payments.request(turn, input);

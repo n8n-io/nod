@@ -288,6 +288,7 @@ export function ScheduleRow({
 function ScheduleRunRow({ run, openResult }: { run: ScheduleRun; openResult: boolean }) {
   const dateFormat = useDateFormat();
   const [open, setOpen] = useState(openResult);
+  const text = run.messageText ?? run.messagePreview ?? '';
   useEffect(() => {
     if (openResult) setOpen(true);
   }, [openResult]);
@@ -320,14 +321,29 @@ function ScheduleRunRow({ run, openResult }: { run: ScheduleRun; openResult: boo
           </a>
         </p>
       )}
-      {run.messageId && (
+      {run.attachmentMessageId && (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            window.dispatchEvent(
+              new CustomEvent('nod:focus-message', {
+                detail: { messageId: run.attachmentMessageId },
+              }),
+            )
+          }
+        >
+          Show files in chat
+        </Button>
+      )}
+      {text.trim() && (
         <PlanDetails
           label={`${run.title}, ${date(run.scheduledFor)}`}
           summary={run.messagePreview}
           open={open}
           onOpenChange={setOpen}
         >
-          <MessageText text={run.messageText ?? run.messagePreview ?? ''} />
+          <MessageText text={text} />
         </PlanDetails>
       )}
     </li>

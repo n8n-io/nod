@@ -88,7 +88,7 @@ Flight cards group each journey's date, flight number, route, and times. A diffe
 
 Seat plans group the supplied rows by cabin and deck, preserving different layouts, aisles and empty positions. The coverage states whether the source shows the whole aircraft, a cabin or selected rows. Each plan refers to one flight or aircraft configuration. The view is schematic; nod can show the original image when exact geometry matters. Inspecting a seat doesn't reserve it or confirm its availability.
 
-Venue cards can include photos, review summaries with their source rating and review count, and notes such as access or cancellation conditions. Comparisons keep each venue's details together. A proposed booking stays an option until nod has evidence of confirmation.
+Venue cards can include photos, review summaries with their source rating and review count, and notes such as access or cancellation conditions. A card shows its first two facts and the price; **See details** opens the rest, the rating and the notes. **Check on** followed by the website's name opens the option there. Comparisons keep each venue's details together. A proposed booking stays an option until nod has evidence of confirmation.
 
 Diagrams show each step with its details and label the connections between steps. Select a step to read its details and connections in full.
 

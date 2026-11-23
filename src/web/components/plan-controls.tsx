@@ -16,6 +16,7 @@ import { SearchPicker, type PickerOption } from './search-picker';
 import { TimeZonePicker } from './time-zone-picker';
 import { api, ApiError, errorMessage, requestAccountVersion } from '../lib/api';
 import { pageDataCache } from '../lib/page-data-cache';
+import { navigate } from '../lib/navigation';
 import {
   reconcileSchedule,
   scheduleMatchesPatch,
@@ -900,7 +901,8 @@ function TaskScheduleForm({
             size="sm"
             onClick={() => {
               void pageDataCache.refresh('/api/schedules', true);
-              onCreated();
+              onClose();
+              navigate('/tasks');
             }}
           >
             View schedules
