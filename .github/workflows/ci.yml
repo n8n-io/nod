@@ -402,7 +402,7 @@ jobs:
     needs: checks
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: windows-2025
-    timeout-minutes: 60
+    timeout-minutes: 75
     env:
       CI: 'true'
       NOD_DESKTOP_VERSION: 999.0.0

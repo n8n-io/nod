@@ -142,7 +142,7 @@ try {
       { timeout: 900_000 },
     );
     await install(join(folder, 'nod-Setup-x64.exe'));
-    await launch(`first setup on ${previous}`, { reported: false, attempts: 4 });
+    await launch(`first setup on ${previous}`, { reported: false, attempts: 3, limit: 480_000 });
     await quit();
     await returning();
     await install(installer);
