@@ -170,6 +170,8 @@ interface ApprovalProps {
   approval: MessageApproval;
   disabled?: boolean;
   onAnswer?: Answer;
+  onStopTask?(): Promise<void>;
+  taskStopped?: boolean;
   children: ReactNode;
 }
 
@@ -181,15 +183,37 @@ export function ApprovalChoiceCard({
   approval,
   disabled = false,
   onAnswer,
+  onStopTask,
+  taskStopped = false,
   children,
 }: ApprovalProps) {
   const id = useId();
   const { state, locked, error, answer } = useApproval(approval, disabled, onAnswer);
-  const rows = [approval.title, declineLabel(approval)];
-  const chosen = state === 'declined' ? 1 : 0;
+  const [stopping, setStopping] = useState(false);
+  const [stopped, setStopped] = useState(false);
+  const [stopError, setStopError] = useState('');
+  const task = Boolean(onStopTask);
+  const rows = task
+    ? [approval.title, 'Skip this step', 'Stop the task']
+    : [approval.title, declineLabel(approval)];
+  const ended = task && (stopped || taskStopped) && state !== 'working' && state !== 'done';
+  const chosen = ended ? 2 : state === 'declined' ? 1 : 0;
+  const stop = async () => {
+    if (!onStopTask || stopping) return;
+    setStopping(true);
+    setStopError('');
+    try {
+      await onStopTask();
+      setStopped(true);
+    } catch (cause) {
+      setStopError(errorMessage(cause));
+    } finally {
+      setStopping(false);
+    }
+  };
   return (
     <section
-      className={`action-card choice-card${state === 'pending' ? '' : ' action-card-settled'}`}
+      className={`action-card choice-card${state === 'pending' && !ended ? '' : ' action-card-settled'}`}
       aria-labelledby={`${id}-question`}
       data-analytics-private
     >
@@ -198,32 +222,50 @@ export function ApprovalChoiceCard({
           {children}
         </div>
       </div>
-      {state === 'pending' ? (
+      {state === 'pending' && !ended ? (
         <div className="choice-card-list" role="group" aria-labelledby={`${id}-question`}>
           {rows.map((label, index) => (
             <button
               key={label}
               type="button"
               className="choice-card-row"
-              aria-disabled={locked}
-              onClick={() => void answer(index === 0, label)}
+              aria-disabled={locked || stopping}
+              onClick={() => {
+                if (stopping) return;
+                setStopError('');
+                if (index === 2) void stop();
+                else void answer(index === 0, label);
+              }}
             >
               <ChoiceBadge index={index} />
-              <ChoiceCopy label={label} />
+              <ChoiceCopy label={stopping && index === 2 ? 'Stopping…' : label} />
             </button>
           ))}
         </div>
       ) : (
         <div className="choice-card-list" role="group" aria-label="Your answer">
           <div className="choice-card-row choice-card-chosen">
-            {state !== 'expired' && <ChoiceBadge index={chosen} on />}
+            {(ended || state !== 'expired') && <ChoiceBadge index={chosen} on />}
             <ChoiceCopy
               label={
-                state === 'expired' ? (approval.failure ? 'Not run' : 'Expired') : rows[chosen]!
+                ended
+                  ? 'Task stopped'
+                  : state === 'expired'
+                    ? approval.failure
+                      ? 'Not run'
+                      : 'Expired'
+                    : rows[chosen]!
               }
             />
             {(state === 'working' || state === 'done') && <ApprovalStatus state={state} />}
           </div>
+        </div>
+      )}
+      {stopError && (
+        <div className="choice-card-footer">
+          <p className="choice-card-error" role="alert">
+            {stopError}
+          </p>
         </div>
       )}
       {state === 'uncertain' && <UncertainNote app={approval.app} />}

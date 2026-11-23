@@ -1,4 +1,14 @@
-import { lazy, memo, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  lazy,
+  memo,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { TaskMark } from './task-mark';
 import { createPortal } from 'react-dom';
 import { Copy, Check, CornerUpLeft, Ellipsis, SmilePlus } from './icons';
 import Markdown from 'react-markdown';
@@ -296,6 +306,7 @@ type MessagePanel =
 export interface MessageWork {
   title: string;
   status: 'needs_you' | 'working' | 'idle';
+  done?: boolean;
   live?: Activity;
   onOpen?(): void;
 }
@@ -303,7 +314,11 @@ export interface MessageWork {
 export function WorkLabel({ work }: { work: MessageWork }) {
   const content = (
     <>
-      {work.status !== 'idle' && <span className="message-work-dot" aria-hidden="true" />}
+      {work.status !== 'idle' ? (
+        <TaskMark status={work.status} size={22} />
+      ) : (
+        work.done && <TaskMark status="done" size={22} />
+      )}
       <span className="message-work-title">{work.title}</span>
       {work.status === 'working' && (
         <span className="message-work-step">
@@ -341,13 +356,17 @@ export function MessageBubble({
   onAnswer,
   answersDisabled,
   onApprove,
+  onStopTask,
+  taskStopped,
   codeRequest,
   handoff,
   handoffPaused,
   work,
+  task,
 }: {
   message: Message;
   work?: MessageWork;
+  task?: ReactNode;
   pendingAudio?: ImagePreview;
   connectedAppIds?: ReadonlySet<string>;
   grouped?: boolean;
@@ -357,6 +376,8 @@ export function MessageBubble({
   onAnswer?: AnswerChoicesProps['onAnswer'];
   answersDisabled?: boolean;
   onApprove?(approved: boolean, label: string): Promise<boolean | 'unavailable'>;
+  onStopTask?(): Promise<void>;
+  taskStopped?: boolean;
   codeRequest?: 'otp' | 'payment';
   handoff?: boolean;
   handoffPaused?: boolean;
@@ -780,6 +801,8 @@ export function MessageBubble({
                   approval={message.approval!}
                   disabled={answersDisabled}
                   onAnswer={onApprove}
+                  onStopTask={onStopTask}
+                  taskStopped={taskStopped}
                 >
                   {cardTitle}
                 </ApprovalChoiceCard>
@@ -957,6 +980,7 @@ export function MessageBubble({
             )}
           </div>
         </div>
+        {task && <div className="message-task">{task}</div>}
         {message.role === 'assistant' && !streaming && message.presentation?.type === 'apps' && (
           <MessagePresentation value={message.presentation} messageId={message.id} />
         )}

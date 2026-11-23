@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import type { Activity } from '../../shared/contracts';
 import { Check, ChevronDown } from './icons';
@@ -87,6 +87,7 @@ export function LiveLine({
   history?: boolean;
 }) {
   const labelId = useId();
+  const label = useRef<HTMLSpanElement>(null);
   const step = item?.step?.trim();
   const site = item?.doing === 'tool' ? item.site : null;
   const minutes = useQuietMinutes(item?.quietSince ?? '', quiet && Boolean(item));
@@ -102,8 +103,11 @@ export function LiveLine({
   const meta = [step ? site || work : null, minutes ? `${minutes} min` : null]
     .filter(Boolean)
     .join(' · ');
+  useEffect(() => {
+    if (label.current) label.current.title = described ? (label.current.textContent ?? '') : '';
+  }, [described, meta]);
   const current = (
-    <span className="live-line-current" id={labelId} role="status">
+    <span className="live-line-current" id={labelId} role="status" ref={label}>
       {described ? (
         <Markdown allowedElements={[]} unwrapDisallowed>
           {described}
