@@ -15,8 +15,8 @@ const reply = z.object({
     .array(z.object({ title: z.string(), when: z.string(), app: z.string().nullish() }))
     .max(10),
 });
-const recentMessages = 40;
-const inputLimit = 24_000;
+const recentMessages = 20;
+const inputLimit = 12_000;
 const contact = /@|https?:|www\.|\b[\p{L}\d-]+\.[a-z]{2,}\b|\d[\d\s().-]{5,}\d/iu;
 
 const hidden = (text: string) =>
