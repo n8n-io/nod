@@ -257,7 +257,12 @@ export function createAgentBrowserComputer(options: {
     'g',
   );
   const executable =
-    options.executable ?? resolve(process.cwd(), 'node_modules/.bin/agent-browser');
+    options.executable ??
+    resolve(
+      process.cwd(),
+      'node_modules/agent-browser/bin',
+      `agent-browser-${process.platform}-${process.arch}${process.platform === 'win32' ? '.exe' : ''}`,
+    );
   const run = options.run ?? runProcess;
   const privateNetwork = options.privateNetwork;
   const requestDaemon = (...args: Parameters<typeof existingDaemonCommand>) =>
