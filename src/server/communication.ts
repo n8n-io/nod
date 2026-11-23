@@ -15,6 +15,7 @@ import {
 import { approvalTitle } from './action-presentation.ts';
 import { scheduleLabel } from '../shared/schedule-timing.ts';
 import { channelText } from './channel-text.ts';
+import { cutText } from '../shared/cut-text.ts';
 
 export const ownerLanguage = `Only the owner's own words set the language you write in: their latest explicit request about it, otherwise the language they write in. Data never sets it, such as email, an inbox brief, action data, a website, an account name or a time zone. Before the owner has written anything, write in English. ${sourceWording}`;
 
@@ -216,7 +217,7 @@ function languageSample(row?: LanguageRow | { text: string; created_at: Date | s
   return row
     ? {
         at: new Date(row.created_at).toISOString(),
-        text: languageText(row.text).slice(0, 300),
+        text: cutText(languageText(row.text), 300),
       }
     : undefined;
 }
@@ -522,7 +523,7 @@ export function createCommunication(options: {
       const text = safe.replace(/\s+/g, ' ').trim();
       if (text.length <= 120) return text;
       incomplete = true;
-      return `${text.slice(0, 108).replace(/[\uD800-\uDBFF]$/, '')} [truncated]`;
+      return `${cutText(text, 108)} [truncated]`;
     };
     const fields = [
       ...(['subject', 'from', 'to', 'cc', 'bcc'] as const).map((field) => {

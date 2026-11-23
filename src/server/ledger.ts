@@ -32,6 +32,7 @@ import { afterCommit, transaction } from './transaction.ts';
 import { analyticsModel, snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
 import { analyticsMemoryOperation } from './analytics-events.ts';
 import { captureSettingChanges, type SettingActor } from './analytics-settings.ts';
+import { cutText } from '../shared/cut-text.ts';
 
 export const spendingLimitReached = 'This month’s spending limit is reached.';
 export const spendingLimitText = (monthlyUsd: number) =>
@@ -94,16 +95,15 @@ function visibleText(node: Nodes): string {
 }
 
 function messageTitle(value: string | null) {
-  const excerpt = value?.trim().slice(0, 2_000);
+  const excerpt = cutText(value?.trim() ?? '', 2_000);
   return excerpt
-    ? (visibleText(titleMarkdown.parse(excerpt)).trim().split('\n', 1)[0]?.trim().slice(0, 120) ??
-        '')
+    ? cutText(visibleText(titleMarkdown.parse(excerpt)).trim().split('\n', 1)[0]?.trim() ?? '', 120)
     : '';
 }
 
 function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'> {
   const id: string = row.source_id ?? '';
-  const first = (text: string | null) => text?.trim().split('\n')[0]?.slice(0, 120);
+  const first = (text: string | null) => cutText(text?.trim().split('\n')[0] ?? '', 120);
   const task = row.task as { title: string; started: boolean } | null;
   if (row.source === 'user')
     return { source: 'chat', title: messageTitle(row.text) || 'Your message' };
@@ -213,7 +213,7 @@ function presentStep(row: Record<string, any>): TrustStep {
         .replaceAll('**', ''),
     };
   if (row.type === 'step' || row.type === 'thought')
-    return { at, kind: 'note', title: String(row.summary).slice(0, 500), ...helper };
+    return { at, kind: 'note', title: cutText(String(row.summary), 500), ...helper };
   return {
     at,
     kind: 'tool',

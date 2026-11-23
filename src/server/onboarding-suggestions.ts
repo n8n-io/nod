@@ -15,6 +15,7 @@ import { hiddenEmail, privateEmailResult, type MailCheck } from './integration-r
 import { withoutSecretKeys } from './redaction.ts';
 import { lockThread } from './thread.ts';
 import { appToolArgs, appTools, type AppAccount, type AppTool } from './app-reads.ts';
+import { cutText } from '../shared/cut-text.ts';
 
 type Source = SuggestedTask['source'];
 type Task = Omit<SuggestedTask, 'id'> & { kind: 'now' | 'ongoing' };
@@ -78,9 +79,9 @@ const plain = (text: string) =>
 function fit(text: string, max: number, more = '') {
   const value = plain(text);
   if (value.length <= max) return value;
-  const cut = value.slice(0, max + 1);
+  const cut = cutText(value, max + 1);
   const space = cut.lastIndexOf(' ');
-  return `${(space > max / 2 ? cut.slice(0, space) : value.slice(0, max)).replace(/[\s,;:-]+$/, '')}${more}`;
+  return `${(space > max / 2 ? cut.slice(0, space) : cutText(value, max)).replace(/[\s,;:-]+$/, '')}${more}`;
 }
 
 const emailAddress = /[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,}/gi;

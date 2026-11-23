@@ -52,6 +52,7 @@ import type { ReplyDelivery, Turn } from './turn.ts';
 import type { ExecutionScope, WorkspaceCommandRecord } from '../shared/execution.ts';
 import type { MemoryBrief } from '../ports/memory-recall.ts';
 import { delimit } from './untrusted.ts';
+import { cutText } from '../shared/cut-text.ts';
 
 const imageBytes = (5 * 1024 * 1024 * 3) / 4;
 function toolProgress() {
@@ -158,7 +159,7 @@ export function webTarget(name: string, params: unknown, redact: (text: string) 
       .replace(/\s+/g, ' ')
       .trim();
     if (!text) return {};
-    return { detail: text.length > 40 ? `${text.slice(0, 39).trimEnd()}…` : text };
+    return { detail: text.length > 40 ? `${cutText(text, 39).trimEnd()}…` : text };
   }
   if (name !== 'fetch_content') return {};
   const url = first(input.url, input.urls);

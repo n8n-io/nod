@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import type { Presentation } from '../../shared/presentation';
+import { cutText } from '../../shared/cut-text';
 
 type ChartVisual = Extract<Presentation, { type: 'chart' }>;
 type Series = ChartVisual['series'][number];
@@ -289,7 +290,7 @@ function CartesianChart({ visual }: { visual: ChartVisual }) {
                                 : 'middle'
                         }
                       >
-                        {label.length > 14 ? `${label.slice(0, 12)}…` : label}
+                        {label.length > 14 ? `${cutText(label, 12)}…` : label}
                       </text>
                     ),
                 )}

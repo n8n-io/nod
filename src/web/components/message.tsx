@@ -60,6 +60,7 @@ import { BugReportCard } from './bug-report-card';
 import { ScheduleRunTrack } from './schedule-run';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
 import { copyContent, selectedText } from '../lib/clipboard';
+import { cutText } from '../../shared/cut-text';
 
 function CopyBlock({ children, table = false }: { children: React.ReactNode; table?: boolean }) {
   const content = useRef<HTMLDivElement>(null);
@@ -426,7 +427,7 @@ export function MessageBubble({
   const [quotePoint, setQuotePoint] = useState({ left: 0, top: 0 });
   const quoteButton = useRef<HTMLButtonElement>(null);
   function selectQuote() {
-    const value = selectedText(articleElement.current).trim().slice(0, 4000);
+    const value = cutText(selectedText(articleElement.current).trim(), 4000);
     const range = window.getSelection()?.rangeCount ? window.getSelection()!.getRangeAt(0) : null;
     if (value && range && typeof range.getBoundingClientRect === 'function') {
       const box = range.getBoundingClientRect();
@@ -455,7 +456,7 @@ export function MessageBubble({
     if (!quote) return;
     const clear = () => setQuote('');
     const selectionChanged = () => {
-      if (selectedText(articleElement.current).trim().slice(0, 4000) !== quote) clear();
+      if (cutText(selectedText(articleElement.current).trim(), 4000) !== quote) clear();
     };
     window.addEventListener('scroll', clear, true);
     window.addEventListener('resize', clear);

@@ -27,6 +27,7 @@ import type { ChannelLinkStatus } from '../../shared/contracts.ts';
 import { contactAttachment, locationAttachment } from './content.ts';
 import { canDeliverWhatsAppLiteral, whatsappText } from './format.ts';
 import { contactCards, sharedLocation } from '../../shared/channel-content.ts';
+import { cutText } from '../../shared/cut-text.ts';
 
 const silent: SocketConfig['logger'] = {
   level: 'silent',
@@ -165,7 +166,7 @@ export function createWhatsAppLinkedTransport(options: {
       options.mode === 'self-chat' ? [own] : options.allowedNumber ? [options.allowedNumber] : [];
     channel.status = channel.allowedSenderIds.length ? 'configured' : 'setup_required';
     state.accountHandle = `+${own}`;
-    state.accountName = auth.creds.me?.name?.slice(0, 200);
+    state.accountName = auth.creds.me?.name ? cutText(auth.creds.me.name, 200) : undefined;
     return channel.status === 'configured';
   }
   function drop(reason: WhatsAppDrop['reason'], message?: WAMessage) {
@@ -235,9 +236,9 @@ export function createWhatsAppLinkedTransport(options: {
       return locationAttachment({
         latitude: location.degreesLatitude,
         longitude: location.degreesLongitude,
-        ...('name' in location && location.name ? { name: location.name.slice(0, 200) } : {}),
+        ...('name' in location && location.name ? { name: cutText(location.name, 200) } : {}),
         ...('address' in location && location.address
-          ? { address: location.address.slice(0, 500) }
+          ? { address: cutText(location.address, 500) }
           : {}),
       });
     const contacts = content?.contactMessage
@@ -267,7 +268,7 @@ export function createWhatsAppLinkedTransport(options: {
               ? 'video/mp4'
               : 'application/octet-stream');
     const name =
-      content?.documentMessage?.fileName?.slice(0, 255) ||
+      cutText(content?.documentMessage?.fileName ?? '', 255) ||
       (sticker
         ? 'sticker.webp'
         : image

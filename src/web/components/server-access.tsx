@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { apiResponse, responseError } from '../lib/api';
 import { NodGlyph } from './motion';
 import { Button, Field, Input, Notice } from './ui';
+import { cutText } from '../../shared/cut-text';
 
 export function ServerAccess({ onConnected }: { onConnected(): Promise<boolean> }) {
   const [key, setKey] = useState('');
@@ -23,7 +24,7 @@ export function ServerAccess({ onConnected }: { onConnected(): Promise<boolean> 
         setError(
           response.status === 401
             ? 'Check your token and try again.'
-            : `Could not connect (HTTP ${response.status}): ${message.length > 200 ? `${message.slice(0, 199)}…` : message}`,
+            : `Could not connect (HTTP ${response.status}): ${message.length > 200 ? `${cutText(message, 199)}…` : message}`,
         );
         return;
       }

@@ -30,6 +30,7 @@ import {
   whatsappText,
 } from './format.ts';
 import { contactCards, sharedLocation } from '../../shared/channel-content.ts';
+import { cutText } from '../../shared/cut-text.ts';
 
 type Environment = Record<string, string | undefined>;
 
@@ -194,16 +195,12 @@ class Telegram extends TelegramAdapter {
     const quote = (status: string) => `${input.text}\n\n> ${status.replaceAll('\n', '\n> ')}`;
     let markdown = input.status ? quote(input.status) : input.text;
     if (input.status && !this.fits(markdown, 4096)) {
-      const graphemes = Array.from(
-        new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(input.status),
-        ({ segment }) => segment,
-      );
       let low = 1;
-      let high = graphemes.length - 1;
+      let high = input.status.length - 1;
       markdown = input.text;
       while (low <= high) {
         const count = Math.floor((low + high) / 2);
-        const candidate = quote(`${graphemes.slice(0, count).join('').trimEnd()}…`);
+        const candidate = quote(`${cutText(input.status, count).trimEnd()}…`);
         if (this.fits(candidate, 4096)) {
           markdown = candidate;
           low = count + 1;
@@ -306,18 +303,12 @@ const whatsappEnvelope = z.object({
 function chunks(text: string, limit = telegramTextLimit) {
   const parts: string[] = [];
   let rest = text;
-  const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
   while (rest.length > limit) {
     const slice = rest.slice(0, limit);
     let cut = slice.lastIndexOf('\n\n');
     if (cut < limit / 2) cut = slice.lastIndexOf('\n');
     if (cut < limit / 2) cut = limit;
-    let boundary = 0;
-    for (const { index, segment } of graphemes.segment(rest)) {
-      if (index + segment.length > cut) break;
-      boundary = index + segment.length;
-    }
-    cut = boundary || cut;
+    cut = cutText(rest, cut).length || cut;
     const last = rest.charCodeAt(cut - 1);
     if (last >= 0xd800 && last <= 0xdbff) cut--;
     parts.push(rest.slice(0, cut).trimEnd());

@@ -1,3 +1,5 @@
+import { cutText } from '../shared/cut-text.ts';
+
 export function modelErrorText(value: string, secrets: string[] = []) {
   const values = [
     ...new Set(
@@ -76,7 +78,7 @@ export async function modelServiceError(
     await reader?.cancel().catch(() => {});
     reader?.releaseLock();
   }
-  const details = modelErrorText(reason, secrets).slice(0, 2000);
+  const details = cutText(modelErrorText(reason, secrets), 2000);
   return new ModelServiceError(
     `${service} failed (HTTP ${response.status})${reason ? `: ${details}` : '.'}`,
     serviceReason ? modelErrorText(serviceReason, secrets) : undefined,

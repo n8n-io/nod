@@ -38,6 +38,7 @@ import { formatNumber } from '../lib/date-format';
 import { safeMessageLink } from '../lib/message-links';
 import { CodeView } from './attachment-code';
 import { Button } from './ui';
+import { cutText } from '../../shared/cut-text';
 
 type Category = 'trigger' | 'ai' | 'flow' | 'code' | 'http' | 'other';
 type WorkflowNode = {
@@ -113,7 +114,7 @@ const size = (value: unknown, fallback: number) =>
   typeof value === 'number' && value > 0 ? value : fallback;
 const range = (count: number) => Array.from({ length: count }, (_, index) => index);
 const clip = (value: string, length: number) =>
-  value.length > length ? `${value.slice(0, Math.max(1, length - 1))}…` : value;
+  value.length > length ? `${cutText(value, Math.max(1, length - 1))}…` : value;
 const segment = (type: string) => type.slice(type.lastIndexOf('.') + 1);
 const port = (box: Box, index: number, count: number) =>
   box.y + (box.h * (index + 1)) / (count + 1);

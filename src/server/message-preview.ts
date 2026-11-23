@@ -4,22 +4,13 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import remarkStringify from 'remark-stringify';
+import { cutText } from '../shared/cut-text.ts';
 
 const markdown = unified().use(remarkParse).use(remarkGfm).use(remarkStringify, {
   bullet: '-',
   emphasis: '*',
   fences: true,
 });
-
-function previewSlice(value: string, length: number): string {
-  let end = Math.min(length, value.length);
-  if (
-    (value.charCodeAt(end - 1) & 0xfc00) === 0xd800 &&
-    (value.charCodeAt(end) & 0xfc00) === 0xdc00
-  )
-    end--;
-  return value.slice(0, end);
-}
 
 const htmlBlocks = new Set([
   'address',
@@ -67,7 +58,7 @@ function htmlText(node: DefaultTreeAdapterMap['node']): string {
   let remaining = 1000;
   let visited = 0;
   const append = (value: string) => {
-    text += previewSlice(value, remaining);
+    text += cutText(value, remaining);
     remaining -= Math.min(value.length, remaining);
   };
   const separate = () => {
@@ -107,7 +98,7 @@ export function messagePreview(text: string): string {
     if (node.type === 'html' && node.value.length > remaining)
       node = { type: 'text', value: htmlText(parseFragment(node.value)) };
     if ('value' in node) {
-      const value = previewSlice(node.value, remaining);
+      const value = cutText(node.value, remaining);
       remaining -= Math.min(node.value.length, remaining);
       node.value = value;
       plain += node.type === 'html' ? htmlText(parseFragment(node.value)) : node.value;
@@ -132,7 +123,7 @@ export function messagePreview(text: string): string {
   } catch {
     plain ||= text;
   }
-  let fallback = previewSlice(plain, 1000).trimEnd();
+  let fallback = cutText(plain, 1000).trimEnd();
   for (;;) {
     const value = markdown
       .stringify({
@@ -141,6 +132,6 @@ export function messagePreview(text: string): string {
       })
       .trimEnd();
     if (value.length <= 4000) return value;
-    fallback = previewSlice(fallback, Math.floor(fallback.length / 2));
+    fallback = cutText(fallback, Math.floor(fallback.length / 2));
   }
 }

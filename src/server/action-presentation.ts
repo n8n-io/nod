@@ -1,6 +1,7 @@
 import { parseFragment, type DefaultTreeAdapterMap } from 'parse5';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { cutText } from '../shared/cut-text.ts';
 
 const apps: Record<string, string> = {
   GMAIL: 'Gmail',
@@ -99,7 +100,7 @@ export function gmailMessageTarget(result: unknown, expectedId: string) {
     if (!text) return;
     const marker = ' [truncated]';
     if (text.length <= limit) return text;
-    const prefix = text.slice(0, limit - marker.length).replace(/[\uD800-\uDBFF]$/, '');
+    const prefix = cutText(text, limit - marker.length);
     return `${prefix}${marker}`;
   };
   const subject = field(300, message.subject, header('subject'));
@@ -253,10 +254,7 @@ export function calendarEventTarget(result: unknown, expectedId: string) {
     .safeParse(self?.responseStatus);
   const target = {
     eventId: expectedId,
-    title:
-      title.length > 300
-        ? `${title.slice(0, 288).replace(/[\uD800-\uDBFF]$/, '')} [truncated]`
-        : title || 'Untitled event',
+    title: title.length > 300 ? `${cutText(title, 288)} [truncated]` : title || 'Untitled event',
     startsAt: startsAt.value,
     endsAt: endsAt.value,
     endExclusive: true,
@@ -380,7 +378,7 @@ export function approvalContent(
   const cut = preview.cut || text.length > 4000;
   return {
     fields,
-    ...(text ? { body: text.slice(0, 4000) } : {}),
+    ...(text ? { body: cutText(text, 4000) } : {}),
     ...(cut ? { bodyCut: true as const } : {}),
   };
 }
@@ -472,7 +470,7 @@ const host = (origin: unknown) => {
   }
 };
 
-const quoted = (text: string) => `“${text.length > 80 ? `${text.slice(0, 79)}…` : text}”`;
+const quoted = (text: string) => `“${text.length > 80 ? `${cutText(text, 79)}…` : text}”`;
 
 const dollarsOrNone = (value: unknown, label: string) =>
   value === null ? `no ${label}` : `${label} $${String(value)}`;
@@ -584,5 +582,5 @@ export function actionTarget(
       .fields?.map((field) => field.value)
       .join(' · ');
   })()?.trim();
-  return target ? target.slice(0, 300) : undefined;
+  return target ? cutText(target, 300) : undefined;
 }

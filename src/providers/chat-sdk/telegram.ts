@@ -4,6 +4,7 @@ import { MessagingAttachmentError } from '../../ports/messaging.ts';
 import { modelServiceError } from '../model-error.ts';
 import { contactAttachment, locationAttachment, telegramContactCard } from './content.ts';
 import { sharedLocation } from '../../shared/channel-content.ts';
+import { cutText } from '../../shared/cut-text.ts';
 
 export const telegramUpdateTypes = ['message', 'message_reaction', 'callback_query'];
 
@@ -238,7 +239,7 @@ export function telegramPairing(
     accountId,
     senderId: String(parsed.data.from.id),
     senderName:
-      [first_name, last_name].filter(Boolean).join(' ').trim().slice(0, 200) ||
+      cutText([first_name, last_name].filter(Boolean).join(' ').trim(), 200) ||
       'your Telegram account',
     ...(username && /^[A-Za-z0-9_]{1,64}$/.test(username) ? { senderUsername: username } : {}),
     messageId: message.id,

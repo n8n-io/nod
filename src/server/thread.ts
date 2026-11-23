@@ -81,6 +81,7 @@ import { lockKey } from './locks.ts';
 import { redactSecretText } from './redaction.ts';
 import { loadConversationLanguage } from './communication.ts';
 import { resemblesTaskAcknowledgement } from '../shared/task-ack.ts';
+import { cutText } from '../shared/cut-text.ts';
 
 const queue = 'thread-drain';
 const rasterTypes = new Set([
@@ -1531,7 +1532,7 @@ async function scheduleRunNotice(
   return presentationSchema.parse({
     version: 1,
     type: 'schedule-run',
-    title: row.title.slice(0, 120).replace(/[\uD800-\uDBFF]$/, ''),
+    title: cutText(row.title, 120),
     sources: [],
     scheduleId: row.scheduleId,
     revision: row.revision,

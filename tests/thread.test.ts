@@ -1,4 +1,5 @@
 import type { Presentation } from '../src/shared/presentation.ts';
+import { cutText } from '../src/shared/cut-text.ts';
 import {
   choiceAnswerText,
   splitQuestion,
@@ -14487,6 +14488,31 @@ test('a web search label keeps a known secret out even when operators or quotes 
   );
   assert.deepEqual(label, { detail: 'forecast' });
   assert.doesNotMatch(JSON.stringify(label), /alpha|beta/);
+});
+
+test('shown text is cut on whole characters and never past its limit', () => {
+  assert.equal(cutText('short', 10), 'short');
+  assert.equal(cutText(`e${'\u0301'.repeat(200)}`, 120), `e${'\u0301'.repeat(119)}`);
+  assert.equal(cutText(`😀${'\u0301'.repeat(200)}`, 121), `😀${'\u0301'.repeat(119)}`);
+  assert.equal(cutText(`a😀${'\u0301'.repeat(200)}`, 2), 'a');
+  for (const emoji of ['😀', '👩🏽‍💻', '🇩🇪']) {
+    const head = 'a'.repeat(36);
+    const text = `${head}${emoji}${'b'.repeat(20)}`;
+    assert.equal(cutText(text, 36 + emoji.length), `${head}${emoji}`);
+    assert.equal(cutText(text, 36 + emoji.length - 1), head);
+    for (let limit = 30; limit < 50; limit++) {
+      const cut = cutText(text, limit);
+      assert.ok(cut.length <= limit && Buffer.from(cut).toString() === cut && text.startsWith(cut));
+      assert.ok(cut.length <= 36 || cut.length >= 36 + emoji.length);
+    }
+  }
+});
+
+test('the activity line keeps an emoji whole at the cut', () => {
+  const line = (text: string) => webTarget('web_search', { query: text }, (value) => value).detail;
+  assert.equal(line(`${'a'.repeat(38)}😀 tail`), `${'a'.repeat(38)}…`);
+  assert.equal(line(`${'a'.repeat(37)}😀 tail`), `${'a'.repeat(37)}😀…`);
+  assert.equal(line(`${'a'.repeat(37)}👩🏽‍💻 tail`), `${'a'.repeat(37)}…`);
 });
 
 test(
