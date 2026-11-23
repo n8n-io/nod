@@ -1271,7 +1271,7 @@ button.message-work:is(:hover, :focus-visible) {
   margin-top: calc(-20px - var(--task-line-height));
   margin-bottom: 8px;
 }
-.messages:has(> .task-line) > .thinking .working-details:not(:has(.live-line[open])),
+.messages:has(> .task-line) > .thinking .working-details:not(:has(.live-line[open] > ol)),
 .messages:has(> .task-line) > .thinking .live-line[open] > ol > li:last-child {
   padding-right: calc(var(--task-line-width, 0px) + 16px);
 }
