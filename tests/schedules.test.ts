@@ -3213,15 +3213,26 @@ test(
           inputs.push(input as (typeof inputs)[number]);
           return {
             ideas: [
-              { title: 'Remind me to send my invoices', when: 'Fridays' },
-              { title: 'Brief me on my day', when: 'Weekday mornings', app: 'googlecalendar' },
-              { title: 'Recap my week', when: 'Fridays' },
-              { title: 'Sum up my Slack threads', when: 'Every evening', app: 'slack' },
+              { title: 'Remind me to take my synthetic pills', when: 'Daily', sensitive: true },
+              { title: 'Remind me to send my invoices', when: 'Fridays', sensitive: false },
+              {
+                title: 'Brief me on my day',
+                when: 'Weekday mornings',
+                app: 'googlecalendar',
+                sensitive: false,
+              },
+              { title: 'Recap my week', when: 'Fridays', sensitive: false },
+              {
+                title: 'Sum up my Slack threads',
+                when: 'Every evening',
+                app: 'slack',
+                sensitive: false,
+              },
             ],
           };
         },
       },
-      learning: async () => true,
+      memory: async () => ({ enabled: true, sensitive: false }),
       limitReached: async () => false,
       apps: async () => ['googlecalendar'],
       run: (work) => work(),
@@ -3248,6 +3259,10 @@ test(
       { title: 'Brief me on my day', when: 'Weekday mornings', app: 'googlecalendar' },
     ];
     assert.deepEqual(await shown(), expected);
+    assert.deepEqual(
+      (await pool.query('SELECT ideas FROM schedule_ideas')).rows[0].ideas,
+      expected,
+    );
     await say('owner-a', 'user', 'I plan my synthetic week on Mondays.', 20);
     await shown();
     assert.equal(inputs.length, 1);
