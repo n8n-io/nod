@@ -210,6 +210,41 @@ async function downloadDescriptor(
   return JSON.parse(await readFile(path, 'utf8'));
 }
 
+function publishedWindowsRuntime({ latest = false } = {}) {
+  const windows = JSON.parse(
+    run(process.execPath, ['desktop/scripts/runtime-inputs.mjs'], {
+      env: { ...process.env, NOD_DESKTOP_TARGET: 'win32-x64' },
+    }),
+  ).fingerprint;
+  if (!hashPattern.test(windows)) throw new Error('Invalid runtime fingerprint.');
+  const releases = gh([
+    'api',
+    `repos/${releaseRepository}/releases?per_page=100`,
+    '--paginate',
+    '--jq',
+    '.[] | {tag_name, draft, assets: [.assets[] | {name}]}',
+  ])
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .filter(
+      (release) =>
+        !release.draft &&
+        /^nod-v/.test(release.tag_name) &&
+        release.assets?.some((asset) => asset.name === windowsRuntimeArchive),
+    );
+  const published = (release) =>
+    release.assets
+      .map((asset) => /^runtime-win32-x64-([a-f0-9]{64})\.json$/.exec(asset.name)?.[1])
+      .find(Boolean);
+  const windowsRuntime = releases.find((release) => published(release) === windows);
+  const fallback = latest && !windowsRuntime && releases.find(published);
+  return {
+    windows_runtime_fingerprint: fallback ? published(fallback) : windows,
+    windows_runtime_tag: (windowsRuntime || fallback)?.tag_name || '',
+  };
+}
+
 async function plan() {
   if (process.env.GITHUB_REF !== 'refs/heads/main')
     throw new Error('Desktop releases must start from main.');
@@ -281,34 +316,10 @@ async function plan() {
         docker_arch: target === 'arm64' ? 'arm64' : 'amd64',
       });
     }
-    const windows = JSON.parse(
-      run(process.execPath, ['desktop/scripts/runtime-inputs.mjs'], {
-        env: { ...process.env, NOD_DESKTOP_TARGET: 'win32-x64' },
-      }),
-    ).fingerprint;
-    if (!hashPattern.test(windows)) throw new Error('Invalid runtime fingerprint.');
-    const windowsRuntime = gh([
-      'api',
-      `repos/${releaseRepository}/releases?per_page=100`,
-      '--paginate',
-      '--jq',
-      '.[] | {tag_name, draft, assets: [.assets[] | {name}]}',
-    ])
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => JSON.parse(line))
-      .find(
-        (release) =>
-          !release.draft &&
-          /^nod-v/.test(release.tag_name) &&
-          [`runtime-win32-x64-${windows}.json`, windowsRuntimeArchive].every((name) =>
-            release.assets?.some((asset) => asset.name === name),
-          ),
-      );
+    const windowsRuntime = publishedWindowsRuntime();
     await outputValues({
       ...first,
-      windows_runtime_fingerprint: windows,
-      windows_runtime_tag: windowsRuntime?.tag_name || '',
+      ...windowsRuntime,
       runtime_refresh: process.env.NOD_RUNTIME_REFRESH || 'local',
       mac_matrix: JSON.stringify({ include: targets }),
       runtime_matrix: JSON.stringify({
@@ -1123,4 +1134,9 @@ else if (command === 'stage') console.log(JSON.stringify(await draftApp({ stageO
 else if (command === 'draft-all') await draftAll();
 else if (command === 'stage-all') await draftAll({ stageOnly: true });
 else if (command === 'reuse-windows-runtime') await reuseWindowsRuntime();
-else throw new Error('Expected plan, draft, stage, stage-all, draft-all or reuse-windows-runtime.');
+else if (command === 'windows-runtime')
+  await outputValues(publishedWindowsRuntime({ latest: true }));
+else
+  throw new Error(
+    'Expected plan, draft, stage, stage-all, draft-all, reuse-windows-runtime or windows-runtime.',
+  );
