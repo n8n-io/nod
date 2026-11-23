@@ -2754,6 +2754,7 @@ test('waiting scheduled runs open their pending question without starting anothe
     messageId: randomUUID(),
     messagePreview: 'Synthetic report ready.',
     messageText: 'Synthetic report ready.',
+    attachmentMessageId: null,
   };
   const queued: ScheduleRun = {
     ...completed,
