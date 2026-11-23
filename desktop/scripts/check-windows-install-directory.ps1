@@ -13,6 +13,10 @@ public static class InstallerWindow {
   public static extern bool PostMessage(IntPtr window, uint message, IntPtr command, IntPtr value);
   [DllImport("user32.dll")]
   public static extern IntPtr GetLastActivePopup(IntPtr window);
+  [DllImport("user32.dll")]
+  public static extern bool IsWindowVisible(IntPtr window);
+  [DllImport("user32.dll")]
+  public static extern bool IsWindowEnabled(IntPtr window);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)]
   public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string name, string title);
   [DllImport("user32.dll")]
@@ -71,10 +75,12 @@ try {
   [void][InstallerWindow]::PostMessage($handle, 0x111, [IntPtr]1, [IntPtr]::Zero)
   $popup = Wait-For 'occupied folder refused' {
     $active = [InstallerWindow]::GetLastActivePopup($handle)
-    if ($active -ne $handle -and $active -ne [IntPtr]::Zero) { $active }
+    if ($active -ne $handle -and $active -ne [IntPtr]::Zero -and [InstallerWindow]::IsWindowVisible($active)) { $active }
   }
-  [void][InstallerWindow]::PostMessage($popup, 0x111, [IntPtr]1, [IntPtr]::Zero)
-  [void](Wait-For 'folder page restored' { [InstallerWindow]::GetLastActivePopup($handle) -eq $handle })
+  $okay = [InstallerWindow]::GetDlgItem($popup, 1)
+  if ($okay -eq [IntPtr]::Zero) { throw 'The folder warning has no OK button.' }
+  [void][InstallerWindow]::PostMessage($okay, 0xF5, [IntPtr]::Zero, [IntPtr]::Zero)
+  [void](Wait-For 'folder page restored' { -not [InstallerWindow]::IsWindowVisible($popup) -and [InstallerWindow]::IsWindowEnabled($handle) })
   $page = Get-FolderPage
   $handle = $page.Window
   if ([InstallerWindow]::SendMessage($page.Field, 0xC, [IntPtr]::Zero, $env:NOD_INSTALLER_TARGET) -eq [IntPtr]::Zero) {
@@ -94,7 +100,9 @@ try {
     $process.Refresh()
     if (-not $process.HasExited) {
       [Console]::Error.WriteLine("Installer window: $($process.MainWindowTitle)")
-      Save-InstallerWindow $process.MainWindowHandle
+      $active = [InstallerWindow]::GetLastActivePopup($process.MainWindowHandle)
+      if ($active -ne [IntPtr]::Zero -and [InstallerWindow]::IsWindowVisible($active)) { Save-InstallerWindow $active }
+      else { Save-InstallerWindow $process.MainWindowHandle }
     }
   } catch { [Console]::Error.WriteLine("Installer capture failed: $($_.Exception.Message)") }
   throw $failure
