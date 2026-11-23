@@ -111,7 +111,7 @@ An interrupted Mac setup from an older version can lack that record. If retry st
 
 The background service reports each startup step, and the startup log records each step with the time since the service started. Loading its code can take up to ten minutes on a slow or busy computer. Each later step can take two minutes. If a step takes longer, Nod stops waiting, and the log records the elapsed wait, the last health check failure, the last startup step and whether the service reported its port. An unexpected service exit has a separate log entry.
 
-On Windows, an interrupted first setup can leave the private computer half installed. The next attempt removes that unfinished computer and installs it again. A failed setup keeps its verified download, so **Try again** does not download it again.
+On Windows, an interrupted first setup can leave the private computer half installed. The next attempt removes that unfinished registration and imports the computer into a new, empty disk folder. This avoids a location conflict with an older disk or another WSL registration. Other files and computers that completed setup are kept. A failed setup keeps its verified download, so **Try again** does not download it again.
 
 On a Mac, setup keeps runtime files that passed their checks, even if a later download fails. **Try again** checks and reuses those files. It does not remove a verified image while the private computer loads it.
 
@@ -136,6 +136,8 @@ Nod versions before 0.7.0 on Windows can't install their own updates. Quit Nod f
 Nod says it could not start WSL 2 when WSL is missing, when Windows has not turned on its virtual machine feature, or when WSL needs an update. The message ends with the error from Windows, in your language.
 
 Select **Install WSL** in Nod, approve the administrator request, restart the PC and open Nod again. This installs or updates WSL and turns on the features it needs. A device policy can block WSL installation. If the Windows error says virtualization is turned off, turn it on in your PC's firmware settings first.
+
+A recognized WSL location conflict, access error, or import error keeps its specific cause. These errors do not offer **Install WSL**.
 
 ### PostgreSQL fails after a Mac VM kernel update
 
@@ -230,7 +232,7 @@ If the workspace crashes, use **Report bug** on the error screen before **Reload
 
 In the desktop app, if Nod's background service or its window stops, Nod shows its error screen. Select **Report bug** there. A separate report form opens without restarting the failed service. The menu bar **Report bug…** entry opens the same form while startup has failed.
 
-Describe the failure, then select **Review**. The startup report contains only fixed startup states, error classes and codes, versions, counts and event ages. Nod omits startup prose, log text, paths, URLs, account details and message content. It keeps up to 100 technical events and 48 KB in memory. It does not read a log file or earlier disk history for the report. Unknown fields are omitted. Error codes come from structured error fields, never from a message. Your description stays exactly as you wrote it. Review the exact attachment, then select **Send report**. You can untick **Include startup report** to send only your description. Keep the form open until you send it; the startup form does not save an unsent draft.
+Describe the failure, then select **Review**. The startup report contains only fixed startup states, error classes and codes, versions, counts and event ages. Nod omits startup prose, log text, paths, URLs, account details and message content. It keeps up to 100 technical events and 48 KB in memory. It does not read a log file or earlier disk history for the report. Unknown fields are omitted. The report reads error codes only from structured fields. The Windows runtime puts recognized WSL error codes in a separate field. The report keeps only codes from a fixed list. Your description stays exactly as you wrote it. Review the exact attachment, then select **Send report**. You can untick **Include startup report** to send only your description. Keep the form open until you send it; the startup form does not save an unsent draft.
 
 If the send result is unknown, select **Check status** while the startup form is open. An unknown or rejected result shows the collector's HTTP status when it is available. The code alone does not confirm delivery. If Nod restarts into the startup error screen, reopen **Report bug** to check the saved submission instead of sending it again. **Show startup log** still opens the local log when you need it.
 

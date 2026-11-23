@@ -444,6 +444,8 @@ jobs:
         run: node .github/scripts/desktop-release.mjs reuse-windows-runtime
       - name: Package the Windows installer
         run: node desktop/scripts/build-windows.mjs
+      - name: Check WSL recovery and occupied install locations
+        run: node desktop/scripts/check-windows.mjs
       - name: Set up on the latest release, update to this build and start again
         shell: bash
         env:

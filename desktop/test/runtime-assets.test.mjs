@@ -4897,7 +4897,8 @@ test(
     await writeFile(
       join(system, 'System32', 'wsl.exe'),
       `#!${process.execPath}
-const { readFileSync, writeFileSync } = require('node:fs');
+const { existsSync, readFileSync, writeFileSync } = require('node:fs');
+const { join } = require('node:path');
 const path = ${JSON.stringify(statePath)};
 const state = JSON.parse(readFileSync(path, 'utf8'));
 const args = process.argv.slice(2);
@@ -4909,11 +4910,18 @@ else if (args[0] === '--list')
 if (args[0] === '--unregister') state.registered = state.ready = [];
 if (args[0] === '--import') {
   if (state.broken) {
-    process.stdout.write(Buffer.from("La machine virtuelle n’a pas pu être démarrée car une fonctionnalité requise n’est pas installée.\\r\\nCode d’erreur : Wsl/Service/RegisterDistro/CreateVm/HCS/HCS_E_SERVICE_NOT_AVAILABLE\\r\\n", 'utf16le'));
+    const reason = state.broken === true
+      ? "La machine virtuelle n’a pas pu être démarrée car une fonctionnalité requise n’est pas installée.\\r\\nCode d’erreur : Wsl/Service/RegisterDistro/CreateVm/HCS/HCS_E_SERVICE_NOT_AVAILABLE\\r\\n"
+      : 'Synthetic WSL failure.\\r\\nError code: Wsl/Service/RegisterDistro/' + state.broken + '\\r\\n';
+    process.stdout.write(Buffer.from(reason, 'utf16le'));
+    code = 1;
+  } else if (existsSync(join(args[2], 'ext4.vhdx'))) {
+    process.stdout.write(Buffer.from('The supplied install location is already in use.\\r\\nError code: Wsl/Service/RegisterDistro/ERROR_FILE_EXISTS\\r\\n', 'utf16le'));
     code = 1;
   } else {
     state.registered = state.ready = [args[1]];
     state.imported = args[2];
+    writeFileSync(join(args[2], 'ext4.vhdx'), 'synthetic computer disk');
   }
 }
 if (args[0] === '--distribution') {
@@ -4979,6 +4987,7 @@ process.exit(code);
       assert.equal(error.code, 'NOD_WSL_REQUIRED');
       assert.equal(error.step, 'import');
       assert.equal(error.exitCode, 1);
+      assert.equal(error.wslCode, 'HCS_E_SERVICE_NOT_AVAILABLE');
       assert.match(error.message, /HCS_E_SERVICE_NOT_AVAILABLE/);
       assert.match(error.message, /une fonctionnalité requise n’est pas installée/);
       assert.equal(error.message.includes('\0'), false);
@@ -4995,7 +5004,9 @@ process.exit(code);
     assert.equal(sha256(await readFile(kept)), sha256(archive));
 
     const elsewhere = join(root, 'another drive');
-    await mkdir(elsewhere);
+    const occupied = join(elsewhere, distribution);
+    await mkdir(occupied, { recursive: true });
+    await writeFile(join(occupied, 'ext4.vhdx'), 'synthetic existing computer');
     await wsl({ ready: [distribution], registered: [distribution], broken: false });
     await assert.rejects(prepare(elsewhere), (error) => {
       assert.equal(error.code, undefined);
@@ -5015,16 +5026,46 @@ process.exit(code);
     assert.equal(downloads, 1);
     assert.equal((await saved()).initializing, undefined);
     await assert.rejects(stat(kept), { code: 'ENOENT' });
-    const computer = join(elsewhere, distribution);
-    assert.equal(JSON.parse(await readFile(statePath, 'utf8')).imported, computer);
+    const computer = JSON.parse(await readFile(statePath, 'utf8')).imported;
+    assert.equal(dirname(computer), occupied);
+    assert.equal(
+      await readFile(join(occupied, 'ext4.vhdx'), 'utf8'),
+      'synthetic existing computer',
+    );
     assert.equal((await saved()).computerPath, computer);
+    await wsl({});
+    await assert.rejects(prepare(join(root, 'unused folder')), { step: 'start', exitCode: 7 });
+    assert.deepEqual(await wsl(), [
+      '--status',
+      '--list --quiet',
+      '--list --quiet',
+      `--distribution ${distribution}`,
+    ]);
+    assert.equal((await saved()).computerPath, computer);
+    assert.equal(await readFile(join(computer, 'ext4.vhdx'), 'utf8'), 'synthetic computer disk');
     await writeFile(join(elsewhere, 'keep.txt'), 'synthetic owner file');
     await wsl({ offline: true });
     await removeWindowsComputer(profile);
     assert.deepEqual((await readdir(elsewhere)).sort(), [distribution, 'keep.txt'].sort());
     await wsl({ offline: false });
     await removeWindowsComputer(profile);
-    assert.deepEqual(await readdir(elsewhere), ['keep.txt']);
+    assert.deepEqual((await readdir(elsewhere)).sort(), [distribution, 'keep.txt'].sort());
+    assert.deepEqual(await readdir(occupied), ['ext4.vhdx']);
+    assert.equal(
+      await readFile(join(occupied, 'ext4.vhdx'), 'utf8'),
+      'synthetic existing computer',
+    );
+    for (const code of ['ERROR_FILE_EXISTS', 'E_ACCESSDENIED']) {
+      await wsl({ ready: [], registered: [], broken: code });
+      await assert.rejects(prepare(elsewhere), (error) => {
+        assert.equal(error.code, undefined);
+        assert.equal(error.wslCode, code);
+        assert.equal(error.step, 'import');
+        assert.equal(error.exitCode, 1);
+        assert.match(error.message, new RegExp(code));
+        return true;
+      });
+    }
   },
 );
 

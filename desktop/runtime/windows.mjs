@@ -4,6 +4,7 @@ import { createReadStream, createWriteStream } from 'node:fs';
 import {
   access,
   lstat,
+  mkdtemp,
   mkdir,
   readdir,
   readFile,
@@ -13,12 +14,13 @@ import {
   statfs,
   writeFile,
 } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
 import { assetHash, resumableDownload, timeLeft } from './assets.mjs';
 import { execute, finishRuntime } from './index.mjs';
+import { startupWslCode } from '../../src/shared/startup-feedback-facts.mjs';
 
 const holders = new Map();
 const distributionName = (root) =>
@@ -67,10 +69,19 @@ async function runWsl(wsl, args, options, source = 'host') {
     return await execute(wsl, args, options);
   } catch (error) {
     options.signal?.throwIfAborted();
+    const wslCode = startupWslCode(error.details?.match(/\bWsl\/(?:\w+\/)*(\w+)\b/)?.[1]);
+    if (wslCode) error.wslCode = wslCode;
+    const repair =
+      wslCode === 'HCS_E_SERVICE_NOT_AVAILABLE' ||
+      wslCode === 'HCS_E_HYPERV_NOT_INSTALLED' ||
+      wslCode === 'WSL_E_WSL_OPTIONAL_COMPONENT_REQUIRED' ||
+      wslCode === 'ERROR_SERVICE_DISABLED' ||
+      wslCode === 'ERROR_SERVICE_DOES_NOT_EXIST';
     if (
-      source === 'guest'
+      (wslCode && !repair) ||
+      (source === 'guest'
         ? error.exitCode !== 4294967295
-        : source === 'host' && !Number.isInteger(error.exitCode)
+        : source === 'host' && !Number.isInteger(error.exitCode))
     )
       throw error;
     throw Object.assign(
@@ -80,6 +91,7 @@ async function runWsl(wsl, args, options, source = 'host') {
       {
         code: 'NOD_WSL_REQUIRED',
         exitCode: error.exitCode,
+        ...(wslCode && { wslCode }),
         details: [error.code, error.stack || error.message, error.details]
           .filter(Boolean)
           .join('\n'),
@@ -445,11 +457,11 @@ async function prepareWindows(options, onComputerStart, progress) {
         throw new Error('The Windows computer image has an unexpected size.');
       if (!existing) {
         progress.step = 'import';
-        saved.initializing = true;
-        saved.computerPath = computerPath;
-        await save();
         await mkdir(computerPath, { recursive: true });
-        await host(['--import', distribution, computerPath, image, '--version', '2'], {
+        saved.initializing = true;
+        saved.computerPath = await mkdtemp(join(computerPath, 'install-'));
+        await save();
+        await host(['--import', distribution, saved.computerPath, image, '--version', '2'], {
           timeout: 1_200_000,
         });
         delete saved.initializing;
@@ -594,7 +606,9 @@ export async function removeWindowsComputer(dataRoot) {
     listed &&
     saved?.distribution === distribution &&
     typeof saved.computerPath === 'string' &&
-    basename(saved.computerPath) === distribution
+    (basename(saved.computerPath) === distribution ||
+      (basename(dirname(saved.computerPath)) === distribution &&
+        /^install-[a-zA-Z0-9]{6}$/.test(basename(saved.computerPath))))
   )
     await rm(saved.computerPath, { recursive: true, force: true });
 }

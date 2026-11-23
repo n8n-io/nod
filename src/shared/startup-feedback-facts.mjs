@@ -141,6 +141,20 @@ const codes = new Set([
   'NOD_COMPUTER_STORAGE_FULL',
   'NOD_KVM_UNAVAILABLE',
 ]);
+const wslCodes = new Set([
+  'HCS_E_SERVICE_NOT_AVAILABLE',
+  'HCS_E_HYPERV_NOT_INSTALLED',
+  'WSL_E_WSL_OPTIONAL_COMPONENT_REQUIRED',
+  'ERROR_SERVICE_DISABLED',
+  'ERROR_SERVICE_DOES_NOT_EXIST',
+  'ERROR_FILE_EXISTS',
+  'ERROR_ALREADY_EXISTS',
+  'E_ILLEGAL_STATE_CHANGE',
+  'E_ACCESSDENIED',
+  'ERROR_ACCESS_DENIED',
+  'ERROR_DISK_FULL',
+  'WSL_E_IMPORT_FAILED',
+]);
 const reasons = {
   status_regular: 'The saved report status is not one regular file.',
   status_changed: 'The saved report status changed. Check it again.',
@@ -183,6 +197,8 @@ const choice = (set, value) => (typeof value === 'string' && set.has(value) ? va
 const integer = (value, min, max) =>
   Number.isSafeInteger(value) && value >= min && value <= max ? value : undefined;
 
+export const startupWslCode = (value) => choice(wslCodes, value);
+
 export function startupErrorFacts(value) {
   const result = { detailsOmitted: true };
   for (const [key, selected] of [
@@ -199,6 +215,7 @@ export function startupErrorFacts(value) {
     ['signal', choice(signals, data(value, 'signal'))],
     ['code', choice(codes, data(value, 'code'))],
     ['step', choice(steps, data(value, 'step'))],
+    ['wslCode', startupWslCode(data(value, 'wslCode'))],
   ])
     if (selected !== undefined) result[key] = selected;
   return result;

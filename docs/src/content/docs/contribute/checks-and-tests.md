@@ -262,6 +262,8 @@ flowchart TD
 
 A daily CI run at 03:17 UTC uses every check, including both Mac architectures and full Windows update acceptance. A manual CI run also uses every check, except a run on `release/desktop`, which compares that branch with `main`. The shared runner fetches two commits to read the merge base. A manual run on `release/desktop` fetches full history. If that base is unavailable, CI runs every check. New pull request commits cancel older runs for that pull request. Main runs stay bound to each commit because releases require CI to pass on their exact source. Daily runs have a separate group so a push cannot cancel them.
 
+The daily and manual Windows startup job also tests WSL errors, unfinished registrations, and occupied disk folders.
+
 The **Self-host bundle** workflow builds and checks both Linux architectures on `main` when package, container, deployment, or bundled documentation inputs change. Pull requests do not export these release bundles. It also runs each Sunday at 04:47 UTC and on request. Ordinary web and server changes do not create both bundles. To get a bundle for a specific revision, run that workflow on the revision. Draft release creation still needs its separate manual input.
 
 The selection rules are in [`.github/scripts/ci-scope.mjs`](https://github.com/n8n-io/nod/blob/main/.github/scripts/ci-scope.mjs). The shared runner selects checks and affected tests after installing the tools. It starts without waiting for a separate selection job. CI tests these rules with disposable Git repositories, including renames, removed tests and version-only releases. Workflow changes also run a pinned, checksum-verified actionlint to check syntax and expressions.

@@ -8479,7 +8479,7 @@ test('startup reports require review and keep exact redacted content through sen
       phase: 'error',
       error: `Synthetic failure for ${privateName} ${secret}`,
       details: 'HTTP 503',
-      failure: { class: 'Error', httpStatus: 503 },
+      failure: { class: 'Error', httpStatus: 503, wslCode: 'ERROR_FILE_EXISTS' },
     },
     delivery: {
       configured: true,
@@ -8516,6 +8516,7 @@ test('startup reports require review and keep exact redacted content through sen
   ])
     assert.ok(!content.includes(value), value);
   assert.match(content, /503/);
+  assert.equal(JSON.parse(content).startup.failure.wslCode, 'ERROR_FILE_EXISTS');
   assert.ok(!content.includes('2026-11-19T'));
   assert.equal(typeof JSON.parse(content).startupLog.entries[0].ageMs, 'number');
   options.startupLog.entries = [
@@ -9638,18 +9639,21 @@ test('startup facts keep only structured bounded codes and do not call getters o
       code: 'NOD_WSL_REQUIRED',
       step: 'import',
       exitCode: 4294967295,
+      wslCode: 'ERROR_FILE_EXISTS',
     }),
     {
       detailsOmitted: true,
       exitCode: 4294967295,
       code: 'NOD_WSL_REQUIRED',
       step: 'import',
+      wslCode: 'ERROR_FILE_EXISTS',
     },
   );
   assert.deepEqual(
     startupErrorFacts({
       code: 'NOD_SYNTHETIC_PRIVATE_CODE',
       step: 'C:\\Users\\Synthetic Owner',
+      wslCode: 'SYNTHETIC_PRIVATE_WSL_CODE',
     }),
     { detailsOmitted: true },
   );
@@ -9660,6 +9664,7 @@ test('startup facts keep only structured bounded codes and do not call getters o
         'name',
         'code',
         'step',
+        'wslCode',
         'syscall',
         'status',
         'phase',
