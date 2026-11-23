@@ -99,7 +99,8 @@ function VenueCard({ venue, action }: { venue: Venue; action?: ReactNode }) {
   const detailsId = useId();
   const [open, setOpen] = useState(false);
   const hasPhotos = Boolean(venue.photos?.length);
-  const price = venue.facts.findIndex((fact, index) => index > 1 && priceLabel.test(fact.label));
+  const first = venue.facts.findIndex((fact) => priceLabel.test(fact.label));
+  const price = first > 1 ? first : -1;
   const summary = venue.facts.filter((_, index) => index < 2 || index === price);
   const rest = venue.facts.filter((_, index) => index >= 2 && index !== price);
   const more = rest.length > 0 || Boolean(venue.notes?.length) || Boolean(venue.rating);
@@ -143,8 +144,8 @@ function VenueCard({ venue, action }: { venue: Venue; action?: ReactNode }) {
             />
           )}
         </div>
-        {more && open && (
-          <div className="booking-details" id={detailsId}>
+        {more && (
+          <div className="booking-details" id={detailsId} hidden={!open}>
             {rest.length > 0 && (
               <dl className="booking-facts">
                 {rest.map((fact, index) => (

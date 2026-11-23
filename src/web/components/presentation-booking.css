@@ -272,7 +272,7 @@
   text-decoration: none;
   transition: border-color 200ms ease;
 }
-.message-presentation .booking-check:is(:hover, :focus-visible) {
+.message-presentation .booking-check:focus-visible {
   border-color: var(--muted-foreground);
   text-decoration: none;
 }
@@ -290,12 +290,12 @@
   font-size: 13px;
   cursor: pointer;
 }
-.booking-more:is(:hover, :focus-visible) {
+.booking-more:focus-visible {
   background: var(--control-hover);
   color: var(--foreground);
 }
-.booking-more > svg {
-  transition: transform 200ms ease;
+.booking-details[hidden] {
+  display: none;
 }
 .booking-more[aria-expanded='true'] > svg {
   transform: rotate(180deg);
@@ -337,7 +337,20 @@
     gap: 12px 16px;
   }
 }
+@media (prefers-reduced-motion: no-preference) {
+  .booking-more > svg {
+    transition: transform 200ms ease;
+  }
+}
 @media (hover: hover) and (pointer: fine) {
+  .message-presentation .booking-check:hover {
+    border-color: var(--muted-foreground);
+    text-decoration: none;
+  }
+  .booking-more:hover {
+    background: var(--control-hover);
+    color: var(--foreground);
+  }
   .booking-photo-picker button:hover {
     background: var(--control-hover);
     text-decoration: none;
