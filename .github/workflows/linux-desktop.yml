@@ -78,7 +78,7 @@ jobs:
           echo "NOD_DESKTOP_VERSION=${RELEASE_VERSION:-$(node -p 'JSON.parse(require("fs").readFileSync("desktop/package.json")).version')}" >> "$GITHUB_ENV"
           echo "NOD_RELEASE_SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - name: Set up Docker build cache
-        uses: useblacksmith/setup-docker-builder@06dd9c83a5d541274d2e3ac67625560979275267
+        uses: useblacksmith/setup-docker-builder@9657a6e02ca6445e6d6ce5ffaf370f4828dea50d
         with:
           cache-key: n8n-io/nod/desktop-images-linux-x64
       - name: Build the workspace image
