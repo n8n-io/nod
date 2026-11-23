@@ -721,7 +721,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     };
   }
 
-  async function recordObservation(turnId: string, raw: unknown) {
+  async function recordObservation(turnId: string, raw: unknown, shared?: PoolClient) {
     z.uuid().parse(turnId);
     const input = observationSchema.parse(raw);
     const result = await transaction(async (client) => {
@@ -734,9 +734,9 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         }>(
           `SELECT r.id,r.schedule_id AS "scheduleId",r.baseline_observation AS "baselineObservation",
              r.observation
-           FROM schedule_runs r JOIN turns u ON u.id=r.turn_id AND u.owner_id=r.owner_id
-           JOIN threads th ON th.id=u.thread_id AND th.archived_at IS NULL
-           WHERE r.turn_id=$1 AND r.owner_id=$2 AND u.status='running'
+           FROM schedule_runs r JOIN turns u ON u.session_id=r.turn_id AND u.owner_id=r.owner_id
+           JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id AND th.archived_at IS NULL
+           WHERE u.id=$1 AND r.owner_id=$2 AND u.status='running'
            FOR UPDATE OF r,u`,
           [turnId, ownerId],
         )
@@ -764,8 +764,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         observation,
         previous: prior,
       };
-    });
-    refresh();
+    }, shared);
+    afterCommit(shared ?? pool, refresh);
     return result;
   }
 
