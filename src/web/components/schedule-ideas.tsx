@@ -37,7 +37,7 @@ function shuffled<T>(items: T[]) {
 
 export function ScheduleIdeas({ first, onAsk }: { first: boolean; onAsk(text: string): void }) {
   const { data: connections } = usePageData<Connection[]>('/api/apps');
-  const { data: personal } = usePageData<{ ideas: Idea[] }>('/api/schedules/ideas');
+  const { data: personal, loading } = usePageData<{ ideas: Idea[] }>('/api/schedules/ideas');
   const [order] = useState(() => shuffled(ideas));
   const connected = new Set(
     (connections ?? []).filter((item) => item.status === 'connected').map((item) => item.slug),
@@ -61,6 +61,7 @@ export function ScheduleIdeas({ first, onAsk }: { first: boolean; onAsk(text: st
       .slice(0, (invite ? 2 : 3) - mined.length),
     ...(invite ? [invite] : []),
   ];
+  if (loading && !personal) return null;
   return (
     <section className="schedule-ideas" aria-labelledby="schedule-ideas-title">
       <h2 id="schedule-ideas-title">

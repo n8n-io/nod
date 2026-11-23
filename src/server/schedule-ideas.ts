@@ -156,8 +156,11 @@ export function createScheduleIdeas(options: {
   function registerRoutes(app: FastifyInstance) {
     app.get('/api/schedules/ideas', async (_request, response) => {
       const [saved, memory] = await Promise.all([
-        pool.query<{ ideas: ScheduleIdea[] }>(
-          'SELECT ideas FROM schedule_ideas WHERE owner_id=$1',
+        pool.query<{ idea: ScheduleIdea }>(
+          `SELECT idea FROM schedule_ideas s, jsonb_array_elements(s.ideas) WITH ORDINALITY AS i(idea,n)
+           WHERE s.owner_id=$1 AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.owner_id=s.owner_id AND m.role='user'
+             AND m.created_at>s.read_until::timestamptz AND strpos(m.text,idea->>'title')>0)
+           ORDER BY n`,
           [ownerId],
         ),
         options.memory(),
@@ -166,7 +169,7 @@ export function createScheduleIdeas(options: {
       response.header('cache-control', 'no-store');
       return {
         ideas: memory.enabled
-          ? (saved.rows[0]?.ideas ?? []).filter((idea) => memory.sensitive || !idea.sensitive)
+          ? saved.rows.map((row) => row.idea).filter((idea) => memory.sensitive || !idea.sensitive)
           : [],
       };
     });

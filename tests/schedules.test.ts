@@ -3275,5 +3275,12 @@ test(
     await pool.query("UPDATE schedule_ideas SET checked_at=now()-interval '25 hours'");
     assert.deepEqual(await shown(), expected);
     assert.equal(inputs.length, 2);
+    await say(
+      'owner-a',
+      'user',
+      'Help me schedule this: Remind me to send my invoices, fridays. Ask me one question at a time for anything you need.',
+      0,
+    );
+    assert.deepEqual(await shown(), expected.slice(1));
   },
 );
