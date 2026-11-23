@@ -2,6 +2,28 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.9.4 - 2026-11-23
+
+### Features
+
+- **analytics:** Send a daily runtime\_active event while Nod runs. [#1448](https://github.com/n8n-io/nod/pull/1448) (9ed5562)
+- **schedules:** Personal schedule ideas from your own messages. [#1444](https://github.com/n8n-io/nod/pull/1444) (fbd8bc3)
+
+### Fixes
+
+- **chat:** Keep the recovery notice when Try again or Use model fails. [#1213](https://github.com/n8n-io/nod/pull/1213) (f358bc7)
+- **schedules:** Scheduled page review fixes from #1441. [#1447](https://github.com/n8n-io/nod/pull/1447) (571158b)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.9.3...f358bc7353e286c901bb82a9b91968149f301f56)
+
+<details>
+<summary>Build details</summary>
+
+Source: `f358bc7353e286c901bb82a9b91968149f301f56`
+Previous release: `nod-v0.9.3`
+
+</details>
+
 ## 0.9.3 - 2026-11-23
 
 ### Features
