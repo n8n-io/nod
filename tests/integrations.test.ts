@@ -2089,13 +2089,9 @@ test(
         mode = 'success';
         const first = new AbortController();
         const second = new AbortController();
-        let initialLogs = 0;
-        let laterLogs = 0;
+        let logs = 0;
         const record = () => {
-          initialLogs++;
-        };
-        const later = () => {
-          laterLogs++;
+          logs++;
         };
         const client = sdk.withOptions({
           timeout: 5000,
@@ -2103,35 +2099,30 @@ test(
           logger: { debug: record, info: record, warn: record, error: record },
         });
         const body = { tool_slug: 'GMAIL_SEND_EMAIL', arguments: { value: 'before' } };
-        const options: Parameters<typeof sdk.request>[0] = {
-          method: 'post',
-          path: '/api/v3.1/tool_router/session/fixture-session/execute',
+        const options: NonNullable<Parameters<typeof sdk.post>[1]> = {
           body,
           signal: first.signal,
         };
-        const pending = client.request(options);
+        const pending = client.post(
+          '/api/v3.1/tool_router/session/fixture-session/execute',
+          options,
+        );
         options.signal = second.signal;
         body.arguments.value = 'after';
-        client.timeout = 1;
-        client.baseURL = 'https://changed.example.test';
-        client.logger = { debug: later, info: later, warn: later, error: later };
-        client.logLevel = 'error';
         await pending;
         assert.deepEqual(received.at(-1), {
           tool_slug: 'GMAIL_SEND_EMAIL',
           arguments: { value: 'before' },
         });
-        assert.ok(initialLogs > 0);
-        assert.equal(laterLogs, 0);
+        assert.ok(logs > 0);
         assert.equal(getEventListeners(first.signal, 'abort').length, 0);
         assert.equal(getEventListeners(second.signal, 'abort').length, 0);
       },
     );
-    await t.test('derived mutable timeout applies to the next request', async () => {
+    await t.test('a derived client timeout applies to its requests', async () => {
       mode = 'body';
       const owner = new AbortController();
-      const client = sdk.withOptions({ timeout: 10000 });
-      client.timeout = 300;
+      const client = sdk.withOptions({ timeout: 300 });
       const started = arrival();
       const pending = client.toolRouter.session.execute(
         'fixture-session',
@@ -2636,7 +2627,10 @@ test('managed integration requests bind SDK calls to a private persisted install
   });
   failExecution = true;
   const before = calls.length;
-  await assert.rejects(session.execute('GMAIL_LIST_LABELS', {}, 'ca_fixture_proxy'));
+  await assert.rejects(
+    session.execute('GMAIL_LIST_LABELS', {}, 'ca_fixture_proxy'),
+    (error: unknown) => error instanceof APIError && error.status === 503,
+  );
   assert.equal(calls.length, before + 1);
   assert.equal(new Set(calls.map((call) => call.key)).size, 1);
   assert.deepEqual(
@@ -2648,10 +2642,7 @@ test('managed integration requests bind SDK calls to a private persisted install
   await proxy.client
     .getClient()
     .withOptions({
-      defaultHeaders: {
-        authorization: 'Bearer synthetic-disallowed',
-        'x-api-key': 'synthetic-disallowed',
-      },
+      defaultHeaders: { authorization: 'Bearer synthetic-disallowed' },
     })
     .get('/v2/api/v3.1/toolkits?type=native');
   await chmod(root, 0o755);

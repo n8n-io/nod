@@ -661,7 +661,11 @@ export function createComposioProvider(options: {
             signal,
             maxRetries: 0,
           } as Parameters<typeof value.execute>[3])
-          .catch((error: unknown) => {
+          .catch((wrapped: unknown) => {
+            const error =
+              !signal?.aborted && wrapped instanceof Error && wrapped.cause instanceof APIError
+                ? wrapped.cause
+                : wrapped;
             if (
               error instanceof APIError &&
               error.status === 403 &&
