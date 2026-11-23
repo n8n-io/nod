@@ -151,6 +151,8 @@ The scripted model behaves like a real one in the ways that matter for the harne
 | `hold:`             | Waits until the scenario calls `release` with the same text, or the turn stops          |
 | Anything else       | Answers `Answer:` and the message. A scheduled run sends the answer with `send_message` |
 
+A `task:` message that also contains `linger:` keeps the chat turn working after it starts the task, until the scenario calls `release` with the same text. Add `hold:` to keep the task working too, as in `task: linger: hold: book the venue`. Use both to interrupt Nod while the chat and its new task run.
+
 After each scenario, `nod.violations()` checks the invariants a user relies on:
 
 - No turn stays queued or running, and no task stays open.
