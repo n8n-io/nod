@@ -2187,6 +2187,7 @@ test('engine source includes startup reporting and documentation without site de
     'desktop/main/system-certificates.mjs',
     'desktop/main/onepassword.mjs',
     'desktop/runtime/index.mjs',
+    'desktop/runtime/computer-storage.mjs',
     'desktop/runtime/assets.mjs',
     'desktop/runtime/guest-config.mjs',
   ]) {
@@ -2205,6 +2206,7 @@ test('engine source includes startup reporting and documentation without site de
   );
   for (const path of [
     'desktop/main/feedback.mjs',
+    'desktop/runtime/computer-storage.mjs',
     'src/shared/environment-secrets.mjs',
     'src/shared/literal-masks.mjs',
     'src/shared/startup-feedback-facts.mjs',

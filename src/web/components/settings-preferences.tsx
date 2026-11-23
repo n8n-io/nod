@@ -12,7 +12,14 @@ import { TimePicker } from './time-picker';
 import { useSettingsDraft } from './settings-drafts';
 import { usePageData } from '../hooks/use-page-data';
 import { errorMessage } from '../lib/api';
-import { desktopZoomAvailable, getDesktopZoomFactor, setDesktopZoomFactor } from '../lib/desktop';
+import {
+  chooseDesktopComputerDirectory,
+  desktopComputerStorageAvailable,
+  desktopRuntimeAvailable,
+  desktopZoomAvailable,
+  getDesktopZoomFactor,
+  setDesktopZoomFactor,
+} from '../lib/desktop';
 import { savePreferences } from '../lib/preferences';
 import { localeRegion } from '../../shared/date-locale';
 import { communityLinks, legalLinks } from '../../shared/onboarding';
@@ -199,6 +206,8 @@ export function GeneralPreferences({
   } = usePageData<AccountPreferences>('/api/preferences');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [storageBusy, setStorageBusy] = useState(false);
+  const [storageError, setStorageError] = useState('');
   const controller = useRef<AbortController | null>(null);
   const active = useRef(true);
   const id = useId();
@@ -227,6 +236,19 @@ export function GeneralPreferences({
         controller.current = null;
         if (!request.signal.aborted) setBusy(false);
       }
+    }
+  }
+
+  async function chooseComputerStorage() {
+    if (storageBusy) return;
+    setStorageBusy(true);
+    setStorageError('');
+    try {
+      await chooseDesktopComputerDirectory();
+    } catch (cause) {
+      setStorageError(errorMessage(cause));
+    } finally {
+      setStorageBusy(false);
     }
   }
   const theme = desktop ? native.settings?.theme : account.theme;
@@ -378,6 +400,36 @@ export function GeneralPreferences({
           <p className="field-hint">Open automatically when you sign in.</p>
         </section>
       )}
+      {desktopRuntimeAvailable() &&
+        desktopComputerStorageAvailable() &&
+        native.settings && (
+          <section className="account-region" aria-labelledby={`${id}-computer-storage`}>
+            <div className="account-preference-row">
+              <div>
+                <span id={`${id}-computer-storage`}>Private-computer storage</span>
+                <p className="field-hint">
+                  {native.settings.computerDirectory || 'Default location'}
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={storageBusy || native.busy}
+                onClick={() => void chooseComputerStorage()}
+              >
+                {storageBusy ? 'Opening…' : 'Choose folder'}
+              </Button>
+            </div>
+            <p className="field-hint">
+              The selected drive needs at least 50 GB free. Changing it recreates your private
+              computer and permanently deletes local assistant data, including conversations,
+              memories, browser profiles, workspace files and saved model and app connections.
+              Desktop app preferences remain.
+            </p>
+            {storageError && <Notice>{storageError}</Notice>}
+          </section>
+        )}
       <section className="account-region account-links" aria-labelledby={`${id}-community`}>
         <h3 id={`${id}-community`}>Community</h3>
         <p className="field-hint">

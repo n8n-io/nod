@@ -99,7 +99,7 @@ flowchart LR
 - A Flatpak runs Electron, the Nod server and the same Lima runtime as the Mac, with QEMU and KVM instead of Apple's Virtualization framework. Install the [Linux x64 preview](/get-started/install-desktop/#linux), or [build the Flatpak](/contribute/desktop-releases/#build-a-linux-flatpak).
 - The VM, its firewall rules, container protection and the PostgreSQL, workspace and browser containers are the same as on a Mac. Docker runs only inside the VM, and Nod never uses a Docker installation on your computer.
 - Nod needs `/dev/kvm`. Without hardware virtualization it refuses to start its private computer rather than fall back to slow emulation.
-- The VM files live in `~/.nod-desktop`, as on a Mac. Saved keys use your desktop's Secret Service, such as GNOME Keyring or KWallet; Nod refuses to save keys when no secret store is available.
+- By default, VM files live in `~/.nod-desktop`, as on a Mac. You can choose another folder in **Settings → General → Private-computer storage**. Saved keys use your desktop's Secret Service, such as GNOME Keyring or KWallet; Nod refuses to save keys when no secret store is available.
 - Install the next release bundle to update the app. These bundles have no update repository. Nod's own update checks are off on Linux.
 - [Computer use](/connect/computer-use/) doesn't work in the Flatpak yet: agent-desktop needs the host's process list to reach the AT-SPI accessibility bus, and the sandbox hides it ([agent-desktop issue #593](https://github.com/vercel-labs/agent-desktop/issues/593)).
 - Like the Mac and Windows apps, the Flatpak can reach your home folder and external drives, so [Local files](/connect/local-files/) and saving to Downloads work. Moving files to the Trash goes through your desktop's portal service (`xdg-desktop-portal`), and saved files go to the Downloads folder your desktop names in `~/.config/user-dirs.dirs`, or your home folder without one. A normal desktop session provides both.
@@ -181,6 +181,7 @@ To remove Nod completely, choose **Remove all data** first, then run `flatpak un
 </TabItem>
 </Tabs>
 
+
 **Remove all data** in **Settings → Privacy & data**, or in the **Nod** menu when setup cannot finish, stops Nod and its private computer. It deletes the private computer, the profile and the app's browser storage, then restarts and opens setup. The app stays installed. On a Mac it keeps the runtime packs and the key store entry. See [Remove Nod](/get-started/install-desktop/#remove-nod).
 
 The profile holds the only key to the private computer's database. When Nod starts and finds a private computer but no profile, it deletes that private computer and sets up a new one.
@@ -190,6 +191,17 @@ Your installation is the VM disks, database, workspace files, browser profiles, 
 :::caution[No tested backup yet]
 There's no supported backup, restore or downgrade. Don't delete the profile, VM or runtime cache to fix a problem. Retry first, then [report a bug](/deploy/troubleshooting/#report-a-bug-with-a-diagnostic-report).
 :::
+
+### Choose a private-computer storage folder
+
+In the local desktop app, open **Settings → General → Private-computer storage** and choose a folder on a drive with at least 50 GB free. Nod checks that the folder exists, is writable and is separate from its application profile. It creates a profile-specific `.nod-desktop` folder inside the selected location. Your desktop settings and profile stay in their normal location. Without a custom folder, Nod keeps using the existing default locations in the tables above.
+
+Changing the folder **recreates** the private computer; it does not move or copy the existing disks. After a separate confirmation, Nod deletes the old private computer and creates a new one at the selected location. This permanently removes local assistant data stored inside that computer, including conversations, memories, browser profiles, workspace files, the local database, and saved model and app connections. Desktop app preferences remain. Export anything you need before confirming, and keep the old drive connected until Nod finishes recreating the computer.
+
+The Linux Flatpak can use only folders it can access inside the sandbox: your home directory, `/media` or `/run/media`. A mounted drive outside those locations is not available to the Flatpak.
+
+At every startup and before removal, Nod checks the selected folder again. If the drive is unavailable, or `.nod-desktop`, the profile folder or the Lima `nod` directory is a symlink or not a normal directory, Nod refuses to start or remove the private computer until the problem is fixed.
+
 
 ## Updates
 

@@ -139,6 +139,11 @@ await mkdir(output, { recursive: true });
 await copyEngineSource({ root, target: engine });
 await copyEngineDependencies({ root, target: engine, arch: process.arch });
 for (const path of ['main', 'preload']) await copy(join(desktop, path), join(appSource, path));
+await mkdir(join(appSource, 'runtime'), { recursive: true });
+await cp(
+  join(desktop, 'runtime/computer-storage.mjs'),
+  join(appSource, 'runtime/computer-storage.mjs'),
+);
 await buildDesktopUI(join(appSource, 'ui'));
 if (full)
   await cp(runtimeAssets, join(engine, 'runtime-assets'), {

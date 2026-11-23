@@ -26,7 +26,7 @@ import { readFileSync } from 'node:fs';
 import { appendFile, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   createSettingsStore,
@@ -62,6 +62,11 @@ import { appOpenPath } from './app-links.mjs';
 import { trustSystemCertificates } from './system-certificates.mjs';
 import { opensAtLogin, setOpenAtLogin } from './login-item.mjs';
 import { createStartupFeedbackClient } from './feedback-client.mjs';
+import {
+  assertComputerStoragePathSafe,
+  computerStoragePath,
+  validateComputerDirectory,
+} from '../runtime/computer-storage.mjs';
 
 trustSystemCertificates();
 
@@ -176,6 +181,103 @@ const settings = createSettingsStore(
     ? createMacEncryption(safeStorage)
     : safeStorage,
 );
+const computerDirectoryChangePath = join(profileRoot, 'computer-directory-change.json');
+
+function isPathWithin(parent, child) {
+  const path = relative(resolve(parent), resolve(child));
+  return path === '' || (path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+}
+
+function pathsOverlap(first, second) {
+  return isPathWithin(first, second) || isPathWithin(second, first);
+}
+
+async function syncDirectory(directory) {
+  if (process.platform === 'win32') return;
+  const handle = await open(directory, 'r');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function persistPendingComputerDirectoryChange(from, to) {
+  const pending = { version: 1, from: from ?? null, to };
+  try {
+    const existing = JSON.parse(await readFile(computerDirectoryChangePath, 'utf8'));
+    if (
+      !existing ||
+      existing.version !== 1 ||
+      (existing.from ?? null) !== pending.from ||
+      typeof existing.to !== 'string' ||
+      !isAbsolute(existing.to) ||
+      resolve(existing.to) !== existing.to
+    )
+      throw new Error('A different private-computer storage change still needs recovery.');
+    if (existing.to === pending.to) return;
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  const temporary = `${computerDirectoryChangePath}.${randomUUID()}.tmp`;
+  try {
+    const handle = await open(temporary, 'wx', 0o600);
+    try {
+      await handle.writeFile(JSON.stringify(pending));
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(temporary, computerDirectoryChangePath);
+    await syncDirectory(profileRoot);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+}
+
+async function recoverPendingComputerDirectoryChange() {
+  let pending;
+  try {
+    pending = JSON.parse(await readFile(computerDirectoryChangePath, 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT') return;
+    throw new Error('Nod could not read the pending private-computer storage change.', {
+      cause: error,
+    });
+  }
+  if (
+    !pending ||
+    pending.version !== 1 ||
+    !(pending.from === null ||
+      (typeof pending.from === 'string' &&
+        isAbsolute(pending.from) &&
+        resolve(pending.from) === pending.from)) ||
+    typeof pending.to !== 'string' ||
+    !isAbsolute(pending.to) ||
+    resolve(pending.to) !== pending.to
+  )
+    throw new Error('Nod could not recover the pending private-computer storage change.');
+  const directory = await validateComputerDirectory(pending.to, {
+    dataRoot: profileRoot,
+    platform: process.platform,
+    flatpak: process.platform === 'linux' && Boolean(process.env.FLATPAK_ID),
+  });
+  if (directory !== pending.to)
+    throw new Error('The new private-computer folder changed before the storage change could finish.');
+  await assertComputerStoragePathSafe(profileRoot, directory);
+  const { removeComputer } = await import(
+    pathToFileURL(join(engineRoot, 'desktop', 'runtime', 'index.mjs')).href
+  );
+  await removeComputer({
+    dataRoot: profileRoot,
+    resourcesPath: engineRoot,
+    computerDirectory: pending.from ?? undefined,
+  });
+  await settings.save({ computerDirectory: directory });
+  await rm(computerDirectoryChangePath, { force: true });
+  await syncDirectory(profileRoot);
+}
+
 const analyticsConfiguration = createDesktopAnalytics(join(profileRoot, 'analytics-id'), {
   packaged: app.isPackaged,
   env: process.env,
@@ -309,6 +411,7 @@ let chatReadCursors = createChatReadCursorStore(join(profileRoot, 'chat-read-cur
 const lifecycle = createDesktopLifecycle({
   prepareRuntime: async ({ signal, onStatus, onStorageReady }) => {
     await mkdir(profileRoot, { recursive: true, mode: 0o700 });
+    await recoverPendingComputerDirectoryChange();
     await writeDiagnostic('Preparing local runtime.', { event: 'runtime_prepare' }).catch(() => {});
     const started = Date.now();
     let phase = 'runtime';
@@ -319,6 +422,7 @@ const lifecycle = createDesktopLifecycle({
       );
       const prepared = await prepareRuntime({
         dataRoot: profileRoot,
+        computerDirectory: (await settings.get()).computerDirectory,
         resourcesPath: engineRoot,
         preserveRuntimeCache: testInstall,
         resolveDownloadUrl: updateSource?.runtimeDownloadUrl,
@@ -353,7 +457,11 @@ const lifecycle = createDesktopLifecycle({
     const { stopRuntime } = await import(
       pathToFileURL(join(engineRoot, 'desktop', 'runtime', 'index.mjs')).href
     );
-    await stopRuntime({ dataRoot: profileRoot, resourcesPath: engineRoot });
+    await stopRuntime({
+      dataRoot: profileRoot,
+      resourcesPath: engineRoot,
+      computerDirectory: (await settings.get()).computerDirectory,
+    });
   },
   onRuntimeStatus: (value) => {
     const runtime = {
@@ -2507,12 +2615,15 @@ async function notifyUpdate(candidate) {
 }
 
 async function preloadUpdateImages(assets, signal) {
-  const { preloadRuntimeImages } = await import(
-    pathToFileURL(join(engineRoot, 'desktop/runtime/index.mjs')).href
-  );
-  await preloadRuntimeImages({ dataRoot: profileRoot, assets, signal }).catch(
-    (error) => void writeDiagnostic(error.message).catch(() => {}),
-  );
+  try {
+    const { preloadRuntimeImages } = await import(
+      pathToFileURL(join(engineRoot, 'desktop/runtime/index.mjs')).href
+    );
+    const { computerDirectory } = await settings.get();
+    await preloadRuntimeImages({ dataRoot: profileRoot, assets, signal, computerDirectory });
+  } catch (error) {
+    await writeDiagnostic(error.message).catch(() => {});
+  }
 }
 
 async function restartForUpdate() {
@@ -2709,6 +2820,8 @@ async function removeAllData() {
   });
   if (response !== 0 || quitting) return;
   await quit(async () => {
+    await recoverPendingComputerDirectoryChange();
+    const computerDirectory = (await settings.get()).computerDirectory;
     const { removeProfile } = await import(
       pathToFileURL(join(engineRoot, 'desktop', 'runtime', 'index.mjs')).href
     );
@@ -2716,7 +2829,7 @@ async function removeAllData() {
     const browser = session.fromPartition('persist:nod-app');
     await browser.clearStorageData();
     await browser.clearCache();
-    await removeProfile({ dataRoot: profileRoot, resourcesPath: engineRoot });
+    await removeProfile({ dataRoot: profileRoot, resourcesPath: engineRoot, computerDirectory });
     app.relaunch();
     app.exit();
   }, 'Nod could not remove all its data.');
@@ -3347,6 +3460,55 @@ else {
         if ((!updates?.ready && !checkingUpdates) || quitting)
           throw new Error('No desktop update is ready.');
         await checkForUpdates(true, true, true);
+      });
+      ipcMain.handle('nod:computer:directory:choose', async (event) => {
+        if (!isEngine(event) || remoteConnection)
+          throw new Error('Local computer settings are unavailable.');
+        if (quitting) throw new Error('Nod is closing.');
+        if (lifecycle.busy)
+          throw new Error('Wait for the private computer to finish its current task.');
+        const current = await settings.get();
+        const parent = BrowserWindow.fromWebContents(event.sender);
+        const selection = await dialog.showOpenDialog(parent, {
+          title: 'Choose private-computer storage folder',
+          buttonLabel: 'Use this folder',
+          defaultPath: current.computerDirectory || homedir(),
+          properties: ['openDirectory', 'createDirectory'],
+        });
+        if (selection.canceled || !selection.filePaths[0])
+          return current.computerDirectory ?? null;
+
+        const directory = await validateComputerDirectory(selection.filePaths[0], {
+          dataRoot: profileRoot,
+          platform: process.platform,
+          flatpak: process.platform === 'linux' && Boolean(process.env.FLATPAK_ID),
+        });
+        await assertComputerStoragePathSafe(profileRoot, directory);
+        const previousPath = computerStoragePath(profileRoot, current.computerDirectory);
+        const nextPath = computerStoragePath(profileRoot, directory);
+        if (previousPath === nextPath) return current.computerDirectory ?? null;
+        if (pathsOverlap(previousPath, nextPath))
+          throw new Error('Choose a storage folder that does not overlap the current private computer.');
+
+        const { response } = await dialog.showMessageBox(parent, {
+          type: 'warning',
+          message: 'Recreate your private computer in this folder?',
+          detail:
+            'This is not a move. Nod will permanently delete the existing private computer and create a new one in the selected folder. All local assistant data stored inside that computer will be lost, including conversations, memories, browser profiles, workspace files, the local database, and saved model and app connections. Your desktop app preferences and settings remain. Export anything you need before continuing. Nothing changes if you cancel.',
+          buttons: ['Recreate private computer', 'Cancel'],
+          defaultId: 1,
+          cancelId: 1,
+          noLink: true,
+        });
+        if (response !== 0 || quitting) return current.computerDirectory ?? null;
+
+        await quit(async () => {
+          await persistPendingComputerDirectoryChange(current.computerDirectory, directory);
+          await recoverPendingComputerDirectoryChange();
+          app.relaunch();
+          app.exit();
+        }, 'Nod could not change the private-computer storage folder.');
+        return directory;
       });
       ipcMain.handle('nod:settings:get', (event) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');

@@ -51,6 +51,12 @@ await copyEngineDependencies({ root, target: engine, platform: 'win32', arch: 'x
 console.log('Windows engine files prepared.');
 for (const path of ['main', 'preload'])
   await copyBundleSource(join(root, 'desktop', path), join(source, path));
+await mkdir(join(source, 'runtime'), { recursive: true });
+await copyBundleSource(
+  join(root, 'desktop/runtime/computer-storage.mjs'),
+  join(source, 'runtime/computer-storage.mjs'),
+);
+await readFile(join(source, 'runtime/computer-storage.mjs'), 'utf8');
 await buildDesktopUI(join(source, 'ui'));
 const runtime = join(engine, 'windows-runtime');
 await mkdir(join(runtime, 'bin'), { recursive: true });

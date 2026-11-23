@@ -199,6 +199,14 @@ Nod starts with a fresh profile and doesn't import data from a source install.
 
 On Linux, app data and settings are in `~/.var/app/io.n8n.Nod/config/nod/profiles/local`. The private computer is in `~/.nod-desktop/<profile id>`. Your desktop's Secret Service protects saved keys. The Flatpak contains Nod's runtime pack.
 
+With a custom folder, macOS and Linux store the private computer in `<folder>/.nod-desktop/<profile id>`; Windows stores its WSL import in `<folder>/.nod-desktop/<profile id>/wsl`. **Remove all data** deletes the private computer there. Uninstalling Nod leaves it in place.
+
+## Choose where the private computer is stored
+
+For a local assistant, open **Settings → General → Private-computer storage** to use another drive. Nod checks that the selected folder is writable and has at least 50 GB free. The default locations stay unchanged until you choose a custom folder. On the Linux Flatpak, the folder must be under your home directory, `/media` or `/run/media`.
+
+Changing the location recreates the private computer; it does not move the existing one. Nod asks for confirmation before deleting it. The old computer contains local assistant data, including conversations, memories, browser profiles, workspace files, the local database and saved model and app connections. That data is permanently lost when the old computer is deleted. Desktop app preferences remain. Export anything you need before confirming.
+
 ## Remove Nod
 
 Moving Nod to the Trash or uninstalling it keeps your data, so a later install opens where you left off. Uninstalling a connected client does not delete server data. To return to a local assistant first, choose **Replay onboarding… → Change server → Use this computer**, then:

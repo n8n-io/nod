@@ -9,6 +9,7 @@ import {
   readFile,
   rename,
   rm,
+  rmdir,
   stat,
   statfs,
   writeFile,
@@ -19,6 +20,13 @@ import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
 import { assetHash, resumableDownload, timeLeft } from './assets.mjs';
 import { execute, finishRuntime } from './index.mjs';
+import {
+  MINIMUM_COMPUTER_STORAGE_BYTES,
+  assertComputerDirectoryReady,
+  assertComputerStoragePathSafe,
+  computerIdentity,
+  computerStoragePath,
+} from './computer-storage.mjs';
 
 const holders = new Map();
 const distributionName = (root) =>
@@ -238,6 +246,17 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
   const dataRoot = resolve(options.dataRoot || options.root);
   const resourcesPath = resolve(options.resourcesPath || options.resources);
   const signal = options.signal;
+  if (options.computerDirectory) {
+    const selected = await assertComputerDirectoryReady(options.computerDirectory, {
+      dataRoot,
+      platform: process.platform,
+      minimumFreeBytes: MINIMUM_COMPUTER_STORAGE_BYTES,
+    });
+    if (selected !== resolve(options.computerDirectory)) {
+      throw new Error('The private-computer storage folder changed after it was selected. Choose it again in Settings.');
+    }
+  }
+  await assertComputerStoragePathSafe(dataRoot, options.computerDirectory);
   const onStatus = options.onStatus || options.onProgress || (() => {});
   const status = (value) => onStatus({ stage: 'computer', ...value });
   const hostEnvironment = windowsEnvironment();
@@ -298,6 +317,11 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
   if (transportHash.digest('hex') !== manifest.transport.sha256)
     throw new Error('The Windows transport failed its integrity check.');
   const distribution = distributionName(dataRoot);
+  const computerPath = computerStoragePath(dataRoot, options.computerDirectory);
+  if (options.computerDirectory) {
+    await mkdir(computerPath, { recursive: true });
+    await protectWindowsProfile(computerPath, resourcesPath);
+  }
   const configPath = join(controlRoot, 'state.json');
   let saved;
   try {
@@ -318,7 +342,9 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
     saved &&
     (saved.version !== 1 ||
       saved.distribution !== distribution ||
-      !/^[a-f0-9]{64}$/.test(saved.password))
+      !/^[a-f0-9]{64}$/.test(saved.password) ||
+      (saved.computerPath !== undefined && saved.computerPath !== computerPath) ||
+      (options.computerDirectory && saved.computerPath !== computerPath))
   )
     throw new Error('The Nod computer configuration needs recovery.');
   saved ??= {
@@ -326,7 +352,9 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
     distribution,
     password: randomBytes(32).toString('hex'),
     guest: manifest.guest.sha256,
+    computerPath,
   };
+  saved.computerPath = computerPath;
   const guestArgs = ['--distribution', distribution, '--user', 'root', '--exec'];
   const temporaryState = `${configPath}.${randomBytes(6).toString('hex')}.tmp`;
   await writeFile(temporaryState, JSON.stringify(saved), { flag: 'wx' });
@@ -349,14 +377,17 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
     const archive = present ? placed : join(controlRoot, archiveName);
     const partial = present ? 0 : ((await stat(archive).catch(() => undefined))?.size ?? 0);
     const space = await statfs(controlRoot);
+    const imageBytes = manifest.images.reduce((bytes, image) => bytes + image.size, 0);
     const required =
       manifest.guest.expandedBytes * 2 +
-      manifest.images.reduce((bytes, image) => bytes + image.size, 0) +
+      imageBytes +
       (present ? 0 : Math.max(0, manifest.guest.bytes - partial)) +
       2 * 1024 ** 3;
-    if (space.bavail * space.bsize < required)
+    const computerSpace = options.computerDirectory ? await statfs(computerPath) : space;
+    const computerRequired = manifest.guest.expandedBytes + imageBytes + 2 * 1024 ** 3;
+    if (space.bavail * space.bsize < required || computerSpace.bavail * computerSpace.bsize < computerRequired)
       throw new Error(
-        'Nod needs more free disk space to prepare its private computer. Free space, then select Try again.',
+        'Nod needs more free disk space to prepare its private computer. Free space on the runtime and computer drives, then select Try again.',
       );
     const guest = join(controlRoot, 'guest.tar');
     let downloaded = false;
@@ -392,10 +423,10 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
       if (expanded !== manifest.guest.expandedBytes)
         throw new Error('The Windows computer image has an unexpected size.');
       if (!existing) {
-        await mkdir(join(controlRoot, 'wsl'), { recursive: true });
+        await mkdir(computerPath, { recursive: true });
         await execute(
           wsl,
-          ['--import', distribution, join(controlRoot, 'wsl'), guest, '--version', '2'],
+          ['--import', distribution, computerPath, guest, '--version', '2'],
           { env: hostEnvironment, signal, timeout: 1_200_000 },
         );
       } else {
@@ -469,6 +500,7 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
   await mkdir(dockerEnvironment.DOCKER_CONFIG, { recursive: true });
   return finishRuntime({
     dataRoot,
+    computerDirectory: options.computerDirectory,
     resourcesPath,
     assets,
     manifest,
@@ -506,7 +538,13 @@ export async function stopWindowsRuntime(options) {
   const wsl = join(env.SYSTEMROOT, 'System32/wsl.exe');
   try {
     const saved = JSON.parse(await readFile(join(dataRoot, 'desktop-runtime/state.json'), 'utf8'));
-    if (saved.version !== 1 || saved.distribution !== distribution) throw new Error();
+    const expectedComputerPath = computerStoragePath(dataRoot, options.computerDirectory);
+    if (
+      saved.version !== 1 ||
+      saved.distribution !== distribution ||
+      (options.computerDirectory && saved.computerPath !== expectedComputerPath)
+    )
+      throw new Error();
     if ((await distributions(wsl, env)).includes(distribution)) {
       await execute(
         wsl,
@@ -541,10 +579,41 @@ export async function stopWindowsRuntime(options) {
   }
 }
 
-export async function removeWindowsComputer(dataRoot) {
+export async function removeWindowsComputer(
+  dataRoot,
+  computerDirectory,
+  {
+    getEnvironment = windowsEnvironment,
+    listDistributions = distributions,
+    executeCommand = execute,
+  } = {},
+) {
   const distribution = distributionName(dataRoot);
-  const env = windowsEnvironment();
+  const computerPath = computerStoragePath(dataRoot, computerDirectory);
+  const configPath = join(dataRoot, 'desktop-runtime/state.json');
+  let saved;
+  try {
+    saved = JSON.parse(await readFile(configPath, 'utf8'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw new Error('The Nod computer configuration needs recovery.');
+  }
+  if (
+    saved &&
+    (saved.version !== 1 ||
+      saved.distribution !== distribution ||
+      (saved.computerPath !== undefined && saved.computerPath !== computerPath) ||
+      (computerDirectory && saved.computerPath !== computerPath))
+  )
+    throw new Error('The Nod computer configuration needs recovery.');
+  const env = getEnvironment();
   const wsl = join(env.SYSTEMROOT, 'System32/wsl.exe');
-  if ((await distributions(wsl, env).catch(() => [])).includes(distribution))
-    await execute(wsl, ['--unregister', distribution], { env, timeout: 300_000 });
+  const available = await listDistributions(wsl, env).catch(() => []);
+  if (available.includes(distribution))
+    await executeCommand(wsl, ['--unregister', distribution], { env, timeout: 300_000 });
+  await rm(computerPath, { recursive: true, force: true });
+  if (computerDirectory) {
+    const profileStorage = join(computerDirectory, '.nod-desktop', computerIdentity(dataRoot));
+    await rm(profileStorage, { recursive: true, force: true });
+    await rmdir(join(computerDirectory, '.nod-desktop')).catch(() => {});
+  }
 }

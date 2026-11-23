@@ -95,6 +95,7 @@ contextBridge.exposeInMainWorld('nodDesktop', {
   },
   openExternal: (url) => invoke('nod:external', url),
   getSettings: () => invoke('nod:settings:get'),
+  chooseComputerDirectory: () => invoke('nod:computer:directory:choose'),
   saveSettings: (input) => invoke('nod:settings:save', input),
   savePreferences: (input) => invoke('nod:preferences:save', input),
   getZoomFactor: () => invoke('nod:zoom:get'),

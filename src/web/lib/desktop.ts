@@ -8,7 +8,7 @@ export type DesktopPreferences = {
   launchAtLogin: boolean;
 };
 
-export type DesktopSettings = DesktopPreferences;
+export type DesktopSettings = DesktopPreferences & { computerDirectory?: string };
 
 type LocalSetup = { preferenceStep: 'launchAtLogin' | 'complete' };
 
@@ -89,6 +89,7 @@ type DesktopWindow = Window & {
     getSettings(): Promise<
       DesktopSettings & { onboardingPreferenceStep?: LocalSetup['preferenceStep'] }
     >;
+    chooseComputerDirectory?(): Promise<string | null>;
     status?(): Promise<DesktopStatus>;
     onStatus?(listener: (status: DesktopStatus) => void): () => void;
     updateStatus?(): Promise<DesktopUpdateStatus>;
@@ -230,12 +231,26 @@ function settingsBridge() {
 
 export function getDesktopSettings() {
   const bridge = settingsBridge();
-  return bridge.protocolVersion === 1 ? bridge.getPreferences() : bridge.getSettings();
+  return bridge.getSettings?.() ?? bridge.getPreferences();
 }
 
 export function saveDesktopSettings(change: DesktopSettingsChange) {
   const bridge = settingsBridge();
   return bridge.savePreferences ? bridge.savePreferences(change) : bridge.saveSettings(change);
+}
+
+export function chooseDesktopComputerDirectory() {
+  const bridge = settingsBridge();
+  return (
+    bridge.chooseComputerDirectory?.() ??
+    Promise.reject(
+      new Error('Choosing a private-computer folder is unavailable in this version of Nod.'),
+    )
+  );
+}
+
+export function desktopComputerStorageAvailable() {
+  return typeof (window as DesktopWindow).nodDesktop?.chooseComputerDirectory === 'function';
 }
 
 export function getDesktopZoomFactor() {
