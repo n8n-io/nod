@@ -2,6 +2,28 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.9.5 - 2026-11-23
+
+### Features
+
+- **models:** Continue on the owner's backup models when a model request fails. [#1361](https://github.com/n8n-io/nod/pull/1361) (2118c35)
+
+### Fixes
+
+- **desktop:** Restore Windows install choices and recovery. [commit](https://github.com/n8n-io/nod/commit/0c3e0ff651d71cc6c4a6676b62ce2aa6ee938394) (0c3e0ff)
+- **browser:** Let the sign-in method picker accept buttons under click-through layers. [#1453](https://github.com/n8n-io/nod/pull/1453) (dcf495e)
+- **vault:** Refuse sign-in steps for controls that are not on the page, and click any sign-in button. [#1452](https://github.com/n8n-io/nod/pull/1452) (ee386a4)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.9.4...0c3e0ff651d71cc6c4a6676b62ce2aa6ee938394)
+
+<details>
+<summary>Build details</summary>
+
+Source: `0c3e0ff651d71cc6c4a6676b62ce2aa6ee938394`
+Previous release: `nod-v0.9.4`
+
+</details>
+
 ## 0.9.4 - 2026-11-23
 
 ### Features

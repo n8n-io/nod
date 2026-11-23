@@ -1,7 +1,7 @@
 {
-  "version": "0.9.4",
-  "previousTag": "nod-v0.9.3",
-  "source": "f358bc7353e286c901bb82a9b91968149f301f56",
-  "highlights": "## 💡 Schedule ideas from your own messages\n\nThe ideas on **Scheduled** can now come from what you ask Nod, such as a reminder for something you do every Friday. Up to two personal ideas appear first. Select one to ask Nod to set it up.\n\nNod reads only your own recent messages, never its replies, your apps or your files. It checks at most once a day, when you open **Scheduled**, and only after you've written something new. Turn off **Save new notes** in **Settings → Memory** to stop these checks.\n\n## Also in this release\n\n- **Chat:** When a model request fails, the notice with **Try again** now stays until the retry or model switch works. You no longer need to retype your request.\n- **Scheduled:** A one-time schedule shows what it cost in the last 30 days instead of \"No estimate yet\".",
+  "version": "0.9.5",
+  "previousTag": "nod-v0.9.4",
+  "source": "0c3e0ff651d71cc6c4a6676b62ce2aa6ee938394",
+  "highlights": "## Choose backup models\n\nChoose up to three backup models in **Settings → Models**. If a request fails before the model starts answering, Nod can continue with the next backup. Nod uses only the backups you choose. **Stop** still ends the work. A connection that needs attention still asks you to reconnect.\n\n## Choose the Windows install folder\n\nYou can choose where to install Nod on Windows again. Updates keep your chosen folder.\n\nSetup avoids occupied private computer folders. Recovery keeps existing data when saved configuration is missing or cannot be checked. If Nod asks for recovery, select **Report bug** and review the report before sending it.\n\n## Also in this release\n\n- **Sign-in:** Nod checks that the required fields and buttons are present before it uses a saved login. Sign-in choices now work under layers that allow clicks through.\n- **Replies:** A local connection that stops responding now produces an error instead of keeping requests waiting without a time limit.",
   "video": null
 }
