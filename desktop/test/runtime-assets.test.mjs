@@ -5027,7 +5027,7 @@ process.exit(code);
     assert.equal((await saved()).initializing, undefined);
     await assert.rejects(stat(kept), { code: 'ENOENT' });
     const computer = JSON.parse(await readFile(statePath, 'utf8')).imported;
-    assert.equal(dirname(computer), occupied);
+    assert.equal(dirname(computer), elsewhere);
     assert.equal(
       await readFile(join(occupied, 'ext4.vhdx'), 'utf8'),
       'synthetic existing computer',
@@ -5046,7 +5046,10 @@ process.exit(code);
     await writeFile(join(elsewhere, 'keep.txt'), 'synthetic owner file');
     await wsl({ offline: true });
     await removeWindowsComputer(profile);
-    assert.deepEqual((await readdir(elsewhere)).sort(), [distribution, 'keep.txt'].sort());
+    assert.deepEqual(
+      (await readdir(elsewhere)).sort(),
+      [distribution, relative(elsewhere, computer), 'keep.txt'].sort(),
+    );
     await wsl({ offline: false });
     await removeWindowsComputer(profile);
     assert.deepEqual((await readdir(elsewhere)).sort(), [distribution, 'keep.txt'].sort());

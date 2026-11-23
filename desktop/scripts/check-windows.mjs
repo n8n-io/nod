@@ -261,7 +261,7 @@ if (process.env.WORKSPACE_CONTAINER) {
       );
       receipt.halfInstalled = true;
       const saved = JSON.parse(await readFile(join(profile, 'desktop-runtime/state.json'), 'utf8'));
-      assert.equal(dirname(saved.computerPath), occupied);
+      assert.equal(dirname(saved.computerPath), elsewhere);
       assert.ok((await stat(join(saved.computerPath, 'ext4.vhdx'))).size);
       assert.equal(
         await readFile(join(occupied, 'ext4.vhdx'), 'utf8'),

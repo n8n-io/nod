@@ -14,7 +14,7 @@ import {
   statfs,
   writeFile,
 } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
@@ -366,8 +366,8 @@ async function prepareWindows(options, onComputerStart, progress) {
   const computerPath = existing
     ? saved.computerPath
     : options.computerDirectory
-      ? join(resolve(options.computerDirectory), distribution)
-      : join(controlRoot, 'wsl');
+      ? resolve(options.computerDirectory)
+      : controlRoot;
   const guestArgs = ['--distribution', distribution, '--user', 'root', '--exec'];
   const guest = (command, extra) =>
     runWsl(wsl, [...guestArgs, ...command], { env: hostEnvironment, signal, ...extra }, 'guest');
@@ -395,10 +395,7 @@ async function prepareWindows(options, onComputerStart, progress) {
     const archive = present ? placed : join(controlRoot, archiveName);
     const partial = present ? 0 : ((await stat(archive).catch(() => undefined))?.size ?? 0);
     const elsewhere = !existing && options.computerDirectory;
-    if (elsewhere) {
-      await mkdir(computerPath, { recursive: true });
-      await protectWindowsProfile(computerPath, resourcesPath);
-    }
+    if (elsewhere) await mkdir(computerPath, { recursive: true });
     const free = async (path) => {
       const space = await statfs(path);
       return space.bavail * space.bsize;
@@ -459,7 +456,8 @@ async function prepareWindows(options, onComputerStart, progress) {
         progress.step = 'import';
         await mkdir(computerPath, { recursive: true });
         saved.initializing = true;
-        saved.computerPath = await mkdtemp(join(computerPath, 'install-'));
+        saved.computerPath = await mkdtemp(join(computerPath, `${distribution}-`));
+        if (elsewhere) await protectWindowsProfile(saved.computerPath, resourcesPath);
         await save();
         await host(['--import', distribution, saved.computerPath, image, '--version', '2'], {
           timeout: 1_200_000,
@@ -607,8 +605,7 @@ export async function removeWindowsComputer(dataRoot) {
     saved?.distribution === distribution &&
     typeof saved.computerPath === 'string' &&
     (basename(saved.computerPath) === distribution ||
-      (basename(dirname(saved.computerPath)) === distribution &&
-        /^install-[a-zA-Z0-9]{6}$/.test(basename(saved.computerPath))))
+      new RegExp(`^${distribution}-[a-zA-Z0-9]{6}$`).test(basename(saved.computerPath)))
   )
     await rm(saved.computerPath, { recursive: true, force: true });
 }
