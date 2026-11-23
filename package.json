@@ -74,7 +74,7 @@
     "remark-parse": "^11.0.0",
     "remark-stringify": "11.0.0",
     "tar": "7.5.23",
-    "tldts": "7.4.24",
+    "tldts": "7.5.5",
     "tsx": "^4.20.6",
     "typebox": "1.4.4",
     "undici": "^8.12.4",
