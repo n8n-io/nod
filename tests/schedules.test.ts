@@ -3012,3 +3012,100 @@ test('waiting scheduled runs open their pending question without starting anothe
   await act(async () => pageDataCache.refresh('/api/schedules', true));
   assert.equal(inactive.open, true);
 });
+
+test('an unconfirmed task schedule opens Scheduled without another creation request', async (t) => {
+  const { JSDOM } = await import('jsdom');
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    url: 'https://nod.example.test/',
+    pretendToBeVisual: true,
+  });
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    navigator: dom.window.navigator,
+    HTMLElement: dom.window.HTMLElement,
+    Element: dom.window.Element,
+    Node: dom.window.Node,
+    NodeFilter: dom.window.NodeFilter,
+    HTMLInputElement: dom.window.HTMLInputElement,
+    HTMLButtonElement: dom.window.HTMLButtonElement,
+    KeyboardEvent: dom.window.KeyboardEvent,
+    MouseEvent: dom.window.MouseEvent,
+    Event: dom.window.Event,
+    CustomEvent: dom.window.CustomEvent,
+    PopStateEvent: dom.window.PopStateEvent,
+    MutationObserver: dom.window.MutationObserver,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const originals = new Map(
+    Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const { act, createElement } = await import('react');
+  const { createRoot } = await import('react-dom/client');
+  const { pageDataCache } = await import('../src/web/lib/page-data-cache.ts');
+  const { ScheduleTask } = await import('../src/web/components/plan-controls.tsx');
+  const root = createRoot(dom.window.document.getElementById('root')!);
+  t.after(async () => {
+    await act(async () => root.unmount());
+    pageDataCache.clear();
+    dom.window.close();
+    for (const [key, value] of originals)
+      if (value) Object.defineProperty(globalThis, key, value);
+      else Reflect.deleteProperty(globalThis, key);
+  });
+  pageDataCache.clear();
+  let posts = 0;
+  let reads = 0;
+  const onCreated = t.mock.fn();
+  t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, options?: RequestInit) => {
+    const path = String(input);
+    if (path.endsWith('/schedule-draft'))
+      return Response.json({
+        title: 'Synthetic task',
+        prompt: 'Synthetic instructions',
+        omittedSensitive: false,
+        hasAttachments: false,
+      });
+    if (path === '/api/schedules' && options?.method === 'POST') {
+      posts++;
+      return Response.json({ error: 'Synthetic response lost' }, { status: 503 });
+    }
+    assert.equal(path, '/api/schedules');
+    reads++;
+    return Response.json([]);
+  });
+  const button = (text: string) =>
+    [...dom.window.document.querySelectorAll('button')].find(
+      (item) => item.textContent?.trim() === text,
+    );
+  const click = async (element: HTMLElement | undefined) => {
+    assert.ok(element);
+    await act(async () => element.click());
+  };
+  await act(async () =>
+    root.render(createElement(ScheduleTask, { taskId: randomUUID(), onCreated })),
+  );
+  await click(button('Schedule task'));
+  await click(
+    [...dom.window.document.querySelectorAll('button')].find((item) =>
+      item.textContent?.includes('Choose frequency'),
+    ),
+  );
+  await click(
+    [...dom.window.document.querySelectorAll<HTMLElement>('button,[role="option"]')].find(
+      (item) => item.textContent?.trim() === 'Every day',
+    ),
+  );
+  await click(button('Create schedule'));
+  assert.equal(posts, 1);
+  await click(button('View schedules'));
+  assert.equal(dom.window.location.pathname, '/tasks');
+  assert.equal(posts, 1);
+  assert.ok(reads > 0);
+  assert.equal(onCreated.mock.callCount(), 0);
+});
