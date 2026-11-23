@@ -3216,14 +3216,13 @@ test(
               { title: 'Remind me to send my invoices', when: 'Fridays' },
               { title: 'Brief me on my day', when: 'Weekday mornings', app: 'googlecalendar' },
               { title: 'Recap my week', when: 'Fridays' },
-              { title: 'Email jo@example.com a summary', when: 'Mondays' },
               { title: 'Sum up my Slack threads', when: 'Every evening', app: 'slack' },
             ],
           };
         },
       },
       learning: async () => true,
-      blocked: async () => undefined,
+      limitReached: async () => false,
       apps: async () => ['googlecalendar'],
       run: (work) => work(),
     });

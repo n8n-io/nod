@@ -1381,8 +1381,7 @@ async function initializeApplication(
     ownerId,
     curator,
     learning: () => memory.enabled(),
-    blocked: async () =>
-      (await ledger.reachedLimit()) ? 'the monthly spending limit is reached' : undefined,
+    limitReached: async () => Boolean(await ledger.reachedLimit()),
     apps: async () => (await integrations.connectedApps()).map((app) => app.slug),
     run: (work) => analytics.withSystemWork(ownerId, 'schedule_ideas', work),
   });

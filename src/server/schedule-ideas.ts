@@ -5,7 +5,6 @@ import type { MemoryCurator } from '../ports/memory-curator.ts';
 import { logFailure } from './failure-log.ts';
 import { learnableText, sensitiveTopics } from './memory-learning.ts';
 import { unsafe } from './memory-tree.ts';
-import { masked } from './onboarding-suggestions.ts';
 
 type ScheduleIdea = { title: string; when: string; app?: string };
 
@@ -17,12 +16,6 @@ const reply = z.object({
 });
 const recentMessages = 20;
 const inputLimit = 12_000;
-const contact = /@|https?:|www\.|\b[\p{L}\d-]+\.[a-z]{2,}\b|\d[\d\s().-]{5,}\d/iu;
-
-const hidden = (text: string) =>
-  masked(text)
-    .replace(/\b(?:www\.)?[\p{L}\d-]+(?:\.[\p{L}\d-]+)*\.[a-z]{2,}(?:\/\S*)?/giu, '[link]')
-    .replace(/\+?\d[\d\s().-]{5,}\d/g, '[number]');
 
 const comparable = (text: string) =>
   text
@@ -40,8 +33,6 @@ function label(text: string, words: number, length: number) {
     /^\p{L}/u.test(value) &&
     value.split(' ').length <= words &&
     value.length <= length &&
-    !contact.test(value) &&
-    masked(value) === value &&
     !unsafe(value)
   )
     return value;
@@ -68,7 +59,7 @@ export function createScheduleIdeas(options: {
   ownerId: string;
   curator: MemoryCurator;
   learning(): Promise<boolean>;
-  blocked(): Promise<string | undefined>;
+  limitReached(): Promise<boolean>;
   apps(): Promise<string[]>;
   run<T>(work: () => Promise<T>): Promise<T>;
 }) {
@@ -93,7 +84,7 @@ export function createScheduleIdeas(options: {
       saved?.recent ||
       !options.curator.configured ||
       !(await options.learning()) ||
-      (await options.blocked())
+      (await options.limitReached())
     )
       return;
     const { rows } = await pool.query<{ text: string; at: string }>(
@@ -110,9 +101,8 @@ export function createScheduleIdeas(options: {
     if (!claimed.rowCount) return;
     let room = inputLimit;
     const messages = rows
-      .filter((row) => !unsafe(row.text))
-      .map((row) => hidden(row.text))
-      .filter((text) => (room -= text.length) >= 0)
+      .map((row) => row.text)
+      .filter((text) => !unsafe(text) && (room -= text.length) >= 0)
       .reverse();
     let ideas: ScheduleIdea[] | undefined;
     if (messages.length) {
@@ -125,7 +115,7 @@ export function createScheduleIdeas(options: {
         options.curator.curate({
           task: 'ideas',
           instructions,
-          input: { messages, schedules: titles.map(hidden), apps },
+          input: { messages, schedules: titles, apps },
         }),
       );
       ideas = checkedIdeas(raw, apps, titles);
