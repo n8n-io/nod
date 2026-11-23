@@ -77,8 +77,10 @@ try {
     $active = [InstallerWindow]::GetLastActivePopup($handle)
     if ($active -ne $handle -and $active -ne [IntPtr]::Zero -and [InstallerWindow]::IsWindowVisible($active)) { $active }
   }
-  $okay = [InstallerWindow]::GetDlgItem($popup, 1)
-  if ($okay -eq [IntPtr]::Zero) { throw 'The folder warning has no OK button.' }
+  $okay = Wait-For 'folder warning OK button shown' {
+    $button = [InstallerWindow]::GetDlgItem($popup, 1)
+    if ($button -ne [IntPtr]::Zero -and [InstallerWindow]::IsWindowVisible($button) -and [InstallerWindow]::IsWindowEnabled($button)) { $button }
+  }
   [void][InstallerWindow]::PostMessage($okay, 0xF5, [IntPtr]::Zero, [IntPtr]::Zero)
   [void](Wait-For 'folder page restored' { -not [InstallerWindow]::IsWindowVisible($popup) -and [InstallerWindow]::IsWindowEnabled($handle) })
   $page = Get-FolderPage
