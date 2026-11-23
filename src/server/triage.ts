@@ -26,7 +26,18 @@ export function createTriage(options: {
       .update(options.heartbeatKey ?? ownerId)
       .digest()[0] % 5;
   const updatePreferences = createPreferencesStore(pool, ownerId, options.analytics).update;
+  const utcDay = () => new Date().toISOString().slice(0, 10);
+  const startedOn = utcDay();
+  let activeOn: string | undefined;
   async function heartbeat() {
+    const today = utcDay();
+    if (activeOn !== today) {
+      activeOn = today;
+      options.analytics?.({
+        event: 'runtime_active',
+        properties: { started_today: today === startedOn },
+      });
+    }
     await options.sweep?.();
     await options.due().catch((error: unknown) => logFailure('proactive_due', error));
   }

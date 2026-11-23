@@ -397,6 +397,12 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
+      event: z.literal('runtime_active'),
+      properties: z.object({ started_today: z.boolean() }).strict(),
+    })
+    .strict(),
+  z
+    .object({
       event: z.literal('vault_imported'),
       properties: z
         .object({
