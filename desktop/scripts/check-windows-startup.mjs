@@ -40,7 +40,16 @@ async function install(path) {
   assert.ok(await present(application));
 }
 
-async function launch(name, { limit = 900_000, reported = true } = {}) {
+async function launch(name, { limit = 900_000, reported = true, attempts = 1 } = {}) {
+  for (let attempt = 1; attempt < attempts; attempt++) {
+    try {
+      return await launch(name, { limit, reported });
+    } catch (error) {
+      console.log(`${error.message} Trying again, as an owner would.`);
+      await close();
+      await returning();
+    }
+  }
   const seen = (await lines()).length;
   const started = Date.now();
   console.log(`Opening Nod: ${name}.`);
@@ -79,11 +88,15 @@ async function launch(name, { limit = 900_000, reported = true } = {}) {
   }
 }
 
-async function quit() {
+async function close() {
   console.log('Quitting Nod.');
   await run(application, ['--quit'], { timeout: 60_000 }).catch(() => {});
   for (let attempt = 0; (await running()) && attempt < 180; attempt++) await delay(1000);
   assert.equal(await running(), false, 'Nod did not quit.');
+}
+
+async function quit() {
+  await close();
   assert.match(
     await run(wsl, ['--list', '--verbose', '--all'], { env: { ...process.env, WSL_UTF8: '1' } }),
     /nod-[a-f0-9]{12}\s+Stopped/,
@@ -129,7 +142,7 @@ try {
       { timeout: 900_000 },
     );
     await install(join(folder, 'nod-Setup-x64.exe'));
-    await launch(`first setup on ${previous}`, { reported: false });
+    await launch(`first setup on ${previous}`, { reported: false, attempts: 4 });
     await quit();
     await returning();
     await install(installer);
