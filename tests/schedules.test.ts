@@ -3133,3 +3133,154 @@ test('waiting scheduled runs open their pending question without starting anothe
   await act(async () => pageDataCache.refresh('/api/schedules', true));
   assert.equal(inactive.open, true);
 });
+
+test(
+  'schedule ideas read only the owner’s eligible messages and refresh at most once a day',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_schedule_ideas_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const url = new URL(process.env.TEST_DATABASE_URL!);
+    url.searchParams.set('options', `-c search_path=${schema}`);
+    const pool = new pg.Pool({ connectionString: url.href });
+    t.after(async () => {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    await pool.query(`CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text,thread_id uuid,turn_id uuid,role text,text text,
+        attachments jsonb NOT NULL DEFAULT '[]',approval_answer text,suggestions jsonb,created_at timestamptz);
+      CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text,message_id uuid,withdrawn boolean NOT NULL DEFAULT false);
+      CREATE TABLE approvals(owner_id text,source_message_id uuid,action text);
+      CREATE TABLE preferences(owner_id text,time_zone text);
+      CREATE TABLE schedules(owner_id text,title text);`);
+    const thread = randomUUID();
+    const say = async (
+      owner: string,
+      role: string,
+      text: string,
+      minutes: number,
+      extra: { turn?: string; attachments?: unknown[]; suggestions?: unknown } = {},
+    ) => {
+      const id = randomUUID();
+      await pool.query(
+        `INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text,attachments,suggestions,created_at)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,now()-make_interval(mins=>$9))`,
+        [
+          id,
+          owner,
+          thread,
+          extra.turn ?? null,
+          role,
+          text,
+          JSON.stringify(extra.attachments ?? []),
+          extra.suggestions ? JSON.stringify(extra.suggestions) : null,
+          minutes,
+        ],
+      );
+      return id;
+    };
+    const withdrawn = randomUUID();
+    await pool.query("INSERT INTO turns(id,owner_id,withdrawn) VALUES($1,'owner-a',true)", [
+      withdrawn,
+    ]);
+    await say('owner-a', 'user', 'I send synthetic invoices every Friday.', 90);
+    await say('owner-a', 'user', 'Withdrawn synthetic plan.', 80, { turn: withdrawn });
+    await say('owner-a', 'assistant', 'Assistant synthetic reply.', 70, {
+      suggestions: { tasks: [{ title: 'Plan my synthetic fortnight' }] },
+    });
+    await say('owner-a', 'user', 'Plan my synthetic fortnight', 60);
+    await say('owner-a', 'user', 'Synthetic photo caption.', 55, { attachments: [{ id: 'a' }] });
+    const saved = await say('owner-a', 'user', 'Remember my synthetic gym day.', 50);
+    await pool.query(
+      "INSERT INTO approvals(owner_id,source_message_id,action) VALUES('owner-a',$1,'NOD_memory_save')",
+      [saved],
+    );
+    await say('owner-a', 'user', 'Fresh synthetic message.', 1);
+    await say('owner-b', 'user', 'Other owner synthetic detail.', 40);
+    await pool.query("INSERT INTO schedules VALUES('owner-a','Recap my week'),('owner-b','Other')");
+    const inputs: Array<{ messages: string[]; schedules: string[]; apps: string[] }> = [];
+    const { createScheduleIdeas } = await import('../src/server/schedule-ideas.ts');
+    const ideas = createScheduleIdeas({
+      pool,
+      ownerId: 'owner-a',
+      curator: {
+        id: 'fixture',
+        configured: true,
+        async curate({ task, input }) {
+          assert.equal(task, 'ideas');
+          inputs.push(input as (typeof inputs)[number]);
+          return {
+            ideas: [
+              { title: 'Remind me to take my synthetic pills', when: 'Daily', sensitive: true },
+              { title: 'Remind me to send my invoices', when: 'Fridays', sensitive: false },
+              {
+                title: 'Brief me on my day',
+                when: 'Weekday mornings',
+                app: 'googlecalendar',
+                sensitive: false,
+              },
+              { title: 'Recap my week', when: 'Fridays', sensitive: false },
+              {
+                title: 'Sum up my Slack threads',
+                when: 'Every evening',
+                app: 'slack',
+                sensitive: false,
+              },
+            ],
+          };
+        },
+      },
+      memory: async () => ({ enabled: true, sensitive: false }),
+      limitReached: async () => false,
+      apps: async () => ['googlecalendar'],
+      run: (work) => work(),
+    });
+    await ideas.initialize();
+    const app = Fastify();
+    ideas.registerRoutes(app);
+    t.after(() => app.close());
+    const shown = async () => {
+      const response = await app.inject({ method: 'GET', url: '/api/schedules/ideas' });
+      await ideas.refresh();
+      return response.json().ideas;
+    };
+    assert.deepEqual(await shown(), []);
+    assert.deepEqual(inputs, [
+      {
+        messages: ['I send synthetic invoices every Friday.'],
+        schedules: ['Recap my week'],
+        apps: ['googlecalendar'],
+      },
+    ]);
+    const expected = [
+      { title: 'Remind me to send my invoices', when: 'Fridays' },
+      { title: 'Brief me on my day', when: 'Weekday mornings', app: 'googlecalendar' },
+    ];
+    assert.deepEqual(await shown(), expected);
+    assert.deepEqual(
+      (await pool.query('SELECT ideas FROM schedule_ideas')).rows[0].ideas,
+      expected,
+    );
+    await say('owner-a', 'user', 'I plan my synthetic week on Mondays.', 20);
+    await shown();
+    assert.equal(inputs.length, 1);
+    await pool.query("UPDATE schedule_ideas SET checked_at=now()-interval '25 hours'");
+    await shown();
+    assert.deepEqual(inputs[1]?.messages, [
+      'I send synthetic invoices every Friday.',
+      'I plan my synthetic week on Mondays.',
+    ]);
+    await pool.query("UPDATE schedule_ideas SET checked_at=now()-interval '25 hours'");
+    assert.deepEqual(await shown(), expected);
+    assert.equal(inputs.length, 2);
+    await say(
+      'owner-a',
+      'user',
+      'Help me schedule this: Remind me to send my invoices, fridays. Ask me one question at a time for anything you need.',
+      0,
+    );
+    assert.deepEqual(await shown(), expected.slice(1));
+  },
+);

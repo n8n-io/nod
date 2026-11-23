@@ -182,6 +182,8 @@ Submitting the form sends no email immediately. Updates require a later email co
 
 Memory notes come only from your own messages, your answers in setup's About you step, and the notes you add. Nod never learns them from its replies, websites, or app data. When you connect Gmail, Nod also reads your recent sent email to learn your writing style, without facts or names. See [Memory](/use/memory/).
 
+The personal ideas on **Scheduled** read the same messages, at most once a day, only while **Save new notes** is on and only after new messages. They are saved as up to three short ideas, never as memory notes. Turning off **Save new notes** hides them, and **Remove all data** deletes them. See [Ideas from your messages](/use/schedules/#ideas-from-your-messages).
+
 ## Delete your data
 
 - **A memory:** open **Settings → Memory**, select the note, and choose **Forget**. You can also ask Nod to forget something.

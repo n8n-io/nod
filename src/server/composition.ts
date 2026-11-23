@@ -197,6 +197,7 @@ import { createPersonalService } from './personal.ts';
 import { createOnboardingSuggestions } from './onboarding-suggestions.ts';
 import { createOnboardingProfile } from './onboarding-profile.ts';
 import { createMemoryLearning, initializeMemoryLearning } from './memory-learning.ts';
+import { createScheduleIdeas } from './schedule-ideas.ts';
 import { createMemoryService, importMemoryFile } from './memory.ts';
 import { createMemoryRecall } from './memory-recall.ts';
 import { createLearnedSkills } from './learned-skills.ts';
@@ -1375,6 +1376,16 @@ async function initializeApplication(
     browserConnections: (client) => browserConnections.list(client),
     icon,
   });
+  const scheduleIdeas = createScheduleIdeas({
+    pool,
+    ownerId,
+    curator,
+    memory: () => memory.load(),
+    limitReached: async () => Boolean(await ledger.reachedLimit()),
+    apps: async () => (await integrations.connectedApps()).map((app) => app.slug),
+    run: (work) => analytics.withSystemWork(ownerId, 'schedule_ideas', work),
+  });
+  await scheduleIdeas.initialize();
   vault = await createVault(pool, {
     signal: closing.signal,
     analytics: captureAnalytics,
@@ -3401,6 +3412,7 @@ async function initializeApplication(
   localFiles.registerRoutes(app);
   computerUse.registerRoutes(app);
   personal.registerRoutes(app);
+  scheduleIdeas.registerRoutes(app);
   onboardingSuggestions.registerRoutes(app);
   onboardingProfile.registerRoutes(app);
   tasks.registerRoutes(app);

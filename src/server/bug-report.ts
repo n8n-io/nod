@@ -117,6 +117,7 @@ const usageOperations = [
   'reflect',
   'style',
   'plan',
+  'ideas',
   'classify',
   'vision',
   'recall',

@@ -90,7 +90,7 @@ async function installationId(root: string, supplied?: string) {
 }
 
 const hostedProvider = z.enum([...apiKeyModelProviders, 'typesafe']);
-const systemActivity = z.enum(['memory_learning', 'onboarding', 'writing_style']);
+const systemActivity = z.enum(['memory_learning', 'onboarding', 'schedule_ideas', 'writing_style']);
 
 export function analyticsModel(provider: string, model?: string) {
   const hosted = hostedProvider.safeParse(provider).data;

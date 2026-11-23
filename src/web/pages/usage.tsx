@@ -61,7 +61,7 @@ const outsideNames: Record<TrustOutside['kind'], string> = {
   email: 'email checks',
   memory: 'memory upkeep',
   style: 'writing style',
-  ideas: 'first task ideas',
+  ideas: 'task and schedule ideas',
   other: 'other work',
 };
 
