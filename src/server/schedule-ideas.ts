@@ -152,16 +152,22 @@ export function createScheduleIdeas(options: {
 
   function registerRoutes(app: FastifyInstance) {
     app.get('/api/schedules/ideas', async (_request, response) => {
-      const [saved, learning] = await Promise.all([
+      const [saved, schedules, learning] = await Promise.all([
         pool.query<{ ideas: ScheduleIdea[] }>(
           'SELECT ideas FROM schedule_ideas WHERE owner_id=$1',
           [ownerId],
         ),
+        pool.query<{ title: string }>('SELECT title FROM schedules WHERE owner_id=$1', [ownerId]),
         options.learning(),
       ]);
       void refresh();
       response.header('cache-control', 'no-store');
-      return { ideas: learning ? (saved.rows[0]?.ideas ?? []) : [] };
+      const taken = new Set(schedules.rows.map((row) => comparable(row.title)));
+      return {
+        ideas: learning
+          ? (saved.rows[0]?.ideas ?? []).filter((idea) => !taken.has(comparable(idea.title)))
+          : [],
+      };
     });
   }
 
