@@ -1750,7 +1750,10 @@ test(
         }
         modelPaused = false;
         const next = (await jobFor(schedule.id)).data.scheduledFor;
-        await request('PATCH', `/api/schedules/${schedule.id}`, { title: 'Renamed schedule' });
+        const renamed = await request('PATCH', `/api/schedules/${schedule.id}`, {
+          title: 'Renamed schedule',
+        });
+        assert.equal(renamed.statusCode, 200, renamed.body);
         const job = await jobFor(schedule.id);
         assert.equal(job.data.scheduledFor, next);
         clock = new Date(next);
