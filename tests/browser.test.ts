@@ -16,7 +16,7 @@ import {
 } from 'node:fs/promises';
 import { connect, createServer, type Socket } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
-import { hostname, tmpdir } from 'node:os';
+import { availableParallelism, hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -69,6 +69,8 @@ function deferred<T = void>() {
   });
   return { promise, resolve };
 }
+
+const interfaceLanes = Math.max(1, Math.min(3, Math.floor(availableParallelism() / 2)));
 
 // Core browser API: ownership and private-capture locks
 
@@ -1390,7 +1392,7 @@ test('at the browser cap a new browser waits for one idle past the window and ne
     dataRoot: directory,
     run: fixture.run,
     maxLiveSessions: 2,
-    evictIdleMs: 3000,
+    evictIdleMs: 1000,
   });
   const open = (id: string, signal?: AbortSignal) =>
     computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' }, signal);
@@ -1408,7 +1410,7 @@ test('at the browser cap a new browser waits for one idle past the window and ne
     await open('scheduled');
     assert.deepEqual(pages(), ['chat', 'scheduled']);
     await computer.hold('scheduled', true);
-    await delay(3100);
+    await delay(1100);
     const waiting = new AbortController();
     const blocked = open('later', waiting.signal);
     await delay(700);
@@ -2211,6 +2213,46 @@ test('visual browser actions fence the session when releasing the pointer fails'
   }
 });
 
+test('a password typed through the handoff in several pauses hides only the finished value', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-handoff-secret-'));
+  const fixture = stagedLoginBrowser();
+  const secret = 'Sign-handoff-password';
+  const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
+  try {
+    await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+    fixture.pages.get('fixture')!.stage = 'password';
+    fixture.pages.get('fixture')!.render();
+    await computer.act('fixture', { action: 'click', selector: '#account' });
+    await computer.control!('fixture', { type: 'text', text: 'Sign' });
+    await computer.control!('fixture', { type: 'text', text: secret.slice(4) });
+    assert.equal(fixture.pages.get('fixture')!.input.value, secret);
+    for (const observation of [
+      await computer.act('fixture', { action: 'snapshot' }),
+      await computer.act('fixture', {
+        action: 'evaluate',
+        script: "document.querySelector('#account').value",
+      }),
+    ])
+      assert.equal(JSON.stringify(observation).includes(secret), false);
+    assert.match((await computer.act('fixture', { action: 'snapshot' })).text, /Sign in password/);
+    await computer.act('fixture', { action: 'fill', selector: '#search', text: 'Sign' });
+    const page = fixture.pages.get('fixture')!;
+    const other = page.dom.window.document.createElement('input');
+    other.type = 'password';
+    page.dom.window.document.body.append(other);
+    other.focus();
+    await computer.control!('fixture', { type: 'text', text: `${secret}2` });
+    const first = await computer.act('fixture', {
+      action: 'evaluate',
+      script: "document.querySelector('#account').value",
+    });
+    assert.equal(JSON.stringify(first).includes(secret), false);
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 describe('native browser controls', { concurrency: 3 }, () => {
   test(
     'the browser bridge reports invalid wait conditions and keeps the page usable',
@@ -2845,225 +2887,192 @@ describe('native browser controls', { concurrency: 3 }, () => {
       }
     },
   );
-});
 
-test('a password typed through the handoff in several pauses hides only the finished value', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'nod-handoff-secret-'));
-  const fixture = stagedLoginBrowser();
-  const secret = 'Sign-handoff-password';
-  const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
-  try {
-    await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
-    fixture.pages.get('fixture')!.stage = 'password';
-    fixture.pages.get('fixture')!.render();
-    await computer.act('fixture', { action: 'click', selector: '#account' });
-    await computer.control!('fixture', { type: 'text', text: 'Sign' });
-    await computer.control!('fixture', { type: 'text', text: secret.slice(4) });
-    assert.equal(fixture.pages.get('fixture')!.input.value, secret);
-    for (const observation of [
-      await computer.act('fixture', { action: 'snapshot' }),
-      await computer.act('fixture', {
-        action: 'evaluate',
-        script: "document.querySelector('#account').value",
-      }),
-    ])
-      assert.equal(JSON.stringify(observation).includes(secret), false);
-    assert.match((await computer.act('fixture', { action: 'snapshot' })).text, /Sign in password/);
-    await computer.act('fixture', { action: 'fill', selector: '#search', text: 'Sign' });
-    const page = fixture.pages.get('fixture')!;
-    const other = page.dom.window.document.createElement('input');
-    other.type = 'password';
-    page.dom.window.document.body.append(other);
-    other.focus();
-    await computer.control!('fixture', { type: 'text', text: `${secret}2` });
-    const first = await computer.act('fixture', {
-      action: 'evaluate',
-      script: "document.querySelector('#account').value",
-    });
-    assert.equal(JSON.stringify(first).includes(secret), false);
-  } finally {
-    await computer.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test(
-  'native browser targets keep their own name before named ancestor context',
-  { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
-  async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'nod-target-name-native-'));
-    const server = createHttpServer((_request, response) => {
-      response.setHeader('content-type', 'text/html');
-      response.end(`<title>Synthetic target names</title>
+  test(
+    'native browser targets keep their own name before named ancestor context',
+    { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'nod-target-name-native-'));
+      const server = createHttpServer((_request, response) => {
+        response.setHeader('content-type', 'text/html');
+        response.end(`<title>Synthetic target names</title>
         <style>#blank{position:fixed;left:0;top:0;width:20vw;height:20vh}body{padding-top:25vh}</style>
         <form aria-label="Named form"><button type="button" id="form-button"></button></form>
         <section role="region" aria-label="Named region"><button id="blank"></button><input id="field"></section>
         <button id="named">Named exact button<div id="child"></div></button>
         <div id="custom" role="treeitem" aria-label="Named custom target" tabindex="0"></div>
         <form action="/submit" method="post" aria-label="Known form"><input id="known"></form>`);
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const address = server.address();
-    assert.ok(address && typeof address !== 'string');
-    const origin = `http://127.0.0.1:${address.port}`;
-    const computer = createAgentBrowserComputer({
-      dataRoot: directory,
-      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
-      privateNetwork: true,
-      headless: true,
-    });
-    try {
-      await computer.act('target-name', { action: 'open', url: origin });
-      for (const [selector, ancestor] of [
-        ['#form-button', 'Named form'],
-        ['#blank', 'Named region'],
-        ['#child', 'Named exact button'],
-      ]) {
-        const page = await computer.currentPage('target-name', { action: 'click', selector });
-        assert.equal(page.controls?.[0]?.name, '', selector);
-        assert.ok(
-          page.controls?.slice(1).some(({ name }) => name === ancestor),
-          selector,
-        );
-        assert.match(page.target!, /^[0-9a-f]{64}$/);
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      assert.ok(address && typeof address !== 'string');
+      const origin = `http://127.0.0.1:${address.port}`;
+      const computer = createAgentBrowserComputer({
+        dataRoot: directory,
+        browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+        privateNetwork: true,
+        headless: true,
+      });
+      try {
+        await computer.act('target-name', { action: 'open', url: origin });
+        for (const [selector, ancestor] of [
+          ['#form-button', 'Named form'],
+          ['#blank', 'Named region'],
+          ['#child', 'Named exact button'],
+        ]) {
+          const page = await computer.currentPage('target-name', { action: 'click', selector });
+          assert.equal(page.controls?.[0]?.name, '', selector);
+          assert.ok(
+            page.controls?.slice(1).some(({ name }) => name === ancestor),
+            selector,
+          );
+          assert.match(page.target!, /^[0-9a-f]{64}$/);
+        }
+        for (const step of [
+          { action: 'click', x: 0.05, y: 0.05 },
+          {
+            action: 'click',
+            points: [
+              { x: 0.05, y: 0.05 },
+              { x: 0.05, y: 0.05 },
+            ],
+          },
+        ] satisfies BrowserAction[]) {
+          const page = await computer.currentPage('target-name', step);
+          assert.equal(page.controls?.[0]?.name, '');
+          assert.equal(page.controls?.[1]?.name, 'Named region');
+        }
+        await computer.act('target-name', {
+          action: 'fill',
+          selector: '#field',
+          text: 'synthetic',
+        });
+        for (const step of [
+          { action: 'press', key: 'Enter' },
+          { action: 'type', text: 'synthetic\n' },
+        ] satisfies BrowserAction[]) {
+          const page = await computer.currentPage('target-name', step);
+          assert.deepEqual(page.controls?.[0], { role: 'textbox', name: '' });
+          assert.equal(page.controls?.[1]?.name, 'Named region');
+          assert.equal(page.submits, undefined);
+        }
+        for (const [selector, name] of [
+          ['#named', 'Named exact button'],
+          ['#custom', 'Named custom target'],
+        ]) {
+          const page = await computer.currentPage('target-name', { action: 'click', selector });
+          assert.equal(page.controls?.[0]?.name, name);
+        }
+        await computer.act('target-name', {
+          action: 'fill',
+          selector: '#known',
+          text: 'synthetic',
+        });
+        const known = await computer.currentPage('target-name', { action: 'press', key: 'Enter' });
+        assert.deepEqual(known.controls?.[0], { role: 'textbox', name: '' });
+        assert.equal(known.controls?.[1]?.name, 'Known form');
+        assert.deepEqual(known.submits, { method: 'POST', to: `${origin}/submit` });
+      } finally {
+        await computer.dispose();
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await rm(directory, { recursive: true, force: true });
       }
-      for (const step of [
-        { action: 'click', x: 0.05, y: 0.05 },
-        {
-          action: 'click',
-          points: [
-            { x: 0.05, y: 0.05 },
-            { x: 0.05, y: 0.05 },
-          ],
-        },
-      ] satisfies BrowserAction[]) {
-        const page = await computer.currentPage('target-name', step);
-        assert.equal(page.controls?.[0]?.name, '');
-        assert.equal(page.controls?.[1]?.name, 'Named region');
-      }
-      await computer.act('target-name', { action: 'fill', selector: '#field', text: 'synthetic' });
-      for (const step of [
-        { action: 'press', key: 'Enter' },
-        { action: 'type', text: 'synthetic\n' },
-      ] satisfies BrowserAction[]) {
-        const page = await computer.currentPage('target-name', step);
-        assert.deepEqual(page.controls?.[0], { role: 'textbox', name: '' });
-        assert.equal(page.controls?.[1]?.name, 'Named region');
-        assert.equal(page.submits, undefined);
-      }
-      for (const [selector, name] of [
-        ['#named', 'Named exact button'],
-        ['#custom', 'Named custom target'],
-      ]) {
-        const page = await computer.currentPage('target-name', { action: 'click', selector });
-        assert.equal(page.controls?.[0]?.name, name);
-      }
-      await computer.act('target-name', { action: 'fill', selector: '#known', text: 'synthetic' });
-      const known = await computer.currentPage('target-name', { action: 'press', key: 'Enter' });
-      assert.deepEqual(known.controls?.[0], { role: 'textbox', name: '' });
-      assert.equal(known.controls?.[1]?.name, 'Known form');
-      assert.deepEqual(known.submits, { method: 'POST', to: `${origin}/submit` });
-    } finally {
-      await computer.dispose();
-      server.closeAllConnections();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      await rm(directory, { recursive: true, force: true });
-    }
-  },
-);
+    },
+  );
 
-test(
-  'native coordinate targets follow normal pointer hit testing',
-  { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
-  async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'nod-pointer-target-native-'));
-    const requests: string[] = [];
-    const server = createHttpServer((request, response) => {
-      if (request.method === 'POST' || request.url?.startsWith('/overlay')) {
-        requests.push(`${request.method} ${request.url}`);
-        response.writeHead(204).end();
-        return;
-      }
-      const named = request.url === '/named';
-      response.setHeader('content-type', 'text/html');
-      response.end(`<title>Synthetic pointer target</title>
+  test(
+    'native coordinate targets follow normal pointer hit testing',
+    { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'nod-pointer-target-native-'));
+      const requests: string[] = [];
+      const server = createHttpServer((request, response) => {
+        if (request.method === 'POST' || request.url?.startsWith('/overlay')) {
+          requests.push(`${request.method} ${request.url}`);
+          response.writeHead(204).end();
+          return;
+        }
+        const named = request.url === '/named';
+        response.setHeader('content-type', 'text/html');
+        response.end(`<title>Synthetic pointer target</title>
         <style>button{position:fixed;inset:0;width:100vw;height:100vh;border:0}#overlay{pointer-events:none;opacity:.2}</style>
         <form method="post" action="/actual-${named ? 'named' : 'blank'}"><button${named ? ' aria-label="Named actual target"' : ''}></button></form>
         <form method="get" action="/overlay"><button id="overlay" aria-label="Named overlay">Named overlay</button></form>`);
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const address = server.address();
-    assert.ok(address && typeof address !== 'string');
-    const computer = createAgentBrowserComputer({
-      dataRoot: directory,
-      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
-      privateNetwork: true,
-      headless: true,
-    });
-    try {
-      const expected: string[] = [];
-      for (const named of [false, true]) {
-        await computer.act('pointer-target', {
-          action: 'open',
-          url: `http://127.0.0.1:${address.port}/${named ? 'named' : 'blank'}`,
-        });
-        const step: BrowserAction = { action: 'click', x: 0.5, y: 0.5 };
-        const page = await computer.currentPage('pointer-target', step);
-        assert.ok(page.target);
-        assert.deepEqual(page.controls?.[0], {
-          role: 'button',
-          name: named ? 'Named actual target' : '',
-        });
-        assert.deepEqual(page.submits, {
-          method: 'POST',
-          to: `http://127.0.0.1:${address.port}/actual-${named ? 'named' : 'blank'}`,
-        });
-        assert.deepEqual(requests, expected);
-        await computer.act('pointer-target', { ...step, expectTarget: page.target });
-        expected.push(`POST /actual-${named ? 'named' : 'blank'}`);
-        for (let i = 0; i < 500 && requests.length < expected.length; i++) await delay(10);
-        assert.deepEqual(requests, expected);
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      assert.ok(address && typeof address !== 'string');
+      const computer = createAgentBrowserComputer({
+        dataRoot: directory,
+        browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+        privateNetwork: true,
+        headless: true,
+      });
+      try {
+        const expected: string[] = [];
+        for (const named of [false, true]) {
+          await computer.act('pointer-target', {
+            action: 'open',
+            url: `http://127.0.0.1:${address.port}/${named ? 'named' : 'blank'}`,
+          });
+          const step: BrowserAction = { action: 'click', x: 0.5, y: 0.5 };
+          const page = await computer.currentPage('pointer-target', step);
+          assert.ok(page.target);
+          assert.deepEqual(page.controls?.[0], {
+            role: 'button',
+            name: named ? 'Named actual target' : '',
+          });
+          assert.deepEqual(page.submits, {
+            method: 'POST',
+            to: `http://127.0.0.1:${address.port}/actual-${named ? 'named' : 'blank'}`,
+          });
+          assert.deepEqual(requests, expected);
+          await computer.act('pointer-target', { ...step, expectTarget: page.target });
+          expected.push(`POST /actual-${named ? 'named' : 'blank'}`);
+          for (let i = 0; i < 500 && requests.length < expected.length; i++) await delay(10);
+          assert.deepEqual(requests, expected);
+        }
+      } finally {
+        await computer.dispose();
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await rm(directory, { recursive: true, force: true });
       }
-    } finally {
-      await computer.dispose();
-      server.closeAllConnections();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      await rm(directory, { recursive: true, force: true });
-    }
-  },
-);
+    },
+  );
 
-test(
-  'native secure entry completes single and split OTP controls without maxlength hints',
-  { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
-  async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'nod-code-native-'));
-    const code = '072846';
-    const received: string[] = [];
-    const server = createHttpServer(async (request, response) => {
-      if (request.method === 'POST') {
-        let body = '';
-        for await (const part of request) body += part.toString();
-        received.push(new URLSearchParams(body).getAll('code').join(''));
-        if (new URLSearchParams(body).getAll('code').join('') !== code) {
-          response.writeHead(400);
-          response.end('Invalid code');
+  test(
+    'native secure entry completes single and split OTP controls without maxlength hints',
+    { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'nod-code-native-'));
+      const code = '072846';
+      const received: string[] = [];
+      const server = createHttpServer(async (request, response) => {
+        if (request.method === 'POST') {
+          let body = '';
+          for await (const part of request) body += part.toString();
+          received.push(new URLSearchParams(body).getAll('code').join(''));
+          if (new URLSearchParams(body).getAll('code').join('') !== code) {
+            response.writeHead(400);
+            response.end('Invalid code');
+            return;
+          }
+          response.writeHead(303, { location: '/done' });
+          response.end();
           return;
         }
-        response.writeHead(303, { location: '/done' });
-        response.end();
-        return;
-      }
-      if (request.url === '/done') {
-        response.end('<h1>Verified</h1>');
-        return;
-      }
-      const retained = request.url === '/retained';
-      const closed = request.url === '/closed';
-      const automatic = request.url === '/automatic';
-      const split = request.url === '/split' || retained || closed;
-      response.setHeader('content-type', 'text/html');
-      response.end(`<form action="/verify" method="post">
+        if (request.url === '/done') {
+          response.end('<h1>Verified</h1>');
+          return;
+        }
+        const retained = request.url === '/retained';
+        const closed = request.url === '/closed';
+        const automatic = request.url === '/automatic';
+        const split = request.url === '/split' || retained || closed;
+        response.setHeader('content-type', 'text/html');
+        response.end(`<form action="/verify" method="post">
         ${Array.from({ length: split ? code.length : 1 }, (_, index) => `<input name="code" autocomplete="one-time-code" inputmode="numeric" aria-label="Code ${index + 1}">`).join('')}
         ${automatic ? '' : '<button type="submit" onclick="if (!event.isTrusted) event.preventDefault()" disabled>Verify</button>'}<h1></h1>
         </form><script>
@@ -3082,115 +3091,497 @@ test(
         ${retained || closed || automatic ? "document.querySelector('form').onsubmit = async event => { event.preventDefault(); const form = event.currentTarget; await fetch('/verify', { method: 'POST', body: new URLSearchParams(new FormData(form)) }); form.querySelector('h1').textContent = 'Verified'; };" : ''}
         ${closed ? "const form = document.querySelector('form'); const host = document.createElement('code-panel'); form.replaceWith(host); host.attachShadow({mode:'closed'}).append(form);" : ''}
         </script>`);
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const address = server.address();
-    assert.ok(address && typeof address !== 'string');
-    const origin = `http://127.0.0.1:${address.port}`;
-    const computer = createAgentBrowserComputer({
-      dataRoot: directory,
-      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
-      privateNetwork: true,
-      headless: true,
-    });
-    const worker = await harness({ computer });
-    const client = worker.client(directory, { timeoutMs: 30_000 });
-    const act = (input: BrowserAction) => client.act('fixture', input);
-    try {
-      for (const path of ['/single', '/split', '/retained', '/closed', '/automatic']) {
-        const count = received.length;
-        await act({ action: 'open', url: origin + path });
-        const shape = await act({
-          action: 'evaluate',
-          script: 'globalThis.fields.map(field => field.maxLength)',
-        });
-        assert.deepEqual(
-          JSON.parse(shape.text.slice(shape.text.indexOf('\n') + 1)),
-          Array(path === '/single' || path === '/automatic' ? 1 : 6).fill(-1),
-        );
-        await act({ action: 'reload' });
-        const initial = (await act({ action: 'snapshot' })).text;
-        const held = /"Code 1"[^\n]*ref=(e\d+)/.exec(initial)?.[1];
-        assert.ok(held);
-        const codeRefs = Array.from(
-          initial.matchAll(/"Code \d+"[^\n]*ref=(e\d+)/g),
-          (match) => `@${match[1]}`,
-        );
-        if (path === '/closed')
-          for (const fields of [codeRefs.slice(1), codeRefs.map(() => codeRefs[0]!)]) {
-            await assert.rejects(
-              client.injectCredentials({
-                threadId: 'fixture',
-                origin,
-                kind: 'otp',
-                code,
-                passwordSelector: fields,
-              }),
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      assert.ok(address && typeof address !== 'string');
+      const origin = `http://127.0.0.1:${address.port}`;
+      const computer = createAgentBrowserComputer({
+        dataRoot: directory,
+        browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+        privateNetwork: true,
+        headless: true,
+      });
+      const worker = await harness({ computer });
+      const client = worker.client(directory, { timeoutMs: 30_000 });
+      const act = (input: BrowserAction) => client.act('fixture', input);
+      try {
+        for (const path of ['/single', '/split', '/retained', '/closed', '/automatic']) {
+          const count = received.length;
+          await act({ action: 'open', url: origin + path });
+          const shape = await act({
+            action: 'evaluate',
+            script: 'globalThis.fields.map(field => field.maxLength)',
+          });
+          assert.deepEqual(
+            JSON.parse(shape.text.slice(shape.text.indexOf('\n') + 1)),
+            Array(path === '/single' || path === '/automatic' ? 1 : 6).fill(-1),
+          );
+          await act({ action: 'reload' });
+          const initial = (await act({ action: 'snapshot' })).text;
+          const held = /"Code 1"[^\n]*ref=(e\d+)/.exec(initial)?.[1];
+          assert.ok(held);
+          const codeRefs = Array.from(
+            initial.matchAll(/"Code \d+"[^\n]*ref=(e\d+)/g),
+            (match) => `@${match[1]}`,
+          );
+          if (path === '/closed')
+            for (const fields of [codeRefs.slice(1), codeRefs.map(() => codeRefs[0]!)]) {
+              await assert.rejects(
+                client.injectCredentials({
+                  threadId: 'fixture',
+                  origin,
+                  kind: 'otp',
+                  code,
+                  passwordSelector: fields,
+                }),
+              );
+              assert.equal(received.length, count);
+              assert.doesNotMatch((await act({ action: 'snapshot' })).text, /:\s*\d/);
+            }
+          const injected = await client.injectCredentials({
+            threadId: 'fixture',
+            origin,
+            kind: 'otp',
+            code,
+            passwordSelector: path === '/closed' ? codeRefs : 'input[autocomplete="one-time-code"]',
+            submitSelector:
+              path === '/closed'
+                ? `@${/button "Verify"[^\n]*ref=(e\d+)/.exec(initial)?.[1]}`
+                : path === '/automatic'
+                  ? undefined
+                  : 'button',
+          });
+          assert.deepEqual(injected, { status: 'submitted' });
+          let accepted: string;
+          if (path === '/closed') {
+            const deadline = Date.now() + 5_000;
+            do accepted = (await act({ action: 'snapshot' })).text;
+            while (!accepted.includes('Verified') && Date.now() < deadline);
+          } else {
+            await act(
+              path === '/retained' || path === '/automatic'
+                ? { action: 'wait', text: 'Verified' }
+                : { action: 'wait', url: '**/done' },
             );
-            assert.equal(received.length, count);
-            assert.doesNotMatch((await act({ action: 'snapshot' })).text, /:\s*\d/);
+            accepted = (await act({ action: 'snapshot' })).text;
           }
-        const injected = await client.injectCredentials({
-          threadId: 'fixture',
-          origin,
-          kind: 'otp',
-          code,
-          passwordSelector: path === '/closed' ? codeRefs : 'input[autocomplete="one-time-code"]',
-          submitSelector:
-            path === '/closed'
-              ? `@${/button "Verify"[^\n]*ref=(e\d+)/.exec(initial)?.[1]}`
-              : path === '/automatic'
-                ? undefined
-                : 'button',
-        });
-        assert.deepEqual(injected, { status: 'submitted' });
-        let accepted: string;
-        if (path === '/closed') {
-          const deadline = Date.now() + 5_000;
-          do accepted = (await act({ action: 'snapshot' })).text;
-          while (!accepted.includes('Verified') && Date.now() < deadline);
-        } else {
-          await act(
-            path === '/retained' || path === '/automatic'
-              ? { action: 'wait', text: 'Verified' }
-              : { action: 'wait', url: '**/done' },
-          );
-          accepted = (await act({ action: 'snapshot' })).text;
+          assert.equal(received.length, count + 1);
+          assert.equal(received.at(-1), code);
+          assert.match(accepted, /Verified/);
+          assert.equal(accepted.includes(code), false);
+          if (path === '/retained' || path === '/closed' || path === '/automatic') {
+            assert.doesNotMatch(accepted, /\[ref=e\d+\]:\s*\d/);
+            await act({ action: 'click', selector: `@${held}` });
+            assert.match((await act({ action: 'snapshot' })).text, /Verified/);
+            await assert.rejects(
+              act({
+                action: 'evaluate',
+                script: 'globalThis.fields.map(node => node.value)',
+              }),
+              (error: unknown) =>
+                error instanceof BrowserActionError && error.code === 'browser_script_paused',
+            );
+            assert.ok(await client.screenshot('fixture'));
+            continue;
+          }
+          await act({ action: 'back' });
+          const restored = await act({
+            action: 'evaluate',
+            script:
+              'btoa([...document.querySelectorAll("input")].map(node => node.value).join(""))',
+          });
+          assert.equal(restored.text.includes(Buffer.from(code).toString('base64')), false);
         }
-        assert.equal(received.length, count + 1);
-        assert.equal(received.at(-1), code);
-        assert.match(accepted, /Verified/);
-        assert.equal(accepted.includes(code), false);
-        if (path === '/retained' || path === '/closed' || path === '/automatic') {
-          assert.doesNotMatch(accepted, /\[ref=e\d+\]:\s*\d/);
-          await act({ action: 'click', selector: `@${held}` });
-          assert.match((await act({ action: 'snapshot' })).text, /Verified/);
-          await assert.rejects(
-            act({
-              action: 'evaluate',
-              script: 'globalThis.fields.map(node => node.value)',
-            }),
-            (error: unknown) =>
-              error instanceof BrowserActionError && error.code === 'browser_script_paused',
-          );
-          assert.ok(await client.screenshot('fixture'));
-          continue;
-        }
-        await act({ action: 'back' });
-        const restored = await act({
-          action: 'evaluate',
-          script: 'btoa([...document.querySelectorAll("input")].map(node => node.value).join(""))',
-        });
-        assert.equal(restored.text.includes(Buffer.from(code).toString('base64')), false);
+      } finally {
+        await worker.close();
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await rm(directory, { recursive: true, force: true });
       }
-    } finally {
-      await worker.close();
-      server.closeAllConnections();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      await rm(directory, { recursive: true, force: true });
-    }
-  },
-);
+    },
+  );
+
+  test(
+    'private entry masks known values, refuses Pi listeners and refuses a foreign login frame',
+    { timeout: 60_000 },
+    async () => {
+      const hits: string[] = [];
+      let shadowImage: Buffer | undefined;
+      const server = createHttpServer((request, response) => {
+        if (request.url === '/image') {
+          response.setHeader('content-type', 'image/png');
+          response.end(shadowImage);
+          return;
+        }
+        response.setHeader('content-type', 'text/html');
+        if (request.url?.startsWith('/record')) {
+          hits.push(new URL(request.url, 'http://fixture').searchParams.get('value') ?? '');
+          response.end();
+          return;
+        }
+        if (request.url === '/frame') {
+          response.end(
+            '<input id="foreign" type="password" aria-label="Foreign password"><script>document.querySelector("input").addEventListener("input", e => fetch("/record?value="+encodeURIComponent(e.target.value)))</script>',
+          );
+          return;
+        }
+        if (request.url === '/card') {
+          response.end(
+            '<input id="number" aria-label="Card number"><input id="expiry" aria-label="Expiry"><input id="cvc" aria-label="Security code"><h2 id="echo"></h2><button id="submit">Continue</button><script>for(const input of document.querySelectorAll("input"))input.addEventListener("input",e=>document.querySelector("h2").textContent+=e.target.value)</script>',
+          );
+          return;
+        }
+        if (request.url === '/shadow') {
+          response.setHeader('Content-Security-Policy', "style-src 'nonce-nod-fixture'");
+          response.end(
+            `<card-panel></card-panel><button id="report">Report</button><script>
+          document.querySelector('#report').onclick = () => { const mutated = globalThis.maskMutations > 0; globalThis.privateStyles[0].style.setProperty('outline-width', '1px'); setTimeout(() => fetch('/record?value=' + encodeURIComponent('report:' + JSON.stringify({ mutated, styles: globalThis.privateStyles.map(node => [getComputedStyle(node).opacity, getComputedStyle(node).transitionProperty, node.style.getPropertyValue('transition-property'), node.style.getPropertyValue('opacity')]) }))), 0); };
+          customElements.define('card-panel', class extends HTMLElement { constructor() { super(); this.attachShadow({ mode: 'closed' }).innerHTML = '<card-fields></card-fields>'; } });
+          customElements.define('card-fields', class extends HTMLElement { constructor() { super(); const root = this.attachShadow({ mode: 'closed' });
+          root.innerHTML = '<style nonce="nod-fixture">input[aria-label="Card number"],input[aria-label="Security code"],h2{background:rgb(255,0,0);transition:opacity 60s !important}button{background:rgb(0,0,255)}</style><form><input aria-label="Card number"><select aria-label="Month"><option value="1">January</option><option value="8">August</option></select><input aria-label="Year"><input aria-label="Security code"><h2></h2><button>Complete</button></form>';
+          root.querySelectorAll('input').forEach(node => node.style.setProperty('visibility', 'visible', 'important'));
+          globalThis.privateStyles = Array.from(root.querySelectorAll('input[aria-label="Card number"],input[aria-label="Security code"],h2'));
+          globalThis.maskMutations = 0;
+          new MutationObserver(records => { globalThis.maskMutations++; const source = root.querySelector('h2'); if (records.some(record => record.target === source) && source.style.opacity === '0' && source.textContent) { const echo = source.cloneNode(true); echo.style.removeProperty('opacity'); echo.style.removeProperty('transition-property'); root.append(echo); } }).observe(root, { subtree: true, attributes: true, attributeFilter: ['style'] });
+          root.querySelector('input').oninput = event => { event.target.value = event.target.value.replace(/\\D/g, '').replace(/(\\d{4})(?=\\d)/g, '$1 '); root.querySelector('h2').textContent = event.target.value; };
+          root.querySelector('form').onsubmit = event => { event.preventDefault(); fetch('/record?value=' + encodeURIComponent([...root.querySelectorAll('input,select')].map(node => node.value).join('/'))); };
+          } });</script>`,
+          );
+          return;
+        }
+        const { port } = server.address() as { port: number };
+        response.end(
+          `<input id="password" type="password" aria-label="Password"><button id="submit">Continue</button><h2></h2><iframe title="Other origin" src="http://localhost:${port}/frame"></iframe><script>document.querySelector('#password').addEventListener('input',e=>document.querySelector('h2').textContent=e.target.value)</script>`,
+        );
+      });
+      await new Promise<void>((resolve) => server.listen(0, '::', resolve));
+      const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+      const directory = await mkdtemp(join(tmpdir(), 'nod-private-entry-'));
+      const native = createAgentBrowserComputer({
+        dataRoot: directory,
+        privateNetwork: true,
+        headless: true,
+      });
+      const worker = await harness({ computer: native });
+      const computer = worker.client(directory, { timeoutMs: 30_000 });
+      assert.ok(computer.cardDestinations);
+      assert.ok(computer.fillCard);
+      try {
+        await computer.act('private', { action: 'open', url: origin });
+        const secret = 'Synthetic private value';
+        const input = {
+          threadId: 'private',
+          origin,
+          kind: 'password' as const,
+          password: secret,
+          passwordSelector: '#password',
+          submitSelector: '#submit',
+        };
+        await computer.act('private', {
+          action: 'evaluate',
+          script:
+            'document.querySelector("#password").addEventListener("input", e => localStorage.setItem("copied", btoa(e.target.value)))',
+        });
+        await assert.rejects(computer.injectCredentials(input), /script ran/);
+        await computer.act('private', { action: 'reload' });
+        await computer.injectCredentials(input);
+        const seen = (await computer.act('private', { action: 'snapshot' })).text;
+        assert.equal(seen.includes(secret), false);
+        await assert.rejects(
+          computer.act('private', {
+            action: 'evaluate',
+            script: 'document.querySelector("#password").value.split("").reverse().join("")',
+          }),
+          /scripts are paused/,
+        );
+        await computer.act('private', { action: 'reload' });
+        assert.equal(
+          (
+            await computer.act('private', {
+              action: 'evaluate',
+              script: 'localStorage.getItem("copied")',
+            })
+          ).text.includes(Buffer.from(secret).toString('base64')),
+          false,
+        );
+        const page = (await computer.act('private', { action: 'snapshot' })).text;
+        const ref = /"Foreign password"[^\n]*ref=(e\d+)/.exec(page)?.[1];
+        assert.ok(ref);
+        await assert.rejects(computer.injectCredentials({ ...input, passwordSelector: `@${ref}` }));
+        assert.deepEqual(hits, []);
+        await computer.act('private', { action: 'open', url: `${origin}/card` });
+        const fields = { number: '#number', expiry: '#expiry', securityCode: '#cvc' };
+        const bound = await computer.cardDestinations('private', fields);
+        await computer.fillCard({
+          threadId: 'private',
+          fields,
+          ...bound,
+          submitSelector: '#submit',
+          card: {
+            cardNumber: '4242424242424242',
+            expiryMonth: 8,
+            expiryYear: 2030,
+            cardholder: 'Synthetic cardholder',
+            securityCode: '737',
+          },
+        });
+        const receipt = (await computer.act('private', { action: 'snapshot' })).text;
+        assert.equal(receipt.includes('4242424242424242'), false);
+        assert.equal(receipt.includes('737'), false);
+        assert.ok(await computer.screenshot('private'));
+        await assert.rejects(
+          computer.act('private', {
+            action: 'evaluate',
+            script: '[...document.querySelectorAll("input")].map(node=>node.value)',
+          }),
+          /scripts are paused/,
+        );
+        await computer.act('private', { action: 'open', url: `${origin}/shadow` });
+        const shadowPage = (await computer.act('private', { action: 'snapshot' })).text;
+        const shadowRef = (name: string) => {
+          const ref = new RegExp(`"${name}"[^\\n]*ref=(e\\d+)`).exec(shadowPage)?.[1];
+          assert.ok(ref);
+          return `@${ref}`;
+        };
+        const shadowFields = {
+          number: shadowRef('Card number'),
+          expiryMonth: shadowRef('Month'),
+          expiryYear: shadowRef('Year'),
+          securityCode: shadowRef('Security code'),
+        };
+        const shadowBound = await computer.cardDestinations('private', shadowFields);
+        assert.deepEqual(Object.values(shadowBound.destinations), Array(4).fill(origin));
+        await computer.fillCard({
+          threadId: 'private',
+          fields: shadowFields,
+          ...shadowBound,
+          submitSelector: shadowRef('Complete'),
+          card: {
+            cardNumber: '4242424242424242',
+            expiryMonth: 8,
+            expiryYear: 2030,
+            cardholder: 'Synthetic cardholder',
+            securityCode: '737',
+          },
+        });
+        const shadowReceipt = (await computer.act('private', { action: 'snapshot' })).text;
+        assert.equal(shadowReceipt.includes('4242424242424242'), false);
+        assert.equal(shadowReceipt.includes('737'), false);
+        assert.deepEqual(hits, ['4242 4242 4242 4242/8/2030/737']);
+        const image = await computer.screenshot('private');
+        assert.ok(image);
+        shadowImage = Buffer.from(image);
+        await assert.rejects(
+          computer.act('private', {
+            action: 'evaluate',
+            script: 'globalThis.maskMutations',
+          }),
+          /scripts are paused/,
+        );
+        for (const field of [
+          shadowFields.number,
+          shadowFields.expiryYear,
+          shadowFields.securityCode,
+        ])
+          await computer.act('private', { action: 'fill', selector: field, text: '' });
+        await assert.rejects(computer.act('private', { action: 'open', url: 'file:///etc/hosts' }));
+        await assert.rejects(
+          computer.act('private', { action: 'evaluate', script: 'document.title' }),
+          /scripts are paused/,
+        );
+        await computer.act('private', { action: 'click', selector: '#report' });
+        const recorded = hits as string[];
+        const reported = Date.now() + 5_000;
+        while (!recorded.some((hit) => hit.startsWith('report:')) && Date.now() < reported)
+          await delay(50);
+        const report = JSON.parse(
+          recorded.find((hit) => hit.startsWith('report:'))?.slice('report:'.length) ?? 'null',
+        ) as { mutated: boolean; styles: string[][] } | null;
+        assert.equal(report?.mutated, true);
+        assert.deepEqual(
+          report?.styles,
+          Array.from({ length: 3 }, () => ['1', 'opacity', '', '']),
+        );
+        await computer.act('private', { action: 'open', url: origin });
+        const pixels = await computer.act('private', {
+          action: 'evaluate',
+          script: `(async () => { const image = new Image(); image.src = '/image'; await image.decode(); const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height; const context = canvas.getContext('2d'); context.drawImage(image, 0, 0); const pixels = context.getImageData(0, 0, image.width, image.height).data; let red = 0, blue = 0; for (let index = 0; index < pixels.length; index += 4) { if (pixels[index] === 255 && pixels[index + 1] === 0 && pixels[index + 2] === 0) red++; if (pixels[index] === 0 && pixels[index + 1] === 0 && pixels[index + 2] === 255) blue++; } return { red, blue }; })()`,
+        });
+        const colors = JSON.parse(pixels.text.slice(pixels.text.indexOf('\n') + 1)) as {
+          red: number;
+          blue: number;
+        };
+        assert.equal(colors.red, 0);
+        assert.ok(colors.blue > 0);
+      } finally {
+        await worker.close();
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test(
+    'a checked step reports the form it would send without sending it',
+    { timeout: 60_000 },
+    async (t) => {
+      const sent: string[] = [];
+      const server = createHttpServer(async (request, response) => {
+        response.setHeader('content-type', 'text/html');
+        if (request.url !== '/' && request.url !== '/favicon.ico') {
+          sent.push(`${request.method} ${request.url}`);
+          response.end('Sent');
+          return;
+        }
+        response.end(
+          '<form method="post" action="/book"><button>19:30</button></form><form action="/search"><input name="q" aria-label="Query"><button>Search</button></form><button id="plain">Plain</button><form method="post" action="/save"><button type="button" id="toggle">Toggle</button><button id="other" formaction="/other" formmethod="get">Other</button></form><form method="post" action="/a"><button>Same</button></form><form method="post" action="/b"><button>Same</button></form><form method="post" action="/reserve"><button>Menu</button></form><form method="post" action="/reserve"><button>Menu</button></form><form action="/find"><input name="city" aria-label="City"><button formaction="/reserve-now" formmethod="post">Go</button></form><form method="post" action="/label"><input type="submit" id="labelled" value="Send"><label for="labelled" id="label">Send it</label></form><form method="post" action="/shadowed"><input type="hidden" name="action" value="other"><input type="radio" name="method" aria-label="Card"><button>Shadowed</button></form>',
+        );
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+      const directory = await mkdtemp(join(tmpdir(), 'nod-submits-'));
+      const computer = createAgentBrowserComputer({
+        dataRoot: directory,
+        browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+        privateNetwork: true,
+        headless: true,
+      });
+      try {
+        let snapshot: string;
+        try {
+          snapshot = (await computer.act('submits', { action: 'open', url: origin })).text;
+        } catch {
+          t.skip('Chrome is not available here.');
+          return;
+        }
+        const ref = (name: string) => {
+          const found = new RegExp(`button "${name}" \\[ref=(e\\d+)\\]`).exec(snapshot)?.[1];
+          assert.ok(found, `No ${name} button in the snapshot.`);
+          return `@${found}`;
+        };
+        const submits = async (step: BrowserAction) =>
+          (await computer.currentPage('submits', step)).submits;
+        assert.deepEqual(await submits({ action: 'click', selector: ref('19:30') }), {
+          method: 'POST',
+          to: `${origin}/book`,
+        });
+        assert.deepEqual(await submits({ action: 'click', selector: ref('Search') }), {
+          method: 'GET',
+          to: `${origin}/search`,
+        });
+        assert.deepEqual(await submits({ action: 'click', selector: '#other' }), {
+          method: 'GET',
+          to: `${origin}/other`,
+        });
+        assert.equal(await submits({ action: 'click', selector: '#plain' }), undefined);
+        assert.equal(await submits({ action: 'click', selector: '#toggle' }), undefined);
+        assert.deepEqual(await submits({ action: 'click', selector: ref('Same') }), {
+          method: 'POST',
+          to: `${origin}/a`,
+        });
+        assert.deepEqual(await submits({ action: 'click', selector: ref('Shadowed') }), {
+          method: 'POST',
+          to: `${origin}/shadowed`,
+        });
+        assert.deepEqual(await submits({ action: 'click', selector: ref('Menu') }), {
+          method: 'POST',
+          to: `${origin}/reserve`,
+        });
+        await computer.act('submits', {
+          action: 'fill',
+          selector: 'input[name=q]',
+          text: 'tables',
+        });
+        for (const key of [
+          'Enter',
+          'Return',
+          'Shift+Enter',
+          'Enter+Shift',
+          'Ctrl+Enter+Meta',
+          'NumpadEnter',
+          '\r',
+          '\n',
+        ]) {
+          assert.deepEqual(
+            await submits({ action: 'press', key }),
+            {
+              method: 'GET',
+              to: `${origin}/search`,
+            },
+            key,
+          );
+        }
+        for (const key of [
+          'Enter+Unknown',
+          ' Enter ',
+          'ControlOrMeta+Enter',
+          'Enter\n',
+          'ShiftLeft+Enter',
+        ])
+          assert.equal(await submits({ action: 'press', key }), undefined, key);
+        await computer.act('submits', {
+          action: 'evaluate',
+          script: "document.querySelector('form button').focus()",
+        });
+        assert.deepEqual(await submits({ action: 'press', key: 'Enter' }), {
+          method: 'POST',
+          to: `${origin}/book`,
+        });
+        await computer.act('submits', {
+          action: 'fill',
+          selector: 'input[name=city]',
+          text: 'Porto',
+        });
+        assert.deepEqual(await submits({ action: 'press', key: 'Enter' }), {
+          method: 'POST',
+          to: `${origin}/reserve-now`,
+        });
+        assert.deepEqual(await submits({ action: 'click', selector: '#label' }), {
+          method: 'POST',
+          to: `${origin}/label`,
+        });
+        const cssStep = { action: 'click', selector: '#plain' } as const;
+        const original = await computer.currentPage('submits', cssStep);
+        assert.equal((await computer.currentPage('submits', cssStep)).target, original.target);
+        await computer.act('submits', { ...cssStep, expectTarget: original.target });
+        const enterStep = { action: 'press', key: 'Enter' } as const;
+        const focused = await computer.currentPage('submits', enterStep);
+        await computer.act('submits', { ...enterStep, expectTarget: focused.target });
+        const located = await computer.act('submits', {
+          action: 'evaluate',
+          script:
+            "const r=document.querySelector('#plain').getBoundingClientRect();({x:(r.x+r.width/2)/innerWidth,y:(r.y+r.height/2)/innerHeight})",
+        });
+        const point = JSON.parse(located.text.slice(located.text.indexOf('\n') + 1)) as {
+          x: number;
+          y: number;
+        };
+        const pointStep = { action: 'click', ...point } as const;
+        const pointed = await computer.currentPage('submits', pointStep);
+        await computer.act('submits', { ...pointStep, expectTarget: pointed.target });
+        await computer.act('submits', {
+          action: 'evaluate',
+          script:
+            "const plain=document.querySelector('#plain');plain.replaceWith(plain.cloneNode(true))",
+        });
+        const replacement = await computer.currentPage('submits', cssStep);
+        assert.notEqual(replacement.target, original.target);
+        await assert.rejects(
+          computer.act('submits', { ...cssStep, expectTarget: original.target }),
+          (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+        );
+        assert.deepEqual(sent, []);
+      } finally {
+        await computer.dispose();
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+});
 
 test('the owner time zone and region reach a new browser launch without injecting browser flags', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-browser-locale-'));
@@ -3363,6 +3754,53 @@ test('feedback redaction checks original text and structure before masking', asy
       privateParts: [opaque],
     },
     { id: 'tuple-control', input: tuple, privateParts: [opaque] },
+    ...['PRIVATE KEY', 'RSA PRIVATE KEY'].map((label) => ({
+      id: `closed-key-keeps-tail-${label}`,
+      input: `-----BEGIN ${label}-----\n${opaque}\n-----END ${label}-----\nPublic status: denied`,
+      privateParts: [opaque],
+      kept: ['Public status: denied'],
+    })),
+    {
+      id: 'mismatched-key-end',
+      input: `-----BEGIN RSA PRIVATE KEY-----\n${opaque}\n-----END PRIVATE KEY-----\nPrivateTrailingValue`,
+      privateParts: [opaque, 'PrivateTrailingValue'],
+    },
+    ...[
+      'GITHUB_TOKEN',
+      'db_password',
+      'authToken',
+      'db_pwd',
+      'AUTH_OTP',
+      'authTOTP',
+      'CARD_PAN',
+      'service__api__key',
+    ].flatMap((name) => [
+      { id: `prefixed-object-${name}`, input: { [name]: opaque }, privateParts: [opaque] },
+      {
+        id: `prefixed-named-value-${name}`,
+        input: { name, value: opaque },
+        privateParts: [opaque],
+      },
+      {
+        id: `prefixed-tuple-${name}`,
+        input: [name, opaque, 'PrivateTrailingValue'],
+        privateParts: [opaque, 'PrivateTrailingValue'],
+      },
+      { id: `prefixed-assignment-${name}`, input: `${name}=${opaque}`, privateParts: [opaque] },
+    ]),
+    { id: 'prefixed-tuple-encoded', input: ['GITHUB_%54OKEN', opaque], privateParts: [opaque] },
+    {
+      id: 'prefixed-assignment-masked-label',
+      input: `GITHUB_TOKEN=${opaque}`,
+      secrets: ['GITHUB_TOKEN'],
+      privateParts: [opaque],
+    },
+    {
+      id: 'sentence-label-keeps-trailing-values',
+      input: ['Enter your password', 'Public scalar detail', 'Another detail'],
+      privateParts: [],
+      kept: ['Enter your password', 'Public scalar detail', 'Another detail'],
+    },
     {
       id: 'private-tuple-tail',
       input: ['Authorization', opaque, 'PrivateTrailingValue'],
@@ -3822,6 +4260,8 @@ test('feedback redaction checks original text and structure before masking', asy
       if (probe.id === 'technical-control') assert.deepEqual(JSON.parse(encoded), probe.input);
     });
   }
+  const redactor = createFeedbackRedactor({ secrets: [], profile: { names: [] } });
+  for (const name of ['GITHUB_TOKEN', 'password']) assert.deepEqual(redactor.value([name]), [name]);
 });
 
 test('feedback redaction advances Unicode overlaps and resets recursive checks between calls', async () => {
@@ -4255,10 +4695,302 @@ test('rich feedback redaction keeps error classes, frame files, sizes and model 
   assert.equal(redactor.text('Open D:\\private-owner\\a.txt'), 'Open [path]');
 });
 
-test('browser handoff preserves platform editing chords, text input and paste', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
+test('navigation stays available when a saved script fence cannot reach the inspector', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-navigation-recovery-'));
+  const fixture = stagedLoginBrowser();
+  let offline = false;
+  const navigated: string[] = [];
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: async (...args) => {
+      const command = args[1].slice(args[1].indexOf('--idle-timeout') + 2);
+      if (offline && command[0] === 'get' && command[1] === 'cdp-url')
+        return { stdout: '{"success":false}', stderr: '', exitCode: 1 };
+      if (['back', 'forward', 'reload', 'open'].includes(command[0])) navigated.push(command[0]);
+      const result = await fixture.run(...args);
+      if (command[0] === 'eval') offline = true;
+      return result;
+    },
+  });
+  try {
+    await computer.act('recovery', { action: 'open', url: 'https://1.1.1.1/login' });
+    await computer.act('recovery', {
+      action: 'evaluate',
+      script: "document.body.dataset.changed = 'synthetic'",
+    });
+    for (const action of ['back', 'forward', 'reload'] as const)
+      await computer.act('recovery', { action });
+    assert.deepEqual(navigated, ['open', 'back', 'forward', 'open']);
+    offline = false;
+    await assert.rejects(
+      computer.injectCredentials({
+        threadId: 'recovery',
+        origin: 'https://1.1.1.1',
+        kind: 'identifier',
+        username: 'synthetic-recovery',
+        usernameSelector: '#account',
+        submitSelector: 'button',
+      }),
+      /script ran/,
+    );
+    await computer.act('recovery', { action: 'reload' });
+    await computer.injectCredentials({
+      threadId: 'recovery',
+      origin: 'https://1.1.1.1',
+      kind: 'identifier',
+      username: 'synthetic-recovery',
+      usernameSelector: '#account',
+      submitSelector: 'button',
+    });
+    assert.deepEqual(fixture.pages.get('recovery')!.entered, ['synthetic-recovery']);
+  } finally {
+    offline = false;
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('failed private entry holds every Pi action until the filled document changes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-private-cleanup-'));
+  const fixture = stagedLoginBrowser();
+  let failSubmit = true;
+  let failedSubmissions = 0;
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: async (...args) => {
+      const command = args[1].slice(args[1].indexOf('--idle-timeout') + 2);
+      if (command[0] === 'click' && failSubmit) {
+        failedSubmissions++;
+        return { stdout: '{"success":false}', stderr: '', exitCode: 1 };
+      }
+      return fixture.run(...args);
+    },
+  });
+  try {
+    await computer.act('private', { action: 'open', url: 'https://1.1.1.1/login' });
+    await assert.rejects(
+      computer.injectCredentials({
+        threadId: 'private',
+        origin: 'https://1.1.1.1',
+        kind: 'identifier',
+        username: 'synthetic-private@example.test',
+        usernameSelector: '#account',
+        submitSelector: 'button',
+      }),
+    );
+    assert.equal(failedSubmissions, 1);
+    const before = fixture.pages.get('private')!.entered.length;
+    for (const input of [
+      { action: 'snapshot' as const },
+      { action: 'click' as const, selector: 'button' },
+      { action: 'evaluate' as const, script: 'document.body.textContent' },
+    ])
+      await assert.rejects(computer.act('private', input));
+    await assert.rejects(computer.currentPage('private'));
+    await assert.rejects(computer.screenshot('private'));
+    await assert.rejects(computer.download!('private', { selector: 'button' }));
+    await assert.rejects(computer.control!('private', { type: 'key', key: 'Enter' }));
+    await assert.rejects(
+      computer.cardDestinations('private', { number: '#account', expiry: '#account' }),
+    );
+    assert.equal(fixture.pages.get('private')!.entered.length, before);
+    failSubmit = false;
+    await computer.act('private', { action: 'reload' });
+    assert.ok(await computer.screenshot('private'));
+    assert.match(
+      (await computer.act('private', { action: 'evaluate', script: 'document.title' })).text,
+      /Script result/,
+    );
+    await computer.act('private', { action: 'reload' });
+    const page = fixture.pages.get('private')!;
+    page.afterInspect = (script) => {
+      if (script.includes('globalThis.__nodFocused = node')) page.search.focus();
+    };
+    await assert.rejects(
+      computer.injectCredentials({
+        threadId: 'private',
+        origin: 'https://1.1.1.1',
+        kind: 'identifier',
+        username: 'synthetic-focus-race',
+        usernameSelector: '#account',
+      }),
+    );
+    assert.equal(page.input.value, '');
+    assert.equal(page.search.value, '');
+    page.afterInspect = undefined;
+    await computer.act('private', { action: 'reload' });
+    page.afterInspect = (script) => {
+      if (script.includes("execCommand('insertText'")) page.document = 'navigated-during-entry';
+    };
+    await assert.rejects(
+      computer.injectCredentials({
+        threadId: 'private',
+        origin: 'https://1.1.1.1',
+        kind: 'identifier',
+        username: 'synthetic-navigation',
+        usernameSelector: '#account',
+        submitSelector: 'button',
+      }),
+      /checkout page changed/,
+    );
+    assert.equal(page.entered.length, before);
+    page.afterInspect = undefined;
+  } finally {
+    failSubmit = false;
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a checked browser step is described from its snapshot and runs only on that page and control', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-checked-step-'));
+  const fixture = stagedLoginBrowser();
+  const commands: Array<Record<string, unknown>> = [];
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: fixture.run,
+    onDaemonCommand: (command) => commands.push(command),
+  });
+  const page = () => fixture.pages.get('checked')!;
+  try {
+    await computer.act('checked', { action: 'open', url: 'https://1.1.1.1/login' });
+    await computer.act('checked', { action: 'fill', selector: '#account', text: 'synthetic' });
+    const search = await computer.currentPage('checked', { action: 'click', selector: '@e3' });
+    assert.match(search.target!, /^[0-9a-f]{64}$/);
+    assert.deepEqual(
+      {
+        origin: search.origin,
+        url: search.url,
+        controls: search.controls,
+        submits: search.submits,
+      },
+      {
+        origin: 'https://1.1.1.1',
+        url: 'https://1.1.1.1/login',
+        controls: [{ role: 'textbox', name: 'Search' }],
+        submits: 'unknown',
+      },
+    );
+    const next = { action: 'click', selector: '@e2' } as const;
+    await assert.rejects(
+      computer.act('checked', { ...next, expectOrigin: 'https://2.2.2.2' }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+    );
+    await assert.rejects(
+      computer.act('checked', { ...next, selector: '@e9', expectOrigin: 'https://1.1.1.1' }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+    );
+    await assert.rejects(
+      computer.act('checked', {
+        action: 'drag',
+        selector: '@e3',
+        targetSelector: '@e9',
+        expectOrigin: 'https://1.1.1.1',
+      }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+    );
+    assert.deepEqual(
+      (
+        await computer.currentPage('checked', {
+          action: 'drag',
+          selector: '@e3',
+          targetSelector: '@e2',
+        })
+      ).dropTarget,
+      [{ role: 'button', name: '' }],
+    );
+    await assert.rejects(
+      computer.act('checked', {
+        action: 'drag',
+        selector: '@e3',
+        targetSelector: '@e2',
+        expectTarget: search.target,
+      }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+    );
+    page().location = {
+      origin: 'https://1.1.1.1',
+      href: 'https://1.1.1.1/login?token=first',
+    };
+    page().dom.window.history.replaceState(null, '', '/login?token=first');
+    const collision = await computer.currentPage('checked', next);
+    page().location.href = 'https://1.1.1.1/login?token=second';
+    page().dom.window.history.replaceState(null, '', '/login?token=second');
+    await assert.rejects(
+      computer.act('checked', {
+        ...next,
+        expectOrigin: collision.origin,
+        expectUrl: collision.url,
+        expectTarget: collision.target,
+      }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+    );
+    assert.deepEqual(page().entered, []);
+    await assert.rejects(
+      computer.download('checked', { selector: '@e2' }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_download_control',
+    );
+    await assert.rejects(
+      computer.download('checked', { selector: '@e2', expectOrigin: 'https://2.2.2.2' }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+    );
+    assert.equal(
+      commands.some((command) => command.action === 'download'),
+      false,
+    );
+    const nextTarget = await computer.currentPage('checked', next);
+    await computer.act('checked', { action: 'snapshot' });
+    assert.equal((await computer.currentPage('checked', next)).target, nextTarget.target);
+    await computer.act('checked', {
+      ...next,
+      expectOrigin: 'https://1.1.1.1',
+      expectTarget: nextTarget.target,
+    });
+    assert.deepEqual(page().entered, ['synthetic']);
+    await assert.rejects(
+      computer.act('checked', {
+        action: 'evaluate',
+        script: "document.body.dataset.changed = 'synthetic'",
+        readOnly: true,
+      }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_script_writes',
+    );
+    assert.equal(page().dom.window.document.body.dataset.changed, undefined);
+    const before = await computer.act('checked', { action: 'snapshot' });
+    const searchRef = /textbox "Search" \[ref=(e\d+)\]/.exec(before.text)?.[1];
+    assert.ok(searchRef);
+    const beforeControlChange = await computer.currentPage('checked', {
+      action: 'click',
+      selector: `@${searchRef}`,
+    });
+    await computer.act('checked', {
+      action: 'evaluate',
+      script: "document.querySelector('#search').setAttribute('aria-label', 'Delete account')",
+    });
+    assert.deepEqual(
+      (await computer.currentPage('checked', { action: 'click', selector: `@${searchRef}` }))
+        .controls,
+      [{ role: 'textbox', name: 'Delete account' }],
+    );
+    await assert.rejects(
+      computer.act('checked', {
+        action: 'click',
+        selector: `@${searchRef}`,
+        expectTarget: beforeControlChange.target,
+      }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
+    );
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+describe('interface components', { concurrency: interfaceLanes }, () => {
+  test('browser handoff preserves platform editing chords, text input and paste', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -4550,14 +5282,14 @@ test('browser handoff preserves platform editing chords, text input and paste', 
         dom.window.close();
       }
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stderr || result.stdout);
   });
-  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
-});
 
-test('voice previews sample unsaved voices and cancel stale playback on selection and close', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
+  test('voice previews sample unsaved voices and cancel stale playback on selection and close', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -4988,14 +5720,14 @@ test('voice previews sample unsaved voices and cancel stale playback on selectio
         dom.window.close();
       }
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stderr || result.stdout);
   });
-  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
-});
 
-test('UI analytics keep answer choices, the survey card and survey flag requests within their consent and account', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
+  test('UI analytics keep answer choices, the survey card and survey flag requests within their consent and account', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -5440,14 +6172,14 @@ test('UI analytics keep answer choices, the survey card and survey flag requests
       await act(() => root.unmount());
       dom.window.close();
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stdout + result.stderr);
   });
-  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
-});
 
-test('composer preserves keyboard shortcuts, upload retries, previews and failed-send recovery', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
+  test('composer preserves keyboard shortcuts, upload retries, previews and failed-send recovery', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root" class="chat-page"></div>', {
@@ -6896,677 +7628,14 @@ test('composer preserves keyboard shortcuts, upload retries, previews and failed
         dom.window.close();
       }
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stderr || result.stdout);
   });
-  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
-});
 
-test(
-  'private entry masks known values, refuses Pi listeners and refuses a foreign login frame',
-  { timeout: 60_000 },
-  async () => {
-    const hits: string[] = [];
-    let shadowImage: Buffer | undefined;
-    const server = createHttpServer((request, response) => {
-      if (request.url === '/image') {
-        response.setHeader('content-type', 'image/png');
-        response.end(shadowImage);
-        return;
-      }
-      response.setHeader('content-type', 'text/html');
-      if (request.url?.startsWith('/record')) {
-        hits.push(new URL(request.url, 'http://fixture').searchParams.get('value') ?? '');
-        response.end();
-        return;
-      }
-      if (request.url === '/frame') {
-        response.end(
-          '<input id="foreign" type="password" aria-label="Foreign password"><script>document.querySelector("input").addEventListener("input", e => fetch("/record?value="+encodeURIComponent(e.target.value)))</script>',
-        );
-        return;
-      }
-      if (request.url === '/card') {
-        response.end(
-          '<input id="number" aria-label="Card number"><input id="expiry" aria-label="Expiry"><input id="cvc" aria-label="Security code"><h2 id="echo"></h2><button id="submit">Continue</button><script>for(const input of document.querySelectorAll("input"))input.addEventListener("input",e=>document.querySelector("h2").textContent+=e.target.value)</script>',
-        );
-        return;
-      }
-      if (request.url === '/shadow') {
-        response.setHeader('Content-Security-Policy', "style-src 'nonce-nod-fixture'");
-        response.end(
-          `<card-panel></card-panel><button id="report">Report</button><script>
-          document.querySelector('#report').onclick = () => { const mutated = globalThis.maskMutations > 0; globalThis.privateStyles[0].style.setProperty('outline-width', '1px'); setTimeout(() => fetch('/record?value=' + encodeURIComponent('report:' + JSON.stringify({ mutated, styles: globalThis.privateStyles.map(node => [getComputedStyle(node).opacity, getComputedStyle(node).transitionProperty, node.style.getPropertyValue('transition-property'), node.style.getPropertyValue('opacity')]) }))), 0); };
-          customElements.define('card-panel', class extends HTMLElement { constructor() { super(); this.attachShadow({ mode: 'closed' }).innerHTML = '<card-fields></card-fields>'; } });
-          customElements.define('card-fields', class extends HTMLElement { constructor() { super(); const root = this.attachShadow({ mode: 'closed' });
-          root.innerHTML = '<style nonce="nod-fixture">input[aria-label="Card number"],input[aria-label="Security code"],h2{background:rgb(255,0,0);transition:opacity 60s !important}button{background:rgb(0,0,255)}</style><form><input aria-label="Card number"><select aria-label="Month"><option value="1">January</option><option value="8">August</option></select><input aria-label="Year"><input aria-label="Security code"><h2></h2><button>Complete</button></form>';
-          root.querySelectorAll('input').forEach(node => node.style.setProperty('visibility', 'visible', 'important'));
-          globalThis.privateStyles = Array.from(root.querySelectorAll('input[aria-label="Card number"],input[aria-label="Security code"],h2'));
-          globalThis.maskMutations = 0;
-          new MutationObserver(records => { globalThis.maskMutations++; const source = root.querySelector('h2'); if (records.some(record => record.target === source) && source.style.opacity === '0' && source.textContent) { const echo = source.cloneNode(true); echo.style.removeProperty('opacity'); echo.style.removeProperty('transition-property'); root.append(echo); } }).observe(root, { subtree: true, attributes: true, attributeFilter: ['style'] });
-          root.querySelector('input').oninput = event => { event.target.value = event.target.value.replace(/\\D/g, '').replace(/(\\d{4})(?=\\d)/g, '$1 '); root.querySelector('h2').textContent = event.target.value; };
-          root.querySelector('form').onsubmit = event => { event.preventDefault(); fetch('/record?value=' + encodeURIComponent([...root.querySelectorAll('input,select')].map(node => node.value).join('/'))); };
-          } });</script>`,
-        );
-        return;
-      }
-      const { port } = server.address() as { port: number };
-      response.end(
-        `<input id="password" type="password" aria-label="Password"><button id="submit">Continue</button><h2></h2><iframe title="Other origin" src="http://localhost:${port}/frame"></iframe><script>document.querySelector('#password').addEventListener('input',e=>document.querySelector('h2').textContent=e.target.value)</script>`,
-      );
-    });
-    await new Promise<void>((resolve) => server.listen(0, '::', resolve));
-    const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-    const directory = await mkdtemp(join(tmpdir(), 'nod-private-entry-'));
-    const native = createAgentBrowserComputer({
-      dataRoot: directory,
-      privateNetwork: true,
-      headless: true,
-    });
-    const worker = await harness({ computer: native });
-    const computer = worker.client(directory, { timeoutMs: 30_000 });
-    assert.ok(computer.cardDestinations);
-    assert.ok(computer.fillCard);
-    try {
-      await computer.act('private', { action: 'open', url: origin });
-      const secret = 'Synthetic private value';
-      const input = {
-        threadId: 'private',
-        origin,
-        kind: 'password' as const,
-        password: secret,
-        passwordSelector: '#password',
-        submitSelector: '#submit',
-      };
-      await computer.act('private', {
-        action: 'evaluate',
-        script:
-          'document.querySelector("#password").addEventListener("input", e => localStorage.setItem("copied", btoa(e.target.value)))',
-      });
-      await assert.rejects(computer.injectCredentials(input), /script ran/);
-      await computer.act('private', { action: 'reload' });
-      await computer.injectCredentials(input);
-      const seen = (await computer.act('private', { action: 'snapshot' })).text;
-      assert.equal(seen.includes(secret), false);
-      await assert.rejects(
-        computer.act('private', {
-          action: 'evaluate',
-          script: 'document.querySelector("#password").value.split("").reverse().join("")',
-        }),
-        /scripts are paused/,
-      );
-      await computer.act('private', { action: 'reload' });
-      assert.equal(
-        (
-          await computer.act('private', {
-            action: 'evaluate',
-            script: 'localStorage.getItem("copied")',
-          })
-        ).text.includes(Buffer.from(secret).toString('base64')),
-        false,
-      );
-      const page = (await computer.act('private', { action: 'snapshot' })).text;
-      const ref = /"Foreign password"[^\n]*ref=(e\d+)/.exec(page)?.[1];
-      assert.ok(ref);
-      await assert.rejects(computer.injectCredentials({ ...input, passwordSelector: `@${ref}` }));
-      assert.deepEqual(hits, []);
-      await computer.act('private', { action: 'open', url: `${origin}/card` });
-      const fields = { number: '#number', expiry: '#expiry', securityCode: '#cvc' };
-      const bound = await computer.cardDestinations('private', fields);
-      await computer.fillCard({
-        threadId: 'private',
-        fields,
-        ...bound,
-        submitSelector: '#submit',
-        card: {
-          cardNumber: '4242424242424242',
-          expiryMonth: 8,
-          expiryYear: 2030,
-          cardholder: 'Synthetic cardholder',
-          securityCode: '737',
-        },
-      });
-      const receipt = (await computer.act('private', { action: 'snapshot' })).text;
-      assert.equal(receipt.includes('4242424242424242'), false);
-      assert.equal(receipt.includes('737'), false);
-      assert.ok(await computer.screenshot('private'));
-      await assert.rejects(
-        computer.act('private', {
-          action: 'evaluate',
-          script: '[...document.querySelectorAll("input")].map(node=>node.value)',
-        }),
-        /scripts are paused/,
-      );
-      await computer.act('private', { action: 'open', url: `${origin}/shadow` });
-      const shadowPage = (await computer.act('private', { action: 'snapshot' })).text;
-      const shadowRef = (name: string) => {
-        const ref = new RegExp(`"${name}"[^\\n]*ref=(e\\d+)`).exec(shadowPage)?.[1];
-        assert.ok(ref);
-        return `@${ref}`;
-      };
-      const shadowFields = {
-        number: shadowRef('Card number'),
-        expiryMonth: shadowRef('Month'),
-        expiryYear: shadowRef('Year'),
-        securityCode: shadowRef('Security code'),
-      };
-      const shadowBound = await computer.cardDestinations('private', shadowFields);
-      assert.deepEqual(Object.values(shadowBound.destinations), Array(4).fill(origin));
-      await computer.fillCard({
-        threadId: 'private',
-        fields: shadowFields,
-        ...shadowBound,
-        submitSelector: shadowRef('Complete'),
-        card: {
-          cardNumber: '4242424242424242',
-          expiryMonth: 8,
-          expiryYear: 2030,
-          cardholder: 'Synthetic cardholder',
-          securityCode: '737',
-        },
-      });
-      const shadowReceipt = (await computer.act('private', { action: 'snapshot' })).text;
-      assert.equal(shadowReceipt.includes('4242424242424242'), false);
-      assert.equal(shadowReceipt.includes('737'), false);
-      assert.deepEqual(hits, ['4242 4242 4242 4242/8/2030/737']);
-      const image = await computer.screenshot('private');
-      assert.ok(image);
-      shadowImage = Buffer.from(image);
-      await assert.rejects(
-        computer.act('private', {
-          action: 'evaluate',
-          script: 'globalThis.maskMutations',
-        }),
-        /scripts are paused/,
-      );
-      for (const field of [shadowFields.number, shadowFields.expiryYear, shadowFields.securityCode])
-        await computer.act('private', { action: 'fill', selector: field, text: '' });
-      await assert.rejects(computer.act('private', { action: 'open', url: 'file:///etc/hosts' }));
-      await assert.rejects(
-        computer.act('private', { action: 'evaluate', script: 'document.title' }),
-        /scripts are paused/,
-      );
-      await computer.act('private', { action: 'click', selector: '#report' });
-      const recorded = hits as string[];
-      const reported = Date.now() + 5_000;
-      while (!recorded.some((hit) => hit.startsWith('report:')) && Date.now() < reported)
-        await delay(50);
-      const report = JSON.parse(
-        recorded.find((hit) => hit.startsWith('report:'))?.slice('report:'.length) ?? 'null',
-      ) as { mutated: boolean; styles: string[][] } | null;
-      assert.equal(report?.mutated, true);
-      assert.deepEqual(
-        report?.styles,
-        Array.from({ length: 3 }, () => ['1', 'opacity', '', '']),
-      );
-      await computer.act('private', { action: 'open', url: origin });
-      const pixels = await computer.act('private', {
-        action: 'evaluate',
-        script: `(async () => { const image = new Image(); image.src = '/image'; await image.decode(); const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height; const context = canvas.getContext('2d'); context.drawImage(image, 0, 0); const pixels = context.getImageData(0, 0, image.width, image.height).data; let red = 0, blue = 0; for (let index = 0; index < pixels.length; index += 4) { if (pixels[index] === 255 && pixels[index + 1] === 0 && pixels[index + 2] === 0) red++; if (pixels[index] === 0 && pixels[index + 1] === 0 && pixels[index + 2] === 255) blue++; } return { red, blue }; })()`,
-      });
-      const colors = JSON.parse(pixels.text.slice(pixels.text.indexOf('\n') + 1)) as {
-        red: number;
-        blue: number;
-      };
-      assert.equal(colors.red, 0);
-      assert.ok(colors.blue > 0);
-    } finally {
-      await worker.close();
-      server.closeAllConnections();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      await rm(directory, { recursive: true, force: true });
-    }
-  },
-);
-
-test('navigation stays available when a saved script fence cannot reach the inspector', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'nod-navigation-recovery-'));
-  const fixture = stagedLoginBrowser();
-  let offline = false;
-  const navigated: string[] = [];
-  const computer = createBrowserFixture({
-    dataRoot: directory,
-    run: async (...args) => {
-      const command = args[1].slice(args[1].indexOf('--idle-timeout') + 2);
-      if (offline && command[0] === 'get' && command[1] === 'cdp-url')
-        return { stdout: '{"success":false}', stderr: '', exitCode: 1 };
-      if (['back', 'forward', 'reload', 'open'].includes(command[0])) navigated.push(command[0]);
-      const result = await fixture.run(...args);
-      if (command[0] === 'eval') offline = true;
-      return result;
-    },
-  });
-  try {
-    await computer.act('recovery', { action: 'open', url: 'https://1.1.1.1/login' });
-    await computer.act('recovery', {
-      action: 'evaluate',
-      script: "document.body.dataset.changed = 'synthetic'",
-    });
-    for (const action of ['back', 'forward', 'reload'] as const)
-      await computer.act('recovery', { action });
-    assert.deepEqual(navigated, ['open', 'back', 'forward', 'open']);
-    offline = false;
-    await assert.rejects(
-      computer.injectCredentials({
-        threadId: 'recovery',
-        origin: 'https://1.1.1.1',
-        kind: 'identifier',
-        username: 'synthetic-recovery',
-        usernameSelector: '#account',
-        submitSelector: 'button',
-      }),
-      /script ran/,
-    );
-    await computer.act('recovery', { action: 'reload' });
-    await computer.injectCredentials({
-      threadId: 'recovery',
-      origin: 'https://1.1.1.1',
-      kind: 'identifier',
-      username: 'synthetic-recovery',
-      usernameSelector: '#account',
-      submitSelector: 'button',
-    });
-    assert.deepEqual(fixture.pages.get('recovery')!.entered, ['synthetic-recovery']);
-  } finally {
-    offline = false;
-    await computer.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test('failed private entry holds every Pi action until the filled document changes', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'nod-private-cleanup-'));
-  const fixture = stagedLoginBrowser();
-  let failSubmit = true;
-  let failedSubmissions = 0;
-  const computer = createBrowserFixture({
-    dataRoot: directory,
-    run: async (...args) => {
-      const command = args[1].slice(args[1].indexOf('--idle-timeout') + 2);
-      if (command[0] === 'click' && failSubmit) {
-        failedSubmissions++;
-        return { stdout: '{"success":false}', stderr: '', exitCode: 1 };
-      }
-      return fixture.run(...args);
-    },
-  });
-  try {
-    await computer.act('private', { action: 'open', url: 'https://1.1.1.1/login' });
-    await assert.rejects(
-      computer.injectCredentials({
-        threadId: 'private',
-        origin: 'https://1.1.1.1',
-        kind: 'identifier',
-        username: 'synthetic-private@example.test',
-        usernameSelector: '#account',
-        submitSelector: 'button',
-      }),
-    );
-    assert.equal(failedSubmissions, 1);
-    const before = fixture.pages.get('private')!.entered.length;
-    for (const input of [
-      { action: 'snapshot' as const },
-      { action: 'click' as const, selector: 'button' },
-      { action: 'evaluate' as const, script: 'document.body.textContent' },
-    ])
-      await assert.rejects(computer.act('private', input));
-    await assert.rejects(computer.currentPage('private'));
-    await assert.rejects(computer.screenshot('private'));
-    await assert.rejects(computer.download!('private', { selector: 'button' }));
-    await assert.rejects(computer.control!('private', { type: 'key', key: 'Enter' }));
-    await assert.rejects(
-      computer.cardDestinations('private', { number: '#account', expiry: '#account' }),
-    );
-    assert.equal(fixture.pages.get('private')!.entered.length, before);
-    failSubmit = false;
-    await computer.act('private', { action: 'reload' });
-    assert.ok(await computer.screenshot('private'));
-    assert.match(
-      (await computer.act('private', { action: 'evaluate', script: 'document.title' })).text,
-      /Script result/,
-    );
-    await computer.act('private', { action: 'reload' });
-    const page = fixture.pages.get('private')!;
-    page.afterInspect = (script) => {
-      if (script.includes('globalThis.__nodFocused = node')) page.search.focus();
-    };
-    await assert.rejects(
-      computer.injectCredentials({
-        threadId: 'private',
-        origin: 'https://1.1.1.1',
-        kind: 'identifier',
-        username: 'synthetic-focus-race',
-        usernameSelector: '#account',
-      }),
-    );
-    assert.equal(page.input.value, '');
-    assert.equal(page.search.value, '');
-    page.afterInspect = undefined;
-    await computer.act('private', { action: 'reload' });
-    page.afterInspect = (script) => {
-      if (script.includes("execCommand('insertText'")) page.document = 'navigated-during-entry';
-    };
-    await assert.rejects(
-      computer.injectCredentials({
-        threadId: 'private',
-        origin: 'https://1.1.1.1',
-        kind: 'identifier',
-        username: 'synthetic-navigation',
-        usernameSelector: '#account',
-        submitSelector: 'button',
-      }),
-      /checkout page changed/,
-    );
-    assert.equal(page.entered.length, before);
-    page.afterInspect = undefined;
-  } finally {
-    failSubmit = false;
-    await computer.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test('a checked browser step is described from its snapshot and runs only on that page and control', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'nod-checked-step-'));
-  const fixture = stagedLoginBrowser();
-  const commands: Array<Record<string, unknown>> = [];
-  const computer = createBrowserFixture({
-    dataRoot: directory,
-    run: fixture.run,
-    onDaemonCommand: (command) => commands.push(command),
-  });
-  const page = () => fixture.pages.get('checked')!;
-  try {
-    await computer.act('checked', { action: 'open', url: 'https://1.1.1.1/login' });
-    await computer.act('checked', { action: 'fill', selector: '#account', text: 'synthetic' });
-    const search = await computer.currentPage('checked', { action: 'click', selector: '@e3' });
-    assert.match(search.target!, /^[0-9a-f]{64}$/);
-    assert.deepEqual(
-      {
-        origin: search.origin,
-        url: search.url,
-        controls: search.controls,
-        submits: search.submits,
-      },
-      {
-        origin: 'https://1.1.1.1',
-        url: 'https://1.1.1.1/login',
-        controls: [{ role: 'textbox', name: 'Search' }],
-        submits: 'unknown',
-      },
-    );
-    const next = { action: 'click', selector: '@e2' } as const;
-    await assert.rejects(
-      computer.act('checked', { ...next, expectOrigin: 'https://2.2.2.2' }),
-      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
-    );
-    await assert.rejects(
-      computer.act('checked', { ...next, selector: '@e9', expectOrigin: 'https://1.1.1.1' }),
-      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
-    );
-    await assert.rejects(
-      computer.act('checked', {
-        action: 'drag',
-        selector: '@e3',
-        targetSelector: '@e9',
-        expectOrigin: 'https://1.1.1.1',
-      }),
-      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
-    );
-    assert.deepEqual(
-      (
-        await computer.currentPage('checked', {
-          action: 'drag',
-          selector: '@e3',
-          targetSelector: '@e2',
-        })
-      ).dropTarget,
-      [{ role: 'button', name: '' }],
-    );
-    await assert.rejects(
-      computer.act('checked', {
-        action: 'drag',
-        selector: '@e3',
-        targetSelector: '@e2',
-        expectTarget: search.target,
-      }),
-      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
-    );
-    page().location = {
-      origin: 'https://1.1.1.1',
-      href: 'https://1.1.1.1/login?token=first',
-    };
-    page().dom.window.history.replaceState(null, '', '/login?token=first');
-    const collision = await computer.currentPage('checked', next);
-    page().location.href = 'https://1.1.1.1/login?token=second';
-    page().dom.window.history.replaceState(null, '', '/login?token=second');
-    await assert.rejects(
-      computer.act('checked', {
-        ...next,
-        expectOrigin: collision.origin,
-        expectUrl: collision.url,
-        expectTarget: collision.target,
-      }),
-      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
-    );
-    assert.deepEqual(page().entered, []);
-    await assert.rejects(
-      computer.download('checked', { selector: '@e2' }),
-      (error) => error instanceof BrowserActionError && error.code === 'browser_download_control',
-    );
-    await assert.rejects(
-      computer.download('checked', { selector: '@e2', expectOrigin: 'https://2.2.2.2' }),
-      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
-    );
-    assert.equal(
-      commands.some((command) => command.action === 'download'),
-      false,
-    );
-    const nextTarget = await computer.currentPage('checked', next);
-    await computer.act('checked', { action: 'snapshot' });
-    assert.equal((await computer.currentPage('checked', next)).target, nextTarget.target);
-    await computer.act('checked', {
-      ...next,
-      expectOrigin: 'https://1.1.1.1',
-      expectTarget: nextTarget.target,
-    });
-    assert.deepEqual(page().entered, ['synthetic']);
-    await assert.rejects(
-      computer.act('checked', {
-        action: 'evaluate',
-        script: "document.body.dataset.changed = 'synthetic'",
-        readOnly: true,
-      }),
-      (error) => error instanceof BrowserActionError && error.code === 'browser_script_writes',
-    );
-    assert.equal(page().dom.window.document.body.dataset.changed, undefined);
-    const before = await computer.act('checked', { action: 'snapshot' });
-    const searchRef = /textbox "Search" \[ref=(e\d+)\]/.exec(before.text)?.[1];
-    assert.ok(searchRef);
-    const beforeControlChange = await computer.currentPage('checked', {
-      action: 'click',
-      selector: `@${searchRef}`,
-    });
-    await computer.act('checked', {
-      action: 'evaluate',
-      script: "document.querySelector('#search').setAttribute('aria-label', 'Delete account')",
-    });
-    assert.deepEqual(
-      (await computer.currentPage('checked', { action: 'click', selector: `@${searchRef}` }))
-        .controls,
-      [{ role: 'textbox', name: 'Delete account' }],
-    );
-    await assert.rejects(
-      computer.act('checked', {
-        action: 'click',
-        selector: `@${searchRef}`,
-        expectTarget: beforeControlChange.target,
-      }),
-      (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
-    );
-  } finally {
-    await computer.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test(
-  'a checked step reports the form it would send without sending it',
-  { timeout: 60_000 },
-  async (t) => {
-    const sent: string[] = [];
-    const server = createHttpServer(async (request, response) => {
-      response.setHeader('content-type', 'text/html');
-      if (request.url !== '/' && request.url !== '/favicon.ico') {
-        sent.push(`${request.method} ${request.url}`);
-        response.end('Sent');
-        return;
-      }
-      response.end(
-        '<form method="post" action="/book"><button>19:30</button></form><form action="/search"><input name="q" aria-label="Query"><button>Search</button></form><button id="plain">Plain</button><form method="post" action="/save"><button type="button" id="toggle">Toggle</button><button id="other" formaction="/other" formmethod="get">Other</button></form><form method="post" action="/a"><button>Same</button></form><form method="post" action="/b"><button>Same</button></form><form method="post" action="/reserve"><button>Menu</button></form><form method="post" action="/reserve"><button>Menu</button></form><form action="/find"><input name="city" aria-label="City"><button formaction="/reserve-now" formmethod="post">Go</button></form><form method="post" action="/label"><input type="submit" id="labelled" value="Send"><label for="labelled" id="label">Send it</label></form><form method="post" action="/shadowed"><input type="hidden" name="action" value="other"><input type="radio" name="method" aria-label="Card"><button>Shadowed</button></form>',
-      );
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-    const directory = await mkdtemp(join(tmpdir(), 'nod-submits-'));
-    const computer = createAgentBrowserComputer({
-      dataRoot: directory,
-      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
-      privateNetwork: true,
-      headless: true,
-    });
-    try {
-      let snapshot: string;
-      try {
-        snapshot = (await computer.act('submits', { action: 'open', url: origin })).text;
-      } catch {
-        t.skip('Chrome is not available here.');
-        return;
-      }
-      const ref = (name: string) => {
-        const found = new RegExp(`button "${name}" \\[ref=(e\\d+)\\]`).exec(snapshot)?.[1];
-        assert.ok(found, `No ${name} button in the snapshot.`);
-        return `@${found}`;
-      };
-      const submits = async (step: BrowserAction) =>
-        (await computer.currentPage('submits', step)).submits;
-      assert.deepEqual(await submits({ action: 'click', selector: ref('19:30') }), {
-        method: 'POST',
-        to: `${origin}/book`,
-      });
-      assert.deepEqual(await submits({ action: 'click', selector: ref('Search') }), {
-        method: 'GET',
-        to: `${origin}/search`,
-      });
-      assert.deepEqual(await submits({ action: 'click', selector: '#other' }), {
-        method: 'GET',
-        to: `${origin}/other`,
-      });
-      assert.equal(await submits({ action: 'click', selector: '#plain' }), undefined);
-      assert.equal(await submits({ action: 'click', selector: '#toggle' }), undefined);
-      assert.deepEqual(await submits({ action: 'click', selector: ref('Same') }), {
-        method: 'POST',
-        to: `${origin}/a`,
-      });
-      assert.deepEqual(await submits({ action: 'click', selector: ref('Shadowed') }), {
-        method: 'POST',
-        to: `${origin}/shadowed`,
-      });
-      assert.deepEqual(await submits({ action: 'click', selector: ref('Menu') }), {
-        method: 'POST',
-        to: `${origin}/reserve`,
-      });
-      await computer.act('submits', { action: 'fill', selector: 'input[name=q]', text: 'tables' });
-      for (const key of [
-        'Enter',
-        'Return',
-        'Shift+Enter',
-        'Enter+Shift',
-        'Ctrl+Enter+Meta',
-        'NumpadEnter',
-        '\r',
-        '\n',
-      ]) {
-        assert.deepEqual(
-          await submits({ action: 'press', key }),
-          {
-            method: 'GET',
-            to: `${origin}/search`,
-          },
-          key,
-        );
-      }
-      for (const key of [
-        'Enter+Unknown',
-        ' Enter ',
-        'ControlOrMeta+Enter',
-        'Enter\n',
-        'ShiftLeft+Enter',
-      ])
-        assert.equal(await submits({ action: 'press', key }), undefined, key);
-      await computer.act('submits', {
-        action: 'evaluate',
-        script: "document.querySelector('form button').focus()",
-      });
-      assert.deepEqual(await submits({ action: 'press', key: 'Enter' }), {
-        method: 'POST',
-        to: `${origin}/book`,
-      });
-      await computer.act('submits', {
-        action: 'fill',
-        selector: 'input[name=city]',
-        text: 'Porto',
-      });
-      assert.deepEqual(await submits({ action: 'press', key: 'Enter' }), {
-        method: 'POST',
-        to: `${origin}/reserve-now`,
-      });
-      assert.deepEqual(await submits({ action: 'click', selector: '#label' }), {
-        method: 'POST',
-        to: `${origin}/label`,
-      });
-      const cssStep = { action: 'click', selector: '#plain' } as const;
-      const original = await computer.currentPage('submits', cssStep);
-      assert.equal((await computer.currentPage('submits', cssStep)).target, original.target);
-      await computer.act('submits', { ...cssStep, expectTarget: original.target });
-      const enterStep = { action: 'press', key: 'Enter' } as const;
-      const focused = await computer.currentPage('submits', enterStep);
-      await computer.act('submits', { ...enterStep, expectTarget: focused.target });
-      const located = await computer.act('submits', {
-        action: 'evaluate',
-        script:
-          "const r=document.querySelector('#plain').getBoundingClientRect();({x:(r.x+r.width/2)/innerWidth,y:(r.y+r.height/2)/innerHeight})",
-      });
-      const point = JSON.parse(located.text.slice(located.text.indexOf('\n') + 1)) as {
-        x: number;
-        y: number;
-      };
-      const pointStep = { action: 'click', ...point } as const;
-      const pointed = await computer.currentPage('submits', pointStep);
-      await computer.act('submits', { ...pointStep, expectTarget: pointed.target });
-      await computer.act('submits', {
-        action: 'evaluate',
-        script:
-          "const plain=document.querySelector('#plain');plain.replaceWith(plain.cloneNode(true))",
-      });
-      const replacement = await computer.currentPage('submits', cssStep);
-      assert.notEqual(replacement.target, original.target);
-      await assert.rejects(
-        computer.act('submits', { ...cssStep, expectTarget: original.target }),
-        (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
-      );
-      assert.deepEqual(sent, []);
-    } finally {
-      await computer.dispose();
-      server.closeAllConnections();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      await rm(directory, { recursive: true, force: true });
-    }
-  },
-);
-
-test('chat retires reply targets without losing drafts or duplicating ambiguous sends', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
+  test('chat retires reply targets without losing drafts or duplicating ambiguous sends', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -7728,14 +7797,14 @@ test('chat retires reply targets without losing drafts or duplicating ambiguous 
         dom.window.close();
       }
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stdout + result.stderr);
   });
-  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
-});
 
-test('chat reloads older history after hidden confirmations exceed the ID window', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
+  test('chat reloads older history after hidden confirmations exceed the ID window', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -7927,14 +7996,14 @@ test('chat reloads older history after hidden confirmations exceed the ID window
         dom.window.close();
       }
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stdout + result.stderr);
   });
-  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
-});
 
-test('chat removes a cached older reply quote when its target becomes hidden', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
+  test('chat removes a cached older reply quote when its target becomes hidden', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -8019,14 +8088,14 @@ test('chat removes a cached older reply quote when its target becomes hidden', a
         dom.window.close();
       }
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stdout + result.stderr);
   });
-  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
-});
 
-test('chat resumes history after a failed focus check and cancels pending focus on Return', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
+  test('chat resumes history after a failed focus check and cancels pending focus on Return', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -8192,14 +8261,14 @@ test('chat resumes history after a failed focus check and cancels pending focus 
         dom.window.close();
       }
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stdout + result.stderr);
   });
-  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
-});
 
-test('chat state reads make progress during refresh events and reject late replies after reset', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
+  test('chat state reads make progress during refresh events and reject late replies after reset', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -8379,14 +8448,14 @@ test('chat state reads make progress during refresh events and reject late repli
         dom.window.close();
       }
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stdout + result.stderr);
   });
-  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
-});
 
-test('chat shows pending sends and active work before a model step', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
+  test('chat shows pending sends and active work before a model step', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -8551,14 +8620,14 @@ test('chat shows pending sends and active work before a model step', async () =>
         dom.window.close();
       }
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stdout + result.stderr);
   });
-  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
-});
 
-test('analytics follow visible Settings sections, Apps tabs and the Scheduled page', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
+  test('analytics follow visible Settings sections, Apps tabs and the Scheduled page', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -8693,14 +8762,14 @@ test('analytics follow visible Settings sections, Apps tabs and the Scheduled pa
         dom.window.close();
       }
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stdout + result.stderr);
   });
-  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
-});
 
-test('a verified app connection opens chat only on request and keeps private details out of analytics', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
+  test('a verified app connection opens chat only on request and keeps private details out of analytics', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: 'https://nod.fixture.invalid/apps', pretendToBeVisual: true });
@@ -8807,14 +8876,14 @@ test('a verified app connection opens chat only on request and keeps private det
         await settle(() => document.body.textContent.includes(failure));
       } finally { await act(async () => root.unmount()); dom.window.close(); }
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stdout + result.stderr);
   });
-  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
-});
 
-test('Quiet hours follow the clock preference and preserve canonical values', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
+  test('Quiet hours follow the clock preference and preserve canonical values', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -8944,14 +9013,14 @@ test('Quiet hours follow the clock preference and preserve canonical values', as
         dom.window.close();
       }
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stderr || result.stdout);
   });
-  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
-});
 
-test('Settings saves only reviewed draft revisions and retains failed edits', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
+  test('Settings saves only reviewed draft revisions and retains failed edits', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -9139,14 +9208,14 @@ test('Settings saves only reviewed draft revisions and retains failed edits', as
         dom.window.close();
       }
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stderr || result.stdout);
   });
-  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
-});
 
-test('SearchPicker selects empty-string options with keyboard navigation and filtering', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
+  test('SearchPicker selects empty-string options with keyboard navigation and filtering', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -9234,14 +9303,14 @@ test('SearchPicker selects empty-string options with keyboard navigation and fil
         dom.window.close();
       }
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stderr || result.stdout);
   });
-  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
-});
 
-test('shared controls retain reachable tabs, visible-label typeahead and disabled explanations', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
+  test('shared controls retain reachable tabs, visible-label typeahead and disabled explanations', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -9335,14 +9404,14 @@ test('shared controls retain reachable tabs, visible-label typeahead and disable
         dom.window.close();
       }
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stderr || result.stdout);
   });
-  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
-});
 
-test('navigation guards restore raw app history entries before leaving unsaved settings', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: String.raw`
+  test('navigation guards restore raw app history entries before leaving unsaved settings', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('', { url: 'https://nod.fixture.invalid/apps' });
@@ -9387,6 +9456,7 @@ test('navigation guards restore raw app history entries before leaving unsaved s
         dom.window.close();
       }
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stderr || result.stdout);
   });
-  assert.equal(result.exitCode, 0, result.stderr || result.stdout);
 });

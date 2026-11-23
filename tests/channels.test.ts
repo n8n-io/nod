@@ -779,7 +779,7 @@ test('channel transports check literal instructions against their actual formatt
 
 test(
   'WhatsApp links privately, admits only its owner, fences echoes across restart, and reconnects without repeating sends',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000, concurrency: true },
   async (t) => {
     const schema = `test_whatsapp_link_${randomUUID().replaceAll('-', '')}`;
     const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
@@ -791,8 +791,15 @@ test(
     const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
     const key = Buffer.alloc(32, 7);
     try {
-      for (const mode of ['bot', 'self-chat'] as const)
-        await t.test(mode, async () => {
+      const setup = await createChannelSessionStore({
+        pool,
+        ownerId: 'fixture-setup',
+        keyStore,
+      }).open();
+      await setup.close();
+      const modes: Promise<void>[] = [];
+      for (const mode of ['bot', 'self-chat'] as const) {
+        const subtest = t.test(mode, async () => {
           type Options = Parameters<typeof createWhatsAppLinkedTransport>[0];
           type Factory = NonNullable<Options['createSocket']>;
           const sockets: { events: EventEmitter; config: Parameters<Factory>[0] }[] = [];
@@ -1515,6 +1522,9 @@ test(
             await transport.close();
           }
         });
+        modes.push(subtest);
+      }
+      await Promise.all(modes);
     } finally {
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);

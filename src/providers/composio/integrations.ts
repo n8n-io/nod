@@ -249,6 +249,7 @@ function connectionFailure(phase: IntegrationConnectionError['phase'], signal?: 
 export function createComposioProvider(options: {
   proxy: ReturnType<typeof createComposioProxy>;
   fileDownload?: Parameters<typeof createComposioFiles>[0];
+  inboxRetryDelay?: (attempt: number) => number;
 }): IntegrationProvider {
   const files = createComposioFiles(options.fileDownload);
   const identities = new Map<string, AccountIdentity>();
@@ -660,7 +661,11 @@ export function createComposioProvider(options: {
             signal,
             maxRetries: 0,
           } as Parameters<typeof value.execute>[3])
-          .catch((error: unknown) => {
+          .catch((wrapped: unknown) => {
+            const error =
+              !signal?.aborted && wrapped instanceof Error && wrapped.cause instanceof APIError
+                ? wrapped.cause
+                : wrapped;
             if (
               error instanceof APIError &&
               error.status === 403 &&
@@ -849,9 +854,12 @@ export function createComposioProvider(options: {
               throw transient;
             const attempt = 2 - retriesRemaining;
             retriesRemaining--;
-            await delay(350 * 2 ** attempt + Math.floor(Math.random() * 150), undefined, {
-              signal: operation,
-            });
+            await delay(
+              options.inboxRetryDelay?.(attempt) ??
+                350 * 2 ** attempt + Math.floor(Math.random() * 150),
+              undefined,
+              { signal: operation },
+            );
           }
         }
       }

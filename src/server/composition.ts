@@ -712,6 +712,7 @@ export async function createApplication(
     workers?: boolean;
     channels?: boolean;
     heartbeat?: boolean;
+    rateLimit?: boolean;
     runtimeReady?: Promise<void>;
   } = {},
 ) {
@@ -746,6 +747,7 @@ async function initializeApplication(
     workers?: boolean;
     channels?: boolean;
     heartbeat?: boolean;
+    rateLimit?: boolean;
     runtimeReady?: Promise<void>;
   },
   diagnostics: {
@@ -3285,6 +3287,7 @@ async function initializeApplication(
   };
   const app = await createApp({
     failureLog: diagnostics.failure,
+    rateLimit: options.rateLimit,
     analytics: captureAnalytics,
     admission,
     artifacts,

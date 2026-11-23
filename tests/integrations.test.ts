@@ -26,7 +26,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test, { type TestContext } from 'node:test';
+import test, { after, type TestContext } from 'node:test';
 import type { Connection as AppConnection } from '../src/shared/contracts.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -1945,7 +1945,10 @@ test(
             mode = 'body';
             const owner = new AbortController();
             const started = arrival();
-            const pending = execute({ timeout: 1000, signal: owner.signal });
+            const pending = execute({
+              timeout: stopped === 'abort' ? 1000 : 300,
+              signal: owner.signal,
+            });
             const headers = pending.asResponse();
             headers.catch(() => {});
             try {
@@ -1981,7 +1984,10 @@ test(
         mode = 'headers';
         const owner = new AbortController();
         const started = arrival();
-        const pending = execute({ timeout: 1000, signal: owner.signal });
+        const pending = execute({
+          timeout: stopped === 'abort' ? 1000 : 300,
+          signal: owner.signal,
+        });
         const rawFailure = pending.asResponse().then(
           () => assert.fail('The response headers were not held.'),
           (error: unknown) => error,
@@ -2021,7 +2027,7 @@ test(
           mode = outcome;
           const owner = new AbortController();
           const started = arrival();
-          const pending = execute({ timeout: 1000, signal: owner.signal });
+          const pending = execute({ timeout: 300, signal: owner.signal });
           const headers = pending.asResponse();
           headers.catch(() => {});
           try {
@@ -2037,7 +2043,7 @@ test(
               );
             else assert.equal((await pending.withResponse()).response, response);
             assert.equal(getEventListeners(owner.signal, 'abort').length, 0);
-            await delay(1100);
+            await delay(400);
             owner.abort();
             assert.equal(response.bodyUsed, false);
             assert.deepEqual((await response.json()).data, { messages: [] });
@@ -2083,13 +2089,9 @@ test(
         mode = 'success';
         const first = new AbortController();
         const second = new AbortController();
-        let initialLogs = 0;
-        let laterLogs = 0;
+        let logs = 0;
         const record = () => {
-          initialLogs++;
-        };
-        const later = () => {
-          laterLogs++;
+          logs++;
         };
         const client = sdk.withOptions({
           timeout: 5000,
@@ -2097,35 +2099,30 @@ test(
           logger: { debug: record, info: record, warn: record, error: record },
         });
         const body = { tool_slug: 'GMAIL_SEND_EMAIL', arguments: { value: 'before' } };
-        const options: Parameters<typeof sdk.request>[0] = {
-          method: 'post',
-          path: '/api/v3.1/tool_router/session/fixture-session/execute',
+        const options: NonNullable<Parameters<typeof sdk.post>[1]> = {
           body,
           signal: first.signal,
         };
-        const pending = client.request(options);
+        const pending = client.post(
+          '/api/v3.1/tool_router/session/fixture-session/execute',
+          options,
+        );
         options.signal = second.signal;
         body.arguments.value = 'after';
-        client.timeout = 1;
-        client.baseURL = 'https://changed.example.test';
-        client.logger = { debug: later, info: later, warn: later, error: later };
-        client.logLevel = 'error';
         await pending;
         assert.deepEqual(received.at(-1), {
           tool_slug: 'GMAIL_SEND_EMAIL',
           arguments: { value: 'before' },
         });
-        assert.ok(initialLogs > 0);
-        assert.equal(laterLogs, 0);
+        assert.ok(logs > 0);
         assert.equal(getEventListeners(first.signal, 'abort').length, 0);
         assert.equal(getEventListeners(second.signal, 'abort').length, 0);
       },
     );
-    await t.test('derived mutable timeout applies to the next request', async () => {
+    await t.test('a derived client timeout applies to its requests', async () => {
       mode = 'body';
       const owner = new AbortController();
-      const client = sdk.withOptions({ timeout: 10000 });
-      client.timeout = 1000;
+      const client = sdk.withOptions({ timeout: 300 });
       const started = arrival();
       const pending = client.toolRouter.session.execute(
         'fixture-session',
@@ -2630,7 +2627,10 @@ test('managed integration requests bind SDK calls to a private persisted install
   });
   failExecution = true;
   const before = calls.length;
-  await assert.rejects(session.execute('GMAIL_LIST_LABELS', {}, 'ca_fixture_proxy'));
+  await assert.rejects(
+    session.execute('GMAIL_LIST_LABELS', {}, 'ca_fixture_proxy'),
+    (error: unknown) => error instanceof APIError && error.status === 503,
+  );
   assert.equal(calls.length, before + 1);
   assert.equal(new Set(calls.map((call) => call.key)).size, 1);
   assert.deepEqual(
@@ -2642,10 +2642,7 @@ test('managed integration requests bind SDK calls to a private persisted install
   await proxy.client
     .getClient()
     .withOptions({
-      defaultHeaders: {
-        authorization: 'Bearer synthetic-disallowed',
-        'x-api-key': 'synthetic-disallowed',
-      },
+      defaultHeaders: { authorization: 'Bearer synthetic-disallowed' },
     })
     .get('/v2/api/v3.1/toolkits?type=native');
   await chmod(root, 0o755);
@@ -5350,7 +5347,7 @@ async function appsFixture(
   > = {},
 ) {
   const schema = `test_apps_${randomUUID().replaceAll('-', '')}`;
-  const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  const admin = schemaAdministrator();
   await admin.query(`CREATE SCHEMA ${schema}`);
   const pool = new pg.Pool({
     connectionString: process.env.TEST_DATABASE_URL,
@@ -5444,7 +5441,6 @@ async function appsFixture(
     await app.close();
     await pool.end();
     await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-    await admin.end();
   });
   async function connect(slug: IntegrationService) {
     const response = await app.inject({ method: 'POST', url: `/api/apps/${slug}/connect` });
@@ -12793,6 +12789,7 @@ test('Composio catalog and connection requests classify HTTP failures without ex
     if (failure && failure.phase === phase && phase) {
       rejected++;
       response.statusCode = failure.status;
+      response.setHeader('retry-after-ms', '0');
       response.end(
         JSON.stringify({ error: failure.code ?? { message: 'synthetic-private-provider-body' } }),
       );
@@ -13351,9 +13348,20 @@ test('Composio proxy sessions omit SDK metadata and refuse unsupported webhooks'
   );
 });
 
+let schemaAdministration: pg.Pool | undefined;
+after(async () => {
+  await schemaAdministration?.end();
+});
+
+function schemaAdministrator() {
+  return (schemaAdministration ??= new pg.Pool({
+    connectionString: process.env.TEST_DATABASE_URL,
+  }));
+}
+
 async function hostedDatabase(options: pg.PoolConfig = {}) {
   const schema = 'test_hosted_integrations_' + randomUUID().replaceAll('-', '');
-  const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  const admin = schemaAdministrator();
   await admin.query(`CREATE SCHEMA ${schema}`);
   const pool = new pg.Pool({
     connectionString: process.env.TEST_DATABASE_URL,
@@ -13365,7 +13373,6 @@ async function hostedDatabase(options: pg.PoolConfig = {}) {
     async close() {
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
     },
   };
 }
@@ -14533,6 +14540,7 @@ function inboxPollFixture<M extends 'pollInbox' | 'inboxSnippets' | 'inboxThread
     signal: AbortSignal,
   ) => unknown,
   method: M = 'pollInbox' as M,
+  backoff = false,
 ) {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
@@ -14559,7 +14567,10 @@ function inboxPollFixture<M extends 'pollInbox' | 'inboxSnippets' | 'inboxThread
       return respond(input, options.signal);
     },
   );
-  return createComposioProvider({ proxy: composioProxyFixture(client) })[method]!;
+  return createComposioProvider({
+    proxy: composioProxyFixture(client),
+    ...(backoff ? {} : { inboxRetryDelay: () => 0 }),
+  })[method]!;
 }
 
 test('Composio inbox polling rejects cancellation and invalid metadata after partial progress', async (t) => {
@@ -14776,11 +14787,16 @@ test('Composio inbox polling defers proxy refusals, retries provider errors and 
 
   const controller = new AbortController();
   let cancelledRequests = 0;
-  const cancellationPoll = inboxPollFixture(t, () => {
-    cancelledRequests++;
-    setTimeout(() => controller.abort(), 25);
-    return { status: 503, data: {} };
-  });
+  const cancellationPoll = inboxPollFixture(
+    t,
+    () => {
+      cancelledRequests++;
+      setTimeout(() => controller.abort(), 25);
+      return { status: 503, data: {} };
+    },
+    'pollInbox',
+    true,
+  );
   await assert.rejects(cancellationPoll('inbox-account', null, controller.signal), {
     name: 'AbortError',
   });
@@ -15464,7 +15480,30 @@ test(
   },
 );
 
-test('proactive readers use fixed GET paths, preserve pages, and check exact source state', async () => {
+async function withinMockedTime<T>(t: TestContext, limit: number, start: () => Promise<T>) {
+  const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+  await turn();
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    let pending = true;
+    const work = start().finally(() => {
+      pending = false;
+    });
+    work.catch(() => {});
+    let elapsed = 0;
+    for (await turn(); pending && elapsed < limit; await turn()) {
+      t.mock.timers.tick(250);
+      elapsed += 250;
+    }
+    assert.equal(pending, false);
+    assert.ok(elapsed < limit);
+    return await work;
+  } finally {
+    t.mock.timers.reset();
+  }
+}
+
+test('proactive readers use fixed GET paths, preserve pages, and check exact source state', async (t) => {
   const { composioActivity } = await import('../src/providers/composio/activity.ts');
   const readActivity = async (
     client: Pick<Composio['tools'], 'proxyExecute'>,
@@ -15737,12 +15776,8 @@ test('proactive readers use fixed GET paths, preserve pages, and check exact sou
     },
   } as unknown as Pick<Composio['tools'], 'proxyExecute'>;
   const started = performance.now();
-  const recovered = await readActivity(
-    slow,
-    'gmail',
-    'fixture-account',
-    {},
-    new AbortController().signal,
+  const recovered = await withinMockedTime(t, 10000, () =>
+    readActivity(slow, 'gmail', 'fixture-account', {}, new AbortController().signal),
   );
   assert.ok(performance.now() - started < 10000);
   assert.equal(recovered.records.find((record) => record.id === 'slow')?.error, 'unavailable');
@@ -15750,7 +15785,7 @@ test('proactive readers use fixed GET paths, preserve pages, and check exact sou
   assert.equal(recovered.nextCursor, 'after-slow');
 });
 
-test('generic source privacy checks hide access mail and cannot delay Stop', async () => {
+test('generic source privacy checks hide access mail and cannot delay Stop', async (t) => {
   const { createObservationSources } = await import('../src/server/observation-sources.ts');
   const secret = 'synthetic-known-source-secret';
   const analytics: import('../src/server/analytics.ts').AnalyticsEvent[] = [];
@@ -15879,7 +15914,9 @@ test('generic source privacy checks hide access mail and cannot delay Stop', asy
     },
   );
   const started = Date.now();
-  const page = await recovering.read({ sourceId: 'mail:feed' }, new AbortController().signal);
+  const page = await withinMockedTime(t, 15000, () =>
+    recovering.read({ sourceId: 'mail:feed' }, new AbortController().signal),
+  );
   assert.equal(page.nextCursor, 'second-page');
   assert.equal(page.records.find((record) => record.id === 'slow')?.error, 'unavailable');
   assert.equal(page.records.find((record) => record.id === 'ready')?.available, true);

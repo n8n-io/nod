@@ -3683,6 +3683,7 @@ test(
       provider,
       baseUrl: 'http://localhost:4310',
       wake: async () => {},
+      emailCodePollMs: 50,
     });
     const connection = randomUUID();
     await pool.query(
@@ -4453,6 +4454,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {mock} from 'node:test';
 import {JSDOM} from 'jsdom';
 import {createSettingsStore} from './desktop/main/settings.mjs';
 const directory=await mkdtemp(join(tmpdir(),'nod-native-preferences-'));
@@ -4522,11 +4524,13 @@ globalThis.EventSource=class{
 };
 let root=createRoot(document.getElementById('root'));
 const render=()=>act(async()=>root.render(createElement(Onboarding,{user:session.user,onComplete:async()=>{completions++;assert.equal(preparationCompleted,true,'No completion before server preparation finishes')}})));
-const settle=()=>act(async()=>{await new Promise(resolve=>setTimeout(resolve,20))});
+const realTimeout=setTimeout;
+mock.timers.enable({apis:['setTimeout']});
+const settle=()=>act(async()=>{await new Promise(resolve=>realTimeout(resolve,20));mock.timers.tick(20)});
 const waitFor=async condition=>{for(let at=0;at<100&&!(await condition());at++)await settle();assert.ok(await condition())};
 const button=text=>[...document.querySelectorAll('button')].find(value=>value.textContent.trim()===text);
 const changed=()=>act(async()=>stream.onmessage(new dom.window.MessageEvent('message',{data:JSON.stringify({type:'refresh'})})));
-const waitForModel=async condition=>{for(let at=0;at<200&&!condition();at++)await settle();assert.ok(condition())};
+const waitForModel=async condition=>{for(let at=0;at<200&&!condition();at++)await act(async()=>{mock.timers.tick(20);await new Promise(resolve=>setImmediate(resolve))});assert.ok(condition())};
 await render();
 assert.equal(window.location.search,'');
 await waitFor(()=>button('Try again'));
@@ -4619,7 +4623,7 @@ const beforeAboutRefresh=modelReads;
 await changed();
 await waitForModel(()=>modelReads>beforeAboutRefresh);
 assert.ok(document.querySelector('[data-step="about"]'));
-for(let at=0;at<10&&!document.querySelector('[data-step="brain"]');at++){await act(async()=>{await new Promise(resolve=>setTimeout(resolve,1000))});if(button('Not now'))await act(async()=>button('Not now').click())}
+for(let at=0;at<10&&!document.querySelector('[data-step="brain"]');at++){await settle();if(button('Not now'))await act(async()=>button('Not now').click())}
 await waitFor(()=>document.querySelector('[data-step="brain"]'));
 await waitForModel(()=>document.querySelector('.ob-brain-connected details')?.textContent.includes(modelFailure));
 modelFailure=undefined;
@@ -4933,7 +4937,19 @@ test(
           assert.equal(rows[0].next_deadline.getTime(), rows[0].first_deadline.getTime());
           const waitMs = rows[0].first_deadline.getTime() - Date.now() + 100;
           assert.ok(waitMs > 0 && waitMs < 5_100);
-          await new Promise((resolve) => setTimeout(resolve, waitMs));
+          await pool.query(
+            "UPDATE credential_requests SET flow_expires_at=flow_expires_at-$2::int*interval '1 millisecond' WHERE turn_id=ANY($1::uuid[])",
+            [[firstTurn.turnId, nextTurn.turnId], waitMs],
+          );
+          assert.equal(
+            (
+              await pool.query(
+                'SELECT 1 FROM credential_requests WHERE turn_id=ANY($1::uuid[]) AND flow_expires_at<clock_timestamp()',
+                [[firstTurn.turnId, nextTurn.turnId]],
+              )
+            ).rowCount,
+            2,
+          );
           assert.equal((await get(nextPath)).status, 'pending');
           assert.equal(
             (await app.inject({ method: 'GET', url: `${nextPath}/status` })).json().status,

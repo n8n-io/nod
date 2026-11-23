@@ -616,14 +616,22 @@ test(
   async () => {
     let submissions = 0;
     const controller = new AbortController();
-    const server = createHttpServer((request, response) => {
+    const validated = deferred();
+    const enabled = deferred();
+    const server = createHttpServer(async (request, response) => {
       response.setHeader('content-type', 'text/html');
       if (request.url === '/submit') {
         submissions++;
         response.end('<h1>Unexpected submission</h1>');
+      } else if (request.url === '/validated') {
+        await validated.promise;
+        response.end();
+      } else if (request.url === '/enabled') {
+        enabled.resolve();
+        response.end();
       } else
         response.end(`<form action="/submit" method="post"><input id="password" type="password"><button id="submit" disabled>Continue</button></form><script>
-        document.querySelector('input').oninput=()=>{clearTimeout(window.validation);window.validation=setTimeout(()=>document.querySelector('button').disabled=false,1500)};
+        document.querySelector('input').oninput=()=>{window.validation??=fetch('/validated').then(()=>{document.querySelector('button').disabled=false;fetch('/enabled')})};
       </script>`);
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -665,7 +673,9 @@ test(
       await waiting;
       controller.abort();
       const submitted = await outcome;
-      await delay(1700);
+      validated.resolve();
+      await enabled.promise;
+      await delay(300);
       assert.equal(submitted, false);
       assert.equal(submissions, 0);
       await computer.act('closing', { action: 'reload' });
@@ -692,7 +702,7 @@ test(
         response.end('<h1>Unexpected submission</h1>');
       } else
         response.end(`<form action="/submit" method="post"><input id="password" type="password"><button id="submit" disabled>Continue</button></form><script>
-        document.querySelector('input').oninput=()=>{clearTimeout(window.validation);window.validation=setTimeout(()=>document.querySelector('button').disabled=false,1500)};
+        document.querySelector('input').oninput=()=>{clearTimeout(window.validation);window.validation=setTimeout(()=>document.querySelector('button').disabled=false,300)};
       </script>`);
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -741,7 +751,7 @@ test(
       controller.abort();
       release();
       const submitted = await outcome;
-      await delay(1700);
+      await delay(500);
       assert.equal(submissions, 0);
       assert.equal(submitted, false);
       await computer.act('closing', { action: 'open', url: origin });
@@ -762,14 +772,22 @@ test(
   async () => {
     let submissions = 0;
     const controller = new AbortController();
-    const server = createHttpServer((request, response) => {
+    const validated = deferred();
+    const enabled = deferred();
+    const server = createHttpServer(async (request, response) => {
       response.setHeader('content-type', 'text/html');
       if (request.url === '/submit') {
         submissions++;
         response.end('<h1>Unexpected submission</h1>');
+      } else if (request.url === '/validated') {
+        await validated.promise;
+        response.end();
+      } else if (request.url === '/enabled') {
+        enabled.resolve();
+        response.end();
       } else
         response.end(`<form action="/submit" method="post"><input id="password" type="password"><button id="submit" disabled>Continue</button></form><script>
-        document.querySelector('input').oninput=()=>{clearTimeout(window.validation);window.validation=setTimeout(()=>document.querySelector('button').disabled=false,1500)};
+        document.querySelector('input').oninput=()=>{window.validation??=fetch('/validated').then(()=>{document.querySelector('button').disabled=false;fetch('/enabled')})};
       </script>`);
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -817,7 +835,9 @@ test(
       await waiting;
       controller.abort();
       const submitted = await outcome;
-      await delay(1700);
+      validated.resolve();
+      await enabled.promise;
+      await delay(300);
       assert.equal(submitted, false);
       assert.equal(submissions, 0);
       await computer.act('closing', { action: 'reload' });
@@ -862,6 +882,9 @@ test(
       browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
       privateNetwork: true,
       headless: true,
+      get submitReadyMs() {
+        return mode === 'disabled' ? 300 : undefined;
+      },
       daemonCommand: async (path, command, signal, timeout, maxBytes) => {
         if (command.action === 'isenabled' && command.selector === '#submit') {
           queries++;
@@ -997,7 +1020,7 @@ test(
         response.end('Accepted');
       } else if (request.url === '/delayed') {
         response.end(`<input id="company"><input id="password" type="password"><button id="submit">Continue</button><script>
-        document.querySelector('button').onclick = () => setTimeout(() => fetch('/record', { method: 'POST', body: JSON.stringify({company: document.querySelector('#company').value, password: document.querySelector('#password').value}) }), 1200);
+        document.querySelector('button').onclick = () => setTimeout(() => fetch('/record', { method: 'POST', body: JSON.stringify({company: document.querySelector('#company').value, password: document.querySelector('#password').value}) }), 300);
       </script>`);
       } else if (request.url === '/card') {
         response.end(
@@ -1006,7 +1029,7 @@ test(
       } else {
         response.end(`<button id="login">Log in</button><dialog><input id="username" aria-label="Email"><button id="submit" disabled>Continue</button></dialog><script>
         document.querySelector('#login').onclick = () => document.querySelector('dialog').showModal();
-        document.querySelector('#username').${request.url === '/blur' ? 'onblur' : 'oninput'} = () => { clearTimeout(window.validation); document.querySelector('#submit').disabled = true; window.validation = setTimeout(() => document.querySelector('#submit').disabled = false, 1500); };
+        document.querySelector('#username').${request.url === '/blur' ? 'onblur' : 'oninput'} = () => { clearTimeout(window.validation); document.querySelector('#submit').disabled = true; window.validation = setTimeout(() => document.querySelector('#submit').disabled = false, 800); };
         document.querySelector('#submit').onclick = async () => { await fetch('/identifier-record', {method: 'POST', body: document.querySelector('#username').value}); document.querySelector('dialog').innerHTML = '<h1>Password step</h1><input type="password" id="password">'; };
       </script>`);
       }
@@ -1244,7 +1267,7 @@ test(
       }
       if (request.url === '/twin' || request.url === '/twin-inner') {
         response.end(
-          `<body style="margin:8px"><form action="/selected" method="post" style="margin:0"><button style="width:200px;height:40px">Continue with Example</button></form>${request.url === '/twin' ? '<div style="position:fixed;left:0;top:0;width:300px;height:60px"></div><iframe title="Sign in" src="/twin-inner" style="width:500px;height:300px;margin:150px 200px;border:0"></iframe>' : ''}`,
+          `<body style="margin:8px"><form action="/selected" method="post" style="margin:0"><button style="width:200px;height:40px">Continue with Example</button></form>${request.url === '/twin' ? `<div style="position:fixed;left:0;top:0;width:300px;height:60px"></div><iframe title="Sign in" src="/twin-inner" onload="document.getElementById('ready').textContent='Frame ready'" style="width:500px;height:300px;margin:150px 200px;border:0"></iframe><p id="ready"></p>` : ''}`,
         );
         return;
       }
@@ -1270,12 +1293,16 @@ test(
     assert.ok(address && typeof address !== 'string');
     const origin = `http://127.0.0.1:${address.port}`;
     let socketPath = '';
+    let clickReceiptMs: number | undefined;
     const makeComputer = () => {
       const computer = createAgentBrowserComputer({
         dataRoot: directory,
         browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
         privateNetwork: true,
         headless: true,
+        get clickReceiptMs() {
+          return clickReceiptMs;
+        },
         daemonCommand: async (path, command, signal, timeoutMs) => {
           socketPath = path;
           return existingDaemonCommand(path, command, signal, timeoutMs);
@@ -1370,6 +1397,7 @@ test(
         if (change === 'navigation') await act({ action: 'reload' });
         else if (change === 'closed') await client.close('fixture');
         else if (change !== 'origin') await act({ action: 'click', selector: '#change' });
+        clickReceiptMs = change === 'removedOnRelease' ? 100 : undefined;
         await assert.rejects(
           client.selectSignInMethod!('fixture', {
             origin: change === 'origin' ? 'https://another.example' : origin,
@@ -1435,7 +1463,7 @@ test(
         client.signInMethods!('fixture', origin, [{ label: 'Ignored', selector: '#primary' }]),
       );
       await act({ action: 'open', url: origin + '/twin' });
-      await act({ action: 'wait', load: 'networkidle' });
+      await act({ action: 'wait', text: 'Frame ready' });
       const twin = /button "Continue with Example"[^\n]*ref=(e\d+)/.exec(
         (await act({ action: 'snapshot' })).text,
       )?.[1];
@@ -1569,7 +1597,12 @@ test(
           inspector = await openDevtools(String(connection.cdpUrl), tab.targetId);
           const current = await inspector.signInControl({ pixel: { x: 150, y: 100 } });
           inspector.close();
-          inspector = await openDevtools(String(connection.cdpUrl), tab.targetId);
+          inspector = await openDevtools(
+            String(connection.cdpUrl),
+            tab.targetId,
+            undefined,
+            path === '/framed' ? 2000 : undefined,
+          );
           let delayed = false;
           let controlSession: string | undefined;
           const dispatched: string[] = [];
@@ -1593,7 +1626,7 @@ test(
                 message.params?.functionDeclaration?.includes("globalThis[name + 'Guard'] = guard")
               ) {
                 delayed = true;
-                guardTimer = setTimeout(() => originalSend.call(this, data), 5200);
+                guardTimer = setTimeout(() => originalSend.call(this, data), 2400);
                 return;
               }
               originalSend.call(this, data);

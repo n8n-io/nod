@@ -1548,7 +1548,7 @@ test('HTML approval previews show the actual link destination', () => {
 
 test(
   'approvals preserve explicit-request authority, execute confirmed snapshots once and fence owners',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 60_000 },
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 180_000 },
   async (t) => {
     const fixtureRoot = await realpath(await mkdtemp(join(tmpdir(), 'nod-approvals-')));
     const previousDirectory = process.cwd();

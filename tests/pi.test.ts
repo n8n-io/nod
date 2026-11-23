@@ -1276,97 +1276,107 @@ test(
   },
 );
 
-test('a Codemode deadline ends the wait with an unknown tool outcome', async (t) => {
-  const { executeCodemode } = await import(
-    new URL(
-      '../node_modules/@earendil-works/pi-coding-agent/dist/extensions/codemode/execute.js',
-      import.meta.url,
-    ).href
-  );
-  for (const mode of ['timeout', 'failure', 'unawaited'] as const)
-    for (const late of ['resolve', 'reject'] as const)
-      await t.test(`${mode} then ${late}`, { timeout: 5_000 }, async () => {
-        let entered!: () => void;
-        const started = new Promise<void>((resolve) => (entered = resolve));
-        let reject!: (error: Error) => void;
-        let release!: () => void;
-        const held = new Promise<void>((resolve, refuse) => {
-          release = resolve;
-          reject = refuse;
+test(
+  'a Codemode deadline ends the wait with an unknown tool outcome',
+  { concurrency: 2 },
+  async (t) => {
+    const { executeCodemode } = await import(
+      new URL(
+        '../node_modules/@earendil-works/pi-coding-agent/dist/extensions/codemode/execute.js',
+        import.meta.url,
+      ).href
+    );
+    const cases: Promise<void>[] = [];
+    for (const mode of ['timeout', 'failure', 'unawaited'] as const)
+      for (const late of ['resolve', 'reject'] as const) {
+        const subtest = t.test(`${mode} then ${late}`, { timeout: 20_000 }, async () => {
+          let entered!: () => void;
+          const started = new Promise<void>((resolve) => (entered = resolve));
+          let reject!: (error: Error) => void;
+          let release!: () => void;
+          const held = new Promise<void>((resolve, refuse) => {
+            release = resolve;
+            reject = refuse;
+          });
+          const stop = new AbortController();
+          const calls: string[] = [];
+          let commits = 0;
+          const code =
+            '// @options: {"timeout_ms": 750}\n' +
+            (mode === 'timeout'
+              ? 'await tools.synthetic_wait({});'
+              : mode === 'failure'
+                ? 'await Promise.all([tools.synthetic_fail({}),tools.synthetic_wait({})]);'
+                : 'void tools.synthetic_wait({}); await tools.synthetic_barrier({}); text("Local script finished.");');
+          const pending = executeCodemode('synthetic-deadline', { code }, stop.signal, undefined, {
+            tools: ['synthetic_fail', 'synthetic_wait', 'synthetic_barrier'].map((name) => ({
+              name,
+              label: name,
+              description: 'Synthetic tool.',
+              parameters: Type.Object({}),
+              execute: async () => ({ content: [], details: {} }),
+            })),
+            sessionManager: SessionManager.inMemory(process.cwd()),
+            executeTool: async (name: string) => {
+              calls.push(name);
+              if (name === 'synthetic_wait') {
+                entered();
+                await held;
+                commits++;
+              }
+              await started;
+              return {
+                toolCall: { type: 'toolCall', id: name, name, arguments: {} },
+                result: { content: [{ type: 'text', text: 'Synthetic result.' }], details: {} },
+                isError: name === 'synthetic_fail',
+              };
+            },
+          });
+          let deadline: ReturnType<typeof globalThis.setTimeout> | undefined;
+          try {
+            const result = await Promise.race([
+              pending,
+              new Promise<never>((_resolve, fail) => {
+                deadline = globalThis.setTimeout(
+                  () => fail(new Error('The script exceeded its deadline.')),
+                  5_000,
+                );
+              }),
+            ]);
+            assert.equal(stop.signal.aborted, false);
+            const text = result.content
+              .map((part: { text?: string }) => part.text ?? '')
+              .join('\n');
+            assert.match(text, /outcome unknown|results are still unknown/i);
+            assert.doesNotMatch(text, /synthetic_wait \((?:cancelled|ok)\)/);
+            const snapshot = JSON.stringify(result.details);
+            assert.equal(
+              result.details.calls.find((call: { name: string }) => call.name === 'synthetic_wait')
+                .status,
+              'running',
+            );
+            assert.equal(result.isError === true, mode !== 'unawaited');
+            if (mode === 'timeout') assert.match(text, /timed out/);
+            if (mode === 'unawaited') assert.match(text, /Local script finished/);
+            assert.equal(commits, 0);
+            if (late === 'resolve') release();
+            else reject(new Error('Synthetic tool rejected after the deadline.'));
+            await setTimeout(25);
+            assert.equal(JSON.stringify(result.details), snapshot);
+            assert.equal(commits, Number(late === 'resolve'));
+            assert.equal(calls.filter((name) => name === 'synthetic_wait').length, 1);
+          } finally {
+            if (deadline) globalThis.clearTimeout(deadline);
+            stop.abort();
+            reject(new Error('Synthetic deadline cleanup.'));
+            await pending;
+          }
         });
-        const stop = new AbortController();
-        const calls: string[] = [];
-        let commits = 0;
-        const code =
-          '// @options: {"timeout_ms": 250}\n' +
-          (mode === 'timeout'
-            ? 'await tools.synthetic_wait({});'
-            : mode === 'failure'
-              ? 'await Promise.all([tools.synthetic_fail({}),tools.synthetic_wait({})]);'
-              : 'void tools.synthetic_wait({}); await tools.synthetic_barrier({}); text("Local script finished.");');
-        const pending = executeCodemode('synthetic-deadline', { code }, stop.signal, undefined, {
-          tools: ['synthetic_fail', 'synthetic_wait', 'synthetic_barrier'].map((name) => ({
-            name,
-            label: name,
-            description: 'Synthetic tool.',
-            parameters: Type.Object({}),
-            execute: async () => ({ content: [], details: {} }),
-          })),
-          sessionManager: SessionManager.inMemory(process.cwd()),
-          executeTool: async (name: string) => {
-            calls.push(name);
-            if (name === 'synthetic_wait') {
-              entered();
-              await held;
-              commits++;
-            }
-            await started;
-            return {
-              toolCall: { type: 'toolCall', id: name, name, arguments: {} },
-              result: { content: [{ type: 'text', text: 'Synthetic result.' }], details: {} },
-              isError: name === 'synthetic_fail',
-            };
-          },
-        });
-        let deadline: ReturnType<typeof globalThis.setTimeout> | undefined;
-        try {
-          const result = await Promise.race([
-            pending,
-            new Promise<never>((_resolve, fail) => {
-              deadline = globalThis.setTimeout(
-                () => fail(new Error('The script exceeded its deadline.')),
-                1_000,
-              );
-            }),
-          ]);
-          assert.equal(stop.signal.aborted, false);
-          const text = result.content.map((part: { text?: string }) => part.text ?? '').join('\n');
-          assert.match(text, /outcome unknown|results are still unknown/i);
-          assert.doesNotMatch(text, /synthetic_wait \((?:cancelled|ok)\)/);
-          const snapshot = JSON.stringify(result.details);
-          assert.equal(
-            result.details.calls.find((call: { name: string }) => call.name === 'synthetic_wait')
-              .status,
-            'running',
-          );
-          assert.equal(result.isError === true, mode !== 'unawaited');
-          if (mode === 'timeout') assert.match(text, /timed out/);
-          if (mode === 'unawaited') assert.match(text, /Local script finished/);
-          assert.equal(commits, 0);
-          if (late === 'resolve') release();
-          else reject(new Error('Synthetic tool rejected after the deadline.'));
-          await setTimeout(25);
-          assert.equal(JSON.stringify(result.details), snapshot);
-          assert.equal(commits, Number(late === 'resolve'));
-          assert.equal(calls.filter((name) => name === 'synthetic_wait').length, 1);
-        } finally {
-          if (deadline) globalThis.clearTimeout(deadline);
-          stop.abort();
-          reject(new Error('Synthetic deadline cleanup.'));
-          await pending;
-        }
-      });
-});
+        cases.push(subtest);
+      }
+    await Promise.all(cases);
+  },
+);
 
 test('a new Pi request follows refreshed owner context after an approval pause', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-pi-approval-next-'));
@@ -2618,6 +2628,7 @@ test('native Pi tools use Linux workspace paths on a Windows host', async (t) =>
 test('bash output larger than Pi limits stays in the sandbox and never creates host temp files', async (t) => {
   const { prefix, root, tools, run } = await hostSandbox(t);
   const before = (await readdir(tmpdir())).filter((name) => name.startsWith('pi-bash-'));
+  const timedOut = assert.rejects(run('bash', { command: 'sleep 5', timeout: 1 }));
   const output = await run('bash', { command: 'seq 1 100000' });
   assert.ok(Buffer.byteLength(output) < 60 * 1024);
   assert.match(output, /100000\n/);
@@ -2642,7 +2653,7 @@ test('bash output larger than Pi limits stays in the sandbox and never creates h
   assert.equal(failed.isError, true);
   const failure = failed.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
   assert.ok(Buffer.byteLength(failure) < 60 * 1024);
-  await assert.rejects(run('bash', { command: 'sleep 5', timeout: 1 }));
+  await timedOut;
   const after = (await readdir(tmpdir())).filter((name) => name.startsWith('pi-bash-'));
   assert.deepEqual(after, before);
 });
@@ -2716,7 +2727,7 @@ test('the owner command stream records exit status and output without known secr
     }
     return events.filter((event) => event.command);
   };
-  const records = await run(createCommandRedactor([secret]));
+  const [records, unredacted] = await Promise.all([run(createCommandRedactor([secret])), run()]);
   assert.deepEqual(
     records.map(({ type, command }) => [type, command?.command, command?.exitCode]),
     [
@@ -2729,7 +2740,7 @@ test('the owner command stream records exit status and output without known secr
   assert.match(records[1].command!.output!, /^\[redacted\]\npassword=\[redacted\]/);
   assert.match(records[3].command!.output!, /late-\[redacted\][\s\S]*timed out/);
   assert.equal(JSON.stringify(records).includes('synthetic-'), false);
-  assert.deepEqual(await run(), []);
+  assert.deepEqual(unredacted, []);
 });
 
 // Runtime: one active turn, stop and shutdown drain.
@@ -4825,276 +4836,287 @@ test('agent and curator traces share analytics IDs across parallel turns and sep
   await standalone.shutdown();
 });
 
-test('a long tool call does not send model requests without usage records', async (t) => {
-  for (const [outcome, changeContext] of [
-    ['failed', false],
-    ['succeeded', false],
-    ['succeeded', true],
-  ] as const)
-    await t.test(changeContext ? 'changed context' : outcome, async (t) => {
-      const { createServer } = await import('node:http');
-      const { createPiModelBackend, createPiModelRuntime } =
-        await import('../src/providers/pi/models.ts');
-      const chunk = (value: object) => `data: ${JSON.stringify(value)}\n\n`;
-      let requests = 0;
-      let realRequests = 0;
-      let tools = 0;
-      let current: Awaited<ReturnType<typeof createAgentSession>>['session'] | undefined;
-      let persistedRefreshes = 0;
-      let completeRefresh: () => void;
-      const refreshCompleted = new Promise<void>((resolve) => {
-        completeRefresh = resolve;
-      });
-      const usage: Array<{
-        id: string;
-        operation?: string;
-        status?: string;
-        costUsd?: number | null;
-      }> = [];
-      const traces: import('../src/ports/traces.ts').ModelTrace[] = [];
-      let holdRefresh = false;
-      let refreshStarted: (() => void) | undefined;
-      let releaseRefresh: (() => void) | undefined;
-      const server = createServer((request, response) => {
-        const parts: Buffer[] = [];
-        request.on('data', (part) => parts.push(part));
-        request.on('end', () => {
-          const send = (value: unknown) => {
-            response.writeHead(200, { 'content-type': 'application/json' });
-            response.end(JSON.stringify(value));
-          };
-          if (request.url === '/v1/models') return send({ data: [{ id: 'fixture-cache' }] });
-          if (request.url === '/api/version') return send({ version: '0.0.0' });
-          if (request.url === '/api/show')
-            return send({
-              capabilities: ['completion', 'tools'],
-              model_info: { 'llama.context_length': 200000 },
-            });
-          if (request.url !== '/v1/chat/completions') {
-            response.writeHead(404);
-            return response.end();
-          }
-          requests++;
-          const body = JSON.parse(Buffer.concat(parts).toString());
-          if (body.max_tokens === 1 || body.max_completion_tokens === 1) {
-            if (outcome === 'failed') {
-              response.writeHead(500, { 'content-type': 'application/json' });
-              return response.end(
-                JSON.stringify({ error: { message: 'Synthetic refresh failure' } }),
-              );
+test(
+  'a long tool call does not send model requests without usage records',
+  { concurrency: true },
+  async (t) => {
+    const cases: Promise<void>[] = [];
+    for (const [outcome, changeContext] of [
+      ['failed', false],
+      ['succeeded', false],
+      ['succeeded', true],
+    ] as const) {
+      const subtest = t.test(changeContext ? 'changed context' : outcome, async (t) => {
+        const { createServer } = await import('node:http');
+        const { createPiModelBackend, createPiModelRuntime } =
+          await import('../src/providers/pi/models.ts');
+        const chunk = (value: object) => `data: ${JSON.stringify(value)}\n\n`;
+        let requests = 0;
+        let realRequests = 0;
+        let tools = 0;
+        let current: Awaited<ReturnType<typeof createAgentSession>>['session'] | undefined;
+        let persistedRefreshes = 0;
+        let completeRefresh: () => void;
+        const refreshCompleted = new Promise<void>((resolve) => {
+          completeRefresh = resolve;
+        });
+        const usage: Array<{
+          id: string;
+          operation?: string;
+          status?: string;
+          costUsd?: number | null;
+        }> = [];
+        const traces: import('../src/ports/traces.ts').ModelTrace[] = [];
+        let holdRefresh = false;
+        let refreshStarted: (() => void) | undefined;
+        let releaseRefresh: (() => void) | undefined;
+        const server = createServer((request, response) => {
+          const parts: Buffer[] = [];
+          request.on('data', (part) => parts.push(part));
+          request.on('end', () => {
+            const send = (value: unknown) => {
+              response.writeHead(200, { 'content-type': 'application/json' });
+              response.end(JSON.stringify(value));
+            };
+            if (request.url === '/v1/models') return send({ data: [{ id: 'fixture-cache' }] });
+            if (request.url === '/api/version') return send({ version: '0.0.0' });
+            if (request.url === '/api/show')
+              return send({
+                capabilities: ['completion', 'tools'],
+                model_info: { 'llama.context_length': 200000 },
+              });
+            if (request.url !== '/v1/chat/completions') {
+              response.writeHead(404);
+              return response.end();
             }
-            const finish = () => {
-              if (changeContext && current)
-                current.agent.state.messages = current.agent.state.messages.map((message) => ({
-                  ...message,
-                }));
-              response.writeHead(200, { 'content-type': 'text/event-stream' });
-              response.end(
-                chunk({
-                  id: 'fixture-warm-' + requests,
-                  choices: [{ index: 0, delta: { role: 'assistant', content: 'x' } }],
-                }) +
+            requests++;
+            const body = JSON.parse(Buffer.concat(parts).toString());
+            if (body.max_tokens === 1 || body.max_completion_tokens === 1) {
+              if (outcome === 'failed') {
+                response.writeHead(500, { 'content-type': 'application/json' });
+                return response.end(
+                  JSON.stringify({ error: { message: 'Synthetic refresh failure' } }),
+                );
+              }
+              const finish = () => {
+                if (changeContext && current)
+                  current.agent.state.messages = current.agent.state.messages.map((message) => ({
+                    ...message,
+                  }));
+                response.writeHead(200, { 'content-type': 'text/event-stream' });
+                response.end(
                   chunk({
                     id: 'fixture-warm-' + requests,
-                    choices: [{ index: 0, delta: {}, finish_reason: 'length' }],
-                    usage: {
-                      prompt_tokens: 100000,
-                      prompt_tokens_details: { cached_tokens: 100000 },
-                      completion_tokens: 1,
-                      total_tokens: 100001,
-                    },
+                    choices: [{ index: 0, delta: { role: 'assistant', content: 'x' } }],
                   }) +
-                  'data: [DONE]\n\n',
-              );
-            };
-            if (holdRefresh) {
-              releaseRefresh = finish;
-              refreshStarted?.();
-            } else finish();
-            return;
-          }
-          const first = ++realRequests === 1;
-          response.writeHead(200, { 'content-type': 'text/event-stream' });
-          response.end(
-            chunk({
-              id: 'fixture-' + realRequests,
-              choices: [
-                {
-                  index: 0,
-                  delta: first
-                    ? {
-                        role: 'assistant',
-                        tool_calls: [
-                          {
-                            index: 0,
-                            id: 'fixture-wait',
-                            type: 'function',
-                            function: { name: 'fixture_wait', arguments: '{}' },
-                          },
-                        ],
-                      }
-                    : { role: 'assistant', content: 'Finished the synthetic wait.' },
-                },
-              ],
-            }) +
+                    chunk({
+                      id: 'fixture-warm-' + requests,
+                      choices: [{ index: 0, delta: {}, finish_reason: 'length' }],
+                      usage: {
+                        prompt_tokens: 100000,
+                        prompt_tokens_details: { cached_tokens: 100000 },
+                        completion_tokens: 1,
+                        total_tokens: 100001,
+                      },
+                    }) +
+                    'data: [DONE]\n\n',
+                );
+              };
+              if (holdRefresh) {
+                releaseRefresh = finish;
+                refreshStarted?.();
+              } else finish();
+              return;
+            }
+            const first = ++realRequests === 1;
+            response.writeHead(200, { 'content-type': 'text/event-stream' });
+            response.end(
               chunk({
                 id: 'fixture-' + realRequests,
-                choices: [{ index: 0, delta: {}, finish_reason: first ? 'tool_calls' : 'stop' }],
-                usage: { prompt_tokens: 100000, completion_tokens: 20, total_tokens: 100020 },
+                choices: [
+                  {
+                    index: 0,
+                    delta: first
+                      ? {
+                          role: 'assistant',
+                          tool_calls: [
+                            {
+                              index: 0,
+                              id: 'fixture-wait',
+                              type: 'function',
+                              function: { name: 'fixture_wait', arguments: '{}' },
+                            },
+                          ],
+                        }
+                      : { role: 'assistant', content: 'Finished the synthetic wait.' },
+                  },
+                ],
               }) +
-              'data: [DONE]\n\n',
-          );
-        });
-      });
-      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-      t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
-      const address = server.address() as import('node:net').AddressInfo;
-      const credential = { type: 'endpoint' as const, url: `http://127.0.0.1:${address.port}/v1` };
-      const [catalog] = await createPiModelBackend().catalog('compatible', 'api_key', credential);
-      const definition = {
-        ...catalog,
-        spec: {
-          ...catalog.spec,
-          cost: { input: 20, output: 20, cacheRead: 1, cacheWrite: 20 },
-          promptCache: { short: 11 },
-        },
-      };
-      const sessionRoot = await mkdtemp(join(tmpdir(), 'nod-pi-cost-'));
-      const access = {
-        provider: 'compatible' as const,
-        method: 'api_key' as const,
-        definition,
-        effort: 'off' as const,
-        read: async () => credential,
-      };
-      const agent = createPiAgent({
-        provider: 'compatible',
-        sessionRoot,
-        resolve: async () => access,
-        traces: { active: () => true, record: (trace) => traces.push(trace) },
-        createSession: async (options) => {
-          const result = await createAgentSession(options);
-          current = result.session;
-          current.subscribe((event) => {
-            if (
-              event.type === 'entry_appended' &&
-              event.entry.type === 'usage' &&
-              event.entry.kind === 'cache_warm'
-            ) {
-              persistedRefreshes++;
-              completeRefresh();
-            }
+                chunk({
+                  id: 'fixture-' + realRequests,
+                  choices: [{ index: 0, delta: {}, finish_reason: first ? 'tool_calls' : 'stop' }],
+                  usage: { prompt_tokens: 100000, completion_tokens: 20, total_tokens: 100020 },
+                }) +
+                'data: [DONE]\n\n',
+            );
           });
-          return result;
-        },
-      });
-      t.after(async () => {
-        await agent.dispose();
-        await rm(sessionRoot, { recursive: true, force: true });
-      });
-      const session = await agent.open({
-        ...fakeExecution(randomUUID(), randomUUID()),
-        ...sandbox,
-        systemPrompt: 'Complete the synthetic wait once.',
-        shouldStop: () => false,
-        onEvent: (event) => {
-          if (event.type === 'model_usage') usage.push(event);
-          if (event.type === 'provider_usage') {
-            usage.push(event.usage);
-            if (event.usage.operation === 'cache_warm' && (outcome === 'failed' || changeContext))
-              completeRefresh();
-          }
-        },
-        tools: [
-          {
-            name: 'fixture_wait',
-            description: 'Wait for the synthetic result.',
-            parameters: { type: 'object', properties: {} },
-            eager: true,
-            execute: async () => {
-              tools++;
-              await Promise.race([
-                refreshCompleted,
-                setTimeout(5000, undefined, { ref: false }).then(() =>
-                  assert.fail('The synthetic cache refresh did not complete.'),
-                ),
-              ]);
-              return { content: [{ type: 'text', text: 'The synthetic wait finished.' }] };
-            },
+        });
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+        t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+        const address = server.address() as import('node:net').AddressInfo;
+        const credential = {
+          type: 'endpoint' as const,
+          url: `http://127.0.0.1:${address.port}/v1`,
+        };
+        const [catalog] = await createPiModelBackend().catalog('compatible', 'api_key', credential);
+        const definition = {
+          ...catalog,
+          spec: {
+            ...catalog.spec,
+            cost: { input: 20, output: 20, cacheRead: 1, cacheWrite: 20 },
+            promptCache: { short: 11 },
           },
-        ],
-      });
-      await session.prompt('Run the synthetic wait.', []);
-      await session.dispose();
-      await new Promise((resolve) => setImmediate(resolve));
-      assert.equal(tools, 1);
-      assert.equal(realRequests, 2);
-      assert.ok(requests > realRequests);
-      assert.equal(usage.length, requests);
-      assert.equal(traces.length, requests);
-      assert.equal(
-        traces.filter((trace) => trace.metadata.request_kind === 'regular').length,
-        realRequests,
-      );
-      assert.equal(
-        traces.filter((trace) => trace.metadata.request_kind === 'cache_warm').length,
-        requests - realRequests,
-      );
-      assert.equal(new Set(usage.map((row) => row.id)).size, requests);
-      const refreshes = usage.filter((row) => row.operation === 'cache_warm');
-      assert.equal(refreshes.length, requests - realRequests);
-      assert.equal(
-        persistedRefreshes,
-        outcome === 'succeeded' && !changeContext ? refreshes.length : 0,
-      );
-      assert.ok(refreshes.every((row) => row.status === outcome));
-      assert.ok(
-        refreshes.every((row) =>
-          outcome === 'failed'
-            ? row.costUsd === null
-            : typeof row.costUsd === 'number' && row.costUsd > 0,
-        ),
-      );
-      if (outcome === 'succeeded' && !changeContext) {
-        const cancelled: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
-        const { runtime, model } = await createPiModelRuntime(access, {
-          reportCacheUsage: (row) => cancelled.push(row),
+        };
+        const sessionRoot = await mkdtemp(join(tmpdir(), 'nod-pi-cost-'));
+        const access = {
+          provider: 'compatible' as const,
+          method: 'api_key' as const,
+          definition,
+          effort: 'off' as const,
+          read: async () => credential,
+        };
+        const agent = createPiAgent({
+          provider: 'compatible',
+          sessionRoot,
+          resolve: async () => access,
+          traces: { active: () => true, record: (trace) => traces.push(trace) },
+          createSession: async (options) => {
+            const result = await createAgentSession(options);
+            current = result.session;
+            current.subscribe((event) => {
+              if (
+                event.type === 'entry_appended' &&
+                event.entry.type === 'usage' &&
+                event.entry.kind === 'cache_warm'
+              ) {
+                persistedRefreshes++;
+                completeRefresh();
+              }
+            });
+            return result;
+          },
         });
-        holdRefresh = true;
-        const received = new Promise<void>((resolve) => {
-          refreshStarted = resolve;
+        t.after(async () => {
+          await agent.dispose();
+          await rm(sessionRoot, { recursive: true, force: true });
         });
-        const controller = new AbortController();
-        const pending = runtime.streamSimple(
-          model,
-          {
-            messages: [
-              {
-                role: 'user',
-                content: [{ type: 'text', text: 'Synthetic cache refresh' }],
-                timestamp: Date.now(),
+        const session = await agent.open({
+          ...fakeExecution(randomUUID(), randomUUID()),
+          ...sandbox,
+          systemPrompt: 'Complete the synthetic wait once.',
+          shouldStop: () => false,
+          onEvent: (event) => {
+            if (event.type === 'model_usage') usage.push(event);
+            if (event.type === 'provider_usage') {
+              usage.push(event.usage);
+              if (event.usage.operation === 'cache_warm' && (outcome === 'failed' || changeContext))
+                completeRefresh();
+            }
+          },
+          tools: [
+            {
+              name: 'fixture_wait',
+              description: 'Wait for the synthetic result.',
+              parameters: { type: 'object', properties: {} },
+              eager: true,
+              execute: async () => {
+                tools++;
+                await Promise.race([
+                  refreshCompleted,
+                  setTimeout(5000, undefined, { ref: false }).then(() =>
+                    assert.fail('The synthetic cache refresh did not complete.'),
+                  ),
+                ]);
+                return { content: [{ type: 'text', text: 'The synthetic wait finished.' }] };
               },
-            ],
-          },
-          {
-            maxTokens: 1,
-            maxRetries: 0,
-            signal: controller.signal,
-            fetch: (input, init) => fetch(input, { ...init, signal: undefined }),
-          },
+            },
+          ],
+        });
+        await session.prompt('Run the synthetic wait.', []);
+        await session.dispose();
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(tools, 1);
+        assert.equal(realRequests, 2);
+        assert.ok(requests > realRequests);
+        assert.equal(usage.length, requests);
+        assert.equal(traces.length, requests);
+        assert.equal(
+          traces.filter((trace) => trace.metadata.request_kind === 'regular').length,
+          realRequests,
         );
-        await received;
-        controller.abort();
-        assert.equal(cancelled.length, 1);
-        assert.equal(cancelled[0].status, 'cancelled');
-        assert.equal(cancelled[0].costUsd, null);
-        releaseRefresh!();
-        await pending.result();
-        assert.equal(cancelled.length, 1);
-        assert.equal(requests, usage.length + cancelled.length);
-      }
-    });
-});
+        assert.equal(
+          traces.filter((trace) => trace.metadata.request_kind === 'cache_warm').length,
+          requests - realRequests,
+        );
+        assert.equal(new Set(usage.map((row) => row.id)).size, requests);
+        const refreshes = usage.filter((row) => row.operation === 'cache_warm');
+        assert.equal(refreshes.length, requests - realRequests);
+        assert.equal(
+          persistedRefreshes,
+          outcome === 'succeeded' && !changeContext ? refreshes.length : 0,
+        );
+        assert.ok(refreshes.every((row) => row.status === outcome));
+        assert.ok(
+          refreshes.every((row) =>
+            outcome === 'failed'
+              ? row.costUsd === null
+              : typeof row.costUsd === 'number' && row.costUsd > 0,
+          ),
+        );
+        if (outcome === 'succeeded' && !changeContext) {
+          const cancelled: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
+          const { runtime, model } = await createPiModelRuntime(access, {
+            reportCacheUsage: (row) => cancelled.push(row),
+          });
+          holdRefresh = true;
+          const received = new Promise<void>((resolve) => {
+            refreshStarted = resolve;
+          });
+          const controller = new AbortController();
+          const pending = runtime.streamSimple(
+            model,
+            {
+              messages: [
+                {
+                  role: 'user',
+                  content: [{ type: 'text', text: 'Synthetic cache refresh' }],
+                  timestamp: Date.now(),
+                },
+              ],
+            },
+            {
+              maxTokens: 1,
+              maxRetries: 0,
+              signal: controller.signal,
+              fetch: (input, init) => fetch(input, { ...init, signal: undefined }),
+            },
+          );
+          await received;
+          controller.abort();
+          assert.equal(cancelled.length, 1);
+          assert.equal(cancelled[0].status, 'cancelled');
+          assert.equal(cancelled[0].costUsd, null);
+          releaseRefresh!();
+          await pending.result();
+          assert.equal(cancelled.length, 1);
+          assert.equal(requests, usage.length + cancelled.length);
+        }
+      });
+      cases.push(subtest);
+    }
+    await Promise.all(cases);
+  },
+);
 
 test('owner context stays out of the system prompt and compaction summaries and is added only when it changes', async (t) => {
   const { createServer } = await import('node:http');

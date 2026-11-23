@@ -105,7 +105,7 @@ GitHub doesn't trigger workflows from a merge made with `GITHUB_TOKEN`, so the w
 </details>
 
 :::caution[Not every pin is covered]
-Dependabot doesn't update Python packages installed inline in Dockerfiles, tools downloaded by pinned workflow commands, or the desktop runtime's custom build lock. Update those by hand.
+Dependabot doesn't update Python packages installed inline in Dockerfiles, tools downloaded by pinned workflow commands, or the desktop runtime's custom build lock. Update those by hand. It also skips `@composio/client`, which must match the exact version `@composio/core` depends on: change both together.
 :::
 
 ## Related resources

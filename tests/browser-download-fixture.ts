@@ -55,7 +55,7 @@ export async function createBrowserDownloadFixture() {
         const timer = setInterval(() => {
           response.write(Buffer.alloc(256 * 1024));
           if (--remaining === 0) response.end();
-        }, 100);
+        }, 50);
         response.once('close', () => clearInterval(timer));
         return;
       }

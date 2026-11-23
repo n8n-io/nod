@@ -1591,6 +1591,7 @@ async function failTurn(
         work: string | null;
         latest_user_message_id: string | null;
         outside_action: boolean;
+        handed_off: boolean;
       }>(
         `${turnChainSql()}, origin AS (
           SELECT u.created_at,u.id FROM turns u JOIN chain c ON c.id=u.id
@@ -1607,6 +1608,11 @@ async function failTurn(
          ,(EXISTS (SELECT 1 FROM turns x JOIN chain c ON c.id=x.id WHERE x.outside_action_at IS NOT NULL)
            OR EXISTS (SELECT 1 FROM approvals a JOIN chain c ON c.id IN (a.turn_id,a.execution_turn_id)
              WHERE a.owner_id=u.owner_id AND a.status IN ('executing','uncertain','completed'))) AS outside_action
+         ,(to_jsonb(u)->>'task_id' IS NULL
+           AND EXISTS (SELECT 1 FROM messages m JOIN chain c ON c.id=m.turn_id WHERE m.owner_id=$2 AND m.role='user')
+           AND NOT EXISTS (SELECT 1 FROM messages m JOIN chain c ON c.id=m.turn_id
+             WHERE m.owner_id=$2 AND m.role='user'
+               AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.owner_id=$2 AND t.source_message_id=m.id AND t.state='open'))) AS handed_off
          FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.status='running' FOR UPDATE`,
         [turnId, ownerId, thread.id],
       )
@@ -1626,7 +1632,8 @@ async function failTurn(
   }, pool);
   if (!turn) return false;
   if (!turn.owner_started && !turn.work) return true;
-  const work = turn.owner_started ? undefined : turn.work!;
+  if (error === interrupted && turn.handed_off) return true;
+  const work = turn.owner_started && !turn.task_id ? undefined : (turn.work ?? undefined);
   const presented = modelFailure
     ? undefined
     : await present?.(

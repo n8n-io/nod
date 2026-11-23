@@ -171,7 +171,7 @@ jobs:
       - name: Install validation dependencies
         run: pnpm install --frozen-lockfile
       - name: Set up Docker build cache
-        uses: useblacksmith/setup-docker-builder@06dd9c83a5d541274d2e3ac67625560979275267
+        uses: useblacksmith/setup-docker-builder@9657a6e02ca6445e6d6ce5ffaf370f4828dea50d
         with:
           cache-key: n8n-io/nod/desktop-images-${{ matrix.arch }}
       - name: Build the workspace image
@@ -466,7 +466,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Set up Docker build cache
         if: env.NOD_WINDOWS_RUNTIME_TAG == ''
-        uses: useblacksmith/setup-docker-builder@06dd9c83a5d541274d2e3ac67625560979275267
+        uses: useblacksmith/setup-docker-builder@9657a6e02ca6445e6d6ce5ffaf370f4828dea50d
         with:
           cache-key: n8n-io/nod/desktop-images-win32-x64
       - name: Build the workspace image
@@ -534,7 +534,7 @@ jobs:
         with:
           node-version: '24.21.0'
           cache: pnpm
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
         with:
           go-version: '1.26.8'
           cache: false
@@ -586,7 +586,7 @@ jobs:
         with:
           node-version: '24.21.0'
           cache: pnpm
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
         with:
           go-version: '1.26.8'
           cache: false

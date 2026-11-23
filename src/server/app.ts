@@ -225,6 +225,7 @@ export interface AppDependencies {
   taskLedger?: () => Promise<import('../shared/contracts.ts').Task[]>;
   activity?: () => Promise<Activity[]>;
   planningTasks?: () => string | undefined;
+  rateLimit?: boolean;
 }
 
 export async function createApp(dependencies: AppDependencies = {}) {
@@ -337,6 +338,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
   await app.register(rateLimit, {
     global: false,
     keyGenerator: () => ownerId,
+    allowList: () => dependencies.rateLimit === false,
   });
   await app.register(multipart, { limits: { fileSize: fileBytes, files: 1, fields: 5 } });
   const audioMessages = registerAudioMessages(app, dependencies);

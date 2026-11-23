@@ -90,7 +90,9 @@ test(
           async () =>
             (
               await nod.query(
-                "SELECT 1 FROM tasks t JOIN turns u ON u.task_id=t.id WHERE t.title='hold: draft the newsletter' AND u.status='running'",
+                `SELECT 1 FROM tasks t JOIN turns u ON u.task_id=t.id
+                 WHERE t.title='hold: draft the newsletter' AND u.status='running'
+                   AND NOT EXISTS (SELECT 1 FROM turns o WHERE o.id<>u.id AND o.status IN ('queued','running'))`,
               )
             ).length > 0,
         );
@@ -160,5 +162,87 @@ test(
         );
       assert.deepEqual(await nod.violations({ failed: 1 }), []);
     });
+
+    const notices = () =>
+      nod.query<{ id: string; text: string; task: string | null }>(
+        `SELECT m.id,m.text,(SELECT t.title FROM tasks t WHERE t.id=u.task_id) AS task
+         FROM messages m JOIN turns u ON u.id=m.turn_id
+         WHERE m.stream_id=concat('failure:',u.id) AND u.error='Interrupted.' ORDER BY m.created_at,m.id`,
+      );
+    const working = (title: string) =>
+      nod.until(
+        async () =>
+          (
+            await nod.query(
+              `SELECT 1 FROM tasks t JOIN turns u ON u.task_id=t.id
+               WHERE t.title=$1 AND u.status='running'
+                 AND (SELECT count(*) FROM turns o WHERE o.status IN ('queued','running'))=2
+                 AND EXISTS (SELECT 1 FROM turns o WHERE o.status='running' AND o.task_id IS NULL)`,
+              [title],
+            )
+          ).length > 0,
+      );
+
+    await t.test(
+      'a crash while the chat hands work to a task leaves one notice, on the task',
+      async () => {
+        const before = (await notices()).length;
+        await nod.send('task: linger: hold: book the venue');
+        await working('linger: hold: book the venue');
+        await nod.crash();
+        await nod.restart();
+        await nod.settle();
+        const [notice, ...more] = (await notices()).slice(before);
+        assert.deepEqual(more, []);
+        assert.equal(notice?.task, 'linger: hold: book the venue');
+        assert.match(notice.text, /“linger: hold: book the venue”/);
+        await nod.release('task: linger: hold: book the venue');
+        await nod.send('continue', { replyTo: notice.id });
+        await nod.settle();
+        assert.deepEqual(await nod.violations({ failed: 3 }), []);
+      },
+    );
+
+    await t.test(
+      'a crash during a chat request and a task names which work each notice is about',
+      async () => {
+        const before = (await notices()).length;
+        await nod.send('task: hold: order the cake');
+        await nod.until(
+          async () =>
+            (
+              await nod.query(
+                `SELECT 1 FROM tasks t JOIN turns u ON u.task_id=t.id
+               WHERE t.title='hold: order the cake' AND u.status='running'
+                 AND (SELECT count(*) FROM turns o WHERE o.status IN ('queued','running'))=1`,
+              )
+            ).length > 0,
+        );
+        const question = await nod.send('hold: check the weather');
+        await working('hold: order the cake');
+        await nod.crash();
+        await nod.restart();
+        await nod.settle();
+        const interrupted = (await notices()).slice(before);
+        assert.deepEqual(interrupted.map((notice) => notice.task).sort(), [
+          'hold: order the cake',
+          null,
+        ]);
+        const chat = interrupted.find((notice) => !notice.task)!;
+        const task = interrupted.find((notice) => notice.task)!;
+        assert.match(task.text, /“hold: order the cake”/);
+        assert.doesNotMatch(chat.text, /order the cake/);
+        await nod.release('task: hold: order the cake');
+        await nod.release('hold: check the weather');
+        await nod.send('continue', { replyTo: task.id });
+        await nod.send('go on', { replyTo: chat.id });
+        await nod.settle();
+        assert.equal(
+          (await nod.query('SELECT 1 FROM turns WHERE message_id=$1', [question.messageId])).length,
+          1,
+        );
+        assert.deepEqual(await nod.violations({ failed: 5 }), []);
+      },
+    );
   },
 );

@@ -572,6 +572,10 @@ async function runningDesktop(
   let permissionCheck;
   let permissionRequest;
   const appSessions = new Map();
+  const timeout = setTimeout;
+  const healthPollDelay = 300;
+  const keyStatusDelay = 50;
+  let healthWaits = 0;
   const fromPartition = (partition) => {
     if (!appSessions.has(partition)) {
       const appSession = Object.assign(new EventEmitter(), {
@@ -720,7 +724,11 @@ async function runningDesktop(
     AbortController,
     AbortSignal,
     Date: Object.assign(class extends Date {}, { now }),
-    setTimeout,
+    setTimeout: (callback, delay, ...args) => {
+      if (delay === healthPollDelay) healthWaits += 1;
+      const shortened = delay === healthPollDelay || delay === keyStatusDelay;
+      return timeout(callback, shortened ? 1 : delay, ...args);
+    },
     clearTimeout,
     macInstallerRunning: installerRunning,
     fetch: async (resource, options) => {
@@ -1084,6 +1092,7 @@ async function runningDesktop(
     trashed,
     awake: () => [...blockers.values()],
     rendererReady,
+    healthWaits: () => healthWaits,
     updateMenu,
     restartMenu,
     willQuit: (event) => appEvents.emit('will-quit', event),
@@ -3690,64 +3699,69 @@ test('an update restart keeps Nod on screen and reopens it as it was', async (t)
     });
 });
 
-test('desktop proxy overrides reach only isolated source engines and retain origin validation', async (t) => {
-  const root = fileURLToPath(new URL('../../', import.meta.url));
-  for (const scenario of [
-    { name: 'isolated local source', url: 'http://127.0.0.1:8787', isolated: true },
-    { name: 'isolated HTTPS source', url: 'https://proxy.example.test', isolated: true },
-    {
-      name: 'packaged override',
-      url: 'https://proxy.example.test',
-      isolated: true,
-      packaged: true,
-    },
-    { name: 'ordinary source override', url: 'https://proxy.example.test' },
-    {
-      name: 'invalid packaged override',
-      url: 'file:///tmp/invalid',
-      isolated: true,
-      packaged: true,
-    },
-    ...[
-      'http://proxy.example.test',
-      'https://user:password@proxy.example.test',
-      'https://proxy.example.test/path',
-      'https://proxy.example.test?query=1',
-      'https://proxy.example.test#fragment',
-    ].map((url) => ({ name: `invalid source ${url}`, url, isolated: true, invalid: true })),
-  ]) {
-    await t.test(scenario.name, async (t) => {
-      const f = await runningDesktop(
-        t,
-        async (url) => {
-          assert.ok(['/api/health', '/api/session'].includes(new URL(url).pathname));
-          return Response.json({ ok: true });
-        },
-        {
-          allowStart: true,
-          packaged: scenario.packaged,
-          environment: (path) => ({
-            NOD_COMPOSIO_PROXY_URL: scenario.url,
-            COMPOSIO_API_KEY: 'synthetic-inherited-project-key',
-            ...(scenario.isolated ? { NOD_DESKTOP_USER_DATA: join(path, 'isolated') } : {}),
-          }),
-        },
-      );
-      f.crash();
-      assert.equal((await f.prepare()).phase, 'ready');
-      const environment = f.children[0].environment;
-      const allowed = scenario.isolated && !scenario.packaged;
-      assert.equal(environment.COMPOSIO_API_KEY, undefined);
-      assert.equal(environment.NOD_COMPOSIO_PROXY_URL, allowed ? scenario.url : undefined);
-      assert.equal(Boolean(environment.NOD_DESKTOP_USER_DATA), Boolean(allowed));
-      assert.equal(
-        environment.NOD_DATA_ROOT,
-        allowed
-          ? join(dirname(f.storage.path), 'isolated', 'profiles', 'local')
-          : join(dirname(f.storage.path), 'nod', 'profiles', 'local'),
-      );
-      const expected = allowed ? scenario.url : 'https://composio.n8n.cloud';
-      const script = `
+test(
+  'desktop proxy overrides reach only isolated source engines and retain origin validation',
+  { concurrency: 2 },
+  async (t) => {
+    const root = fileURLToPath(new URL('../../', import.meta.url));
+    const cases = [];
+    for (const scenario of [
+      { name: 'isolated local source', url: 'http://127.0.0.1:8787', isolated: true },
+      { name: 'isolated HTTPS source', url: 'https://proxy.example.test', isolated: true },
+      {
+        name: 'packaged override',
+        url: 'https://proxy.example.test',
+        isolated: true,
+        packaged: true,
+      },
+      { name: 'ordinary source override', url: 'https://proxy.example.test' },
+      {
+        name: 'invalid packaged override',
+        url: 'file:///tmp/invalid',
+        isolated: true,
+        packaged: true,
+      },
+      ...[
+        'http://proxy.example.test',
+        'https://user:password@proxy.example.test',
+        'https://proxy.example.test/path',
+        'https://proxy.example.test?query=1',
+        'https://proxy.example.test#fragment',
+      ].map((url) => ({ name: `invalid source ${url}`, url, isolated: true, invalid: true })),
+    ]) {
+      cases.push(
+        t.test(scenario.name, async (t) => {
+          const f = await runningDesktop(
+            t,
+            async (url) => {
+              assert.ok(['/api/health', '/api/session'].includes(new URL(url).pathname));
+              return Response.json({ ok: true });
+            },
+            {
+              allowStart: true,
+              packaged: scenario.packaged,
+              environment: (path) => ({
+                NOD_COMPOSIO_PROXY_URL: scenario.url,
+                COMPOSIO_API_KEY: 'synthetic-inherited-project-key',
+                ...(scenario.isolated ? { NOD_DESKTOP_USER_DATA: join(path, 'isolated') } : {}),
+              }),
+            },
+          );
+          f.crash();
+          assert.equal((await f.prepare()).phase, 'ready');
+          const environment = f.children[0].environment;
+          const allowed = scenario.isolated && !scenario.packaged;
+          assert.equal(environment.COMPOSIO_API_KEY, undefined);
+          assert.equal(environment.NOD_COMPOSIO_PROXY_URL, allowed ? scenario.url : undefined);
+          assert.equal(Boolean(environment.NOD_DESKTOP_USER_DATA), Boolean(allowed));
+          assert.equal(
+            environment.NOD_DATA_ROOT,
+            allowed
+              ? join(dirname(f.storage.path), 'isolated', 'profiles', 'local')
+              : join(dirname(f.storage.path), 'nod', 'profiles', 'local'),
+          );
+          const expected = allowed ? scenario.url : 'https://composio.n8n.cloud';
+          const script = `
         import assert from 'node:assert/strict';
         import { createHash } from 'node:crypto';
         let requests = 0;
@@ -3789,39 +3803,42 @@ test('desktop proxy overrides reach only isolated source engines and retain orig
         }
         await pool.end();
       `;
-      await new Promise((resolveRun, reject) =>
-        execFile(
-          process.execPath,
-          ['--import', 'tsx', '--input-type=module', '--eval', script],
-          {
-            cwd: root,
-            env: {
-              ...environment,
-              DOTENV_CONFIG_PATH: join(dirname(f.storage.path), 'absent.env'),
-              COMPOSIO_BASE_URL: 'https://backend.composio.dev',
-              NOD_ANALYTICS_ENABLED: 'false',
-            },
-            timeout: 20_000,
-            maxBuffer: 128 * 1024,
-          },
-          (error, _stdout, stderr) => {
-            if (error) reject(new Error(stderr || error.message));
-            else resolveRun();
-          },
-        ),
+          await new Promise((resolveRun, reject) =>
+            execFile(
+              process.execPath,
+              ['--import', 'tsx', '--input-type=module', '--eval', script],
+              {
+                cwd: root,
+                env: {
+                  ...environment,
+                  DOTENV_CONFIG_PATH: join(dirname(f.storage.path), 'absent.env'),
+                  COMPOSIO_BASE_URL: 'https://backend.composio.dev',
+                  NOD_ANALYTICS_ENABLED: 'false',
+                },
+                timeout: 20_000,
+                maxBuffer: 128 * 1024,
+              },
+              (error, _stdout, stderr) => {
+                if (error) reject(new Error(stderr || error.message));
+                else resolveRun();
+              },
+            ),
+          );
+        }),
       );
-    });
-  }
-  await assert.rejects(
-    runningDesktop(t, () => assert.fail('No engine should launch.'), {
-      environment: () => ({
-        NOD_DESKTOP_USER_DATA: 'relative-profile',
-        NOD_COMPOSIO_PROXY_URL: 'http://127.0.0.1:8787',
+    }
+    await Promise.all(cases);
+    await assert.rejects(
+      runningDesktop(t, () => assert.fail('No engine should launch.'), {
+        environment: () => ({
+          NOD_DESKTOP_USER_DATA: 'relative-profile',
+          NOD_COMPOSIO_PROXY_URL: 'http://127.0.0.1:8787',
+        }),
       }),
-    }),
-    /profile path must be absolute/,
-  );
-});
+      /profile path must be absolute/,
+    );
+  },
+);
 
 test('packaged pages add their content policy without replacing server policy or changing artifact responses', async (t) => {
   const f = await runningDesktop(t, () => assert.fail('No request is needed.'), {
@@ -4437,9 +4454,12 @@ test('the engine token waits for the engine Nod started to report its port', asy
   for (let attempt = 0; !f.children.length && attempt < 250; attempt += 1)
     await new Promise((accept) => setTimeout(accept, 20));
   assert.equal(f.children.length, 1);
-  await new Promise((accept) => setTimeout(accept, 1000));
+  for (let attempt = 0; f.healthWaits() < 4 && attempt < 1000; attempt += 1)
+    await new Promise((accept) => setTimeout(accept, 5));
+  const healthWaits = f.healthWaits();
   f.children[0].emit('exit', 1);
   assert.equal((await prepared).phase, 'error');
+  assert.ok(healthWaits >= 4);
   assert.deepEqual(requests, []);
 });
 
@@ -4514,10 +4534,8 @@ test('a successful health check, engine exit or shutdown does not log a timeout'
       f.crash();
       const status = await f.prepare();
       await closing;
-      if (ending === 'healthy') {
-        assert.equal(status.phase, 'ready');
-        await f.close();
-      }
+      if (ending === 'healthy') assert.equal(status.phase, 'ready');
+      if (ending !== 'shutdown') await f.close();
       const log = await readFile(join(f.profileRoot, 'logs/startup.log'), 'utf8').catch((error) => {
         if (error.code !== 'ENOENT') throw error;
         return '';

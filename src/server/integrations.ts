@@ -179,6 +179,7 @@ type IntegrationOptions = {
   browserConnections?: (client?: PoolClient) => Promise<Connection[]>;
   icon?: (origin: string) => Promise<SiteIcon | null>;
   mailCheck?: MailCheck;
+  emailCodePollMs?: number;
   paused?(): Promise<boolean>;
 };
 
@@ -2075,7 +2076,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         signal,
       );
       while (messages?.length === 0) {
-        await delay(5000, undefined, { signal });
+        await delay(options.emailCodePollMs ?? 5000, undefined, { signal });
         before = Date.now();
         messages = await provider.verificationEmails(
           row.account_id!,

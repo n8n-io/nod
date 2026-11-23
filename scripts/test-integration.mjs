@@ -54,7 +54,7 @@ if (process.argv.includes('--run')) {
     throw new Error('The integration test selection must name existing test files.');
   const tests = run({
     files,
-    concurrency: Math.min(2, availableParallelism()),
+    concurrency: Math.max(1, Math.floor(availableParallelism() / 2)),
     execArgv: ['--import', 'tsx'],
   });
   const timings = {};
@@ -106,6 +106,8 @@ if (process.argv.includes('--run')) {
       'POSTGRES_PASSWORD=nod-test',
       '--env',
       'POSTGRES_DB=nod_test',
+      '--env',
+      'POSTGRES_INITDB_ARGS=--set fsync=off --set synchronous_commit=off --set full_page_writes=off --set max_connections=300',
       'postgres:17-alpine',
     ]);
     let ready = false;

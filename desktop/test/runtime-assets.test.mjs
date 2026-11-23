@@ -2641,7 +2641,7 @@ test('runtime download keeps a slow connection going and resumes its saved bytes
     return new Response(
       new ReadableStream({
         async pull(controller) {
-          await new Promise((resolve) => setTimeout(resolve, 120));
+          await new Promise((resolve) => setTimeout(resolve, 40));
           if (sent >= bytes.length) return controller.close();
           controller.enqueue(bytes.subarray(sent, sent + size));
           sent += size;
@@ -2659,54 +2659,56 @@ test('runtime download keeps a slow connection going and resumes its saved bytes
     fetch: async () => slowly(bytes),
   });
   assert.equal(await slow.done, slow.root);
-  for (const server of ['resumes', 'ignores', 'refuses']) {
-    const stalled = await fixture(t);
-    const archive = await readFile(stalled.archivePath);
-    const half = Math.floor(archive.length / 2);
-    const downloadUrl = 'https://runtime.example.invalid/fixture.tar.gz';
-    const stuck = await openRuntimeAssets({
-      ...stalled,
-      stallTimeout: 300,
-      downloadUrl,
-      fetch: async (url, { signal }) =>
-        new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.enqueue(archive.subarray(0, half));
-              signal.addEventListener('abort', () => controller.error(signal.reason));
-            },
-          }),
-        ),
-    });
-    await assert.rejects(stuck.done, /stopped receiving data/);
-    const partial = `${stalled.release.id}.${stalled.release.archive.sha256.slice(0, 12)}.download`;
-    const saved = await readdir(stalled.cacheRoot);
-    assert.ok(saved.includes(partial));
-    assert.ok(saved.every((name) => [partial, stalled.release.id].includes(name)));
-    assert.equal(await findRuntimeAssets(stalled), undefined);
-    const ranges = [];
-    const resumed = await openRuntimeAssets({
-      ...stalled,
-      stallTimeout: 300,
-      downloadUrl,
-      fetch: async (url, { headers }) => {
-        ranges.push(headers.range);
-        if (server === 'resumes')
-          return slowly(archive.subarray(half), {
-            status: 206,
-            headers: { 'content-range': `bytes ${half}-${archive.length - 1}/${archive.length}` },
-          });
-        if (server === 'refuses' && headers.range) return new Response(null, { status: 416 });
-        return slowly(archive);
-      },
-    });
-    assert.equal(await resumed.done, resumed.root);
-    assert.deepEqual(
-      ranges,
-      server === 'refuses' ? [`bytes=${half}-`, undefined] : [`bytes=${half}-`],
-    );
-    assert.deepEqual(await readdir(stalled.cacheRoot), [stalled.release.id]);
-  }
+  await Promise.all(
+    ['resumes', 'ignores', 'refuses'].map(async (server) => {
+      const stalled = await fixture(t);
+      const archive = await readFile(stalled.archivePath);
+      const half = Math.floor(archive.length / 2);
+      const downloadUrl = 'https://runtime.example.invalid/fixture.tar.gz';
+      const stuck = await openRuntimeAssets({
+        ...stalled,
+        stallTimeout: 300,
+        downloadUrl,
+        fetch: async (url, { signal }) =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(archive.subarray(0, half));
+                signal.addEventListener('abort', () => controller.error(signal.reason));
+              },
+            }),
+          ),
+      });
+      await assert.rejects(stuck.done, /stopped receiving data/);
+      const partial = `${stalled.release.id}.${stalled.release.archive.sha256.slice(0, 12)}.download`;
+      const saved = await readdir(stalled.cacheRoot);
+      assert.ok(saved.includes(partial));
+      assert.ok(saved.every((name) => [partial, stalled.release.id].includes(name)));
+      assert.equal(await findRuntimeAssets(stalled), undefined);
+      const ranges = [];
+      const resumed = await openRuntimeAssets({
+        ...stalled,
+        stallTimeout: 300,
+        downloadUrl,
+        fetch: async (url, { headers }) => {
+          ranges.push(headers.range);
+          if (server === 'resumes')
+            return slowly(archive.subarray(half), {
+              status: 206,
+              headers: { 'content-range': `bytes ${half}-${archive.length - 1}/${archive.length}` },
+            });
+          if (server === 'refuses' && headers.range) return new Response(null, { status: 416 });
+          return slowly(archive);
+        },
+      });
+      assert.equal(await resumed.done, resumed.root);
+      assert.deepEqual(
+        ranges,
+        server === 'refuses' ? [`bytes=${half}-`, undefined] : [`bytes=${half}-`],
+      );
+      assert.deepEqual(await readdir(stalled.cacheRoot), [stalled.release.id]);
+    }),
+  );
 });
 
 test('a complete saved runtime installs offline after a late connection failure or cancellation', async (t) => {

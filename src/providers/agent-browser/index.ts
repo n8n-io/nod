@@ -222,6 +222,14 @@ export function redactBrowserUrl(value: string, secrets: Iterable<string>): stri
   return redactBrowserText(url.href, secrets);
 }
 
+function nativeBinary() {
+  if (process.platform === 'win32') return 'agent-browser-win32-x64.exe';
+  const report = process.report?.getReport() as
+    { header?: { glibcVersionRuntime?: string } } | undefined;
+  const musl = process.platform === 'linux' && !report?.header?.glibcVersionRuntime;
+  return `agent-browser-${process.platform}-${musl ? 'musl-' : ''}${process.arch}`;
+}
+
 export function createAgentBrowserComputer(options: {
   dataRoot: string;
   executable?: string;
@@ -230,6 +238,8 @@ export function createAgentBrowserComputer(options: {
   platform?: NodeJS.Platform;
   headless?: boolean;
   evictIdleMs?: number;
+  submitReadyMs?: number;
+  clickReceiptMs?: number;
   maxLiveSessions?: number;
   viewport?: { width: number; height: number };
   run?: typeof runProcess;
@@ -255,7 +265,7 @@ export function createAgentBrowserComputer(options: {
     'g',
   );
   const executable =
-    options.executable ?? resolve(process.cwd(), 'node_modules/.bin/agent-browser');
+    options.executable ?? resolve(process.cwd(), 'node_modules/agent-browser/bin', nativeBinary());
   const run = options.run ?? runProcess;
   const privateNetwork = options.privateNetwork;
   const requestDaemon = (...args: Parameters<typeof existingDaemonCommand>) =>
@@ -1403,7 +1413,7 @@ export function createAgentBrowserComputer(options: {
               const control = selector(submitSelector);
               assertOpen();
               await devtools.blur();
-              const readyBy = performance.now() + 30_000;
+              const readyBy = performance.now() + (options.submitReadyMs ?? 30_000);
               for (;;) {
                 assertOpen();
                 if ((await devtools.document()) !== document)
@@ -1548,7 +1558,7 @@ export function createAgentBrowserComputer(options: {
       .parse((await command(state, { action: 'tab_list' }, { signal })).tabs)
       .find((item) => item.active);
     if (!tab) throw new Error('The checkout tab is no longer open.');
-    return openDevtools(cdpUrl, tab.targetId, signal);
+    return openDevtools(cdpUrl, tab.targetId, signal, options.clickReceiptMs);
   }
 
   async function focusField(

@@ -49,6 +49,7 @@ import {
   createRedactor,
   createTextRedactor,
   redactSecretText,
+  withoutSecretKeys,
 } from '../src/server/redaction.ts';
 
 test('decision failures retain bounded HTTP and response details', async (t) => {
@@ -3261,6 +3262,113 @@ test('secret redaction hides every bearer token character', () => {
   assert.equal(redactSecretText(`Rejected Basic ${basic}~tail`), 'Rejected [redacted]~tail');
 });
 
+test('secret field values stay private in every supported representation', () => {
+  const redact = createRedactor([]);
+  const canary = 'SyntheticPrefixedCredentialValue';
+  const tail = 'SyntheticPrivateTupleTail';
+  const names = [
+    'GITHUB_TOKEN',
+    'password',
+    'db_password',
+    'STRIPE_API_KEY',
+    'authToken',
+    'DBPwd',
+    'db_pwd',
+    'AUTH_OTP',
+    'authTOTP',
+    'card_cvv',
+    'card_cvc',
+    'CARD_PAN',
+    'database.password',
+    'service__api__key',
+  ];
+  for (const name of names) {
+    for (const clean of [redact, withoutSecretKeys]) {
+      assert.deepEqual(
+        JSON.parse(JSON.stringify(clean({ [name]: canary }))),
+        { [name]: '[redacted]' },
+        name,
+      );
+      assert.deepEqual(
+        JSON.parse(JSON.stringify(clean({ name, value: canary }))),
+        { name, value: '[redacted]' },
+        name,
+      );
+      assert.deepEqual(clean([name, canary, tail]), [name, '[redacted]'], name);
+      assert.deepEqual(clean([name]), [name], name);
+    }
+    for (const input of [
+      `${name}=${canary}`,
+      `"${name}":"${canary}"`,
+      `note="${name}=${canary}"`,
+      `https://example.test/?${name}=${canary}&status=ok`,
+    ]) {
+      assert.ok(!redactSecretText(input).includes(canary), input);
+      assert.ok(!createTextRedactor([])(input).includes(canary), input);
+    }
+  }
+  for (const name of [
+    'span',
+    'japan',
+    'Japan',
+    'tokenCount',
+    'passwordLength',
+    'Enter your password',
+  ]) {
+    for (const clean of [redact, withoutSecretKeys]) {
+      assert.deepEqual(
+        JSON.parse(JSON.stringify(clean({ [name]: 'Public value' }))),
+        { [name]: 'Public value' },
+        name,
+      );
+      assert.deepEqual(
+        clean([name, 'Public scalar detail', 'Another detail']),
+        [name, 'Public scalar detail', 'Another detail'],
+        name,
+      );
+    }
+  }
+  assert.equal(redactSecretText('span=safe japan=safe'), 'span=safe japan=safe');
+  const maskedLabel = createTextRedactor(['GITHUB_TOKEN']);
+  assert.ok(!maskedLabel(`GITHUB_TOKEN=${canary}`).includes(canary));
+  const overlapping = createTextRedactor(['AlphaBridge', 'BridgeOmega']);
+  assert.equal(overlapping('AlphaBridgeOmega'), '[redacted]');
+  const encoded = Buffer.from(canary).toString('base64');
+  assert.ok(
+    !redactSecretText(`api_key=data:application/octet-stream;base64,${encoded}`).includes(encoded),
+  );
+  const keyBlock = `Synthetic failure: api_key=-----BEGIN PRIVATE KEY-----\n${canary}\n-----END PRIVATE KEY-----`;
+  const keyError = createTextRedactor(['PRIVATE KEY'])(keyBlock);
+  assert.ok(keyError.startsWith('Synthetic failure:'));
+  assert.ok(!keyError.includes(canary));
+  for (const label of ['PRIVATE KEY', 'RSA PRIVATE KEY', 'EC PRIVATE KEY', 'OPENSSH PRIVATE KEY']) {
+    const start = `-----BEGIN ${label}-----`;
+    const end = `-----END ${label}-----`;
+    const suffix = 'Public status: denied';
+    const closed = `${start}\n${canary}\n${end}\n${suffix}`;
+    for (const clean of [redactSecretText, createTextRedactor([])]) {
+      for (const input of [closed, `${closed}\n${closed}`]) {
+        const output = clean(input);
+        assert.ok(!output.includes(canary), label);
+        assert.ok(output.endsWith(suffix), label);
+      }
+      for (const broken of [
+        `${start}\n${canary}\n${tail}`,
+        `${start}\n${canary}\n-----END CERTIFICATE-----\n${tail}`,
+        `${start}\n${canary}\n${start}\n${end}\n${tail}`,
+      ]) {
+        const hidden = clean(broken);
+        assert.ok(!hidden.includes(canary), label);
+        assert.ok(!hidden.includes(tail), label);
+      }
+    }
+  }
+  const manyPublicFields = `${'publicField=ok\n'.repeat(9000)}GITHUB_TOKEN=${canary}\nFinal public reason`;
+  const largeOutput = createTextRedactor([])(manyPublicFields);
+  assert.ok(!largeOutput.includes(canary));
+  assert.ok(largeOutput.endsWith('Final public reason'));
+});
+
 test('secret redaction keeps valid tokens when another token is missing', () => {
   const secrets = [' fixture-access-token ', undefined, null, 42] as unknown as string[];
   const text = createTextRedactor(secrets);
@@ -3645,6 +3753,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       connectionString: process.env.TEST_DATABASE_URL,
       options: `-c search_path=${schema}`,
       max: 2,
+      idleTimeoutMillis: 0,
     });
     const key = randomBytes(32);
     const keyStore = { id: 'fixture', configured: true, getKey: async () => key };

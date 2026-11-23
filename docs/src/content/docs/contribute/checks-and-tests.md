@@ -120,6 +120,14 @@ The network has no internet access, and your source folders are mounted read-onl
 
 Keep independent browser cases in the matching test files so they can run in separate processes. Use short retry intervals in fixtures that check retry results, not the delay. Keep the same request count and failure checks.
 
+Don't let a test sleep through a real-time window, such as a timeout, a backoff, a rate limit or a refresh interval. Pass a short value through an option, move the stored deadline, or use the test runner's mock timers. A test that only waits makes every run slower for everyone.
+
+The approval application cases share one app and run in order, so they can't run in parallel inside one process. [`tests/approvals-application-cases.ts`](https://github.com/n8n-io/nod/blob/main/tests/approvals-application-cases.ts) holds the cases in three sections, and three small test files each run one section in their own process. Add a case to the section it belongs with. To run them all:
+
+```sh title="Terminal"
+pnpm exec tsx --test tests/approvals-application-*.test.ts
+```
+
 Wait for a controlled frame to finish loading before checking an old control binding. A reload can still show the previous document while navigation is pending.
 
 ## End-to-end tests
@@ -142,6 +150,8 @@ The scripted model behaves like a real one in the ways that matter for the harne
 | `task:`             | Starts a task for that message. The task finishes with `Done:` and its instruction      |
 | `hold:`             | Waits until the scenario calls `release` with the same text, or the turn stops          |
 | Anything else       | Answers `Answer:` and the message. A scheduled run sends the answer with `send_message` |
+
+A `task:` message that also contains `linger:` keeps the chat turn working after it starts the task, until the scenario calls `release` with the same text. Add `hold:` to keep the task working too, as in `task: linger: hold: book the venue`. Use both to interrupt Nod while the chat and its new task run.
 
 After each scenario, `nod.violations()` checks the invariants a user relies on:
 
@@ -217,7 +227,7 @@ CI reads the changed files on pull requests, merge queue checks and pushes to `m
 
 The required **Checks, tests and build** result keeps its existing name. One Linux runner installs dependencies once. It runs formatting, Oxlint, type checks, desktop contracts, eval contracts and application tests in parallel. A failed command fails the result. Failed or incomplete check selection also fails the result. No branch protection change is needed.
 
-The runner builds the clients before application tests. It uses the runner's Chromium and a disposable PostgreSQL service. Each test file has its own process. Up to eight files run at once. Independent native browser control cases also run in parallel, with separate profiles and servers. Recorded file times put the slowest files first. Without recorded times, file size sets the order. Successful runs cache file paths and times. Test results and private content do not enter this cache.
+The runner builds the clients before application tests. It uses the runner's Google Chrome and a disposable PostgreSQL service that keeps its data in memory. CI uses Chromium only when Google Chrome is missing. Each test file has its own process. Half the runner's processors set how many files run at once, which is eight on CI. Independent native browser control cases and interface cases also run in parallel inside their file, with separate profiles, servers and processes. Recorded file times put the slowest files first. Without recorded times, file size sets the order. Successful runs cache file paths and times. Test results and private content do not enter this cache.
 
 Pull requests and merge queue checks run the selected Linux checks and security scans. Native Mac, Windows installer and container deployment acceptance run on `main` when their inputs change. Daily and manual runs use every check. The desktop publication rehearsal also runs outside pull requests and the merge queue. Other selected desktop contracts stay on the PR path. Release packaging requires successful CI for the exact source revision. Release workflows also check the packaged apps before publication.
 
