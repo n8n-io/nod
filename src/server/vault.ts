@@ -1164,10 +1164,17 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       ...(kind === 'otp' && input.emailCode !== undefined ? { emailCode: input.emailCode } : {}),
       ...(kind === 'otp' && input.emailRecipient ? { emailRecipient: input.emailRecipient } : {}),
     };
-    const siteLabel = async (selector: string, fallback: string) =>
-      (
-        await options.page?.(threadId, { action: 'fill', selector }).catch(() => undefined)
-      )?.controls?.[0]?.name?.trim() || fallback;
+    const siteLabel = async (selector: string, fallback = '') => {
+      const controls = (await options.page?.(threadId, { action: 'fill', selector }))?.controls;
+      if (controls?.length === 0)
+        throw new VaultError(
+          'This sign-in step names a field or button that is not on the current page, so nothing was entered. Read the page again and request the step with its current controls.',
+          409,
+        );
+      return controls?.[0]?.name?.trim() || fallback;
+    };
+    for (const selector of [input.submitSelector, ...[target].flat().slice(1)])
+      if (selector) await siteLabel(selector);
     const targetLabel = await siteLabel(
       [target].flat()[0]!,
       kind === 'identifier'

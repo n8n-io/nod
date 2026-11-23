@@ -234,6 +234,7 @@ async function vaultFixture(emailCode?: Parameters<typeof createVault>[1]['email
     url: 'https://example.com/login',
   });
   let cancelAtCommit: string | undefined;
+  let absent: string | undefined;
   const database = new Proxy(pool, {
     get(target, member) {
       if (member === 'connect')
@@ -265,7 +266,10 @@ async function vaultFixture(emailCode?: Parameters<typeof createVault>[1]['email
     emailCode,
     requestKey: Buffer.alloc(32, 42),
     keyStore: { id: 'fixture', configured: true, getKey: async () => randomBytes(32) },
-    page: () => inspecting(),
+    page: async (_id, step) => ({
+      ...(await inspecting()),
+      ...(step?.selector && step.selector === absent ? { controls: [] } : {}),
+    }),
     inject: async () => {
       calls.injected++;
     },
@@ -305,6 +309,9 @@ async function vaultFixture(emailCode?: Parameters<typeof createVault>[1]['email
     calls,
     cancelBeforeEntry(turnId: string) {
       cancelAtCommit = turnId;
+    },
+    removeFromPage(selector?: string) {
+      absent = selector;
     },
     resumed: async () =>
       (
@@ -413,6 +420,57 @@ test(
         ).rows,
         [{ status: 'not_entered' }, { status: 'not_entered' }],
       );
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test(
+  'a sign-in step for a control that is not on the page is refused before a saved login is spent',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const f = await vaultFixture();
+    try {
+      const step = {
+        origin: 'https://example.com',
+        label: 'Example',
+        kind: 'password' as const,
+        usernameSelector: '#username',
+        passwordSelector: '#password',
+        submitSelector: '#sign-in',
+      };
+      const entry = await f.vault.saveLogin({
+        label: 'Example',
+        origin: step.origin,
+        username: 'synthetic@example.com',
+        password: 'fixture-secret',
+      });
+      const missing = /not on the current page, so nothing was entered/;
+      const turn = await f.turn();
+      for (const selector of ['#username', '#password', '#sign-in']) {
+        f.removeFromPage(selector);
+        await assert.rejects(f.vault.request(turn, 'local-development', step), missing);
+        await assert.rejects(f.vault.fillSaved(turn, 'local-development', entry.id, step), missing);
+      }
+      assert.equal((await f.pool.query('SELECT 1 FROM credential_requests')).rowCount, 0);
+      assert.equal((await f.pool.query('SELECT 1 FROM vault_uses')).rowCount, 0);
+      f.removeFromPage();
+      assert.equal(await f.vault.fillSaved(turn, 'local-development', entry.id, step), true);
+      assert.equal(f.calls.injected, 1);
+
+      const later = await f.turn();
+      const url = await f.link(later);
+      await f.wait(later);
+      f.removeFromPage('#password');
+      const refused = await f.submit(url);
+      assert.equal(refused.statusCode, 409, refused.body);
+      assert.match(refused.json().error, missing);
+      assert.equal(await f.status(url), 'pending');
+      assert.equal(f.calls.injected, 1);
+      f.removeFromPage();
+      assert.equal((await f.submit(url)).statusCode, 200);
+      assert.equal(f.calls.injected, 2);
     } finally {
       await f.close();
     }

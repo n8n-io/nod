@@ -472,6 +472,58 @@ test(
 );
 
 test(
+  'private sign-in submits with a button that cannot take focus',
+  { timeout: 60_000 },
+  async () => {
+    let username = '';
+    const server = createHttpServer((request, response) => {
+      response.setHeader('content-type', 'text/html');
+      if (request.method !== 'POST') {
+        response.end(
+          '<form method="post" action="/session"><input id="account" name="account"><input id="secret" name="secret" type="password"><div id="go" role="button" onclick="this.parentElement.submit()">Sign in</div></form>',
+        );
+        return;
+      }
+      let body = '';
+      request.on('data', (chunk) => (body += chunk));
+      request.on('end', () => {
+        username = new URLSearchParams(body).get('account') ?? '';
+        response.end('<title>Done</title><p>Signed in</p>');
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const directory = await mkdtemp(join(tmpdir(), 'nod-sign-in-button-'));
+    const computer = createAgentBrowserComputer({
+      dataRoot: directory,
+      browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+      privateNetwork: true,
+      headless: true,
+    });
+    try {
+      await computer.act('login', { action: 'open', url: origin });
+      await computer.injectCredentials({
+        threadId: 'login',
+        origin,
+        kind: 'password',
+        username: 'synthetic@example.com',
+        password: 'fixture-secret',
+        usernameSelector: '#account',
+        passwordSelector: '#secret',
+        submitSelector: '#go',
+      });
+      await computer.act('login', { action: 'wait', text: 'Signed in' });
+      assert.equal(username, 'synthetic@example.com');
+    } finally {
+      await computer.dispose();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'private frame input refuses a control center outside the root viewport before dispatch',
   { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 30_000 },
   async (t) => {
