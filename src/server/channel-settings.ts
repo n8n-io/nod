@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import { openVaultValue, sealVaultValue } from './vault-crypto.ts';
+import { transaction } from './transaction.ts';
 import {
   ChannelSetupFailure,
   telegramSecret,
@@ -222,22 +223,14 @@ async function databaseStore(pool: Pool, owner: string) {
       ).rows;
     },
     async save(row: ChannelSettingsRow, beforeCommit?: () => Promise<void>) {
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
+      return transaction(async (client) => {
         await client.query(
           `INSERT INTO channel_settings(owner_id,provider,enabled,ciphertext,summary) VALUES($1,$2,$3,$4,$5)
            ON CONFLICT(owner_id,provider) DO UPDATE SET enabled=EXCLUDED.enabled,ciphertext=EXCLUDED.ciphertext,summary=EXCLUDED.summary,updated_at=now()`,
           [owner, row.provider, row.enabled, row.ciphertext, JSON.stringify(row.summary)],
         );
         await beforeCommit?.();
-        await client.query('COMMIT');
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
-      }
+      }, pool);
     },
     async activate(provider: ChannelProvider) {
       return (
@@ -252,9 +245,7 @@ async function databaseStore(pool: Pool, owner: string) {
       next: ChannelSettingsRow,
       beforeCommit: (client: PoolClient) => Promise<(() => void) | undefined>,
     ) {
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
+      return transaction(async (client) => {
         const updated = await client.query(
           `UPDATE channel_settings SET ciphertext=$2,summary=$3::jsonb || CASE WHEN summary ? 'webhookStatus' THEN jsonb_build_object('webhookStatus',summary->'webhookStatus') ELSE '{}'::jsonb END,updated_at=now()
            WHERE owner_id=$1 AND provider='telegram' AND enabled=true AND ciphertext=$4`,
@@ -262,14 +253,8 @@ async function databaseStore(pool: Pool, owner: string) {
         );
         if (updated.rowCount !== 1) throw new ChannelSetupFailure('pairing_unavailable');
         const notify = await beforeCommit(client);
-        await client.query('COMMIT');
         return notify;
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
-      }
+      }, pool);
     },
   };
 }

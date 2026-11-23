@@ -14115,13 +14115,14 @@ test(
 );
 
 test(
-  'a silent database connection times out without replaying work and the next request gets a fresh connection',
+  'a silent database connection times out without replaying work, including a lost commit reply',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 15_000 },
   async (t) => {
     const { createConnection, createServer } = await import('node:net');
     const { setImmediate: nextTick } = await import('node:timers/promises');
     const { createPool, pool: applicationPool } = await import('../src/server/db.ts');
-    const { transaction } = await import('../src/server/transaction.ts');
+    const { afterCommit, afterRollback, transaction } =
+      await import('../src/server/transaction.ts');
     const schema = `test_silent_database_${randomUUID().replaceAll('-', '')}`;
     const database = new URL(process.env.TEST_DATABASE_URL!);
     const admin = new pg.Pool({ connectionString: database.href });
@@ -14169,17 +14170,22 @@ test(
       if (!applicationPool.ending) await applicationPool.end();
     });
     t.mock.timers.enable({ apis: ['setTimeout'] });
-    for (const kind of ['query', 'transaction']) {
+    for (const kind of ['query', 'transaction', 'commit']) {
       await pool.query('SELECT 1');
       const before = queries;
       const received = new Promise<void>((resolve) => {
         observed = resolve;
       });
+      let commits = 0;
+      let rollbacks = 0;
       const pending =
-        kind === 'transaction'
+        kind !== 'query'
           ? transaction(async (client) => {
-              blocked = true;
+              afterCommit(client, () => commits++);
+              afterRollback(client, () => rollbacks++);
+              blocked = kind === 'transaction';
               await client.query('INSERT INTO saved VALUES(1)');
+              blocked = true;
             }, pool)
           : (() => {
               blocked = true;
@@ -14195,10 +14201,15 @@ test(
       assert.ok(failure instanceof Error, kind);
       assert.match(failure.message, /Query read timeout/);
       assert.equal(pool.totalCount, 0, kind);
-      assert.equal(queries - before, kind === 'transaction' ? 2 : 1, kind);
+      assert.equal(queries - before, kind === 'commit' ? 3 : kind === 'transaction' ? 2 : 1, kind);
+      assert.equal(commits, 0, kind);
+      assert.equal(rollbacks, kind === 'transaction' ? 1 : 0, kind);
       await failed;
       blocked = false;
-      assert.equal((await pool.query('SELECT count(*)::int AS count FROM saved')).rows[0].count, 0);
+      assert.equal(
+        (await pool.query('SELECT count(*)::int AS count FROM saved')).rows[0].count,
+        kind === 'commit' ? 1 : 0,
+      );
     }
   },
 );

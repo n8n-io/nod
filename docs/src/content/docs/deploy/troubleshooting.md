@@ -125,7 +125,7 @@ On a Mac, setup keeps runtime files that passed their checks, even if a later do
 
 On Windows, database errors show whether PostgreSQL stopped, reached a memory limit, or failed its TCP check inside WSL. If PostgreSQL answers inside WSL, the error names the Windows connection that failed. Open **Technical details** to read the original error, its code, its stack, and available native command output. These details also appear in the startup log. Saved secrets are removed.
 
-During use, a database query can wait up to 30 seconds for a reply. If the connection stops returning data, Nod closes it and reports the failure. Nod does not repeat the failed work. After the connection is restored, a new request can use a new connection. Check the result of an action before you ask Nod to do it again.
+During use, Nod waits up to 30 seconds for each query reply after it gets a database connection. The wait for a connection has a separate timeout. If the connection stops returning data, Nod closes it and reports the failure. Nod does not repeat the failed work. After the connection is restored, a new request can use a new connection. Check the result of an action before you ask Nod to do it again.
 
 On a Mac, **Technical details** and the startup log also show the cause of a runtime download failure. This includes a connection error inside `fetch failed` or a damaged archive error. Select **Try again** after you restore the connection. If Nod can keep the saved part, an interrupted download resumes. Otherwise it starts again.
 
