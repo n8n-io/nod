@@ -61,7 +61,7 @@
     "dotenv": "^18.0.10",
     "fastify": "^5.12.8",
     "jose": "6.2.18",
-    "libphonenumber-js": "1.13.15",
+    "libphonenumber-js": "1.13.17",
     "lottie-web": "5.13.0",
     "parse5": "8.1.1",
     "pdfjs-dist": "6.4.299",

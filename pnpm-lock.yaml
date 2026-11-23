@@ -126,8 +126,8 @@ importers:
         specifier: 6.2.18
         version: 6.2.18
       libphonenumber-js:
-        specifier: 1.13.15
-        version: 1.13.15
+        specifier: 1.13.17
+        version: 1.13.17
       lottie-web:
         specifier: 5.13.0
         version: 5.13.0
@@ -3317,8 +3317,8 @@ packages:
     resolution: {integrity: sha512-37fYHAhL12r1twaEV0PA5TwoIT491eTGGYjhhXxlYNMq3DSkiGZBQ++Jfk5maXj0vq52NRauLtMikBKtbNJs3Q==}
     hasBin: true
 
-  libphonenumber-js@1.13.15:
-    resolution: {integrity: sha512-AHdhEQeDFEJ4GKDAQ9AwxChy+v2kUILUB3TGQRpkXMkWePjXTU/WQEzWVQoIx/Gz8fE73Wr5SEuZCy2vk8jrMQ==}
+  libphonenumber-js@1.13.17:
+    resolution: {integrity: sha512-V92dxRHhYTsHF5B6IjR8rtKW6qL7xKuERPFFqZt7XQl8A+NikbwEzjhxGpM+R6JnWjaL7/wokWSdTG/eyYAscQ==}
 
   libsignal@6.0.0:
     resolution: {integrity: sha512-d/5V3YFtDljbFMufz4ncyUYGYhJl+vzAe+c2EFFBQ6bz1h8Q3IOMEGXYMzlibU60I+e8GagMMpji18iez3P1hA==}
@@ -8063,7 +8063,7 @@ snapshots:
       lefthook-windows-arm64: 2.2.2
       lefthook-windows-x64: 2.2.2
 
-  libphonenumber-js@1.13.15: {}
+  libphonenumber-js@1.13.17: {}
 
   libsignal@6.0.0(patch_hash=c85a97bad5f112bb1fb62d6824af84561f086399ac2934b1e450eaad8a535447):
     dependencies:
