@@ -25,6 +25,7 @@ type RuntimeStatus = {
   progress?: number;
   secondsLeft?: number;
   needsWsl?: boolean;
+  needsStorage?: boolean;
   needsRuntimeArchive?: boolean;
   needsServerConnection?: boolean;
 };
@@ -59,6 +60,7 @@ type Desktop = StartupFeedbackDesktop & {
   prepare(options?: { retry: boolean }): Promise<Status>;
   warmup?(): Promise<void>;
   installWsl(): Promise<Status>;
+  chooseComputerDirectory(): Promise<Status>;
   showStartupLog(): Promise<void>;
   importRuntime(): Promise<Status | undefined>;
   onStatus(listener: (status: Status) => void): (() => void) | undefined;
@@ -594,6 +596,15 @@ function Startup() {
                 onClick={() => void run(() => desktop.installWsl())}
               >
                 Install WSL
+              </button>
+            )}
+            {(failure.needsStorage || runtime?.needsStorage) && (
+              <button
+                type="button"
+                disabled={working}
+                onClick={() => void run(() => desktop.chooseComputerDirectory())}
+              >
+                Choose folder
               </button>
             )}
             {(failure.needsRuntimeArchive || runtime?.needsRuntimeArchive) && (

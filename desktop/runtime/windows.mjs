@@ -13,7 +13,7 @@ import {
   statfs,
   writeFile,
 } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
@@ -346,6 +346,11 @@ async function prepareWindows(options, onComputerStart, progress) {
     guest: manifest.guest.sha256,
   };
   delete saved.initializing;
+  const computerPath = existing
+    ? saved.computerPath
+    : options.computerDirectory
+      ? join(resolve(options.computerDirectory), distribution)
+      : join(controlRoot, 'wsl');
   const guestArgs = ['--distribution', distribution, '--user', 'root', '--exec'];
   const guest = (command, extra) =>
     runWsl(wsl, [...guestArgs, ...command], { env: hostEnvironment, signal, ...extra }, true);
@@ -372,15 +377,33 @@ async function prepareWindows(options, onComputerStart, progress) {
         await rm(join(controlRoot, name), { force: true });
     const archive = present ? placed : join(controlRoot, archiveName);
     const partial = present ? 0 : ((await stat(archive).catch(() => undefined))?.size ?? 0);
-    const space = await statfs(controlRoot);
-    const required =
-      manifest.guest.expandedBytes * 2 +
-      manifest.images.reduce((bytes, image) => bytes + image.size, 0) +
+    const elsewhere = !existing && options.computerDirectory;
+    if (elsewhere) {
+      await mkdir(computerPath, { recursive: true });
+      await protectWindowsProfile(computerPath, resourcesPath);
+    }
+    const free = async (path) => {
+      const space = await statfs(path);
+      return space.bavail * space.bsize;
+    };
+    const computer =
+      manifest.guest.expandedBytes +
+      manifest.images.reduce((bytes, image) => bytes + image.size, 0);
+    const staging =
+      manifest.guest.expandedBytes +
       (present ? 0 : Math.max(0, manifest.guest.bytes - partial)) +
       2 * 1024 ** 3;
-    if (space.bavail * space.bsize < required)
-      throw new Error(
-        'Nod needs more free disk space to prepare its private computer. Free space, then select Try again.',
+    if (
+      (await free(controlRoot)) < staging + (elsewhere ? 0 : computer) ||
+      (elsewhere && (await free(computerPath)) < computer + 2 * 1024 ** 3)
+    )
+      throw Object.assign(
+        new Error(
+          existing
+            ? 'Nod needs more free disk space to prepare its private computer. Free space, then select Try again.'
+            : 'Nod needs more free disk space to prepare its private computer. Free space, or select Choose folder to keep the private computer on another drive.',
+        ),
+        existing ? {} : { code: 'NOD_COMPUTER_STORAGE_FULL' },
       );
     const image = join(controlRoot, 'guest.tar');
     try {
@@ -418,9 +441,10 @@ async function prepareWindows(options, onComputerStart, progress) {
       if (!existing) {
         progress.step = 'import';
         saved.initializing = true;
+        saved.computerPath = computerPath;
         await save();
-        await mkdir(join(controlRoot, 'wsl'), { recursive: true });
-        await host(['--import', distribution, join(controlRoot, 'wsl'), image, '--version', '2'], {
+        await mkdir(computerPath, { recursive: true });
+        await host(['--import', distribution, computerPath, image, '--version', '2'], {
           timeout: 1_200_000,
         });
         delete saved.initializing;
@@ -558,4 +582,13 @@ export async function removeWindowsComputer(dataRoot) {
   const { registered } = await distributions(wsl, env).catch(() => ({ registered: [] }));
   if (registered.includes(distribution))
     await execute(wsl, ['--unregister', distribution], { env, timeout: 300_000 });
+  const saved = await readFile(join(dataRoot, 'desktop-runtime/state.json'), 'utf8')
+    .then((value) => JSON.parse(value))
+    .catch(() => undefined);
+  if (
+    saved?.distribution === distribution &&
+    typeof saved.computerPath === 'string' &&
+    basename(saved.computerPath) === distribution
+  )
+    await rm(saved.computerPath, { recursive: true, force: true });
 }

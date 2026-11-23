@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -106,46 +106,50 @@ const protection = await run(powershell, [
 ]).catch((error) => error.diagnostic || error.message);
 receipt.realTimeProtection = /True\s*$/.test(protection);
 console.log(`Real-time virus scanning: ${receipt.realTimeProtection ? 'on' : 'off'}.`);
-if (previous) {
-  const folder = join(process.env.RUNNER_TEMP, 'nod-previous-release');
-  await mkdir(folder, { recursive: true });
-  await run(
-    'gh',
-    [
-      'release',
-      'download',
-      previous,
-      '--repo',
-      process.env.GITHUB_REPOSITORY,
-      '--pattern',
-      'nod-Setup-x64.exe',
-      '--pattern',
-      'nod-Runtime-win32-x64.tar.gz',
-      '--dir',
-      folder,
-    ],
-    { timeout: 900_000 },
-  );
-  await install(join(folder, 'nod-Setup-x64.exe'));
-  await launch(`first setup on ${previous}`, { reported: false });
-  await quit();
-  await returning();
-  await install(installer);
-  const updated = await launch('first start after the update');
-  assert.notEqual(updated.version, receipt.launches[0].version);
-} else {
-  await install(installer);
-  await launch('first setup');
-  await quit();
-  await returning();
-}
-if (await running()) await quit();
-const warm = await launch('next start', { limit: 300_000 });
-assert.ok(
-  warm.steps.listening < 120,
-  'The background service took too long on a prepared computer.',
-);
-await quit();
 await mkdir(output, { recursive: true });
+try {
+  if (previous) {
+    const folder = join(process.env.RUNNER_TEMP, 'nod-previous-release');
+    await mkdir(folder, { recursive: true });
+    await run(
+      'gh',
+      [
+        'release',
+        'download',
+        previous,
+        '--repo',
+        process.env.GITHUB_REPOSITORY,
+        '--pattern',
+        'nod-Setup-x64.exe',
+        '--pattern',
+        'nod-Runtime-win32-x64.tar.gz',
+        '--dir',
+        folder,
+      ],
+      { timeout: 900_000 },
+    );
+    await install(join(folder, 'nod-Setup-x64.exe'));
+    await launch(`first setup on ${previous}`, { reported: false });
+    await quit();
+    await returning();
+    await install(installer);
+    const updated = await launch('first start after the update');
+    assert.notEqual(updated.version, receipt.launches[0].version);
+  } else {
+    await install(installer);
+    await launch('first setup');
+    await quit();
+    await returning();
+  }
+  if (await running()) await quit();
+  const warm = await launch('next start', { limit: 300_000 });
+  assert.ok(
+    warm.steps.listening < 120,
+    'The background service took too long on a prepared computer.',
+  );
+  await quit();
+} finally {
+  await copyFile(log, join(output, 'windows-startup.log')).catch(() => {});
+}
 await writeFile(join(output, 'windows-startup.json'), JSON.stringify(receipt, null, 2));
 console.log(JSON.stringify(receipt));

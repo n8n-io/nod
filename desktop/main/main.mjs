@@ -321,6 +321,7 @@ const lifecycle = createDesktopLifecycle({
         dataRoot: profileRoot,
         resourcesPath: engineRoot,
         preserveRuntimeCache: testInstall,
+        computerDirectory: (await settings.get()).computerDirectory,
         resolveDownloadUrl: updateSource?.runtimeDownloadUrl,
         signal,
         onStatus: (value) => {
@@ -3040,6 +3041,7 @@ async function prepare(options = {}) {
         details: startupErrorDetails(error),
         needsRuntimeArchive: error.code === 'RUNTIME_ARCHIVE_REQUIRED',
         needsWsl: error.code === 'NOD_WSL_REQUIRED',
+        needsStorage: error.code === 'NOD_COMPUTER_STORAGE_FULL',
         needsServerConnection: error.code === 'NOD_SERVER_TOKEN_UNAVAILABLE',
       });
       return status;
@@ -3060,6 +3062,27 @@ function replayOnboarding() {
   onboardingSetupOpen = true;
   void showSettings('onboarding', true);
   return status;
+}
+
+async function chooseComputerDirectory() {
+  if (process.platform !== 'win32' || lifecycle.busy || quitting || !status.runtime.needsStorage)
+    throw new Error('This setup action is unavailable.');
+  const chosen = await dialog.showOpenDialog(setupWindow, {
+    title: 'Choose a folder for Nod’s private computer',
+    buttonLabel: 'Use this folder',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (chosen.canceled || !chosen.filePaths[0] || quitting) return status;
+  const directory = resolve(chosen.filePaths[0]);
+  const profile = resolve(profileRoot).toLowerCase();
+  if (
+    [profile, `${profile}\\`, `${profile}/`].some((path, index) =>
+      index ? directory.toLowerCase().startsWith(path) : directory.toLowerCase() === path,
+    )
+  )
+    throw new Error('Choose a folder outside Nod’s own data.');
+  await settings.save({ computerDirectory: directory });
+  return prepare({ retry: true });
 }
 
 async function importRuntime() {
@@ -3593,6 +3616,10 @@ else {
           needsWsl: false,
         });
         return status;
+      });
+      ipcMain.handle('nod:runtime:choose-folder', (event) => {
+        allowSetup(event);
+        return chooseComputerDirectory();
       });
       ipcMain.handle('nod:chat-read:get', (event, ownerId, threadId) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');

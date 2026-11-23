@@ -123,6 +123,10 @@ Quit Nod and open it again. If the error continues, restart Windows. Keep your a
 
 To start over, select **Remove all data…** in the **Nod** menu. Nod deletes your profile and private computer, then restarts and opens setup. See [Remove Nod](/get-started/install-desktop/#remove-nod) for what it keeps.
 
+### Windows setup says Nod needs more free disk space
+
+The private computer needs room for its disk. If your system drive is too full during first setup, select **Choose folder** and pick a folder on another drive. Nod keeps the private computer there and tries again. Your profile, keys and settings stay where they are. **Remove all data…** removes the private computer from that folder too.
+
 ### Windows keeps offering the same update
 
 Nod versions before 0.7.0 on Windows can't install their own updates. Quit Nod from the tray icon, then run the latest installer as described in [Update Nod](/get-started/install-desktop/#update-nod). It keeps your profile, keys and data. Don't uninstall Nod or delete its folders first.

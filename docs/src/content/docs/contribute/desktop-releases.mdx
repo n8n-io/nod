@@ -233,7 +233,7 @@ Pull requests and normal merges to `main` run source checks and isolated native 
 
 Each night, and when you start **CI** by hand on a branch, a Windows runner also checks a real first setup, update and next start. It turns on real-time virus scanning, installs the latest published release, opens it and waits for the private computer and background service. It then installs the current build over it, opens Nod again and checks a later start too. The job reuses the published Windows runtime that matches the source, or the latest published one. **Build desktop release** runs the same check on the installer it built.
 
-The release build's Windows check also stops the WSL service to confirm that Nod names the Windows error and offers **Install WSL**, and plants a half-installed WSL distribution to confirm that setup replaces it.
+The release build's Windows check also stops the WSL service to confirm that Nod names the Windows error and offers **Install WSL**, plants a half-installed WSL distribution to confirm that setup replaces it, and installs the private computer in a chosen folder.
 
 Pull requests that change Linux build inputs also run **Build Linux desktop**. It builds and installs the Flatpak preview, checks its engine and bundle parts, and uploads the files. **Build desktop release** packages all desktop apps and verifies their release assets before publication.
 

@@ -452,7 +452,7 @@ jobs:
           name: windows-startup
           path: |
             dist/windows/windows-startup.json
-            ~/AppData/Roaming/nod/profiles/local/logs/startup.log
+            dist/windows/windows-startup.log
           if-no-files-found: ignore
 
   secrets:

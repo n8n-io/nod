@@ -492,6 +492,7 @@ async function runningDesktop(
   {
     allowStart = false,
     reportReady = true,
+    openDialog = async () => ({ canceled: true, filePaths: [] }),
     now = Date.now,
     initialState = 'running',
     storedProfile,
@@ -676,7 +677,10 @@ async function runningDesktop(
       getDisplayMatching: () => displays[0],
     },
     protocol: { registerSchemesAsPrivileged() {} },
-    dialog: { showMessageBox: async (options) => prompt(options) },
+    dialog: {
+      showMessageBox: async (options) => prompt(options),
+      showOpenDialog: async () => openDialog(),
+    },
     Menu: {
       getApplicationMenu: () => ({
         getMenuItemById: (id) => (id === 'desktop-restart' ? restartMenu : updateMenu),
@@ -1692,6 +1696,44 @@ test('native first open waits for consent on disabled and returning profiles', a
       }
     });
   }
+});
+
+test('a first Windows setup without disk space offers another folder and retries there', async (t) => {
+  let attempts = 0;
+  let chosen;
+  const f = await runningDesktop(
+    t,
+    async () => assert.fail('No backend can run without storage.'),
+    {
+      initialState: 'fresh',
+      platform: 'win32',
+      allowStart: true,
+      openDialog: async () => ({ canceled: false, filePaths: [chosen] }),
+      prepareRuntime: async () => {
+        throw Object.assign(new Error('Synthetic full drive'), {
+          code: ++attempts === 3 ? 'NOD_WSL_REQUIRED' : 'NOD_COMPUTER_STORAGE_FULL',
+        });
+      },
+    },
+  );
+  await f.launch();
+  await f.prepare();
+  assert.equal(f.status().needsStorage, true);
+  const window = f.windows.find((window) => window.isVisible());
+  const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+  const choose = f.handlers.get('nod:runtime:choose-folder');
+  chosen = join(f.profileRoot, 'synthetic-inside');
+  await assert.rejects(choose(event), /outside Nod/);
+  assert.equal((await f.storage.store.get()).computerDirectory, undefined);
+  assert.equal(attempts, 1);
+  chosen = join(dirname(f.profileRoot), 'synthetic-other-drive');
+  await choose(event);
+  assert.equal((await f.storage.store.get()).computerDirectory, chosen);
+  assert.equal(attempts, 2);
+  await f.prepare({ retry: true });
+  assert.equal(f.status().needsStorage, false);
+  await assert.rejects(choose(event), /unavailable/);
+  assert.equal(attempts, 3);
 });
 
 test('Windows onboarding waits for storage before unlocking credentials and exposes prerequisite recovery', async (t) => {

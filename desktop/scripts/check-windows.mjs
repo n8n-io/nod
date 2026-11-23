@@ -215,6 +215,7 @@ if (process.env.WORKSPACE_CONTAINER) {
         {
           dataRoot: profile,
           resourcesPath: engine,
+          computerDirectory: join(installation, 'synthetic-other-drive'),
           onStatus: (value) => value.phase === 'downloading' || console.log(value.message),
           resolveDownloadUrl: async () =>
             'https://runtime.example.invalid/nod-Runtime-win32-x64.tar.gz',
@@ -234,6 +235,11 @@ if (process.env.WORKSPACE_CONTAINER) {
         new RegExp(`${distribution}\\s+Running`),
       );
       receipt.halfInstalled = true;
+      assert.ok(
+        (await stat(join(installation, 'synthetic-other-drive', distribution, 'ext4.vhdx'))).size,
+      );
+      await assert.rejects(stat(join(profile, 'desktop-runtime/wsl')), { code: 'ENOENT' });
+      receipt.chosenFolder = true;
       await run(
         join(engine, 'windows-runtime/bin/docker.exe'),
         [

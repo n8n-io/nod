@@ -4870,11 +4870,11 @@ test('Windows storage starts on a free port, and a readiness failure names its c
 });
 
 test(
-  'Windows setup replaces a half-installed computer, names a WSL failure in the owner’s language and keeps its download for the retry',
+  'Windows setup replaces a half-installed computer, names a WSL failure in the owner’s language, keeps its download for the retry and installs in a chosen folder',
   { skip: process.platform === 'win32' },
   async (t) => {
     const { gzipSync } = await import('node:zlib');
-    const { prepareWindowsRuntime } = await import('../runtime/windows.mjs');
+    const { prepareWindowsRuntime, removeWindowsComputer } = await import('../runtime/windows.mjs');
     const root = await realpath(await mkdtemp(join(tmpdir(), 'nod-windows-setup-')));
     const system = join(root, 'Windows');
     const resources = join(root, 'engine');
@@ -4910,7 +4910,10 @@ if (args[0] === '--import') {
   if (state.broken) {
     process.stdout.write(Buffer.from("La machine virtuelle n’a pas pu être démarrée car une fonctionnalité requise n’est pas installée.\\r\\nCode d’erreur : Wsl/Service/RegisterDistro/CreateVm/HCS/HCS_E_SERVICE_NOT_AVAILABLE\\r\\n", 'utf16le'));
     code = 1;
-  } else state.registered = state.ready = [args[1]];
+  } else {
+    state.registered = state.ready = [args[1]];
+    state.imported = args[2];
+  }
 }
 if (args[0] === '--distribution') {
   process.stderr.write('synthetic guest stop');
@@ -4952,11 +4955,12 @@ process.exit(code);
       return state.calls;
     };
     let downloads = 0;
-    const prepare = () =>
+    const prepare = (computerDirectory) =>
       prepareWindowsRuntime(
         {
           dataRoot: profile,
           resourcesPath: resources,
+          computerDirectory,
           resolveDownloadUrl: async () => 'https://runtime.example.invalid/guest.tar.gz',
           fetch: async () => {
             downloads++;
@@ -4989,8 +4993,10 @@ process.exit(code);
     assert.equal((await saved()).initializing, true);
     assert.equal(sha256(await readFile(kept)), sha256(archive));
 
+    const elsewhere = join(root, 'another drive');
+    await mkdir(elsewhere);
     await wsl({ ready: [distribution], registered: [distribution], broken: false });
-    await assert.rejects(prepare(), (error) => {
+    await assert.rejects(prepare(elsewhere), (error) => {
       assert.equal(error.code, undefined);
       assert.equal(error.step, 'start');
       assert.equal(error.exitCode, 7);
@@ -5008,6 +5014,12 @@ process.exit(code);
     assert.equal(downloads, 1);
     assert.equal((await saved()).initializing, undefined);
     await assert.rejects(stat(kept), { code: 'ENOENT' });
+    const computer = join(elsewhere, distribution);
+    assert.equal(JSON.parse(await readFile(statePath, 'utf8')).imported, computer);
+    assert.equal((await saved()).computerPath, computer);
+    await writeFile(join(elsewhere, 'keep.txt'), 'synthetic owner file');
+    await removeWindowsComputer(profile);
+    assert.deepEqual(await readdir(elsewhere), ['keep.txt']);
   },
 );
 
