@@ -178,6 +178,7 @@ interface RunRow {
   error: string | null;
   messageId: string | null;
   messageText: string | null;
+  attachmentMessageId: string | null;
   cursorAt: string;
   observation: ScheduleObservation | null;
   observedAt: Date | null;
@@ -225,6 +226,7 @@ function runValue(row: RunRow): ScheduleRun {
     messageId: row.messageId,
     messagePreview: row.messageText && preview(row.messageText),
     messageText: row.messageText,
+    attachmentMessageId: row.attachmentMessageId,
   };
 }
 
@@ -678,7 +680,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       await pool.query<RunRow>(
         `SELECT r.id,r.schedule_id AS "scheduleId",r.title,r.turn_id AS "turnId",
            r.scheduled_for AS "scheduledFor",r.time_zone AS "timeZone",r.created_at AS "createdAt",
-           u.status,u.error,r.observation,r.observed_at AS "observedAt",m.id AS "messageId",m.text AS "messageText",
+           u.status,u.error,r.observation,r.observed_at AS "observedAt",
+           m.id AS "messageId",m.text AS "messageText",files.id AS "attachmentMessageId",
            to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "cursorAt"
          FROM schedule_runs r ${runTurn}
          LEFT JOIN LATERAL (
@@ -687,6 +690,13 @@ export function createSchedules(dependencies: ScheduleDependencies) {
              AND m.hidden_at IS NULL AND u.channel='web' AND ${activeThreadSql('m')}
            ORDER BY (m.text<>'') DESC,m.created_at DESC,m.id DESC LIMIT 1
          ) m ON true
+         LEFT JOIN LATERAL (
+           SELECT m.id FROM messages m
+           WHERE m.turn_id=u.id AND m.owner_id=u.owner_id AND m.role='assistant'
+             AND m.hidden_at IS NULL AND u.channel='web' AND ${activeThreadSql('m')}
+             AND jsonb_array_length(m.attachments)>0
+           ORDER BY m.created_at DESC,m.id DESC LIMIT 1
+         ) files ON true
          WHERE r.owner_id=$1 AND ($2::uuid IS NULL OR r.schedule_id=$2)
            AND ($3::timestamptz IS NULL OR (r.created_at,r.id)<($3::timestamptz,$4::uuid))
          ORDER BY r.created_at DESC,r.id DESC LIMIT $5`,
