@@ -109,7 +109,7 @@ await writeFile(
   ).join(''),
 );
 const archive = join(output, `${name}-${revision}.tar.gz`);
-await create({ cwd: output, file: archive, gzip: { level: 1 }, portable: true }, [name]);
+await create({ cwd: output, file: archive, gzip: { level: 0 }, portable: true }, [name]);
 await chmod(archive, 0o600);
 await writeFile(`${archive}.sha256`, `${await digest(archive)}  ${basename(archive)}\n`, {
   mode: 0o600,
