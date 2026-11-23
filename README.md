@@ -30,11 +30,22 @@
   <img alt="Status: research preview" src="https://img.shields.io/badge/status-research_preview-ff91ac?style=flat-square&labelColor=191919" />
 </p>
 
+<p align="center">
+  <sub><a href="#on-your-machine">On your machine</a> · <a href="#hard-ones">The hard ones</a> · <a href="#memory">Memory</a> · <a href="#your-rules">Your rules</a> · <a href="#benchmarks">Measured</a> · <a href="#under-the-hood">Under the hood</a> · <a href="#next-on-the-list">Next</a> · <a href="#straight-answers">Answers</a> · <a href="#get-nod">Get Nod</a> · <a href="#build-with-us">Build with us</a></sub>
+</p>
+
 <br />
 
+<a name="on-your-machine"></a>
+
 <p align="center">
-  <a href="docs/src/assets/readme/heading-machine-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-machine-dark.webp" alt="On your machine, on your word" width="586" /></a>
-  <a href="docs/src/assets/readme/heading-machine.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-machine.webp" alt="On your machine, on your word" width="586" /></a>
+  <a href="#on-your-machine">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-machine-dark.webp" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/src/assets/readme/heading-machine.webp" />
+      <img src="docs/src/assets/readme/heading-machine.webp" alt="On your machine, on your word" width="586" />
+    </picture>
+  </a>
 </p>
 
 <p align="center">It gets on with the work across Gmail, Calendar, Slack, Notion, and the web,<br />and asks before it speaks for you.</p>
@@ -53,9 +64,16 @@
 
 <br />
 
+<a name="hard-ones"></a>
+
 <p align="center">
-  <a href="docs/src/assets/readme/heading-hard-ones-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-hard-ones-dark.webp" alt="Hand it the hard ones" width="421" /></a>
-  <a href="docs/src/assets/readme/heading-hard-ones.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-hard-ones.webp" alt="Hand it the hard ones" width="421" /></a>
+  <a href="#hard-ones">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-hard-ones-dark.webp" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/src/assets/readme/heading-hard-ones.webp" />
+      <img src="docs/src/assets/readme/heading-hard-ones.webp" alt="Hand it the hard ones" width="421" />
+    </picture>
+  </a>
 </p>
 
 <p align="center">Jobs that eat an afternoon of tabs, logins, and forms.<br />Nod has its own computer and browser, so it finishes them.</p>
@@ -66,9 +84,16 @@
 
 <br />
 
+<a name="memory"></a>
+
 <p align="center">
-  <a href="docs/src/assets/readme/heading-memory-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-memory-dark.webp" alt="A memory like an elephant" width="508" /></a>
-  <a href="docs/src/assets/readme/heading-memory.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-memory.webp" alt="A memory like an elephant" width="508" /></a>
+  <a href="#memory">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-memory-dark.webp" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/src/assets/readme/heading-memory.webp" />
+      <img src="docs/src/assets/readme/heading-memory.webp" alt="A memory like an elephant" width="508" />
+    </picture>
+  </a>
 </p>
 
 <p align="center">Say once that Anna, not Bob, handles invoices. It remembers.</p>
@@ -91,9 +116,16 @@
 
 <br />
 
+<a name="your-rules"></a>
+
 <p align="center">
-  <a href="docs/src/assets/readme/heading-rules-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-rules-dark.webp" alt="Your machine. Your model. Your rules." width="688" /></a>
-  <a href="docs/src/assets/readme/heading-rules.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-rules.webp" alt="Your machine. Your model. Your rules." width="688" /></a>
+  <a href="#your-rules">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-rules-dark.webp" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/src/assets/readme/heading-rules.webp" />
+      <img src="docs/src/assets/readme/heading-rules.webp" alt="Your machine. Your model. Your rules." width="688" />
+    </picture>
+  </a>
 </p>
 
 - **Runs on your computer or server.** Files, memory, and saved logins stay there. Your model provider gets what each task needs.
@@ -111,8 +143,13 @@
 <a name="benchmarks"></a>
 
 <p align="center">
-  <a href="docs/src/assets/readme/heading-measured-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-measured-dark.webp" alt="Measured, not promised" width="476" /></a>
-  <a href="docs/src/assets/readme/heading-measured.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-measured.webp" alt="Measured, not promised" width="476" /></a>
+  <a href="#benchmarks">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-measured-dark.webp" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/src/assets/readme/heading-measured.webp" />
+      <img src="docs/src/assets/readme/heading-measured.webp" alt="Measured, not promised" width="476" />
+    </picture>
+  </a>
 </p>
 
 <p align="center">We give Nod real errands in test apps and websites, then check what actually changed.</p>
@@ -133,9 +170,16 @@
 
 <br />
 
+<a name="under-the-hood"></a>
+
 <p align="center">
-  <a href="docs/src/assets/readme/heading-hood-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-hood-dark.webp" alt="Under the hood" width="328" /></a>
-  <a href="docs/src/assets/readme/heading-hood.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-hood.webp" alt="Under the hood" width="328" /></a>
+  <a href="#under-the-hood">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-hood-dark.webp" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/src/assets/readme/heading-hood.webp" />
+      <img src="docs/src/assets/readme/heading-hood.webp" alt="Under the hood" width="328" />
+    </picture>
+  </a>
 </p>
 
 <p align="center">One Node process and a few Docker containers, all on the machine that runs Nod.</p>
@@ -164,9 +208,16 @@ flowchart TB
 
 <br />
 
+<a name="next-on-the-list"></a>
+
 <p align="center">
-  <a href="docs/src/assets/readme/heading-next-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-next-dark.webp" alt="Next on the list" width="316" /></a>
-  <a href="docs/src/assets/readme/heading-next.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-next.webp" alt="Next on the list" width="316" /></a>
+  <a href="#next-on-the-list">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-next-dark.webp" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/src/assets/readme/heading-next.webp" />
+      <img src="docs/src/assets/readme/heading-next.webp" alt="Next on the list" width="316" />
+    </picture>
+  </a>
 </p>
 
 - **Managed hosting.** An always-on Nod, hosted for you.
@@ -176,9 +227,16 @@ flowchart TB
 
 <br />
 
+<a name="straight-answers"></a>
+
 <p align="center">
-  <a href="docs/src/assets/readme/heading-answers-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-answers-dark.webp" alt="Straight answers" width="355" /></a>
-  <a href="docs/src/assets/readme/heading-answers.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-answers.webp" alt="Straight answers" width="355" /></a>
+  <a href="#straight-answers">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-answers-dark.webp" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/src/assets/readme/heading-answers.webp" />
+      <img src="docs/src/assets/readme/heading-answers.webp" alt="Straight answers" width="355" />
+    </picture>
+  </a>
 </p>
 
 <details>
@@ -228,8 +286,13 @@ Pick a capable model. In 240 test decisions, GPT-6.1 Sol and Claude Opus 5.5 got
 <a name="get-nod"></a>
 
 <p align="center">
-  <a href="docs/src/assets/readme/heading-get-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-get-dark.webp" alt="Get Nod" width="209" /></a>
-  <a href="docs/src/assets/readme/heading-get.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-get.webp" alt="Get Nod" width="209" /></a>
+  <a href="#get-nod">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-get-dark.webp" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/src/assets/readme/heading-get.webp" />
+      <img src="docs/src/assets/readme/heading-get.webp" alt="Get Nod" width="209" />
+    </picture>
+  </a>
 </p>
 
 <p align="center">Install the app, connect a model and your apps, then ask for something<br />in the app, on Telegram, or on WhatsApp. Setup takes about ten minutes.</p>
@@ -271,8 +334,13 @@ See [Install from source](https://nod.n8n.io/docs/get-started/install-from-sourc
 <a name="build-with-us"></a>
 
 <p align="center">
-  <a href="docs/src/assets/readme/heading-build-dark.webp#gh-dark-mode-only"><img src="docs/src/assets/readme/heading-build-dark.webp" alt="Build with us" width="280" /></a>
-  <a href="docs/src/assets/readme/heading-build.webp#gh-light-mode-only"><img src="docs/src/assets/readme/heading-build.webp" alt="Build with us" width="280" /></a>
+  <a href="#build-with-us">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/readme/heading-build-dark.webp" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/src/assets/readme/heading-build.webp" />
+      <img src="docs/src/assets/readme/heading-build.webp" alt="Build with us" width="280" />
+    </picture>
+  </a>
 </p>
 
 <p align="center">Nod is open source, from the team behind <a href="https://n8n.io">n8n</a>.<br />Read <a href="CONTRIBUTING.md">CONTRIBUTING</a> to send your first change.</p>

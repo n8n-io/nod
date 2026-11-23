@@ -1,6 +1,7 @@
 import {
   InMemoryCredentialStore,
   getSupportedThinkingLevels,
+  isRetryableAssistantError,
   type Api,
   type AssistantMessage,
   type Context,
@@ -319,7 +320,12 @@ export function createPiMemoryCurator(options: {
         const status = [...(reply.errorMessage ?? '').matchAll(/\(HTTP (\d{3})\)/g)].at(-1)?.[1];
         throw Object.assign(
           new Error(`${label} Task: ${task}. Model: ${model.provider}/${model.id}.${detail}`),
-          status ? { providerStatus: Number(status) } : {},
+          status
+            ? {
+                providerStatus: Number(status),
+                providerRetryable: isRetryableAssistantError(reply),
+              }
+            : {},
         );
       }
       return json(

@@ -3997,6 +3997,29 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       const completeCurrent = await current.prepareRequest!(selection.modelId, false);
       await completeCurrent();
       assert.equal(owner.current.issue, undefined);
+
+      const started = checks.length;
+      await owner.addEndpoint('http://localhost:11434/v1', 'fixture-busy-endpoint-key');
+      assert.equal(checks.length, started + 1);
+      checks.at(-1)!.reject(
+        Object.assign(new Error('HTTP 429: Synthetic model is at capacity.'), {
+          providerStatus: 429,
+          providerRetryable: true,
+        }),
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(owner.current.checking, false);
+      assert.equal(owner.current.issue, undefined);
+
+      await owner.addEndpoint('http://localhost:11434/v1', 'fixture-quota-endpoint-key');
+      checks.at(-1)!.reject(
+        Object.assign(new Error('HTTP 429: Synthetic insufficient_quota.'), {
+          providerStatus: 429,
+          providerRetryable: false,
+        }),
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.match(owner.current.issue!.reason, /Synthetic insufficient_quota/);
     },
   );
 
@@ -4639,14 +4662,25 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(service.view().connections[0]!.issue, undefined);
     assert.equal(service.current.issue, undefined);
 
+    reply = () =>
+      Response.json(
+        { error: { message: 'Synthetic model is at capacity; please retry later.' } },
+        { status: 429 },
+      );
+    await assert.rejects(
+      curator.curate({ task: 'check', instructions: 'Return only {"ok":true}.', input: {} }),
+      { providerStatus: 429, providerRetryable: true },
+    );
+    assert.equal(calls, 10);
+
     reply = () => Response.json({ error: { message: 'API key expired.' } }, { status: 401 });
     assert.equal((await ask()).stopReason, 'error');
-    assert.equal(calls, 10);
+    assert.equal(calls, 11);
     assert.equal(service.view().connections[0]!.status, 'reconnect');
     assert.match(service.current.issue!.reason, /API key expired/);
     assert.equal(service.configured, false);
     await assert.rejects(ask(), /add it again/);
-    assert.equal(calls, 10);
+    assert.equal(calls, 11);
   });
 
   test('model setup chooses capable defaults, preserves explicit choices and requires valid cloud accounts', async (t) => {
