@@ -131,7 +131,7 @@ export function LiveLine({
     <details className="live-line" key={item.turnId}>
       <summary aria-labelledby={labelId}>
         {current}
-        {recent.length > 0 && <ChevronDown size={14} aria-hidden="true" />}
+        <ChevronDown size={14} aria-hidden="true" />
       </summary>
       {recent.length > 0 && (
         <ol aria-label="Recent completed activity">
