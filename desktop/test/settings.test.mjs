@@ -10573,12 +10573,18 @@ test('computer use refuses a password focus or renamed control at delivery', asy
 test('computer use refuses a changed keyboard target even when window content stays the same', async (t) => {
   const tree = (selected) => ({
     role: 'window',
-    children: ['First', 'Second'].map((name, index) => ({
-      role: 'textfield',
-      name,
-      value: '',
-      states: index === selected ? ['focused'] : [],
-    })),
+    children: [
+      {
+        role: 'list',
+        name: 'Fields',
+        children: ['First', 'Second'].map((name, index) => ({
+          role: 'textfield',
+          name,
+          value: '',
+          states: index === selected ? ['focused'] : [],
+        })),
+      },
+    ],
   });
   const desktop = await fakeDesktop(
     t,

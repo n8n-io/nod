@@ -80,10 +80,11 @@ const isFocused = (node) =>
   node.states?.includes('focused') && !['window', 'dialog'].includes(node.role);
 
 function focusClaims(tree) {
-  const claims = new Set();
+  const claims = new Map();
   const visit = (node, list) => {
     const own = listRoles.has(node.role) ? node : list;
-    if (isFocused(node)) claims.add(own ?? node);
+    const claim = own ?? node;
+    if (isFocused(node)) claims.set(claim, claims.has(claim) ? claim : node);
     node.children?.forEach((child) => visit(child, own));
   };
   visit(tree);
@@ -140,7 +141,7 @@ function inspectResult(data, menu = false, target) {
         Boolean(
           node.states?.includes('selected') ||
           isTarget(node) ||
-          claims.has(node) ||
+          holders.has(node) ||
           node.children?.some(relevant),
         ),
       );
@@ -153,7 +154,7 @@ function inspectResult(data, menu = false, target) {
   const selected = [];
   const focused = [];
   const focus = (node, path = []) => {
-    if (claims.has(node))
+    if (holders.has(node))
       focused.push({ path, role: node.role ?? '', name: secure(node) ? '' : (node.name ?? '') });
     if (secure(node)) return;
     node.children?.forEach((child, index) => focus(child, [...path, index]));
@@ -183,7 +184,7 @@ function inspectResult(data, menu = false, target) {
         .filter((child) => !emptyGroup(child)),
     };
     if (isTarget(node)) targetNode ??= read;
-    if (claims.has(node)) focusNode ??= read;
+    if (holders.has(node)) focusNode ??= read;
     if (inFocus && node.states?.includes('selected')) selected.push(read);
     return read;
   };
@@ -196,6 +197,7 @@ function inspectResult(data, menu = false, target) {
       }
     : data.tree;
   const claims = focusClaims(source);
+  const holders = new Set(claims.values());
   const tree = walk(source);
   focus(source);
   if (target && !found)

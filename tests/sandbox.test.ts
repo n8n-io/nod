@@ -2411,6 +2411,20 @@ test('computer use refuses blocked apps, keeps browsers view-only and acts only 
     computer.prepare(turn, 'COMPUTER_KEY', { pid: 11, keys: 'cmd+opt+escape' }),
     /system shortcut/,
   );
+  const beforeKey = calls.length;
+  const key = await computer.prepare(turn, 'COMPUTER_KEY', { pid: 11, keys: 'cmd+b' });
+  await computer.execute(turn, 'COMPUTER_KEY', key);
+  await computer.execute(
+    turn,
+    'COMPUTER_SCREENSHOT',
+    await computer.prepare(turn, 'COMPUTER_SCREENSHOT', { pid: 11 }),
+  );
+  const sent = (op: string) => calls.slice(beforeKey).find((call) => call.op === op)!;
+  assert.deepEqual(
+    [sent('key').expected, sent('key').expectedFocus, sent('key').noSecureFocus],
+    [key.windowBinding!.state, key.windowBinding!.focus, true],
+  );
+  assert.equal(sent('screenshot').noSecureFocus, true);
   const chromeSnapshot = (await computer.execute(
     turn,
     'COMPUTER_SNAPSHOT',
