@@ -301,6 +301,33 @@ export function WorkModel({ task }: { task: Task }) {
   );
 }
 
+export function ScheduleCost({ schedule }: { schedule: Schedule }) {
+  const models = useModels();
+  const usage = usePageData<WorkUsageResponse>(workUsagePath);
+  const data = models.data;
+  const current = data && routeModel(data, 'schedule', { schedule: schedule.model });
+  const name = data && current ? modelOf(data, current.selection)?.name : undefined;
+  const spent = usage.data?.schedules[schedule.id];
+  const recent = spent ? spent.agentUsd + spent.otherUsd : 0;
+  if (schedule.kind !== 'recurring' && recent <= 0) return null;
+  return (
+    <div className="work-model">
+      <span className="work-model-label">Expected cost</span>
+      <span className="work-model-value">
+        {schedule.monthlyUsd !== null ? (
+          <>
+            <strong>≈{money(schedule.monthlyUsd)} a month</strong>
+            {name && ` on ${name}`}
+          </>
+        ) : (
+          <strong>No estimate yet</strong>
+        )}
+        {recent > 0 && ` · ${money(recent)} in the last 30 days`}
+      </span>
+    </div>
+  );
+}
+
 export function ScheduleModel({ schedule }: { schedule: Schedule }) {
   const models = useModels();
   const usage = usePageData<WorkUsageResponse>(workUsagePath);

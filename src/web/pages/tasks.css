@@ -66,7 +66,7 @@
 }
 .schedule-row-main {
   display: grid;
-  grid-template-columns: minmax(44px, auto) minmax(160px, 1fr) fit-content(220px) 104px 16px;
+  grid-template-columns: minmax(44px, auto) minmax(160px, 1fr) fit-content(220px) 104px auto 16px;
   align-items: center;
   gap: 12px;
   min-height: 72px;
@@ -151,6 +151,10 @@
   color: var(--muted-foreground);
   font-size: 12px;
 }
+.schedule-row-run {
+  margin-right: -8px;
+  color: var(--muted-foreground);
+}
 .schedule-row-chevron {
   color: var(--muted-foreground);
   transition: transform 220ms var(--ease-reveal);
@@ -183,7 +187,7 @@
   margin-left: auto;
 }
 .schedule-total {
-  padding: 4px 49px 0 0;
+  padding: 4px 85px 0 0;
   color: var(--muted-foreground);
   font-size: var(--text-control);
   text-align: right;
@@ -215,10 +219,10 @@
 }
 @container (max-width: 640px) {
   .schedule-row-main {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     grid-template-areas:
-      'name switch'
-      'model price';
+      'name name switch'
+      'model price run';
     gap: 6px 8px;
     min-height: 0;
     padding: 14px 12px 12px 16px;
@@ -236,6 +240,11 @@
   .schedule-row-price {
     grid-area: price;
   }
+  .schedule-row-run {
+    grid-area: run;
+    justify-self: end;
+    margin-right: 0;
+  }
   .schedule-row-chevron {
     display: none;
   }
@@ -247,7 +256,7 @@
     padding: 0 16px 16px;
   }
   .schedule-total {
-    padding-right: 13px;
+    padding-right: 53px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

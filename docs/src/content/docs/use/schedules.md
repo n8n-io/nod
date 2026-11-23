@@ -28,8 +28,8 @@ When you have fewer than three active schedules, **Scheduled** also shows three 
 
 - Use the switch to pause or resume it.
 - Select its model to give this schedule a different one. See [Choose a model for a schedule](#choose-a-model-for-a-schedule).
-- Select its name to read the instruction, any saved baseline, and that schedule's runs. When you have only one schedule, or only one active schedule, it's already open when you open the page.
-- Select **Run now** to start one run and follow it in its runs.
+- Select its name to read the instruction, its expected cost, any saved baseline, and that schedule's runs. When you have only one schedule, or only one active schedule, it's already open when you open the page.
+- Select **Run now**, the play button on its row, to start one run. The row opens so you can follow it.
 - Select **Edit schedule** to change its name, instructions or timing.
 - Select **Ask Nod** to change it in your own words.
 - Select **Delete schedule**. Future runs stop, and past activity stays in [Usage](/use/spending/).
@@ -40,7 +40,7 @@ In chat, "stop the morning summary" asks Nod to pause the schedule. If Nod asks 
 
 ## Run a schedule now
 
-Open **Scheduled**, select a schedule's name, then select **Run now**. Its runs stay open so you can follow the new one. The new result opens when it is available. A run that failed in chat offers **Run now** too. If you changed the schedule after that run failed, Nod refuses and asks you to review it first.
+Open **Scheduled** and select **Run now**, the play button on a schedule's row. The row opens so you can follow the run. The new result opens when it is available. A run that failed in chat offers **Run now** too. If you changed the schedule after that run failed, Nod refuses and asks you to review it first.
 
 The extra run uses the saved instruction and delivery channel and does its work now, even when the instruction names another day or time. The usual approval checks still apply, and the time named in the instruction never makes them ask. It does not change the next scheduled time or resume a paused schedule. You can also run a completed one-time schedule again.
 
@@ -103,7 +103,7 @@ Select **Edit schedule** to review its name, instructions and timing together. T
 
 ### Choose a model for a schedule
 
-A schedule uses the model for schedules from **Settings > Models**. To give one schedule its own model, select the model on its row in **Scheduled**. When the schedule has priced usage in the last 30 days, the list shows what that work would have cost on each model; otherwise it shows each model's token prices. Choose **Same as schedules** to follow **Settings > Models** again. The change applies from the next turn, so a run that waits for your answer continues on the new model. When a recurring schedule shows a projected monthly cost, it prices the schedule's recent runs on that model. See [Models for each kind of work](/connect/models/#models-for-each-kind-of-work).
+A schedule uses the model for schedules from **Settings > Models**. To give one schedule its own model, select the model on its row in **Scheduled**. When the schedule has priced usage in the last 30 days, the list shows what that work would have cost on each model; otherwise it shows each model's token prices. Choose **Same as schedules** to follow **Settings > Models** again. The schedule's details show its expected cost a month on its model and what it cost in the last 30 days. The change applies from the next turn, so a run that waits for your answer continues on the new model. When a recurring schedule shows a projected monthly cost, it prices the schedule's recent runs on that model. See [Models for each kind of work](/connect/models/#models-for-each-kind-of-work).
 
 ## Quiet hours
 

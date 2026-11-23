@@ -26,7 +26,7 @@ import {
 } from '../components/plan-controls';
 import { Button, Loading, Notice } from '../components/ui';
 import { money } from '../lib/money';
-import { ScheduleModel } from '../components/model-choices';
+import { ScheduleCost, ScheduleModel } from '../components/model-choices';
 
 export function ScheduleRow({
   schedule,
@@ -262,6 +262,33 @@ export function ScheduleRow({
             </>
           )}
         </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="schedule-row-run"
+          disabled={
+            starting ||
+            Boolean(activeStatus && !questionMessageId) ||
+            change.busy ||
+            change.uncertain
+          }
+          aria-label={`${runLabel} for ${schedule.title}`}
+          title={runLabel}
+          aria-busy={starting}
+          aria-live="polite"
+          onClick={() => {
+            if (questionMessageId) focusQuestion();
+            else void runNow();
+          }}
+        >
+          {starting ? (
+            <LoaderCircle size={16} className="spin" aria-hidden="true" />
+          ) : activeStatus ? (
+            <StatusIcon status={activeStatus} />
+          ) : (
+            <Play size={16} aria-hidden="true" />
+          )}
+        </Button>
         <ChevronDown size={16} className="schedule-row-chevron" aria-hidden="true" />
       </div>
       {live && (
@@ -280,6 +307,7 @@ export function ScheduleRow({
         <div className="saved-plan-details-content">
           <div className="schedule-row-more">
             <p className="saved-plan-description">{schedule.prompt}</p>
+            <ScheduleCost schedule={schedule} />
             {schedule.baselineObservation?.status === 'verified' && (
               <p className="saved-plan-note">
                 Baseline: {schedule.baselineObservation.value} ·{' '}
@@ -287,32 +315,6 @@ export function ScheduleRow({
               </p>
             )}
             <div className="schedule-row-actions">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={
-                  starting ||
-                  Boolean(activeStatus && !questionMessageId) ||
-                  change.busy ||
-                  change.uncertain
-                }
-                aria-label={`${runLabel} for ${schedule.title}`}
-                aria-busy={starting}
-                aria-live="polite"
-                onClick={() => {
-                  if (questionMessageId) focusQuestion();
-                  else void runNow();
-                }}
-              >
-                {starting ? (
-                  <LoaderCircle size={16} className="spin" aria-hidden="true" />
-                ) : activeStatus ? (
-                  <StatusIcon status={activeStatus} />
-                ) : (
-                  <Play size={16} aria-hidden="true" />
-                )}
-                {runLabel}
-              </Button>
               {activeRun && (
                 <Button
                   variant="outline"
