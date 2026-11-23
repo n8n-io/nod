@@ -1431,6 +1431,43 @@ test(
           await expectRunCost(0.15);
         },
       );
+      await t.test('schedule history opens the finished reply after progress', async () => {
+        const before = clock;
+        const schedule = await create({ cron: '*/15 * * * *' });
+        const job = await jobFor(schedule.id);
+        clock = new Date(job.data.scheduledFor);
+        await deliver([job]);
+        const [run] = await runs(schedule.id);
+        await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [run!.turnId]);
+        const reportId = randomUUID();
+        const fileId = randomUUID();
+        const file = {
+          id: fileId,
+          name: 'fixture.csv',
+          mimeType: 'text/csv',
+          size: 13,
+          url: `/api/artifacts/${fileId}`,
+        };
+        for (const [id, text, seconds, attachments] of [
+          [randomUUID(), 'Checking the synthetic report.', 0, []],
+          [reportId, 'The synthetic report is complete.', 1, []],
+          [randomUUID(), '', 2, [file]],
+        ] as const)
+          await db.pool.query(
+            `INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text,stream_id,created_at,attachments)
+             SELECT $1,owner_id,thread_id,id,'assistant',$3,$4,now()+$5 * interval '1 second',$6::jsonb
+             FROM turns WHERE id=$2`,
+            [id, run!.turnId, text, randomUUID(), seconds, JSON.stringify(attachments)],
+          );
+        const response = await request('GET', `/api/schedule-runs?scheduleId=${schedule.id}`);
+        assert.equal(response.statusCode, 200, response.body);
+        const [result] = response.json<ScheduleHistory>().runs;
+        assert.equal(result!.messageId, reportId);
+        assert.equal(result!.messageText, 'The synthetic report is complete.');
+        await request('DELETE', `/api/schedules/${schedule.id}`);
+        clock = before;
+      });
+
       await t.test(
         'a recurring schedule starts no run while its last run is busy or waiting on the owner',
         async () => {

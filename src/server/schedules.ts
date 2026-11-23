@@ -685,7 +685,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
            SELECT m.id,left(m.text,4000) AS text FROM messages m
            WHERE m.turn_id=u.id AND m.owner_id=u.owner_id AND m.role='assistant'
              AND m.hidden_at IS NULL AND u.channel='web' AND ${activeThreadSql('m')}
-           ORDER BY date_trunc('milliseconds',m.created_at),m.id LIMIT 1
+           ORDER BY (m.text<>'') DESC,m.created_at DESC,m.id DESC LIMIT 1
          ) m ON true
          WHERE r.owner_id=$1 AND ($2::uuid IS NULL OR r.schedule_id=$2)
            AND ($3::timestamptz IS NULL OR (r.created_at,r.id)<($3::timestamptz,$4::uuid))
