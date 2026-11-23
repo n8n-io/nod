@@ -1534,6 +1534,55 @@ test(
           clock = before;
         },
       );
+      await t.test(
+        'changing schedule kind clears a watch without reviving legacy data',
+        async () => {
+          const before = clock;
+          const account = randomUUID();
+          watched.set(account, 'constant');
+          const schedule = await create({ cron: '*/15 * * * *', watch: [account] });
+          const patch = async (body: Record<string, unknown>) => {
+            const response = await request('PATCH', `/api/schedules/${schedule.id}`, body);
+            assert.equal(response.statusCode, 200, response.body);
+          };
+          await patch({ title: 'Still watched' });
+          assert.deepEqual((await saved(schedule.id)).watch, [account]);
+          const once = { kind: 'once', runAt: new Date(clock.getTime() + 60_000).toISOString() };
+          const prepared = await personal.prepareScheduleChange('schedule_update', {
+            id: schedule.id,
+            ...once,
+          });
+          assert.equal(prepared.after.watch, null);
+          const invalid = await request('PATCH', `/api/schedules/${schedule.id}`, {
+            ...once,
+            watch: [account],
+          });
+          assert.equal(invalid.statusCode, 400, invalid.body);
+          await patch(once);
+          assert.equal((await saved(schedule.id)).watch, null);
+          await db.pool.query('UPDATE schedules SET watch=$2::jsonb WHERE id=$1 AND owner_id=$3', [
+            schedule.id,
+            JSON.stringify([account]),
+            ownerId,
+          ]);
+          await patch({ kind: 'recurring', cron: '*/15 * * * *' });
+          assert.equal((await saved(schedule.id)).watch, null);
+          for (let i = 0; i < 2; i++) {
+            const job = await jobFor(schedule.id);
+            clock = new Date(job.data.scheduledFor);
+            await deliver([job]);
+            await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=ANY($1::uuid[])", [
+              (await runs(schedule.id)).map((run) => run.turnId),
+            ]);
+          }
+          assert.equal((await runs(schedule.id)).length, 2);
+          await patch({ kind: 'once', runAt: new Date(clock.getTime() + 60_000).toISOString() });
+          await patch({ kind: 'recurring', cron: '*/15 * * * *', watch: [account] });
+          assert.deepEqual((await saved(schedule.id)).watch, [account]);
+          await request('DELETE', `/api/schedules/${schedule.id}`);
+          clock = before;
+        },
+      );
       await t.test('stale watched jobs do not poll accounts or start runs', async () => {
         const before = clock;
         const account = randomUUID();

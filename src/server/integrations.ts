@@ -2165,8 +2165,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     );
   }
 
-  async function watchable(connectionIds: string[]) {
-    const rows = await connectionRows(configuredOwner);
+  async function watchable(connectionIds: string[], client?: PoolClient) {
+    const rows = await connectionRows(configuredOwner, client);
     return connectionIds.every((id) => rows.some((row) => row.id === id && changeSignal(row)));
   }
 

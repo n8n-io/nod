@@ -113,7 +113,7 @@ export interface ScheduleDependencies {
   retireScheduleConfirmations?(client: PoolClient, id: string, waitForSend: boolean): Promise<void>;
   now?: () => Date;
   sessionCosts?(sessionIds: string[]): Promise<Record<string, number | null>>;
-  watchable?(connectionIds: string[]): Promise<boolean>;
+  watchable?(connectionIds: string[], client?: PoolClient): Promise<boolean>;
   watchState?(connectionIds: string[]): Promise<string | null>;
   modelPaused?(model: ModelSelection | null): boolean;
   recentTurnUsage?(
@@ -241,9 +241,13 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     shared?: PoolClient,
   ) => (shared ? operation(shared) : cancellationTransaction(operation, pool));
 
-  function validateTiming(input: z.infer<typeof timingSchema>, enabled: boolean) {
+  function validateTiming(
+    input: z.infer<typeof timingSchema> & { watch?: string[] | null },
+    enabled: boolean,
+  ) {
     if (!ianaTimeZone(input.timeZone)) throw invalid('Choose a valid time zone.');
     if (input.kind === 'once') {
+      if (input.watch) throw invalid('Only a recurring schedule can watch accounts.');
       if (!input.runAt || input.cron)
         throw invalid('A one-off schedule needs one exact date and time, with its UTC offset.');
       if (enabled && new Date(input.runAt).getTime() <= now().getTime())
@@ -890,10 +894,9 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     return Promise.all(rows.map((row) => value(row, monthly)));
   }
 
-  async function validateWatch(watch: string[] | null | undefined, kind: string) {
+  async function validateWatch(watch: string[] | null | undefined, client?: PoolClient) {
     if (!watch) return;
-    if (kind !== 'recurring') throw invalid('Only a recurring schedule can watch accounts.');
-    if (!(await dependencies.watchable?.(watch)))
+    if (!(await dependencies.watchable?.(watch, client)))
       throw invalid(
         'One of these accounts has no change signal, so this schedule cannot skip unchanged runs. Save it without watch.',
       );
@@ -912,10 +915,13 @@ export function createSchedules(dependencies: ScheduleDependencies) {
   }
 
   function updateValue(previous: ScheduleRow, input: z.infer<typeof updateSchema>) {
+    const inheritedWatch =
+      previous.kind === 'once' || input.kind === 'once' ? null : previous.watch;
     const next = {
       ...previous,
       ...(input.kind && input.kind !== previous.kind ? { cron: null, runAt: null } : {}),
       ...input,
+      watch: input.watch === undefined ? inheritedWatch : input.watch,
       runAt:
         input.runAt === undefined
           ? input.kind === 'recurring'
@@ -1132,7 +1138,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
 
   async function create(raw: unknown, provenance?: ScheduleProvenance, shared?: PoolClient) {
     const input = validateCreate(raw);
-    await validateWatch(input.watch, input.kind);
+    await validateWatch(input.watch, shared);
     const created = await transaction(async (client) => {
       const source = await sourceProvenance(client, provenance);
       const route = await deliveryRoute(client, source);
@@ -1203,7 +1209,6 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     z.uuid().parse(id);
     const input = updateSchema.parse(raw);
     if (!Object.keys(input).length) throw invalid('Choose a schedule detail to update.');
-    if (input.watch) await validateWatch(input.watch, input.kind ?? (await read(id)).kind);
     const mutate = input.enabled === false ? retirementTransaction : transaction;
     const row = await mutate(async (client) => {
       const previous = (
@@ -1217,6 +1222,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       if (!previous.enabled && input.enabled === false && Object.keys(input).length === 1)
         return previous;
       const next = updateValue(previous, input);
+      await validateWatch(input.watch, client);
       if (provenance) await sourceProvenance(client, provenance);
       assertChange(provenance, next);
       const fresh = await authority(client, input, provenance);
@@ -1236,8 +1242,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           `UPDATE schedules SET title=$3,prompt=$4,kind=$5,cron=$6,run_at=$7,time_zone=$8,
              enabled=$9,authority=$10::jsonb,
              baseline_observation=COALESCE($11::jsonb,baseline_observation),
-             watch=CASE WHEN $12 THEN $13::jsonb ELSE watch END,
-             skipped=CASE WHEN $14 THEN '[]'::jsonb ELSE skipped END,
+             watch=$12::jsonb,skipped=CASE WHEN $13 THEN '[]'::jsonb ELSE skipped END,
              revision=revision+1 WHERE id=$1 AND owner_id=$2 RETURNING ${columns}`,
           [
             id,
@@ -1253,8 +1258,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
             input.baselineObservation
               ? JSON.stringify({ ...input.baselineObservation, checkedAt: now().toISOString() })
               : null,
-            'watch' in input,
-            input.watch ? JSON.stringify(input.watch) : null,
+            next.watch ? JSON.stringify(next.watch) : null,
             timingChanged,
           ],
         )

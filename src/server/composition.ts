@@ -1169,7 +1169,7 @@ async function initializeApplication(
             adapters.models!.paused({ kind: 'schedule', schedule: model }),
         }
       : {}),
-    watchable: async (connectionIds) => integrations.watchable(connectionIds),
+    watchable: (connectionIds, client) => integrations.watchable(connectionIds, client),
     watchState: async (connectionIds) => integrations.watchState(connectionIds),
   });
   await personal.initialize({ workers: options.workers });
