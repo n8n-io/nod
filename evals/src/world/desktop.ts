@@ -156,6 +156,10 @@ export function createDesktop(apps: DesktopApp[]): FakeDesktop {
         };
       case 'apps':
         return { apps: apps.filter((item) => item.running).map(info) };
+      case 'windows': {
+        const found = apps.find((item) => item.running && pids.get(item.bundle) === request.pid);
+        return { windows: found ? info(found).windows : [] };
+      }
       case 'locate': {
         const found = apps.find((item) => item.bundle === request.bundle);
         if (!found) throw new Error('No app with that bundle ID is installed.');
@@ -189,7 +193,13 @@ export function createDesktop(apps: DesktopApp[]): FakeDesktop {
         const tree = content(root);
         const hash = (value: unknown) =>
           createHash('sha256').update(JSON.stringify(value)).digest('hex');
-        return { tree, state: hash(tree), focus: hash([]), focused: [] };
+        return {
+          tree,
+          context: JSON.stringify(tree),
+          state: hash(tree),
+          focus: hash([]),
+          focused: [],
+        };
       }
       case 'snapshot': {
         const id = `sfake${String(++snapshots).padStart(4, '0')}`;
