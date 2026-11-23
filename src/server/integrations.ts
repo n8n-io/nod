@@ -27,7 +27,7 @@ import {
   type createDiscoveredConnections,
 } from './discovered-connections.ts';
 import { bundledApps } from './app-catalog.ts';
-import { transaction } from './transaction.ts';
+import { afterRollback, transaction } from './transaction.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type { SiteIcon } from '../ports/link-preview.ts';
 import { BrowserConnectionError } from './browser-connections.ts';
@@ -2345,6 +2345,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           const pollDeadline = AbortSignal.timeout(30_000);
           const pollSignal = AbortSignal.any([stop.signal, pollDeadline]);
           let pollFinished = false;
+          let checkpointStarted = false;
+          let checkpointRolledBack = false;
           try {
             serviceWait('background');
             const result = await provider.pollInbox!(row.account_id!, row.inbox_cursor, pollSignal);
@@ -2369,6 +2371,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             );
             stop.signal.throwIfAborted();
             const changed = await transaction(async (client) => {
+              checkpointStarted = true;
+              afterRollback(client, () => {
+                checkpointRolledBack = true;
+              });
               const saved = await client.query(
                 `UPDATE app_connections SET inbox_cursor=$1,inbox_checked_at=now(),inbox_failed=false,
              inbox_poll_at=CASE WHEN $2 THEN now()+$10::integer * interval '1 millisecond' ELSE inbox_poll_at END
@@ -2414,6 +2420,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             }, pool);
             if (changed) options.refresh?.();
           } catch (error) {
+            if (checkpointStarted && !checkpointRolledBack) throw error;
             if (stop.signal.aborted) {
               await pool.query(
                 `UPDATE app_connections SET inbox_poll_at=now(),inbox_claim_id=NULL

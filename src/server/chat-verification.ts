@@ -160,7 +160,7 @@ export async function createChatVerification(
     if (incompatible && input.verificationRequestId)
       throw conflict('Send the verification code by itself in the sign-in conversation.');
     const channel = input.channel ?? 'web';
-    const prepared = await transaction(async (client) => {
+    const reserve = async (client: PoolClient) => {
       const thread = await lockThread(client, options.ownerId);
       input.signal?.throwIfAborted();
       if (input.threadId !== undefined && input.threadId !== thread.id)
@@ -342,7 +342,8 @@ export async function createChatVerification(
           code,
         },
       };
-    }, pool);
+    };
+    const prepared = await transaction(reserve, pool, input.signal);
     if (!prepared || !('reserved' in prepared)) return prepared;
     const { reserved } = prepared;
     options.refresh();

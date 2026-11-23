@@ -8502,6 +8502,69 @@ test(
 );
 
 test(
+  'a lost inbox commit reply keeps the saved cursor and receipts without reporting a failed poll',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t, { max: 1 });
+    f.provider.webhooksConfigured = false;
+    const selected = await f.connect('gmail');
+    const cursors: Array<string | null> = [];
+    f.provider.pollInbox = async (_account, cursor) => {
+      cursors.push(cursor);
+      return {
+        cursor: cursor === null ? 'baseline' : 'complete',
+        hasMore: false,
+        messages:
+          cursor === null
+            ? []
+            : [
+                {
+                  id: 'lost-commit-fixture',
+                  threadId: 'fixture-thread',
+                  subject: 'Fixture update',
+                  sender: 'sender@example.test',
+                  receivedAt: '2026-01-01T00:00:00.000Z',
+                },
+              ],
+      };
+    };
+    await f.service.pollInboxes();
+    await f.pool.query('UPDATE app_connections SET inbox_poll_at=NULL WHERE id=$1', [
+      selected.connectionId,
+    ]);
+    const lost = new Error('Query read timeout');
+    f.pool.once('acquire', (client) => {
+      const query = client.query.bind(client);
+      client.query = ((...args: unknown[]) => {
+        const result = Reflect.apply(query, client, args);
+        if (args[0] !== 'COMMIT') return result;
+        client.query = query;
+        return (result as Promise<pg.QueryResult>).then(() => {
+          throw lost;
+        });
+      }) as typeof client.query;
+    });
+    await assert.rejects(f.service.pollInboxes(), (error) => error === lost);
+    const saved = (
+      await f.pool.query('SELECT inbox_cursor,inbox_failed FROM app_connections WHERE id=$1', [
+        selected.connectionId,
+      ])
+    ).rows[0];
+    assert.equal(saved.inbox_cursor, 'complete');
+    assert.equal(saved.inbox_failed, false);
+    assert.equal((await f.pool.query('SELECT id FROM integration_events')).rowCount, 1);
+    await f.service.pollInboxes();
+    assert.deepEqual(cursors, [null, 'baseline']);
+    await f.pool.query('UPDATE app_connections SET inbox_poll_at=NULL WHERE id=$1', [
+      selected.connectionId,
+    ]);
+    await f.service.pollInboxes();
+    assert.deepEqual(cursors, [null, 'baseline', 'complete']);
+    assert.equal((await f.pool.query('SELECT id FROM integration_events')).rowCount, 1);
+  },
+);
+
+test(
   'transient inbox failures retain completed receipts and retry before the normal interval',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {

@@ -4435,6 +4435,74 @@ test(
       );
 
       await t.test(
+        'cancelling a private verification interrupts a blocked reservation without submitting the code',
+        async () => {
+          await waitFor(settledThread);
+          const waiting = await thread.submitUserMessage('ask-credentials');
+          await waitFor(settled(waiting.turnId));
+          const requestId = (
+            await db.pool.query('SELECT id FROM credential_requests WHERE turn_id=$1', [
+              waiting.turnId,
+            ])
+          ).rows[0].id;
+          const held = await db.pool.connect();
+          await held.query('BEGIN');
+          await held.query('LOCK TABLE chat_verification_submissions IN ACCESS EXCLUSIVE MODE');
+          const blocker = (await held.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+          const controller = new AbortController();
+          const before = privateAudioCodes.length;
+          const messageId = randomUUID();
+          let finished = false;
+          const pending = assert
+            .rejects(
+              verification.accept('582614', {
+                threadId,
+                clientMessageId: messageId,
+                verificationRequestId: requestId,
+                signal: controller.signal,
+              }),
+            )
+            .then(() => {
+              finished = true;
+            });
+          try {
+            await waitFor(async () =>
+              Boolean(
+                (
+                  await db.pool.query(
+                    'SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))',
+                    [blocker],
+                  )
+                ).rowCount,
+              ),
+            );
+            controller.abort(new Error('Synthetic cancelled verification.'));
+            await Promise.race([pending, delay(1000)]);
+            assert.equal(finished, true);
+            assert.equal(privateAudioCodes.length, before);
+            assert.equal(
+              (
+                await held.query(
+                  'SELECT 1 FROM chat_verification_submissions WHERE message_id=$1',
+                  [messageId],
+                )
+              ).rowCount,
+              0,
+            );
+          } finally {
+            controller.abort();
+            await held.query('ROLLBACK');
+            held.release();
+            await pending;
+            await db.pool.query(
+              "UPDATE credential_requests SET status='superseded' WHERE turn_id=$1",
+              [waiting.turnId],
+            );
+          }
+        },
+      );
+
+      await t.test(
         'spoken replies follow the owner preference once and preserve text on failure or stop',
         async () => {
           await waitFor(settledThread);
