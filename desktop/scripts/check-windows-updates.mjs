@@ -355,13 +355,33 @@ app.whenReady().then(async () => {
   assert.deepEqual(await unsignedWindowsFiles([system], { release: true }), []);
   assert.equal((await unsignedWindowsFiles([system])).length, 1);
   receipt.stage = 'installing 1.0.0';
-  await run(installers['1.0.0'], [`/D=${installation}`], {
-    env: environment,
-    timeout: 180_000,
-    windowsVerbatimArguments: true,
-    argv0: `"${installers['1.0.0']}"`,
-  });
+  const occupied = join(root, 'owner files');
+  await mkdir(occupied);
+  await writeFile(join(occupied, 'keep.txt'), 'synthetic owner file');
+  await mkdir(output, { recursive: true });
+  await run(
+    powershell,
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      join(repository, 'desktop/scripts/check-windows-install-directory.ps1'),
+    ],
+    {
+      env: {
+        ...environment,
+        NOD_INSTALLER_PATH: installers['1.0.0'],
+        NOD_INSTALLER_TARGET: installation,
+        NOD_INSTALLER_REJECT: occupied,
+        NOD_INSTALLER_SCREENSHOT: join(output, 'install-directory.png'),
+      },
+      timeout: 180_000,
+    },
+  );
   installed = true;
+  assert.equal(await readFile(join(occupied, 'keep.txt'), 'utf8'), 'synthetic owner file');
   await stat(executable);
   await stat(join(installation, 'Uninstall.exe'));
   const openedByInstaller = await waitFor((entries) =>
@@ -494,6 +514,9 @@ app.whenReady().then(async () => {
     realNsis: true,
     realElectron: true,
     installerOpenedApp: true,
+    installDirectoryPicked: true,
+    occupiedInstallDirectoryRefused: true,
+    customInstallDirectoryKeptOnUpdate: true,
     quitInstallStayedClosed: true,
     failedInstallPreserved: true,
     runningAppQuitByInstaller: true,

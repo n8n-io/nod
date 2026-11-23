@@ -394,6 +394,7 @@ jobs:
           path: |
             .local/windows-setup/*.xml
             .local/windows-update-acceptance/*.json
+            .local/windows-update-acceptance/*.png
           include-hidden-files: true
           if-no-files-found: ignore
 

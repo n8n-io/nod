@@ -15,6 +15,8 @@ AutoCloseWindow true
 !define MUI_ICON "${ICON}"
 !define MUI_UNICON "${ICON}"
 !define MUI_ABORTWARNING
+!define MUI_PAGE_CUSTOMFUNCTION_LEAVE CheckInstallDirectory
+!insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
@@ -57,11 +59,8 @@ Function CheckInstallDirectory
   directory_empty:
     FindClose $0
   directory_ready:
+    SetErrorLevel 0
     ClearErrors
-FunctionEnd
-
-Function .onVerifyInstDir
-  Call CheckInstallDirectory
 FunctionEnd
 
 !macro CLOSE_NOD UN

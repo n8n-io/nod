@@ -77,7 +77,7 @@ You need Windows 11 x64. A local assistant also needs WSL
 
 1. Download the latest [Windows x64 installer](https://github.com/n8n-io/nod/releases/latest/download/nod-Setup-x64.exe) from GitHub.
 
-2. Run `nod-Setup-x64.exe`. Windows shows n8n GmbH as the publisher, though SmartScreen can still warn about a new release. The installer installs Nod for your Windows account and opens it. It adds Nod to the Start menu. An existing installation keeps its current folder.
+2. Run `nod-Setup-x64.exe`. Windows shows n8n GmbH as the publisher, though SmartScreen can still warn about a new release. Choose the app's install folder, then select **Install**. Use an empty folder or the current Nod folder. The installer installs Nod for your Windows account, adds it to the Start menu, and opens it. An existing installation starts with its current folder selected. Automatic updates keep that folder.
 
 3. At Welcome, choose **Connect to a server** to use an existing assistant, or **Get started** to start a local one. Local setup offers an optional email connection, a few optional questions about you, a model if none works yet, a choice about conversation traces, which also says basic usage data is shared by default for new owners and can be turned off in **Settings → Privacy & data**, and an optional email address for updates about Nod and other n8n products, with its own consent checkbox. Discord and forum links are also in **Settings → General**. Other apps can be connected later from the first chat or **Apps**. Nod tries to turn on **Open at login** when local setup finishes. If the operating system blocks this setting, setup still finishes. After the first chat introduction, choose **Enable notifications** if you want Nod to alert you while you’re away. Windows notification settings control delivery. You can change these preferences later in Settings.
 
@@ -86,6 +86,8 @@ You need Windows 11 x64. A local assistant also needs WSL
 5. Keep your internet connection on. When setup is ready, Nod opens your chat with your saved connections. See [Your first conversation](/get-started/first-conversation/).
 
 </Steps>
+
+The install folder holds the app files. Your profile stays in Windows app data. If local setup needs more room for the private computer, select **Choose folder** on the disk-space screen. See [Troubleshooting](/deploy/troubleshooting/#windows-setup-says-nod-needs-more-free-disk-space).
 
 <details>
 <summary>Install from PowerShell instead</summary>
