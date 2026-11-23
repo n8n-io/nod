@@ -69,8 +69,8 @@ importers:
         specifier: ^4.45.0
         version: 4.45.0(zod@4.6.7)
       '@composio/client':
-        specifier: 2.0.0-rc.17
-        version: 2.0.0-rc.17
+        specifier: 2.1.36
+        version: 2.1.36
       '@composio/core':
         specifier: 0.25.0
         version: 0.25.0(@aws-sdk/credential-provider-node@3.972.88)(@smithy/signature-v4@5.7.4)(ws@8.22.0)(zod@4.6.7)
@@ -522,6 +522,15 @@ packages:
 
   '@composio/client@2.0.0-rc.17':
     resolution: {integrity: sha512-j1fqyiAwAO6kOmbLwkLn4fb4//GNveV2yo0iMo4wTwOk9euRwQNK6lodVcRhJT6ZeRCSS2Xv8uUsJtmGsPTyiA==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      effect: '*'
+    peerDependenciesMeta:
+      effect:
+        optional: true
+
+  '@composio/client@2.1.36':
+    resolution: {integrity: sha512-wb9Z5jUvgVWmAh95RI2pzvdOLj9EjsjBttbYGsS8uhsY2n2qLXe5paeCw77lqUu7gMjMx0hUQMgytBMky7FSWA==}
     engines: {node: '>=22'}
     peerDependencies:
       effect: '*'
@@ -5207,6 +5216,8 @@ snapshots:
       - zod
 
   '@composio/client@2.0.0-rc.17': {}
+
+  '@composio/client@2.1.36': {}
 
   '@composio/core@0.25.0(@aws-sdk/credential-provider-node@3.972.88)(@smithy/signature-v4@5.7.4)(ws@8.22.0)(zod@4.6.7)':
     dependencies:
