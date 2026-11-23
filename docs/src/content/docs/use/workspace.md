@@ -49,7 +49,7 @@ The workspace can reach the internet. Code that Nod runs there can download file
 
 ## Watch Nod's commands
 
-You can watch the commands a task runs in the workspace. Open the task's preview in chat and select **Show commands**.
+You can watch the commands a task runs in the workspace. On **Scheduled**, open the task's preview and select **Show commands**.
 
 Each row shows the command and its status. Select a row to open the command and its saved output.
 

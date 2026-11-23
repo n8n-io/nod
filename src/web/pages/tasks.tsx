@@ -138,40 +138,9 @@ function TaskCommands({ id }: { id: string }) {
   );
 }
 
-export function TaskCard({
-  task,
-  live,
-  onScheduled,
-  onReply,
-}: {
-  task: Task;
-  live?: Activity;
-  onScheduled?(): void;
-  onReply?(): void;
-}) {
+export function TaskCard({ task, live }: { task: Task; live?: Activity }) {
   const headingId = useId();
   const [expanded, setExpanded] = useState(false);
-  const card = useRef<HTMLElement>(null);
-  const inChat = Boolean(onReply);
-  useEffect(() => {
-    if (!inChat) return;
-    const open = (event: Event) => {
-      const element = card.current;
-      if (
-        (event as CustomEvent<{ taskId?: unknown }>).detail?.taskId !== task.id ||
-        !element?.getClientRects().length
-      )
-        return;
-      event.preventDefault();
-      setExpanded(true);
-      element.focus({ preventScroll: true });
-      element.classList.remove('task-preview-pulse');
-      void element.offsetWidth;
-      element.classList.add('task-preview-pulse');
-    };
-    window.addEventListener('nod:open-task', open);
-    return () => window.removeEventListener('nod:open-task', open);
-  }, [inChat, task.id]);
   const [showActivity, setShowActivity] = useState(false);
   const [showCommands, setShowCommands] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -192,25 +161,12 @@ export function TaskCard({
   const handoffMessage = task.browserHandoff ? task.questionMessageId : null;
   const startMessage = task.questionMessageId ?? task.messageId;
   const line =
-    !onReply && expanded && task.status === 'needs_you'
+    expanded && task.status === 'needs_you'
       ? task.now || 'Waiting for your answer'
       : taskHeadline(task);
   const showLive = live && (task.status === 'working' || task.status === 'queued') ? live : null;
-  const shownInChat = inChat && ['needs_you', 'done', 'cancelled'].includes(task.status);
   return (
-    <article
-      ref={card}
-      className="task-preview"
-      data-status={task.status}
-      data-task-id={task.id}
-      onAnimationEnd={(event) => {
-        if (event.animationName === 'task-preview-pulse')
-          event.currentTarget.classList.remove('task-preview-pulse');
-      }}
-      aria-labelledby={headingId}
-      tabIndex={-1}
-      data-message-id={onReply ? task.messageId : undefined}
-    >
+    <article className="task-preview" data-status={task.status} aria-labelledby={headingId}>
       <h2 className="task-preview-heading">
         <button
           type="button"
@@ -236,7 +192,7 @@ export function TaskCard({
             </span>
             {chevron}
           </span>
-          {!showLive && !shownInChat && (
+          {!showLive && (
             <span className="task-preview-line">
               <Markdown allowedElements={[]} unwrapDisallowed>
                 {line}
@@ -270,7 +226,7 @@ export function TaskCard({
                 await pageDataCache.refresh('/api/tasks', true);
               }}
             />
-            {!onReply && task.status === 'needs_you' && task.question && (
+            {task.status === 'needs_you' && task.question && (
               <div className="task-preview-question">
                 <MessageText text={task.question} />
               </div>
@@ -352,17 +308,6 @@ export function TaskCard({
                   <Globe2 size={16} aria-hidden="true" />
                   Open browser
                 </Button>
-              ) : onReply ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    captureAnalytics('task_action', { action: 'reply' });
-                    onReply();
-                  }}
-                >
-                  Reply
-                </Button>
               ) : (
                 startMessage && (
                   <Button
@@ -425,7 +370,7 @@ export function TaskCard({
             {error && <Notice>{error}</Notice>}
             {showActivity && <TaskActivity id={task.id} />}
             {showCommands && <TaskCommands id={task.id} />}
-            {task.status === 'done' && <ScheduleTask taskId={task.id} onCreated={onScheduled} />}
+            {task.status === 'done' && <ScheduleTask taskId={task.id} />}
           </div>
         </div>
       </div>
@@ -470,6 +415,7 @@ export function Scheduled({
   const schedules = usePageData<Schedule[]>('/api/schedules');
   const tasks = usePageData<Task[]>('/api/tasks');
   const open = (tasks.data ?? []).filter((task) => !closed(task));
+  const finished = (tasks.data ?? []).filter(closed);
   const upcoming = (schedules.data ?? [])
     .filter((schedule) => schedule.enabled && schedule.nextRun)
     .sort((a, b) => a.nextRun!.localeCompare(b.nextRun!) || a.id.localeCompare(b.id));
@@ -511,6 +457,19 @@ export function Scheduled({
             />
           ))}
         </div>
+      )}
+      {finished.length > 0 && (
+        <details className="schedule-inactive">
+          <summary>
+            Finished <span>{finished.length}</span>
+            <ChevronDown size={16} aria-hidden="true" />
+          </summary>
+          <div className="saved-plan-list">
+            {finished.map((task) => (
+              <TaskCard key={task.id} task={task} />
+            ))}
+          </div>
+        </details>
       )}
       {!schedules.data ? (
         schedules.loading && <Pending label="Loading schedules…" />
