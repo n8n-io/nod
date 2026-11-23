@@ -55,4 +55,12 @@ Source asset: inline radius-logo-mark SVG, with presentation classes removed.
 Attribution: Earendil Works. This asset is not covered by either bundled MIT
 license.
 
+Simple Icons
+Source: https://github.com/simple-icons/simple-icons
+Source file: icons/hostinger.svg
+License: CC0-1.0.
+Local asset: hostinger.svg
+The SVG path is unmodified. The title and role attributes are removed and
+width and height are set to 24 pixels.
+
 Provider names and trademarks remain with their respective owners.

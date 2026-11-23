@@ -25,6 +25,7 @@ Select **Add connection** (or **Add** when you already have a connection), then 
 | OpenAI / ChatGPT                   | API key or existing ChatGPT sign-in                       | GPT-6.2 Sol, high effort                 |
 | Anthropic                          | API key                                                   | Claude Opus 5.5, high effort             |
 | OpenRouter                         | API key or browser sign-in                                | GPT-6.1 Sol, high effort                 |
+| Hostinger AI Router                | [hPanel API key](https://hpanel.hostinger.com/ai-router/) | Default Hostinger Model, high effort     |
 | Google Vertex AI                   | Vertex API key                                            | Gemini 4 Argon, medium effort            |
 | Amazon Bedrock                     | API key and Region                                        | You choose the model and routing profile |
 | Azure OpenAI                       | Endpoint, deployment, model, and API key                  | The deployment's model                   |
@@ -136,6 +137,20 @@ Nod lists the OpenRouter models that support text and tools.
 The `openrouter/free` and `openrouter/auto` routers can select different models for each request. Nod keeps your router choice and uses an 8,192-token working limit. This leaves room for routes with a small context window. Provider limits and free-model availability still apply.
 
 </TabItem>
+<TabItem label="Hostinger AI Router">
+
+<Steps>
+
+1. Create an API key in [hPanel's AI Router page](https://hpanel.hostinger.com/ai-router/).
+2. Choose **Hostinger AI Router**, paste the key, then select **Connect**.
+
+</Steps>
+
+Nod lists the router's models that support text, tools and chat completions. Models that generate images or speech, embedding models and decision models aren't listed. Models that read images stay in the list.
+
+Nod uses each model's output limit, up to 32,768 tokens per response.
+
+</TabItem>
 <TabItem label="Google Gemini">
 
 <Steps>
@@ -233,7 +248,7 @@ Use this for Ollama, LM Studio, vLLM, llama.cpp and hosted services with an Open
 
 All the models from your connections appear in one searchable list, grouped by connection. Choosing a model also chooses the connection that pays for it.
 
-OpenRouter models show input and output token prices beside each model name, in USD per million tokens. Prices can wrap to the next line on small screens. The list identifies free tokens and prices that vary by model. These are the rates from the last model list update. Actual charges can vary with routing, caching, context length, and extra services. See [OpenRouter's model pricing](https://openrouter.ai/docs/guides/overview/models#pricing-object).
+OpenRouter and Hostinger AI Router models show input and output token prices beside each model name, in USD per million tokens. Prices can wrap to the next line on small screens. The list identifies free tokens and prices that vary by model. These are the rates from the last model list update. Actual charges can vary with routing, caching, context length, and extra services. See [OpenRouter's model pricing](https://openrouter.ai/docs/guides/overview/models#pricing-object) or Hostinger's rates in [hPanel's AI Router page](https://hpanel.hostinger.com/ai-router/).
 
 You can connect several accounts of one service, such as two ChatGPT accounts or a personal and a work API key. A ChatGPT connection shows the account's email. A key connection, including one an OpenRouter sign-in created, shows only the last four characters of a key longer than four characters. Shorter keys stay hidden. The model never sees this display value. Signing in again with an account you already connected, or adding the same key or server address to the same service again, updates that connection instead of adding another.
 
@@ -366,6 +381,7 @@ Every service below supports environment setup. You can add several provider key
 | `anthropic`                  | Anthropic                   | `ANTHROPIC_API_KEY`                  |
 | `google`                     | Google Gemini               | `GEMINI_API_KEY`                     |
 | `openrouter`                 | OpenRouter                  | `OPENROUTER_API_KEY`                 |
+| `hostinger`                  | Hostinger AI Router         | `HOSTINGER_AI_ROUTER_API_KEY`        |
 | `amazon-bedrock`             | Amazon Bedrock              | `AWS_BEARER_TOKEN_BEDROCK`           |
 | `google-vertex`              | Google Vertex AI            | `GOOGLE_CLOUD_API_KEY`               |
 | `azure`                      | Azure OpenAI                | `AZURE_OPENAI_API_KEY`               |

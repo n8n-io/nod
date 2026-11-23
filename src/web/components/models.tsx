@@ -63,11 +63,15 @@ import {
   SearchField,
 } from './ui';
 
+const listsPrices = (provider: ModelProvider) =>
+  provider === 'openrouter' || provider === 'hostinger';
+
 const modelProviderLogos: Partial<Record<ModelProvider, string>> = {
   openai: 'models/openai',
   anthropic: 'models/anthropic',
   google: 'models/google',
   openrouter: 'models/openrouter',
+  hostinger: 'models/hostinger',
   'amazon-bedrock': 'models/amazon-bedrock',
   'google-vertex': 'models/google-vertex',
   azure: 'models/azure',
@@ -1450,7 +1454,7 @@ export function ModelPicker({
                 {group.map(({ item, key, recommended }) => {
                   const price = pricedUsage
                     ? workPrice(usage, item)
-                    : target || source.provider === 'openrouter'
+                    : target || listsPrices(source.provider)
                       ? tokenPrice(item.pricing)
                       : null;
                   return (
@@ -1558,8 +1562,8 @@ export function ModelPicker({
                 ? ' · Prices show the last 30 days of this work on each model.'
                 : target
                   ? ' · Prices in USD per million tokens.'
-                  : connections.some((source) => source.provider === 'openrouter')
-                    ? ' · OpenRouter prices in USD; rates can vary.'
+                  : connections.some((source) => listsPrices(source.provider))
+                    ? ' · Router prices in USD; rates can vary.'
                     : ''}
             </span>
             {manageConnections && (

@@ -81,6 +81,15 @@ function supportedModel(model: Model<Api>): Model<Api> {
 }
 
 const resource = 'https://api.openai.com/v1';
+
+const routers = {
+  openrouter: {
+    baseUrl: 'https://openrouter.ai/api/v1',
+    perMillion: 1_000_000,
+    compat: { thinkingFormat: 'openrouter' },
+  },
+  hostinger: { baseUrl: 'https://router.hostinger.com/v1', perMillion: 10_000, compat: {} },
+} as const;
 const issuer = 'https://auth.openai.com';
 
 const registration = 'dynamic_agent_client';
@@ -790,18 +799,19 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       if (provider === 'amazon-bedrock') return bedrockCatalog(local, credential);
       if (provider === 'google-vertex') return vertexCatalog(local, credential);
       if (provider === 'azure') return azureCatalog(local, credential);
-      if (provider !== 'openai' && provider !== 'anthropic' && provider !== 'openrouter')
+      const router =
+        provider === 'openrouter' || provider === 'hostinger' ? routers[provider] : undefined;
+      if (provider !== 'openai' && provider !== 'anthropic' && !router)
         return (await nativeCatalog(provider, local, credential, request)).map(definition);
       if (credential.type !== 'api_key' && credential.type !== 'oauth')
         throw new Error('This model connection is unavailable.');
       if (method === 'subscription') chatgptCredential(credential);
       const key = credential.type === 'api_key' ? credential.key : credential.access;
-      const url =
-        provider === 'openrouter'
-          ? 'https://openrouter.ai/api/v1/models'
-          : provider === 'anthropic'
-            ? 'https://api.anthropic.com/v1/models?limit=1000'
-            : `${method === 'api_key' && credential.type === 'api_key' ? openAIBaseUrl(credential.region) : resource}/models`;
+      const url = router
+        ? `${router.baseUrl}/models`
+        : provider === 'anthropic'
+          ? 'https://api.anthropic.com/v1/models?limit=1000'
+          : `${method === 'api_key' && credential.type === 'api_key' ? openAIBaseUrl(credential.region) : resource}/models`;
       const headers: Record<string, string> =
         provider === 'anthropic'
           ? {
@@ -872,7 +882,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       const data = await jsonResponse(response, `${modelProviderNames[provider]} model discovery`, [
         key,
       ]);
-      if (provider !== 'openrouter') {
+      if (!router) {
         const list = entries(
           method === 'subscription' ? data.models : data.data,
           z.object({
@@ -898,7 +908,9 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
           id: z.string(),
           name: z.string(),
           context_length: z.number().positive(),
+          max_output_tokens: z.number().positive().nullable().optional(),
           supported_parameters: z.array(z.string()),
+          supported_endpoints: z.array(z.string()).optional(),
           architecture: z.object({
             input_modalities: z.array(z.string()),
             output_modalities: z.array(z.string()),
@@ -923,7 +935,8 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
             m.architecture.output_modalities.includes('text') &&
             m.architecture.output_modalities.every((modality) => modality === 'text') &&
             assistantModelId(m.id) &&
-            !m.id.includes(':batch'),
+            !m.id.includes(':batch') &&
+            (!m.supported_endpoints || m.supported_endpoints.includes('/v1/chat/completions')),
         )
         .map((m) => {
           const known = local.find((model) => model.id === m.id);
@@ -948,25 +961,26 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
             name: m.name,
             api: known?.api ?? 'openai-completions',
             provider,
-            baseUrl: known?.baseUrl ?? 'https://openrouter.ai/api/v1',
-            compat: known?.compat ?? { thinkingFormat: 'openrouter' },
+            baseUrl: known?.baseUrl ?? router.baseUrl,
+            compat: known?.compat ?? router.compat,
             reasoning,
             input: m.architecture.input_modalities.includes('image') ? ['text', 'image'] : ['text'],
             contextWindow: m.context_length,
             maxTokens:
               m.top_provider?.max_completion_tokens ??
+              m.max_output_tokens ??
               known?.maxTokens ??
               Math.min(32_768, Math.floor(m.context_length / 2)),
             cost: {
-              input: m.pricing.prompt * 1000000,
-              output: m.pricing.completion * 1000000,
+              input: m.pricing.prompt * router.perMillion,
+              output: m.pricing.completion * router.perMillion,
               cacheRead:
                 m.pricing.input_cache_read !== undefined
-                  ? m.pricing.input_cache_read * 1000000
+                  ? m.pricing.input_cache_read * router.perMillion
                   : (known?.cost.cacheRead ?? 0),
               cacheWrite:
                 m.pricing.input_cache_write !== undefined
-                  ? m.pricing.input_cache_write * 1000000
+                  ? m.pricing.input_cache_write * router.perMillion
                   : (known?.cost.cacheWrite ?? 0),
             },
             thinkingLevelMap: map,

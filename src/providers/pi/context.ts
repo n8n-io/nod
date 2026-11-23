@@ -16,7 +16,7 @@ export function modelContext<
       maxTokens: Math.min(
         model.maxTokens,
         companion?.maxTokens ?? Infinity,
-        model.provider === 'openrouter' ? 32_768 : Infinity,
+        model.provider === 'openrouter' || model.provider === 'hostinger' ? 32_768 : Infinity,
         Math.floor(window / (compact ? 4 : 2)),
       ),
     },

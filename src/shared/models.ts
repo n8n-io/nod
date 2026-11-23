@@ -3,6 +3,7 @@ export const apiKeyModelProviders = [
   'anthropic',
   'google',
   'openrouter',
+  'hostinger',
   'amazon-bedrock',
   'google-vertex',
   'azure',
@@ -268,6 +269,7 @@ export const modelProviderNames = {
   anthropic: 'Anthropic',
   google: 'Google Gemini',
   openrouter: 'OpenRouter',
+  hostinger: 'Hostinger AI Router',
   elevenlabs: 'ElevenLabs',
   'amazon-bedrock': 'Amazon Bedrock',
   'google-vertex': 'Google Vertex AI',
@@ -338,6 +340,12 @@ export const modelProviderInfo: Record<
   openrouter: {
     keyUrl: 'openrouter.ai/settings/keys',
     env: 'OPENROUTER_API_KEY',
+    catalog: 'account',
+    common: true,
+  },
+  hostinger: {
+    keyUrl: 'hpanel.hostinger.com/ai-router',
+    env: 'HOSTINGER_AI_ROUTER_API_KEY',
     catalog: 'account',
     common: true,
   },
