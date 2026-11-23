@@ -61,6 +61,7 @@ import {
   cloudflareCredential,
   discoveryCause,
   nativeCatalog,
+  openRouterRoute,
 } from './model-catalog.ts';
 
 const reconnectChatGpt = `Reconnect your ChatGPT account in ${appPages['/settings/models']}.`;
@@ -927,6 +928,10 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
           }),
         }),
       );
+      const variant =
+        provider === 'openrouter' && credential?.type === 'api_key'
+          ? credential.variant
+          : undefined;
       return list
         .filter(
           (m) =>
@@ -985,7 +990,8 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
             },
             thinkingLevelMap: map,
           } as Model<Api>);
-        });
+        })
+        .map((item) => openRouterRoute(item, variant));
     },
     authorize({ redirectUri }) {
       const state = random();

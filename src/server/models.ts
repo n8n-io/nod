@@ -40,6 +40,8 @@ import {
   lightestEffort,
   modelSource,
   openAIRegions,
+  openRouterVariants,
+  type OpenRouterVariant,
   routeModel,
   supportsLongCacheWrites,
 } from '../shared/models.ts';
@@ -71,6 +73,7 @@ const keySchema = z
     accountId: z.string().trim().max(100).optional(),
     gatewayId: z.string().trim().max(100).optional(),
     workspaceId: z.string().trim().max(100).optional(),
+    variant: z.enum(['standard', 'nitro', 'cost']).optional(),
   })
   .strict();
 export const modelSelectionInput = z
@@ -168,6 +171,7 @@ export function modelKeyCredential(
     accountId?: string;
     gatewayId?: string;
     workspaceId?: string;
+    variant?: string;
   },
 ): ModelCredential {
   if (provider === 'openai') {
@@ -206,6 +210,16 @@ export function modelKeyCredential(
       ...(provider === 'cloudflare-ai-gateway' ? { gatewayId: settings.gatewayId } : {}),
     };
   }
+  if (provider === 'openrouter') {
+    const variant = settings.variant?.trim();
+    if (variant && !Object.hasOwn(openRouterVariants, variant))
+      throw new ConnectionError('Choose an OpenRouter routing variant.');
+    return {
+      type: 'api_key',
+      key,
+      ...(variant && variant !== 'standard' ? { variant: variant as OpenRouterVariant } : {}),
+    };
+  }
   if (provider !== 'azure') return { type: 'api_key', key };
   const url = settings.url && azureAddress(settings.url);
   if (!url)
@@ -236,6 +250,8 @@ function connectionLabel(provider: ModelProvider, method: ModelMethod, value: Mo
     return `OpenAI · ${openAIRegions[value.region]}`;
   if (provider === 'anthropic' && value.type === 'api_key' && value.workspaceId)
     return value.workspaceId;
+  if (provider === 'openrouter' && value.type === 'api_key' && value.variant)
+    return `OpenRouter · ${openRouterVariants[value.variant]}`;
   if (value.type === 'oauth') return value.email ?? 'ChatGPT account';
   if (value.type === 'endpoint') return new URL(value.url).host;
   if (value.type === 'bedrock') return value.region;
@@ -1515,6 +1531,7 @@ export function createModelService(options: {
         accountId?: string;
         gatewayId?: string;
         workspaceId?: string;
+        variant?: string;
       } = {},
     ) {
       key = key.trim();

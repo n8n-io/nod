@@ -24,6 +24,7 @@ export interface KeySettings {
   deployment: string;
   accountId: string;
   gatewayId: string;
+  variant: string;
 }
 
 export const noKeySettings: KeySettings = {
@@ -34,6 +35,7 @@ export const noKeySettings: KeySettings = {
   deployment: '',
   accountId: '',
   gatewayId: '',
+  variant: 'standard',
 };
 
 export function keySettingsReady(provider: ModelProvider, settings: KeySettings) {
@@ -55,6 +57,9 @@ export function keyConnection(provider: ModelProvider, key: string, settings: Ke
       : {}),
     ...(provider === 'anthropic' && settings.workspaceId.trim()
       ? { workspaceId: settings.workspaceId.trim() }
+      : {}),
+    ...(provider === 'openrouter' && settings.variant && settings.variant !== 'standard'
+      ? { variant: settings.variant }
       : {}),
     ...(provider === 'amazon-bedrock' ? { region: settings.region.trim() } : {}),
     ...(provider === 'azure'

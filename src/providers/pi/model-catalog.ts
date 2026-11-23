@@ -1,14 +1,16 @@
 import type { Api, Model } from '@earendil-works/pi-ai';
 import { z } from 'zod';
-import { ModelAuthError, type ModelCredential } from '../../ports/models.ts';
+import { ModelAuthError, type ModelCredential, type ModelDefinition } from '../../ports/models.ts';
 import { ModelServiceError, modelErrorText, modelServiceError } from '../model-error.ts';
 import {
   cloudflareAccountPattern,
   cloudflareGatewayPattern,
   modelProviderInfo,
   modelProviderNames,
+  openRouterVariants,
   type OpenAIRegion,
   type ModelProvider,
+  type OpenRouterVariant,
 } from '../../shared/models.ts';
 import { openAIBaseUrl } from '../openai/api.ts';
 
@@ -30,6 +32,21 @@ const catalogEndpoints = {
   together: 'https://api.together.xyz/v1/models',
   nvidia: 'https://integrate.api.nvidia.com/v1/models',
 } as const;
+
+export function openRouterRoute(
+  definition: ModelDefinition,
+  variant: OpenRouterVariant | undefined,
+): ModelDefinition {
+  if (!variant || variant === 'standard' || !Object.hasOwn(openRouterVariants, variant))
+    return definition;
+  const suffix = `:${variant}`;
+  const { choice, spec } = definition;
+  if (choice.id.endsWith(suffix)) return definition;
+  return {
+    choice: { ...choice, id: `${choice.id}${suffix}`, name: `${choice.name} · ${suffix}` },
+    spec: { ...spec, id: `${String(spec.id ?? choice.id)}${suffix}` },
+  };
+}
 
 export function openAIModels(region: OpenAIRegion = 'global'): Model<'openai-responses'>[] {
   const rate = region === 'global' ? 1 : 1.1;
