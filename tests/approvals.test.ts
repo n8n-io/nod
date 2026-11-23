@@ -835,9 +835,17 @@ test('confirmation keeps bold on checked values and escapes every other Markdown
     'https://train.example.test/buy',
     'https://unlisted.example.test/pay',
   ]);
-  const code = nodes.filter((node) => node.type === 'inlineCode').map((node) => node.value);
-  assert.ok(code.includes(strange));
-  assert.ok(code.includes('https://safe.example.test**@other.example.test/**'));
+  assert.deepEqual(
+    nodes.filter((node) => node.type === 'inlineCode').map((node) => node.value),
+    [
+      'jane@example.test',
+      'https://train.example.test/buy',
+      strange,
+      'https://unlisted.example.test/pay',
+      'https://safe.example.test**@other.example.test/**',
+      'https://outside.example.test',
+    ],
+  );
   const visible = visibleMarkdownText(result.question);
   assert.match(visible, /次の12月2日の便ですか？/);
   assert.match(visible, /_Note_ # review \(https:\/\/outside\.example\.test\) \*\* loose/);
