@@ -76,8 +76,6 @@ Open a schedule's **See details** to read its runs, newest first. Select **Load 
 
 Each run shows its status. When a saved web reply is available, select **See details** on the result to read it within the schedule. Runs with complete API pricing also show their recorded cost. Subscription usage and runs with unavailable pricing show no cost amount. Review recorded app actions and activity from deleted schedules in [Usage](/use/spending/).
 
-Nod can save an observation while a scheduled check is running in your active conversation, including after the check resumes from your answer. Each run keeps its first saved observation.
-
 ## Work Nod starts on its own
 
 Nod watches Gmail and Google Calendar on its own, prepares useful work privately and messages you only when it's worth it. See [Nudges](/use/nudges/). Turn on **Automatic preparation** in **Settings → Notifications**. New profiles start with it off. At any time, you can say what's worth interrupting you for, such as "tell me when a client emails", and Nod uses it to choose what to flag.

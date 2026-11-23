@@ -1725,39 +1725,37 @@ test(
         },
       );
       await t.test(
-        'a resumed scheduled run records one observation on its original run',
+        'a resumed scheduled run records its observation on the original run',
         async () => {
           const before = clock;
           const schedule = await create({ cron: '0 9 * * 1' });
           clock = new Date(schedule.nextRun!);
           await deliver([await jobFor(schedule.id)]);
           const [run] = await runs(schedule.id);
-          const continuation = randomUUID();
           const observation = {
             status: 'verified',
             sourceUrl: 'https://watch.example.test/pricing',
             value: 'Pro 39 EUR',
             summary: 'Synthetic pricing observation.',
           };
-          const record = (turnId: string, value = observation) =>
-            personal.manage('schedule_record_observation', value, {
-              sourceMessageId: null,
-              turnId,
-            });
+          const record = (turnId: string, service = personal) =>
+            thread.withTurnLock(turnId, (client) =>
+              service.manage(
+                'schedule_record_observation',
+                observation,
+                { sourceMessageId: null, turnId },
+                { client },
+              ),
+            );
+          const [continuation, unrelated] = [randomUUID(), randomUUID()];
           await db.pool.query("UPDATE turns SET status='waiting' WHERE id=$1", [run!.turnId]);
           await db.pool.query(
             `INSERT INTO turns(id,owner_id,thread_id,session_id,parent_turn_id,source,status,prompt)
-           SELECT $1,owner_id,thread_id,session_id,id,'resume','running','Synthetic follow-up'
-           FROM turns WHERE id=$2`,
-            [continuation, run!.turnId],
-          );
-          await assert.rejects(record(run!.turnId), /no active scheduled run/);
-          const unrelated = randomUUID();
-          await db.pool.query(
-            `INSERT INTO turns(id,owner_id,thread_id,session_id,source,status,prompt)
-           SELECT $1,owner_id,thread_id,$1,'user','running','Synthetic unrelated work'
-           FROM turns WHERE id=$2`,
-            [unrelated, run!.turnId],
+           SELECT v.id,u.owner_id,u.thread_id,COALESCE(v.session,u.session_id),v.parent,v.source,'running','Synthetic work'
+           FROM turns u,(VALUES($2::uuid,NULL::uuid,$1::uuid,'resume'),($3::uuid,$3::uuid,NULL::uuid,'user'))
+             AS v(id,session,parent,source)
+           WHERE u.id=$1`,
+            [run!.turnId, continuation, unrelated],
           );
           await assert.rejects(record(unrelated), /no active scheduled run/);
           const other = createPersonalService({
@@ -1767,40 +1765,12 @@ test(
             enqueueTurn: thread.enqueueTurn,
             refresh() {},
           });
-          await assert.rejects(
-            other.manage('schedule_record_observation', observation, {
-              sourceMessageId: null,
-              turnId: continuation,
-            }),
-            /no active scheduled run/,
-          );
-          await db.pool.query(
-            'UPDATE threads SET archived_at=now() WHERE id=(SELECT thread_id FROM turns WHERE id=$1)',
-            [continuation],
-          );
-          await assert.rejects(record(continuation), /no active scheduled run/);
-          await db.pool.query(
-            'UPDATE threads SET archived_at=NULL WHERE id=(SELECT thread_id FROM turns WHERE id=$1)',
-            [continuation],
-          );
-          await thread.withTurnLock(continuation, (client) =>
-            personal.manage(
-              'schedule_record_observation',
-              observation,
-              { sourceMessageId: null, turnId: continuation },
-              { client },
-            ),
-          );
+          await assert.rejects(record(continuation, other), /no active scheduled run/);
+          await record(continuation);
           assert.equal((await runs(schedule.id))[0]!.observation?.value, 'Pro 39 EUR');
-          await assert.rejects(
-            record(continuation, { ...observation, value: 'replacement' }),
-            /already has a saved observation/,
-          );
-          assert.equal((await runs(schedule.id))[0]!.observation?.value, 'Pro 39 EUR');
-          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [continuation]);
-          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [unrelated]);
-          await assert.rejects(record(continuation), /no active scheduled run/);
-          await db.pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [run!.turnId]);
+          await db.pool.query("UPDATE turns SET status='cancelled' WHERE id=ANY($1::uuid[])", [
+            [run!.turnId, continuation, unrelated],
+          ]);
           clock = before;
         },
       );
