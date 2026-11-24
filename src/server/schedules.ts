@@ -496,6 +496,35 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     return { ok: true };
   }
 
+  async function cancelWaitingRun(id: string) {
+    const capture = snapshotAnalytics(dependencies.analytics);
+    const cancelled = await cancellationTransaction(async (client) => {
+      const thread = await lockThread(client, ownerId);
+      const run = await activeRun(client, id);
+      const session =
+        run?.status === 'waiting'
+          ? (
+              await client.query<{ sessionId: string }>(
+                `SELECT r.turn_id AS "sessionId" FROM schedule_runs r
+                 JOIN turns u ON u.session_id=r.turn_id AND u.owner_id=r.owner_id
+                 WHERE r.owner_id=$1 AND r.schedule_id=$2 AND u.id=$3 AND u.thread_id=$4`,
+                [ownerId, id, run.turnId, thread.id],
+              )
+            ).rows[0]?.sessionId
+          : undefined;
+      if (!session) return { ids: [], browsers: [] };
+      await client.query(
+        `UPDATE approvals a SET status='expired' FROM turns u
+         WHERE u.id=a.turn_id AND u.owner_id=a.owner_id AND a.owner_id=$1 AND u.session_id=$2 AND a.status='pending'`,
+        [ownerId, session],
+      );
+      return cancelTurns(client, thread.id, { sessionId: session }, capture, 'agent');
+    }, pool);
+    abortTurns(cancelled.ids);
+    await Promise.allSettled(cancelled.browsers.map((id) => dependencies.clearBrowser?.(id)));
+    if (cancelled.ids.length) refresh();
+  }
+
   async function dispatch(job: Job<ScheduleJob>) {
     job.signal.throwIfAborted();
     const watched = (
@@ -508,6 +537,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       watched?.kind === 'recurring' && watched.watch?.length
         ? await dependencies.watchState?.(watched.watch).catch(() => null)
         : null;
+    job.signal.throwIfAborted();
+    if (watched?.kind === 'recurring') await cancelWaitingRun(job.data.scheduleId);
     job.signal.throwIfAborted();
     const accepted = await transaction(async (client) => {
       const row = (
@@ -1286,6 +1317,9 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     }, shared);
     afterCommit(shared ?? pool, () => {
       refresh();
+      void cancelWaitingRun(id).catch((error: unknown) =>
+        logFailure('schedule_run_cancel_failed', error),
+      );
       dependencies.analytics?.({
         event: 'schedule_changed',
         properties: {
@@ -1343,6 +1377,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       await dependencies.retireScheduleConfirmations?.(client, id, true);
       return row;
     });
+    await cancelWaitingRun(id);
     refresh();
     dependencies.analytics?.({
       event: 'schedule_changed',

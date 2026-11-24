@@ -44,7 +44,7 @@ function syntheticConfirmation(input: Record<string, unknown>) {
     action: string;
     args: Record<string, unknown>;
     details?: Record<string, unknown>;
-    work?: { title?: string; waitsForAnswer?: boolean };
+    work?: { title?: string };
   };
   const { action, args } = data;
   const details = data.details ?? {};
@@ -98,7 +98,6 @@ function syntheticConfirmation(input: Record<string, unknown>) {
   }
   if (data.work?.title)
     text = `For ${data.work.title}, ${text[0]?.toLowerCase() ?? ''}${text.slice(1)}`;
-  if (data.work?.waitsForAnswer) text += ' This schedule skips its runs until you answer.';
   if (Array.isArray(input.withheld) && input.withheld.length)
     text += ' Some details are hidden. This description is incomplete.';
   return { text, action: label };
