@@ -1,0 +1,27 @@
+{
+  "$schema": "https://nod.n8n.io/docs/schemas/apps/v1/contract.schema.json",
+  "type": "mcp",
+  "source": "https://antigravity.google/docs/mcp",
+  "tool": {
+    "name": "antigravity_list_projects",
+    "description": "List all active projects in Antigravity.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  "input": {},
+  "output": {
+    "projects": [
+      {
+        "name": "my-app",
+        "path": "/projects/my-app",
+        "type": "node-api"
+      }
+    ]
+  }
+}

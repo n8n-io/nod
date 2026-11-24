@@ -1,0 +1,17 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "antigravity",
+  "version": "1.0.0",
+  "description": "Connect Google Antigravity to run autonomous coding tasks, project synthesis, webhook integration, and git management.",
+  "homepage": "https://antigravity.google",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.n8n.nod": {
+      "app": "./io.n8n.nod/app.json"
+    }
+  },
+  "author": {
+    "name": "Google DeepMind / Antigravity Team",
+    "url": "https://antigravity.google"
+  }
+}

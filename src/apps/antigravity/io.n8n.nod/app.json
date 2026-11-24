@@ -1,0 +1,26 @@
+{
+  "$schema": "https://nod.n8n.io/docs/schemas/apps/v1/app.schema.json",
+  "displayName": "Google Antigravity",
+  "icon": "./io.n8n.nod/icon.svg",
+  "categories": ["Development", "Coding"],
+  "connection": {
+    "type": "mcp",
+    "server": "antigravity",
+    "authentication": ["bearer"],
+    "hints": {
+      "token": "Enter your Antigravity Bridge API Key (set in Render) or leave blank for local loopback."
+    }
+  },
+  "prompts": [
+    "In my project backend-api, add an API endpoint and commit to git.",
+    "Check git status and commit pending changes in my project.",
+    "List all my active Antigravity projects."
+  ],
+  "requirements": [
+    "Antigravity MCP Bridge running on Render or locally on http://localhost:4568."
+  ],
+  "limitations": [
+    "Code generation and file writes follow workspace file permissions on the Antigravity host.",
+    "Git pushes require configured credentials or SSH keys on the host machine."
+  ]
+}

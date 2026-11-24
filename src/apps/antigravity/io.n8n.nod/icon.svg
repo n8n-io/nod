@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <defs>
+    <linearGradient id="agy-grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4285F4"/>
+      <stop offset="50%" stop-color="#9B51E0"/>
+      <stop offset="100%" stop-color="#FF6D5A"/>
+    </linearGradient>
+    <linearGradient id="agy-grad2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#34A853"/>
+      <stop offset="50%" stop-color="#4285F4"/>
+      <stop offset="100%" stop-color="#FBBC05"/>
+    </linearGradient>
+  </defs>
+  <!-- Background Circle -->
+  <circle cx="50" cy="50" r="46" fill="#121316"/>
+  <!-- Orbital 1 -->
+  <ellipse cx="50" cy="50" rx="36" ry="14" transform="rotate(-30 50 50)" stroke="url(#agy-grad1)" stroke-width="4.5" stroke-dasharray="160 20" stroke-linecap="round"/>
+  <!-- Orbital 2 -->
+  <ellipse cx="50" cy="50" rx="36" ry="14" transform="rotate(30 50 50)" stroke="url(#agy-grad2)" stroke-width="4.5" stroke-dasharray="160 20" stroke-linecap="round"/>
+  <!-- Core Nucleus -->
+  <circle cx="50" cy="50" r="10" fill="url(#agy-grad1)"/>
+  <circle cx="50" cy="50" r="4" fill="#FFFFFF"/>
+</svg>
