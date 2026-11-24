@@ -203,7 +203,13 @@ export async function recentOwnerWords(
      visible AS NOT MATERIALIZED (SELECT m.id,m.created_at FROM messages m
          WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.hidden_at IS NULL
            AND (m.role='user' OR (m.role='assistant' AND m.turn_id IS NOT NULL))
-           AND (m.text<>'' OR m.presentation IS NOT NULL)),
+           AND (m.text<>'' OR m.presentation IS NOT NULL)${
+             taskId
+               ? ''
+               : `
+           AND NOT EXISTS (SELECT 1 FROM turns tt WHERE tt.owner_id=m.owner_id
+             AND (tt.id=m.turn_id OR tt.message_id=m.id) AND tt.task_id IS NOT NULL)`
+           }),
      anchors AS (${
        taskId
          ? 'SELECT t.created_at FROM tasks t WHERE t.id=$4::uuid AND t.owner_id=$1'

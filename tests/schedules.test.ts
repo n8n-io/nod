@@ -2284,11 +2284,10 @@ test(
             )?.text,
             'Check it every morning.',
           );
-          assert.equal(
-            authority.messages.find(
+          assert.ok(
+            !authority.messages.some(
               (message: { id: string }) => message.id === unrelated.sourceMessageId,
-            )?.canAuthorize ?? false,
-            false,
+            ),
           );
           const proposalId = randomUUID();
           const proposal = 'Read the synthetic board every Friday?';

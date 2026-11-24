@@ -1232,13 +1232,19 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           ORDER BY lm.created_at DESC,lm.id DESC LIMIT 1) owner
       JOIN channel_inbox i ON i.channel=owner.channel AND i.owner_id=m.owner_id AND i.created_at<=m.created_at
       WHERE m.role='assistant' AND m.owner_id=$1 AND m.hidden_at IS NULL AND i.state='submitted'
-        AND owner.channel<>'web' AND m.created_at>now()-interval '1 day'
-        AND (m.answer_choices IS NOT NULL${
-          approvals
-            ? ` OR m.id IN (SELECT a.confirmation_message_id FROM approvals a
+        AND owner.channel<>'web'
+        AND (m.id IN (SELECT q.id FROM turns w CROSS JOIN LATERAL (SELECT q.id FROM messages q
+              WHERE q.turn_id=w.id AND q.owner_id=w.owner_id AND q.role='assistant'
+              ORDER BY q.created_at DESC,q.id DESC LIMIT 1) q
+            WHERE w.owner_id=$1 AND w.thread_id IN (SELECT th.id FROM threads th
+                WHERE th.owner_id=$1 AND th.archived_at IS NULL)
+              AND w.status='waiting' AND w.waiting_reason='question'
+              AND w.channel='web')${
+                approvals
+                  ? ` OR m.id IN (SELECT a.confirmation_message_id FROM approvals a
               WHERE a.owner_id=$1 AND a.status='pending')`
-            : ''
-        })
+                  : ''
+              })
         AND NOT EXISTS (SELECT 1 FROM channel_outbox q WHERE q.message_id=m.id)
       ORDER BY m.id,i.received_at DESC,i.source_id
       ON CONFLICT(message_id) DO NOTHING`,

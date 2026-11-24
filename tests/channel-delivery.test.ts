@@ -4623,56 +4623,60 @@ test(
       return { id: `provider-${sent.length}` };
     };
     const channels = await create();
-    receive('111', 'moved-to-telegram', 'moved-chat');
-    await channels.drain();
-    await pool.query(
-      `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
-       SELECT $1,'local-development','user','Moving to Telegram.',$2,turn_id FROM channel_inbox`,
-      [randomUUID(), threadId],
-    );
-    const webTurn = async (status: string, waiting?: string) => {
-      const id = randomUUID();
+    try {
+      receive('111', 'moved-to-telegram', 'moved-chat');
+      await channels.drain();
       await pool.query(
-        `INSERT INTO turns(id,owner_id,thread_id,source,channel,status,waiting_reason)
-         VALUES($1,'local-development',$2,'task','web',$3,$4)`,
-        [id, threadId, status, waiting ?? null],
+        `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
+         SELECT $1,'local-development','user','Moving to Telegram.',$2,turn_id FROM channel_inbox`,
+        [randomUUID(), threadId],
       );
-      return id;
-    };
-    const ask = async (text: string, seconds: number) => {
-      const turn = await webTurn('waiting', 'question');
+      const webTurn = async (status: string, waiting?: string) => {
+        const id = randomUUID();
+        await pool.query(
+          `INSERT INTO turns(id,owner_id,thread_id,source,channel,status,waiting_reason)
+           VALUES($1,'local-development',$2,'task','web',$3,$4)`,
+          [id, threadId, status, waiting ?? null],
+        );
+        return id;
+      };
+      const ask = async (text: string, seconds: number) => {
+        const turn = await webTurn('waiting', 'question');
+        await pool.query(
+          `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,answer_choices,created_at)
+           VALUES($1,'local-development','assistant',$2,$3,$4,$5,now()+make_interval(secs=>$6))`,
+          [
+            randomUUID(),
+            text,
+            threadId,
+            turn,
+            JSON.stringify({
+              options: [
+                { id: randomUUID(), label: 'Yes' },
+                { id: randomUUID(), label: 'No' },
+              ],
+              multiple: false,
+            }),
+            seconds,
+          ],
+        );
+      };
+      await reply(await webTurn('running'), 'Reading the synthetic folder.', randomUUID(), 1);
+      await ask('Shall I read the synthetic document?', 2);
+      await channels.drain();
+      assert.ok(sent.some((text) => text.includes('Shall I read the synthetic document?')));
+      assert.ok(!sent.some((text) => text.includes('Reading the synthetic folder.')));
+      const back = await webTurn('succeeded');
       await pool.query(
-        `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,answer_choices,created_at)
-         VALUES($1,'local-development','assistant',$2,$3,$4,$5,now()+make_interval(secs=>$6))`,
-        [
-          randomUUID(),
-          text,
-          threadId,
-          turn,
-          JSON.stringify({
-            options: [
-              { id: randomUUID(), label: 'Yes' },
-              { id: randomUUID(), label: 'No' },
-            ],
-            multiple: false,
-          }),
-          seconds,
-        ],
+        `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,created_at)
+         VALUES($1,'local-development','user','Back on the web app.',$2,$3,now()+interval '3 seconds')`,
+        [randomUUID(), threadId, back],
       );
-    };
-    await reply(await webTurn('running'), 'Reading the synthetic folder.', randomUUID(), 1);
-    await ask('Shall I read the synthetic document?', 2);
-    await channels.drain();
-    assert.ok(sent.some((text) => text.includes('Shall I read the synthetic document?')));
-    assert.ok(!sent.some((text) => text.includes('Reading the synthetic folder.')));
-    const back = await webTurn('succeeded');
-    await pool.query(
-      `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,created_at)
-       VALUES($1,'local-development','user','Back on the web app.',$2,$3,now()+interval '3 seconds')`,
-      [randomUUID(), threadId, back],
-    );
-    await ask('Shall I open the synthetic sheet?', 4);
-    await channels.drain();
-    assert.ok(!sent.some((text) => text.includes('Shall I open the synthetic sheet?')));
+      await ask('Shall I open the synthetic sheet?', 4);
+      await channels.drain();
+      assert.ok(!sent.some((text) => text.includes('Shall I open the synthetic sheet?')));
+    } finally {
+      await channels.close();
+    }
   },
 );

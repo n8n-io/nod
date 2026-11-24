@@ -7995,7 +7995,8 @@ export const approvalCases = inParts(
                 if (
                   !changed &&
                   typeof input[0] === 'string' &&
-                  input[0].startsWith('WITH cleared AS')
+                  input[0].startsWith('WITH cleared AS') &&
+                  input[1]?.[3] === taskId
                 ) {
                   changed = true;
                   assert.ok(progressId);

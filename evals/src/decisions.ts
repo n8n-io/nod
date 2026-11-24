@@ -2786,6 +2786,7 @@ export async function evaluateDecision(options: {
   const input = (terms = false) => {
     const value = JSON.parse(encoded);
     if (
+      !terms &&
       options.authorization.replyFormat === 'message' &&
       typeof value.assistantMessageBeforeLatestUserMessage === 'string'
     ) {

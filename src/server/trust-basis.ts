@@ -114,7 +114,16 @@ export function trustBasis(
   if (
     terms !== undefined &&
     (!Array.isArray(terms) ||
-      terms.some((term) => !term || typeof term !== 'object' || term.same !== true))
+      terms.some(
+        (term) =>
+          !term ||
+          typeof term !== 'object' ||
+          term.same !== true ||
+          typeof term.user !== 'string' ||
+          !term.user.trim() ||
+          typeof term.action !== 'string' ||
+          !term.action.trim(),
+      ))
   )
     return undefined;
   const cited =

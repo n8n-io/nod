@@ -3043,7 +3043,7 @@ async function initializeApplication(
           }
           const prepared = await computerUse.prepare(turn, action, args, options.signal);
           if (!computerUse.needsCheck(action, prepared)) {
-            await options.admit?.(false, true);
+            await options.admit?.(false, action !== 'COMPUTER_FOCUS');
             return computerUse.execute(turn, action, prepared, options.signal);
           }
           const verdict = await trust.check(

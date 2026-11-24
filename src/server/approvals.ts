@@ -92,7 +92,7 @@ export type ChatConfirmationResult =
 
 const deliveredSql = (message: string, owner: string, channel: string) =>
   `EXISTS (SELECT 1 FROM channel_outbox o JOIN channel_inbox ci ON ci.source_id=o.source_id
-    WHERE o.message_id=${message} AND ci.owner_id=${owner} AND ci.channel=${channel})`;
+    WHERE o.message_id=${message} AND o.state='sent' AND ci.owner_id=${owner} AND ci.channel=${channel})`;
 
 async function channelsReady() {
   return Boolean((await pool.query("SELECT to_regclass('channel_outbox') AS name")).rows[0]?.name);
