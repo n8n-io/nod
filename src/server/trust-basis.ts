@@ -117,8 +117,20 @@ export function trustBasis(
       terms.some((term) => !term || typeof term !== 'object' || term.same !== true))
   )
     return undefined;
-  const cited = typeof source === 'string' ? source : because === 'read' ? 'read' : undefined;
-  if (run !== true || !cited || (cited !== 'read' && !Array.isArray(terms))) return undefined;
+  const cited =
+    typeof source === 'string'
+      ? source
+      : because === 'read'
+        ? 'read'
+        : because === 'schedule approval'
+          ? 'scheduleApproval'
+          : undefined;
+  if (
+    run !== true ||
+    !cited ||
+    (cited !== 'read' && cited !== 'scheduleApproval' && !Array.isArray(terms))
+  )
+    return undefined;
   const name = words.action?.name ?? '';
   const args = words.action?.arguments ?? {};
   const command = args.command;
