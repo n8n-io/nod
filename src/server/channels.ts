@@ -1,3 +1,4 @@
+import { laterSupersedingTurnSql } from './turn-chain.ts';
 import { presentationSchema, presentationText } from '../shared/presentation.ts';
 import { answerChoicesSchema, questionWithChoices } from '../shared/answer-choices.ts';
 import { createHash, randomUUID } from 'node:crypto';
@@ -1233,13 +1234,13 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       JOIN channel_inbox i ON i.channel=owner.channel AND i.owner_id=m.owner_id AND i.created_at<=m.created_at
       WHERE m.role='assistant' AND m.owner_id=$1 AND m.hidden_at IS NULL AND i.state='submitted'
         AND owner.channel<>'web'
-        AND (m.id IN (SELECT q.id FROM turns w CROSS JOIN LATERAL (SELECT q.id FROM messages q
-              WHERE q.turn_id=w.id AND q.owner_id=w.owner_id AND q.role='assistant'
+        AND (m.id IN (SELECT q.id FROM turns u CROSS JOIN LATERAL (SELECT q.id FROM messages q
+              WHERE q.turn_id=u.id AND q.owner_id=u.owner_id AND q.role='assistant'
               ORDER BY q.created_at DESC,q.id DESC LIMIT 1) q
-            WHERE w.owner_id=$1 AND w.thread_id IN (SELECT th.id FROM threads th
+            WHERE u.owner_id=$1 AND u.thread_id IN (SELECT th.id FROM threads th
                 WHERE th.owner_id=$1 AND th.archived_at IS NULL)
-              AND w.status='waiting' AND w.waiting_reason='question'
-              AND w.channel='web')${
+              AND u.status='waiting' AND u.waiting_reason='question' AND u.handoff_browser_id IS NULL
+              AND u.channel='web' AND NOT ${laterSupersedingTurnSql})${
                 approvals
                   ? ` OR m.id IN (SELECT a.confirmation_message_id FROM approvals a
               WHERE a.owner_id=$1 AND a.status='pending')`
