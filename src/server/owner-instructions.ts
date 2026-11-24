@@ -212,20 +212,25 @@ export async function recentOwnerWords(
        r.withdrawn AS reply_withdrawn,EXISTS (SELECT 1 FROM approvals p
          JOIN turns e ON e.id=p.execution_turn_id AND e.owner_id=p.owner_id
          WHERE p.owner_id=$1 AND e.message_id=m.id) AS answer
-     FROM messages m CROSS JOIN cleared
+     FROM (SELECT id FROM recent UNION SELECT unnest($3::uuid[])) ids
+     JOIN messages m ON m.id=ids.id CROSS JOIN cleared
      LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
      LEFT JOIN LATERAL (SELECT a.id,a.text,a.presentation,${withdrawnSql('a')} AS withdrawn FROM messages a
-         LEFT JOIN turns t ON t.id=a.turn_id AND t.owner_id=a.owner_id
-         WHERE a.owner_id=$1 AND a.thread_id=$2 AND a.role='assistant' AND a.hidden_at IS NULL
-           AND (a.text<>'' OR a.presentation IS NOT NULL)
-           AND CASE WHEN m.reply_to_message_id IS NOT NULL THEN a.id=m.reply_to_message_id
-             ELSE a.turn_id IS NOT NULL AND (a.created_at,a.id)<(m.created_at,m.id)
-               AND a.created_at>=CASE WHEN m.created_at>=cleared.at THEN cleared.at ELSE '-infinity'::timestamptz END
-               AND t.channel IS NOT DISTINCT FROM u.channel END
-         ORDER BY a.created_at DESC,a.id DESC LIMIT 1) r ON TRUE
+         WHERE a.id=m.reply_to_message_id AND a.owner_id=$1 AND a.thread_id=$2 AND a.role='assistant'
+           AND a.hidden_at IS NULL AND (a.text<>'' OR a.presentation IS NOT NULL)) explicit ON TRUE
+     LEFT JOIN LATERAL (SELECT a.id,a.text,a.presentation,${withdrawnSql('a')} AS withdrawn FROM messages a
+         JOIN turns t ON t.id=a.turn_id AND t.owner_id=a.owner_id
+         WHERE m.reply_to_message_id IS NULL AND a.owner_id=$1 AND a.thread_id=$2 AND a.role='assistant'
+           AND a.hidden_at IS NULL AND (a.text<>'' OR a.presentation IS NOT NULL)
+           AND (a.created_at,a.id)<(m.created_at,m.id)
+           AND a.created_at>=CASE WHEN m.created_at>=cleared.at THEN cleared.at ELSE '-infinity'::timestamptz END
+           AND t.channel IS NOT DISTINCT FROM u.channel
+         ORDER BY a.created_at DESC,a.id DESC LIMIT 1) implicit ON TRUE
+     CROSS JOIN LATERAL (SELECT COALESCE(explicit.id,implicit.id) AS id,COALESCE(explicit.text,implicit.text) AS text,
+         CASE WHEN explicit.id IS NOT NULL THEN explicit.presentation ELSE implicit.presentation END AS presentation,
+         COALESCE(explicit.withdrawn,implicit.withdrawn) AS withdrawn) r
      WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.role='user' AND m.text<>'' AND m.hidden_at IS NULL
        AND m.approval_answer IS NULL AND NOT ${withdrawnSql('m')}
-       AND (m.id IN (SELECT id FROM recent) OR m.id=ANY($3::uuid[]))
      ORDER BY m.created_at,m.id`,
     [ownerId, threadId, requestIds],
   );
