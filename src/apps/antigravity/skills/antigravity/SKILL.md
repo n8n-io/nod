@@ -9,7 +9,7 @@ Use the connected Antigravity MCP server to delegate ANY task to Google Antigrav
 
 ## Available Tools
 
-The tools are exposed as `mcp__antigravity__<tool>` or `mcp__gemini__<tool>`. Load the ones you need with `nod_tool_search`:
+The tools are exposed as `mcp__antigravity__<tool>`. Load the ones you need with `nod_tool_search`:
 
 ### 1. General & Multimodal Intelligence
 - `mcp__antigravity__agent`: Universal autonomous agent. Executes complete missions (coding, bug fixes, refactors, database models) and commits to git.
@@ -37,8 +37,8 @@ The tools are exposed as `mcp__antigravity__<tool>` or `mcp__gemini__<tool>`. Lo
 
 ## How to Route User Prompts
 
-- **When the user asks to watch or analyze a video:** Call `antigravity_youtube_analyze` or `antigravity_ask` with the video URL.
-- **When the user asks to search the web or find docs:** Call `antigravity_web_search` or `antigravity_fetch_url`.
-- **When the user asks to build, fix, or add features:** Call `antigravity_agent` with the task description.
-- **When the user asks to run commands, check tests, or inspect files:** Call `antigravity_run_command`, `antigravity_read_file`, or `antigravity_list_files`.
-- **When the user asks to configure a skill (e.g. Shopify, database):** Call `antigravity_setup_skill`.
+- **When the user asks to watch or analyze a video:** Call `mcp__antigravity__youtube_analyze` or `mcp__antigravity__ask` with the video URL.
+- **When the user asks to search the web or find docs:** Call `mcp__antigravity__web_search` or `mcp__antigravity__fetch_url`.
+- **When the user asks to build, fix, or add features:** Call `mcp__antigravity__agent` with the task description.
+- **When the user asks to run commands, check tests, or inspect files:** Call `mcp__antigravity__run_command`, `mcp__antigravity__read_file`, or `mcp__antigravity__list_files`.
+- **When the user asks to configure a skill (e.g. Shopify, database):** Call `mcp__antigravity__setup_skill`.

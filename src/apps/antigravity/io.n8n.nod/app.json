@@ -2,13 +2,16 @@
   "$schema": "https://nod.n8n.io/docs/schemas/apps/v1/app.schema.json",
   "displayName": "Google Antigravity",
   "icon": "./io.n8n.nod/icon.svg",
-  "categories": ["Development", "Coding"],
+  "categories": ["Development"],
   "connection": {
     "type": "mcp",
-    "server": "antigravity",
+    "endpoint": {
+      "source": "owner",
+      "path": "/mcp"
+    },
     "authentication": ["bearer"],
     "hints": {
-      "token": "Enter your Antigravity Bridge API Key (set in Render) or leave blank for local loopback."
+      "token": "Enter your Antigravity Bridge API Key or leave blank for local loopback."
     }
   },
   "prompts": [
@@ -17,10 +20,10 @@
     "List all my active Antigravity projects."
   ],
   "requirements": [
-    "Antigravity MCP Bridge running on Render or locally on http://localhost:4568."
+    "An Antigravity MCP Bridge running locally or on a reachable server."
   ],
   "limitations": [
-    "Code generation and file writes follow workspace file permissions on the Antigravity host.",
-    "Git pushes require configured credentials or SSH keys on the host machine."
+    "Workspace permissions limit file system modifications on the Antigravity host.",
+    "This app does not start automatic monitoring from its MCP connection alone."
   ]
 }
