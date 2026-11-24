@@ -187,6 +187,7 @@ export async function recentOwnerWords(
   ownerId: string,
   threadId: string,
   requestIds: string[],
+  taskId: string | null = null,
 ) {
   const { rows } = await pool.query<{
     id: string;
@@ -203,14 +204,27 @@ export async function recentOwnerWords(
          WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.hidden_at IS NULL
            AND (m.role='user' OR (m.role='assistant' AND m.turn_id IS NOT NULL))
            AND (m.text<>'' OR m.presentation IS NOT NULL)),
-     requests AS (SELECT m.id,m.created_at FROM messages m WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.id=ANY($3::uuid[])),
-     recent AS ((SELECT v.id FROM visible v,cleared WHERE v.created_at>=cleared.at
+     anchors AS (${
+       taskId
+         ? 'SELECT t.created_at FROM tasks t WHERE t.id=$4::uuid AND t.owner_id=$1'
+         : 'SELECT m.created_at FROM messages m WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.id=ANY($3::uuid[])'
+     }),
+     recent AS (${
+       taskId
+         ? ''
+         : `(SELECT v.id FROM visible v,cleared WHERE v.created_at>=cleared.at
            AND v.created_at>now()-interval '24 hours'
-           ORDER BY v.created_at DESC,v.id DESC LIMIT ${recentMessages})
-         UNION SELECT w.id FROM requests r,cleared,LATERAL (SELECT v.id FROM visible v
-           WHERE (v.created_at,v.id)<=(r.created_at,r.id) AND v.created_at>r.created_at-interval '24 hours'
+           ORDER BY v.created_at DESC,v.id DESC LIMIT ${recentMessages}) UNION `
+     }SELECT w.id FROM anchors r,cleared,LATERAL (SELECT v.id FROM visible v
+           WHERE v.created_at<=r.created_at AND v.created_at>r.created_at-interval '24 hours'
              AND v.created_at>=CASE WHEN r.created_at>=cleared.at THEN cleared.at ELSE '-infinity'::timestamptz END
-           ORDER BY v.created_at DESC,v.id DESC LIMIT ${recentMessages}) w)
+           ORDER BY v.created_at DESC,v.id DESC LIMIT ${recentMessages}) w${
+             taskId
+               ? ` UNION SELECT tm.id FROM turns tu JOIN messages tm ON tm.owner_id=tu.owner_id
+           AND (tm.id=tu.message_id OR tm.turn_id=tu.id)
+           WHERE tu.owner_id=$1 AND tu.task_id=$4::uuid AND tm.role='user'`
+               : ''
+           })
      SELECT m.id,m.text,m.created_at,r.id AS reply_id,r.text AS reply_text,r.presentation AS reply_presentation,
        r.withdrawn AS reply_withdrawn,EXISTS (SELECT 1 FROM approvals p
          JOIN turns e ON e.id=p.execution_turn_id AND e.owner_id=p.owner_id
@@ -237,7 +251,7 @@ export async function recentOwnerWords(
        AND m.text NOT IN (SELECT task->>'title' FROM messages offer,jsonb_array_elements(offer.suggestions->'tasks') task
          WHERE offer.owner_id=$1 AND offer.thread_id=$2 AND offer.suggestions IS NOT NULL AND task->>'title' IS NOT NULL)
      ORDER BY m.created_at,m.id`,
-    [ownerId, threadId, requestIds],
+    taskId ? [ownerId, threadId, requestIds, taskId] : [ownerId, threadId, requestIds],
   );
   const messages = rows.map((row) => {
     const replied = row.reply_id && !row.reply_withdrawn;

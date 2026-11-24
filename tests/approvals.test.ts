@@ -890,7 +890,6 @@ test('Gmail deletion names verified identity without model wording', async () =>
       work: {
         kind: 'schedule' as const,
         title: 'Synthetic draft cleanup [review](https://outside.example.test)',
-        waitsForAnswer: true as const,
       },
     },
   ]) {
@@ -903,8 +902,6 @@ test('Gmail deletion names verified identity without model wording', async () =>
     assert.doesNotMatch(result.question, /synthetic-private/);
     if (proposal.action === 'GMAIL_DELETE_MESSAGE')
       assert.match(visibleText, /description is incomplete/i);
-    if (proposal.action === 'GMAIL_DELETE_DRAFT')
-      assert.match(visibleText, /schedule skips its runs until you answer/i);
     assert.match(
       result.question,
       proposal.action === 'GMAIL_DELETE_MESSAGE' ? /alex@example\.test/ : /cleanup@example\.test/,
@@ -3431,7 +3428,6 @@ test(
             kind: 'schedule',
             title: 'Synthetic standup',
             ownerRequest: instruction,
-            waitsForAnswer: true,
           });
           await finish(authorized.turnId, 'cancelled');
           await setRule('');
@@ -3982,7 +3978,7 @@ test(
       });
 
       await t.test(
-        'a task check sees its request, the question it answered and recent chat',
+        'a task check sees the conversation before its request and its own replies, not later chat',
         async (t) => {
           const parent = await begin('Read my fixture flight dates.');
           const preTaskQuestion = randomUUID();
@@ -4052,16 +4048,17 @@ test(
             text: string;
             replyTo?: string;
           }>;
-          const recent = startedWords.slice(-3);
+          const recent = startedWords.slice(-2);
           assert.deepEqual(
             recent.map((item) => item.text),
-            [
-              'Read my fixture flight dates.',
-              'Include the fixture taxes.',
-              'Send the separate hotel request to hotel@example.test.',
-            ],
+            ['Read my fixture flight dates.', 'Include the fixture taxes.'],
           );
           assert.equal(recent[1]!.replyTo, 'Should I include the fixture taxes?');
+          assert.ok(
+            !startedWords.some(
+              (item) => item.text === 'Send the separate hotel request to hotel@example.test.',
+            ),
+          );
           const oldApproval = await propose(turn, 'GMAIL_SEND_EMAIL', { to: 'hotel@example.test' });
           await db.pool.query(
             "INSERT INTO messages(id,owner_id,thread_id,role,text,reply_to_message_id) SELECT $1,$2,thread_id,'assistant','Saved task question',confirmation_message_id FROM approvals WHERE id=$3",
@@ -4097,6 +4094,7 @@ test(
           const words = reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text);
           assert.equal(words.at(-1), 'Use the new fixture flight dates.');
           assert.ok(words.includes('Read my fixture flight dates.'));
+          assert.ok(!words.includes('Send the separate hotel request to hotel@example.test.'));
           await tasks.execute(
             continued,
             { action: 'finish', id: task.id, status: 'done', result: 'Dates checked' },
