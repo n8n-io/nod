@@ -8281,6 +8281,52 @@ test('native OpenAI model discovery and requests keep each connection in its reg
   );
 });
 
+test('OpenRouter routing variants suffix model ids but keep routers and existing variants', async () => {
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const { modelKeyCredential } = await import('../src/server/models.ts');
+  const entry = (id: string) => ({
+    id,
+    name: id,
+    context_length: 100000,
+    supported_parameters: ['tools', 'reasoning'],
+    architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+    pricing: { prompt: '0.000002', completion: '0.00001' },
+  });
+  const backend = createPiModelBackend({
+    fetch: async (input) => {
+      if (String(input) === 'https://openrouter.ai/api/v1/key')
+        return Response.json({ data: { is_management_key: false } });
+      return Response.json({
+        data: ['openai/gpt-6.1-sol', 'openrouter/free', 'fixture/open-model:free'].map(entry),
+      });
+    },
+  });
+  const ids = async (variant?: string) =>
+    (
+      await backend.catalog(
+        'openrouter',
+        'api_key',
+        modelKeyCredential('openrouter', 'fixture-router-key', variant ? { variant } : {}),
+      )
+    ).map((definition) => [definition.choice.id, definition.spec.id]);
+  const unchanged = [
+    ['openai/gpt-6.1-sol', 'openai/gpt-6.1-sol'],
+    ['openrouter/free', 'openrouter/free'],
+    ['fixture/open-model:free', 'fixture/open-model:free'],
+  ];
+  assert.deepEqual(await ids(), unchanged);
+  assert.deepEqual(await ids('standard'), unchanged);
+  assert.deepEqual(await ids('nitro'), [
+    ['openai/gpt-6.1-sol:nitro', 'openai/gpt-6.1-sol:nitro'],
+    ...unchanged.slice(1),
+  ]);
+  assert.deepEqual((await ids('cost'))[0], ['openai/gpt-6.1-sol:cost', 'openai/gpt-6.1-sol:cost']);
+  assert.throws(
+    () => modelKeyCredential('openrouter', 'fixture-router-key', { variant: 'fastest' }),
+    /variant/,
+  );
+});
+
 test('ChatGPT discovery preserves account visibility and reasoning controls through requests', async () => {
   const credential = chatgptFixtureCredential();
   let hidden = false;

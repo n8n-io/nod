@@ -35,7 +35,7 @@ export const noKeySettings: KeySettings = {
   deployment: '',
   accountId: '',
   gatewayId: '',
-  variant: 'standard',
+  variant: '',
 };
 
 export function keySettingsReady(provider: ModelProvider, settings: KeySettings) {

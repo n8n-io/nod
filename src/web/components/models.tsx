@@ -269,7 +269,7 @@ export function CloudKeyFields({
       >
         <select
           className="input"
-          value={value.variant}
+          value={value.variant || 'standard'}
           disabled={disabled}
           onChange={(event) => onChange({ ...value, variant: event.target.value })}
         >

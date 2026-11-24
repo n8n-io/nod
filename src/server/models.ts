@@ -73,7 +73,7 @@ const keySchema = z
     accountId: z.string().trim().max(100).optional(),
     gatewayId: z.string().trim().max(100).optional(),
     workspaceId: z.string().trim().max(100).optional(),
-    variant: z.enum(['standard', 'nitro', 'cost']).optional(),
+    variant: z.string().trim().max(100).optional(),
   })
   .strict();
 export const modelSelectionInput = z

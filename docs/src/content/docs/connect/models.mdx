@@ -134,7 +134,7 @@ If the connection fails because workspace discovery isn't available, **Enter wor
 
 Nod lists the OpenRouter models that support text and tools.
 
-**Routing variant** chooses how OpenRouter picks the provider for a model. **Standard routing** keeps its default balance of speed and price. **Nitro (fastest)** sorts providers by throughput. **Cost (cheapest)** sorts by price. Nod adds the variant to each model ID it saves, so the model list shows names ending in `:nitro` or `:cost`, and the choice applies to every request on that connection. The variant is set when you connect the key; to change it, add the key again with the other variant.
+**Routing variant** chooses how OpenRouter picks the provider for a model. **Standard routing** keeps its default balance of speed and price. **Nitro (fastest)** sorts providers by throughput. **Cost (cheapest)** sorts by price. Nod adds the variant to each model ID it saves, so the model list shows names ending in `:nitro` or `:cost`, and the choice applies to every request on that connection. The `openrouter/free` and `openrouter/auto` routers and models that already have a variant, such as `:free`, keep their ID. The variant is set when you connect with an API key. To change it, add the key as a new connection with the other variant, then remove the old connection.
 
 The `openrouter/free` and `openrouter/auto` routers can select different models for each request. Nod keeps your router choice and uses an 8,192-token working limit. This leaves room for routes with a small context window. Provider limits and free-model availability still apply.
 

@@ -37,11 +37,16 @@ export function openRouterRoute(
   definition: ModelDefinition,
   variant: OpenRouterVariant | undefined,
 ): ModelDefinition {
-  if (!variant || variant === 'standard' || !Object.hasOwn(openRouterVariants, variant))
+  const { choice, spec } = definition;
+  if (
+    !variant ||
+    variant === 'standard' ||
+    !Object.hasOwn(openRouterVariants, variant) ||
+    choice.id.startsWith('openrouter/') ||
+    choice.id.includes(':')
+  )
     return definition;
   const suffix = `:${variant}`;
-  const { choice, spec } = definition;
-  if (choice.id.endsWith(suffix)) return definition;
   return {
     choice: { ...choice, id: `${choice.id}${suffix}`, name: `${choice.name} · ${suffix}` },
     spec: { ...spec, id: `${String(spec.id ?? choice.id)}${suffix}` },
