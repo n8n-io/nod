@@ -103,11 +103,18 @@ export function trustBasis(
   words: TrustWords & { action?: { name: string; arguments?: Record<string, unknown> } },
 ): TrustBasis | undefined {
   if (!answer || typeof answer !== 'object') return undefined;
-  const { run, because, source } = answer as {
+  const { run, because, source, terms } = answer as {
     run?: unknown;
     because?: unknown;
     source?: unknown;
+    terms?: unknown;
   };
+  if (
+    terms !== undefined &&
+    (!Array.isArray(terms) ||
+      terms.some((term) => !term || typeof term !== 'object' || term.same !== true))
+  )
+    return undefined;
   const cited = typeof source === 'string' ? source : because === 'read' ? 'read' : undefined;
   if (run !== true || !cited) return undefined;
   const name = words.action?.name ?? '';
