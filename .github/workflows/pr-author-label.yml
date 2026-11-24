@@ -23,7 +23,9 @@ jobs:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          permission=$(gh api "repos/$GH_REPO/collaborators/$PR_AUTHOR/permission" --jq .permission)
+          if ! permission=$(gh api "repos/$GH_REPO/collaborators/$PR_AUTHOR/permission" --jq .permission 2>&1); then
+            case "$permission" in *"HTTP 404"*) exit 0 ;; *) echo "$permission" >&2; exit 1 ;; esac
+          fi
           case "$permission" in admin | write) ;; *) exit 0 ;; esac
           gh label create "n8n team" --color ffffff --description "Authored by the n8n team" --force
           gh api --method POST "repos/$GH_REPO/issues/$PR_NUMBER/labels" -f "labels[]=n8n team" --silent
