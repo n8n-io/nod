@@ -3,7 +3,7 @@ import type { DecisionModel, DecisionQuestion } from '../ports/decisions.ts';
 import type { ModelAccess } from '../ports/models.ts';
 import type { OpenAIRegion } from '../shared/models.ts';
 import { openAIBaseUrl, openAIRequestError } from './openai/api.ts';
-import { nodHeaders } from './attribution.ts';
+import { nodFetch } from './attribution.ts';
 import { ModelServiceError } from './model-error.ts';
 
 export type DecisionConnection = {
@@ -153,7 +153,7 @@ export function createDecisionModel(options: {
   fetch?: typeof fetch;
   reserve?: ModelAccess['reserve'];
 }): DecisionModel {
-  const request = options.fetch ?? fetch;
+  const request = options.fetch ?? nodFetch;
   return {
     get configured() {
       return options.configured?.();
@@ -270,7 +270,6 @@ export function createDecisionModel(options: {
           method: 'POST',
           redirect: 'error',
           headers: {
-            ...nodHeaders(connection.provider, url),
             authorization: `Bearer ${connection.key}`,
             'content-type': 'application/json',
           },

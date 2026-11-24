@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { SpeechProviderError, type SpeechProvider } from '../../ports/speech.ts';
 import type { ProviderUsageEvent } from '../../ports/provider-usage.ts';
-import { nodHeaders } from '../attribution.ts';
+import { nodFetch } from '../attribution.ts';
 import { readSpeechResponse } from '../speech.ts';
 import { speechVoices } from '../../shared/speech.ts';
 
@@ -12,7 +12,7 @@ export function createOpenRouterSpeechProvider(options: {
   voice?: string;
   fetch?: typeof fetch;
 }): SpeechProvider {
-  const request = options.fetch ?? fetch;
+  const request = options.fetch ?? nodFetch;
   const voices = speechVoices.filter(
     (voice) => voice.engine === 'ElevenLabs' || voice.engine === 'Kokoro',
   );
@@ -58,11 +58,7 @@ export function createOpenRouterSpeechProvider(options: {
         const response = await request('https://openrouter.ai/api/v1/audio/speech', {
           method: 'POST',
           redirect: 'error',
-          headers: {
-            ...nodHeaders('openrouter', 'https://openrouter.ai/api/v1'),
-            Authorization: `Bearer ${key}`,
-            'Content-Type': 'application/json',
-          },
+          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ model, input: text, voice, response_format: 'mp3' }),
           signal: AbortSignal.any([AbortSignal.timeout(120_000), ...(signal ? [signal] : [])]),
         });
@@ -97,7 +93,7 @@ export function createOpenRouterTranscriptionProvider(options: {
   model?: string;
   fetch?: typeof fetch;
 }) {
-  const request = options.fetch ?? fetch;
+  const request = options.fetch ?? nodFetch;
   const transcribe: NonNullable<SpeechProvider['transcribe']> = async (audio, signal, report) => {
     signal?.throwIfAborted();
     const key = await options.apiKey();
@@ -128,10 +124,7 @@ export function createOpenRouterTranscriptionProvider(options: {
       const response = await request('https://openrouter.ai/api/v1/audio/transcriptions', {
         method: 'POST',
         redirect: 'error',
-        headers: {
-          ...nodHeaders('openrouter', 'https://openrouter.ai/api/v1'),
-          Authorization: `Bearer ${key}`,
-        },
+        headers: { Authorization: `Bearer ${key}` },
         body,
         signal: AbortSignal.any([AbortSignal.timeout(120_000), ...(signal ? [signal] : [])]),
       });

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SpeechProvider } from '../../ports/speech.ts';
 import type { ProviderUsageEvent } from '../../ports/provider-usage.ts';
+import { nodFetch } from '../attribution.ts';
 import { readSpeechResponse } from '../speech.ts';
 import { speechVoices } from '../../shared/speech.ts';
 import type { OpenAIRegion } from '../../shared/models.ts';
@@ -17,7 +18,7 @@ export function createOpenAISpeechProvider(options: {
   voice?: string;
   fetch?: typeof fetch;
 }): SpeechProvider {
-  const request = options.fetch ?? fetch;
+  const request = options.fetch ?? nodFetch;
   const speechModel = options.speechModel || 'gpt-4o-mini-tts';
   const voices = speechVoices.filter(
     (voice) =>

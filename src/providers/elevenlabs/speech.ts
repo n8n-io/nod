@@ -4,6 +4,7 @@ import { SpeechProviderError, type SpeechProvider } from '../../ports/speech.ts'
 import type { ProviderUsageEvent } from '../../ports/provider-usage.ts';
 import type { SpeechVoice } from '../../shared/speech.ts';
 import { appPages } from '../../shared/app-links.ts';
+import { nodFetch } from '../attribution.ts';
 import { readSpeechResponse } from '../speech.ts';
 
 export class ElevenLabsConnectionError extends SpeechProviderError {}
@@ -17,7 +18,7 @@ const voiceSchema = z.object({
 
 export async function readElevenLabsVoices(
   key: string,
-  request: typeof fetch = fetch,
+  request: typeof fetch = nodFetch,
   signal?: AbortSignal,
 ): Promise<SpeechVoice[]> {
   const deadline = AbortSignal.any([AbortSignal.timeout(15_000), ...(signal ? [signal] : [])]);
@@ -92,7 +93,7 @@ export function createElevenLabsSpeechProvider(options: {
   configured: () => boolean;
   fetch?: typeof fetch;
 }): SpeechProvider {
-  const request = options.fetch ?? fetch;
+  const request = options.fetch ?? nodFetch;
   let voices: SpeechVoice[] = [];
   let catalogKey: string | undefined;
   let loadedAt = 0;
