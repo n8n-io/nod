@@ -94,7 +94,7 @@ Shared storage does not put every change into every active model context. The se
 
 Coordination goes through the main session and ledger. Task sessions cannot forward owner updates to other tasks. They can read shared outputs. `delegate` is different: it runs temporary helpers inside a turn, returns their results to the parent and does not create saved task records.
 
-Shared information does not grant permission. For a task started from chat, the trust check uses its original owner request and owner messages addressed to it. It also keeps up to five owner chat messages from the 24 hours before the task started, as background only. Other task reports, files, briefs and memory cannot authorize an outside action. See [Approvals](/trust/approvals/).
+Shared information does not grant permission. For a task started from chat, the trust check uses your recent chat messages and the conversation that led to the task, including the original request. Other task reports, files, briefs and memory cannot authorize an outside action. See [Approvals](/trust/approvals/).
 
 ## One task across web and chat apps
 

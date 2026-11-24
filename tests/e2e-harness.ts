@@ -81,6 +81,30 @@ function scriptedReply(messages: Entry[]) {
   });
   if (task) {
     const instruction = pending.map((request) => request.text).join(' / ');
+    if (instruction.includes('pause-all') && !calls.some((call) => call.includes('schedule_pause')))
+      return {
+        call: {
+          name: 'codemode',
+          arguments: {
+            code: `const ids = new Set();
+const walk = (node) => {
+  if (typeof node === 'string') {
+    const start = node.search(/[[{]/);
+    const end = Math.max(node.lastIndexOf(']'), node.lastIndexOf('}'));
+    if (start >= 0 && end > start) {
+      try { walk(JSON.parse(node.slice(start, end + 1))); } catch {}
+    }
+  } else if (Array.isArray(node)) node.forEach(walk);
+  else if (node && typeof node === 'object') {
+    if (typeof node.id === 'string' && String(node.title).startsWith('Synthetic')) ids.add(node.id);
+    Object.values(node).forEach(walk);
+  }
+};
+walk(await tools.nod({ action: 'schedule_list', args: {} }));
+for (const id of ids) await tools.nod({ action: 'schedule_pause', args: { id } });`,
+          },
+        },
+      };
     if (!calls.some((call) => call.includes('\\"action\\":\\"finish\\"')))
       return {
         hold: pending.find((request) => request.text.includes('hold:'))?.text,
@@ -179,6 +203,24 @@ async function serve() {
     throw new Error('Speech is not part of the scripted harness.');
   };
   const integration = createIntegrationFixture(`http://localhost:${port}`, () => {});
+  const checker = {
+    id: 'scripted-checker',
+    configured: true,
+    async curate(request: { task: string; input: object }) {
+      const input = request.input as {
+        action?: { name?: string };
+        userMessages?: Array<{ text: string; canAuthorize?: boolean }>;
+      };
+      if (request.task !== 'review' || !input.action) return undefined;
+      const said = input.userMessages ?? [];
+      const index = said.findLastIndex(
+        (message) => message.canAuthorize !== false && /^pause my synthetic/i.test(message.text),
+      );
+      return input.action.name === 'NOD_schedule_pause' && index >= 0
+        ? { run: true, source: `message:${index}`, because: said[index]!.text }
+        : { run: false };
+    },
+  };
   const application = await createApplication(
     {
       agent: createPiAgent({
@@ -226,6 +268,7 @@ async function serve() {
       speech: { id: 'disabled', configured: false, synthesize: unavailable },
       keyStore: { id: 'scripted', configured: true, getKey: async () => key },
       model: { provider: 'openai', name: 'scripted', configured: true },
+      ...(process.env.NOD_E2E_CHECKER === '1' ? { onboardingCurator: checker } : {}),
     },
     { heartbeat: false },
   );
@@ -241,7 +284,7 @@ async function freePort() {
   return port;
 }
 
-export async function startNod() {
+export async function startNod(options: { checker?: boolean } = {}) {
   const base = new URL(process.env.TEST_DATABASE_URL!);
   const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
   const schema = `e2e_${suffix}`;
@@ -272,6 +315,7 @@ export async function startNod() {
         PGBOSS_SCHEMA: bossSchema,
         PORT: String(port),
         NODE_ENV: 'test',
+        ...(options.checker ? { NOD_E2E_CHECKER: '1' } : {}),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });

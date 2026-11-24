@@ -6786,7 +6786,7 @@ test(
       await t.test(
         'clear keeps admitted task and schedule instructions while stopping chat',
         async () => {
-          const { captureOwnerInstructions, validateOwnerInstructions } =
+          const { recentOwnerWords, validateOwnerInstructions } =
             await import('../src/server/owner-instructions.ts');
           const { turnOrigin } = await import('../src/server/approvals.ts');
           const restriction = 'Do not publish synthetic project data.';
@@ -6829,22 +6829,12 @@ test(
             const origin = await turnOrigin(child!.turnId);
             assert.ok(origin);
             const capture = () =>
-              captureOwnerInstructions(
-                db.pool,
-                ownerId,
-                creator.threadId,
-                origin.messageIds,
-                task!.id,
-                new Date(0),
-                child!.turnId,
-              );
+              recentOwnerWords(db.pool, ownerId, creator.threadId, origin.messageIds);
+            const said = (words: Awaited<ReturnType<typeof capture>>) =>
+              (words.words.userMessages ?? []).map((message) => message.text);
             const before = await capture();
-            assert.ok(before?.authorizingIds.includes(creator.messageId));
-            const priorLimit = before?.words.userMessages?.find(
-              (message) => message.text === restriction,
-            );
-            assert.ok(priorLimit);
-            assert.equal(priorLimit.canAuthorize, false);
+            assert.ok(said(before).includes(prompt));
+            assert.ok(said(before).includes(restriction));
             const args = {
               title: 'Synthetic saved monitor',
               prompt: 'Read the synthetic project report daily.',
@@ -6852,20 +6842,17 @@ test(
               cron: '0 9 * * *',
               timeZone: 'UTC',
             };
-            const chatEvidence = await captureOwnerInstructions(
-              db.pool,
-              ownerId,
-              creator.threadId,
-              [creator.messageId],
-              null,
-              new Date(0),
-              creator.turnId,
-            );
+            const chatEvidence = await recentOwnerWords(db.pool, ownerId, creator.threadId, [
+              creator.messageId,
+            ]);
             const prepared = await personal.prepareScheduleChange('schedule_create', args);
             schedule = (await personal.manage('schedule_create', args, {
               turnId: creator.turnId,
               sourceMessageId: creator.messageId,
-              instructionChange: { ...prepared, evidence: chatEvidence!.evidence },
+              instructionChange: {
+                ...prepared,
+                evidence: chatEvidence.evidence(creator.messageId),
+              },
             })) as { id: string };
             const savedEvidence = (
               await db.pool.query('SELECT authority FROM schedules WHERE id=$1', [schedule.id])
@@ -6887,32 +6874,29 @@ test(
             assert.equal(record.state, 'open');
             const after = await capture();
             await validateOwnerInstructions(db.pool, ownerId, savedEvidence);
-            assert.deepEqual(
-              after?.words.userMessages?.find((message) => message.text === restriction),
-              priorLimit,
-            );
+            assert.ok(said(after).includes(restriction));
             releaseMain();
             const freshPrompt = 'Give the synthetic monitor status only.';
             block(freshPrompt);
             const fresh = await thread.submitUserMessage(freshPrompt);
             await waitFor(() => Boolean(ran(fresh.turnId)));
             try {
-              const newChat = await captureOwnerInstructions(
-                db.pool,
-                ownerId,
-                creator.threadId,
-                [fresh.messageId],
-                null,
-                new Date(Date.now() - 86_400_000),
-                fresh.turnId,
-              );
-              assert.equal(newChat?.authorizingIds.includes(creator.messageId) ?? false, false);
-              assert.ok(newChat?.authorizingIds.includes(fresh.messageId));
+              const newChat = await recentOwnerWords(db.pool, ownerId, creator.threadId, [
+                fresh.messageId,
+              ]);
+              assert.equal(said(newChat).includes(prompt), false);
+              assert.equal(said(newChat).includes(restriction), false);
+              assert.ok(said(newChat).includes(freshPrompt));
               const { createTrust } = await import('../src/server/trust.ts');
               const oldGrant = await createTrust({
                 pool: db.pool,
                 ownerId,
-                review: async () => ({ run: true, because: prompt }),
+                review: async (_instructions, input) => {
+                  const index = (
+                    (input as { userMessages?: Array<{ text: string }> }).userMessages ?? []
+                  ).findIndex((message) => message.text === prompt);
+                  return index < 0 ? { run: false } : { run: true, source: `message:${index}` };
+                },
               }).check(
                 { threadId: creator.threadId, turnId: fresh.turnId },
                 'SYNTHETIC_SEND_REPORT',
@@ -6927,15 +6911,15 @@ test(
                 ).rows[0],
                 { status: 'cancelled', withdrawn: false, error: null },
               );
-              assert.ok((await capture())?.authorizingIds.includes(creator.messageId));
+              assert.ok(said(await capture()).includes(prompt));
               await validateOwnerInstructions(db.pool, ownerId, savedEvidence);
             } finally {
               release(freshPrompt);
               await waitFor(settled(fresh.turnId));
             }
             assert.ok(
-              after?.authorizingIds.includes(creator.messageId),
-              'The active independent task lost its owner authority after /clear.',
+              said(after).includes(prompt),
+              'The active independent task lost its owner request after /clear.',
             );
           } finally {
             releaseMain();

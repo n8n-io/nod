@@ -1871,11 +1871,23 @@ test(
         | ((input: Record<string, any>) => boolean | Record<string, unknown>) = false;
       let ruled = false;
       const cite = (input: Record<string, any>) =>
-        input.userMessages?.at(-1)?.text ??
-        input.scheduledInstructions?.[0]?.text ??
-        input.standingInstruction ??
-        input.userRules ??
-        'read';
+        input.userMessages?.length
+          ? `message:${input.userMessages.length - 1}`
+          : input.scheduledInstructions?.length
+            ? 'schedule:0'
+            : input.standingInstruction
+              ? 'standing'
+              : input.userRules
+                ? 'rules'
+                : 'read';
+      const lastReply = (input?: Record<string, any>) =>
+        input?.userMessages?.at(-1)?.replyTo as string | undefined;
+      const said = (input: Record<string, any>, text: string) => {
+        const index = (input.userMessages ?? []).findLastIndex(
+          (message: { text: string }) => message.text === text,
+        );
+        return index < 0 ? { run: false } : { run: true, source: `message:${index}` };
+      };
       t.beforeEach(() => {
         aligned = false;
         ruled = false;
@@ -1920,7 +1932,7 @@ test(
           if (yes && typeof yes === 'object') return yes;
           return {
             run: yes,
-            ...(yes === true ? { because: cite(input) } : {}),
+            ...(yes === true ? { source: cite(input) } : {}),
             ...(ruled ? { rule: true } : {}),
           };
         },
@@ -2287,46 +2299,6 @@ test(
         },
       );
 
-      await t.test('a quoted permission cannot override a reported term mismatch', async () => {
-        const turn = await begin('Email Ana the invoice for EUR 1200.');
-        try {
-          for (const terms of [
-            null,
-            {},
-            [false],
-            [{ user: 'EUR 1200', action: 'EUR 1300', same: false }],
-            [{ user: 'EUR 1200', action: 'EUR 1200', same: 'true' }],
-          ]) {
-            aligned = (input) => ({ run: true, because: cite(input), terms });
-            assert.equal(
-              (
-                await trust.check(turn, 'GMAIL_SEND_EMAIL', {
-                  ...email('ana@example.test'),
-                  body: 'Invoice EUR 1300.',
-                })
-              ).confirm,
-              true,
-            );
-          }
-          aligned = (input) => ({
-            run: true,
-            because: cite(input),
-            terms: [{ user: 'EUR 1200', action: 'EUR 1200', same: true }],
-          });
-          assert.equal(
-            (
-              await trust.check(turn, 'GMAIL_SEND_EMAIL', {
-                ...email('ana@example.test'),
-                body: 'Invoice EUR 1200.',
-              })
-            ).confirm,
-            false,
-          );
-        } finally {
-          await finish(turn.turnId, 'cancelled');
-        }
-      });
-
       await t.test('a stopped turn cannot use an awaited authorization result', async () => {
         for (const status of ['cancelled', 'succeeded']) {
           for (const action of ['GMAIL_SEND_EMAIL', 'GMAIL_FETCH_EMAILS']) {
@@ -2334,7 +2306,7 @@ test(
             const entered = deferred();
             const release = deferred();
             aligned =
-              action === 'GMAIL_FETCH_EMAILS' ? () => ({ run: true, because: 'read' }) : true;
+              action === 'GMAIL_FETCH_EMAILS' ? () => ({ run: true, source: 'read' }) : true;
             duringReview = async () => {
               entered.resolve();
               await release.promise;
@@ -2432,7 +2404,7 @@ test(
         await finish(empty.turnId, 'cancelled');
 
         const invented = await begin('Email Ana the synthetic invoice.');
-        aligned = () => ({ run: true, because: 'Send it to everyone.' });
+        aligned = () => ({ run: true, source: 'message:99' });
         await checkWith(invented);
         assert.deepEqual(unusable(), [{ name: 'TrustCheckUnusable', code: 'basis_rejected' }]);
         await finish(invented.turnId, 'cancelled');
@@ -2443,50 +2415,6 @@ test(
         assert.deepEqual(unusable(), []);
         await finish(declined.turnId, 'cancelled');
       });
-
-      await t.test(
-        'a browser step quoted from informal owner words runs, and uncovered steps still ask',
-        async () => {
-          const request =
-            'no brecho.example.test clica no icone de lapis do anuncio da luminaria, muda o preço p 90 e salva as alteraçoes';
-          const step = (name: string) => ({
-            website: 'https://brecho.example.test',
-            page: 'https://brecho.example.test/minha-loja/anuncios',
-            step: 'click',
-            control: [{ role: 'button', name }],
-            command: { action: 'click', selector: '@e12' },
-          });
-          const turn = await begin(request);
-          for (const because of [
-            '...clica no icone de lapis do anuncio da luminaria',
-            '…salva as alteraçoes',
-            'clica no ícone de lápis do anúncio da luminária',
-            'salva as alterações',
-          ]) {
-            aligned = () => ({ run: true, because });
-            const verdict = await trust.check(turn, 'NOD_browser', step('editar anúncio'));
-            assert.equal(verdict.confirm, false, because);
-            assert.equal(!verdict.confirm && verdict.basis.kind, 'message', because);
-          }
-          for (const because of [
-            'clica no ícone ... salva as alterações',
-            'apaga o anúncio da luminária',
-            '...',
-          ]) {
-            aligned = () => ({ run: true, because });
-            compareVerdict(await trust.check(turn, 'NOD_browser', step('apagar anúncio')), {
-              confirm: true,
-              reason: 'unrequested',
-            });
-          }
-          aligned = false;
-          compareVerdict(await trust.check(turn, 'NOD_browser', step('apagar anúncio')), {
-            confirm: true,
-            reason: 'unrequested',
-          });
-          await finish(turn.turnId, 'cancelled');
-        },
-      );
 
       await t.test(
         'an unquoted web retry keeps the request of the latest task even across channels (LAB-1467)',
@@ -2505,16 +2433,16 @@ test(
           };
           aligned = ({ action, userMessages }) => {
             const args = action?.arguments;
-            const instruction = (
-              userMessages as Array<{ text: string; canAuthorize?: boolean }> | undefined
-            )?.find(({ text, canAuthorize }) => text === request && canAuthorize !== false);
+            const index = ((userMessages ?? []) as Array<{ text: string }>).findLastIndex(
+              ({ text }) => text === request,
+            );
             return action?.name === 'NOD_browser' &&
               args?.website === website &&
               args.page === `${website}/calendar` &&
               args.step === 'click' &&
               args.control?.[0]?.name === 'Create' &&
-              instruction
-              ? { run: true, because: instruction.text }
+              index >= 0
+              ? { run: true, source: `message:${index}` }
               : false;
           };
 
@@ -2737,7 +2665,7 @@ test(
           const checking = createTrust({
             pool,
             ownerId,
-            review: async (_instructions, input) => ({ run: true, because: cite(input) }),
+            review: async (_instructions, input) => ({ run: true, source: cite(input) }),
           });
           const args = email('ana@example.test');
           const before = calls.length;
@@ -2852,8 +2780,7 @@ test(
           assert.equal(allowed.confirm, false);
           if (!allowed.confirm) {
             assert.equal(allowed.basis.kind, 'message');
-            if (allowed.basis.kind === 'message')
-              assert.equal(allowed.basis.quote, text.slice(0, -1));
+            if (allowed.basis.kind === 'message') assert.equal(allowed.basis.quote, text);
           }
           for (const value of [
             { trust: 'ask' },
@@ -2981,7 +2908,7 @@ test(
           (await trust.check(sending, 'GMAIL_SEND_EMAIL', email('ana@example.test'))).confirm,
           true,
         );
-        assert.equal(reviews.at(-1)?.assistantMessageBeforeLatestUserMessage, draft);
+        assert.equal(lastReply(reviews.at(-1)), draft);
         assert.equal(await marked(), false);
         aligned = true;
         assert.equal(
@@ -3026,11 +2953,11 @@ test(
         turnIds.push(reaction.turnId);
         const reacted = await running(reaction.turnId);
         await trust.check(reacted, 'GMAIL_SEND_EMAIL', email('bob@example.test'));
-        assert.equal(reviews.at(-1)?.assistantMessageBeforeLatestUserMessage, older.text);
+        assert.equal(lastReply(reviews.at(-1)), older.text);
         assert.ok(
           reviews.at(-1)?.userMessages.some((message: { text: string }) => message.text === '👍'),
         );
-        aligned = (input) => input.assistantMessageBeforeLatestUserMessage === older.text;
+        aligned = (input) => lastReply(input) === older.text;
         assert.equal(
           (await trust.check(reacted, 'GMAIL_SEND_EMAIL', email('ana@example.test'))).confirm,
           false,
@@ -3038,7 +2965,7 @@ test(
         aligned = false;
         await db.pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [older.id]);
         await trust.check(reacted, 'GMAIL_SEND_EMAIL', email('bob@example.test'));
-        assert.equal('assistantMessageBeforeLatestUserMessage' in reviews.at(-1)!, false);
+        assert.equal(lastReply(reviews.at(-1)) !== undefined, false);
         const typedText = 'I approve the synthetic report to Bob.';
         const typed = await thread.submitUserMessage(typedText, [], {
           replyToMessageId: newer.id,
@@ -3046,7 +2973,7 @@ test(
         turnIds.push(typed.turnId);
         const typedTurn = await running(typed.turnId);
         await trust.check(typedTurn, 'GMAIL_SEND_EMAIL', email('bob@example.test'));
-        assert.equal(reviews.at(-1)?.assistantMessageBeforeLatestUserMessage, newer.text);
+        assert.equal(lastReply(reviews.at(-1)), newer.text);
         assert.ok(
           reviews
             .at(-1)
@@ -3055,7 +2982,7 @@ test(
         const accepted = await thread.submitUserMessage('Yes.');
         turnIds.push(accepted.turnId);
         const acceptedTurn = await running(accepted.turnId);
-        aligned = (input) => input.assistantMessageBeforeLatestUserMessage === newer.text;
+        aligned = (input) => lastReply(input) === newer.text;
         const acceptedVerdict = await trust.check(
           acceptedTurn,
           'GMAIL_SEND_EMAIL',
@@ -3067,17 +2994,7 @@ test(
         const bare = await begin('What time is it?');
         turnIds.push(bare.turnId);
         await trust.check(bare, 'GMAIL_SEND_EMAIL', email('bob@example.test'));
-        assert.equal(reviews.at(-1)?.assistantMessageBeforeLatestUserMessage, newer.text);
-        assert.ok(
-          !reviews.at(-1)?.userMessages.some((message: { text: string }) => message.text === '👍'),
-        );
-        assert.equal(
-          reviews
-            .at(-1)
-            ?.userMessages.find((message: { text: string }) => message.text === typedText)
-            ?.canAuthorize,
-          false,
-        );
+        assert.equal(lastReply(reviews.at(-1)), newer.text);
         const active = await begin('Continue the synthetic task.');
         turnIds.push(active.turnId);
         const steered = await thread.submitUserMessage('🙏', [], {
@@ -3115,16 +3032,16 @@ test(
             confirmation,
           ])
         ).rows[0]!.text;
-        assert.equal(reviews.at(-1)?.assistantMessageBeforeLatestUserMessage, question);
+        assert.equal(lastReply(reviews.at(-1)), question);
         const untargeted = await thread.submitUserMessage('👍');
         turnIds.push(untargeted.turnId);
         const untargetedTurn = await running(untargeted.turnId);
-        aligned = (input) => input.assistantMessageBeforeLatestUserMessage === newer.text;
+        aligned = (input) => lastReply(input) === newer.text;
         compareVerdict(
           await trust.check(untargetedTurn, 'GMAIL_SEND_EMAIL', email('fixture@example.test')),
           { confirm: true, reason: 'unrequested' },
         );
-        assert.equal(reviews.at(-1)?.assistantMessageBeforeLatestUserMessage, question);
+        assert.equal(lastReply(reviews.at(-1)), question);
         const otherChannel = await begin('Check the synthetic channel note.', {
           channel: 'telegram',
         });
@@ -3139,12 +3056,12 @@ test(
         const webBare = await thread.submitUserMessage('Yes.', [], { channel: 'web' });
         turnIds.push(webBare.turnId);
         const webBareTurn = await running(webBare.turnId);
-        aligned = (input) => input.assistantMessageBeforeLatestUserMessage === otherMessage;
+        aligned = (input) => lastReply(input) === otherMessage;
         compareVerdict(
           await trust.check(webBareTurn, 'GMAIL_SEND_EMAIL', email('carol@example.test')),
           { confirm: true, reason: 'unrequested' },
         );
-        assert.notEqual(reviews.at(-1)?.assistantMessageBeforeLatestUserMessage, otherMessage);
+        assert.notEqual(lastReply(reviews.at(-1)), otherMessage);
         const crossChannelReply = await thread.submitUserMessage('Yes.', [], {
           channel: 'web',
           replyToMessageId: otherMessageId,
@@ -3156,7 +3073,7 @@ test(
             .confirm,
           false,
         );
-        assert.equal(reviews.at(-1)?.assistantMessageBeforeLatestUserMessage, otherMessage);
+        assert.equal(lastReply(reviews.at(-1)), otherMessage);
         const proposalReaction = await thread.submitUserMessage('👍', [], {
           channel: 'web',
           replyToMessageId: otherMessageId,
@@ -3171,7 +3088,7 @@ test(
         );
         assert.equal(verdict.confirm, false);
         assert.equal(verdict.chatRevision, proposalReaction.messageId);
-        assert.equal(reviews.at(-1)?.assistantMessageBeforeLatestUserMessage, otherMessage);
+        assert.equal(lastReply(reviews.at(-1)), otherMessage);
       });
 
       await t.test(
@@ -3198,7 +3115,7 @@ test(
           turnIds.push(confirmed.turnId);
           await execute(approvalId);
           const resumed = await running(confirmed.turnId);
-          aligned = () => ({ run: true, because: 'Yes' });
+          aligned = (input) => said(input, 'Yes');
           const unrelated = await trust.check(
             resumed,
             'GMAIL_SEND_EMAIL',
@@ -3210,7 +3127,7 @@ test(
             rules: '',
             chat: { threadId: resumed.threadId, id: originalMessageId },
           });
-          aligned = () => ({ run: true, because: requestText });
+          aligned = (input) => said(input, requestText);
           const followOn = await trust.check(
             resumed,
             'GMAIL_SEND_EMAIL',
@@ -3221,16 +3138,15 @@ test(
             basis: {
               kind: 'message',
               messageId: originalMessageId,
-              quote: requestText.slice(0, -1),
+              quote: requestText,
             },
           });
           assert.equal(followOn.chatRevision, originalMessageId);
-          const words = reviews.at(-1)?.userMessages as Array<{
-            text: string;
-            canAuthorize: boolean;
-          }>;
-          assert.equal(words.find((item) => item.text === 'Yes')?.canAuthorize, false);
-          assert.equal(words.find((item) => item.text === requestText)?.canAuthorize, true);
+          const seen = () =>
+            reviews.at(-1)?.userMessages as Array<{ text: string; canAuthorize?: boolean }>;
+          const texts = () => seen().map((item) => item.text);
+          assert.equal(seen().find((item) => item.text === 'Yes')?.canAuthorize, false);
+          assert.equal(seen().find((item) => item.text === requestText)?.canAuthorize, undefined);
           const sent = calls.length;
           await approved.request(resumed, 'GMAIL_SEND_EMAIL', email('bob@example.test'), {
             allowed: true,
@@ -3247,27 +3163,16 @@ test(
           await db.pool.query("UPDATE turns SET status='succeeded',finished_at=now() WHERE id=$1", [
             correction.turnId,
           ]);
-          aligned = () => ({ run: true, because: requestText });
+          aligned = false;
           const corrected = await trust.check(
             resumed,
             'GMAIL_SEND_EMAIL',
             email('bob@example.test'),
           );
-          compareVerdict(corrected, { confirm: true, reason: 'unrequested' });
           assert.equal(corrected.chatRevision, correction.messageId);
-          const correctedWords = reviews.at(-1)?.userMessages as Array<{
-            text: string;
-            canAuthorize: boolean;
-          }>;
-          assert.equal(correctedWords.find((item) => item.text === 'Yes')?.canAuthorize, false);
-          assert.equal(
-            correctedWords.find((item) => item.text === requestText)?.canAuthorize,
-            false,
-          );
-          assert.equal(
-            correctedWords.find((item) => item.text === correctionText)?.canAuthorize,
-            true,
-          );
+          assert.equal(seen().find((item) => item.text === 'Yes')?.canAuthorize, false);
+          assert.ok(texts().indexOf(requestText) >= 0);
+          assert.ok(texts().indexOf(requestText) < texts().indexOf(correctionText));
         },
       );
 
@@ -3316,7 +3221,7 @@ test(
             await tasks.inherit(resumed);
             assert.equal((await row(resumed.turnId)).task_id, task.id);
             const sent = calls.length;
-            aligned = () => ({ run: true, because: reply });
+            aligned = (input) => said(input, reply);
             const verdict = await trust.check(
               resumed,
               'GMAIL_SEND_EMAIL',
@@ -3326,54 +3231,17 @@ test(
             assert.equal(calls.length, sent);
             const words = reviews.at(-1)?.userMessages as Array<{
               text: string;
-              canAuthorize: boolean;
+              canAuthorize?: boolean;
             }>;
             assert.equal(words.find((item) => item.text === reply)?.canAuthorize, false);
-            assert.equal(words.find((item) => item.text === requestText)?.canAuthorize, true);
+            assert.ok(
+              words.some((item) => item.text === requestText && item.canAuthorize !== false),
+            );
           }
         },
       );
 
-      await t.test(
-        'prior chat constraints remain visible without granting a new write',
-        async () => {
-          const priorText = 'Only send the synthetic report to Ana after Friday.';
-          const prior = await begin(priorText);
-          await finish(prior.turnId, 'succeeded');
-          const current = await begin('What time is it?');
-          aligned = () => ({ run: true, because: priorText });
-          const verdict = await trust.check(current, 'GMAIL_SEND_EMAIL', email('ana@example.test'));
-          const messages = reviews.at(-1)?.userMessages as Array<{
-            at: string;
-            text: string;
-            canAuthorize?: boolean;
-          }>;
-          assert.equal(messages.find((message) => message.text === priorText)?.canAuthorize, false);
-          assert.equal(
-            messages.find((message) => message.text === 'What time is it?')?.canAuthorize,
-            true,
-          );
-          assert.equal(verdict.confirm, true);
-          assert.equal(verdict.chatRevision, (await row(current.turnId)).message_id);
-          const { trustDecision } = await import('../src/server/trust-basis.ts');
-          const priorIndex = messages.findIndex((message) => message.text === priorText);
-          assert.ok(priorIndex >= 0);
-          assert.equal(
-            trustDecision({ userMessages: messages }).question.choices.some(
-              ({ value }) => value === `message:${priorIndex}`,
-            ),
-            false,
-          );
-          aligned = () => ({ run: true, because: priorText, source: `message:${priorIndex}` });
-          assert.equal(
-            (await trust.check(current, 'GMAIL_SEND_EMAIL', email('ana@example.test'))).confirm,
-            true,
-          );
-          await finish(current.turnId, 'cancelled');
-        },
-      );
-
-      await t.test('an absorbed correction removes the earlier request as authority', async (t) => {
+      await t.test('an absorbed correction reaches the checker after the request', async (t) => {
         const requestText = 'Send the synthetic report to Ana at ana@example.test.';
         const correctionText = 'Do not send the synthetic report to Ana.';
         const original = await begin(requestText);
@@ -3392,15 +3260,13 @@ test(
         await db.pool.query("UPDATE turns SET status='succeeded',finished_at=now() WHERE id=$1", [
           correction.turnId,
         ]);
-        aligned = () => ({ run: true, because: requestText });
+        aligned = false;
         const verdict = await trust.check(original, 'GMAIL_SEND_EMAIL', email('ana@example.test'));
-        const words = reviews.at(-1)?.userMessages as Array<{
-          text: string;
-          canAuthorize: boolean;
-        }>;
-        assert.equal(words.find((message) => message.text === requestText)?.canAuthorize, false);
-        assert.equal(words.find((message) => message.text === correctionText)?.canAuthorize, true);
-        assert.equal(verdict.confirm, true);
+        const words = (reviews.at(-1)!.userMessages as Array<{ text: string }>).map(
+          (message) => message.text,
+        );
+        assert.ok(words.indexOf(requestText) >= 0);
+        assert.ok(words.indexOf(requestText) < words.indexOf(correctionText));
         assert.equal(verdict.chatRevision, correction.messageId);
       });
 
@@ -3424,7 +3290,7 @@ test(
           aligned = (input) =>
             input.userMessages.some((message: { text: string }) =>
               /continued invoice|stopped invoice/.test(message.text),
-            ) || /stopped invoice/.test(input.assistantMessageBeforeLatestUserMessage ?? '');
+            ) || /stopped invoice/.test(lastReply(input) ?? '');
           try {
             const verdict = await trust.check(later, 'GMAIL_SEND_EMAIL', email('bob@example.test'));
             compareVerdict(verdict, { confirm: true, reason: 'unrequested' });
@@ -3437,7 +3303,7 @@ test(
               'Thanks, that is all.',
               'Yes, go ahead.',
             ]);
-            assert.equal(reviews.at(-1)!.assistantMessageBeforeLatestUserMessage, undefined);
+            assert.equal(lastReply(reviews.at(-1)), undefined);
             assert.ok(!seen.some((text: string) => /continued invoice|stopped invoice/.test(text)));
           } finally {
             await finish(later.turnId, 'cancelled');
@@ -3472,7 +3338,7 @@ test(
               message_id: 'synthetic-invoice',
               recipient_email: 'accounting@example.test',
             }),
-            { confirm: false, basis: { kind: 'standing', quote: standing.slice(0, -1) } },
+            { confirm: false, basis: { kind: 'standing', quote: standing } },
           );
           assert.equal(reviews.at(-1)?.userMessages, undefined);
           await trust.check(await begin('Check my inbox.'), 'GMAIL_FETCH_EMAILS', {});
@@ -3509,7 +3375,7 @@ test(
               event_id: 'synthetic-standup',
               start_time: '10:00',
             }),
-            { confirm: false, basis: { kind: 'schedule', quote: instruction.slice(0, -1) } },
+            { confirm: false, basis: { kind: 'schedule', quote: instruction } },
           );
           assert.equal(reviews.at(-1)?.userMessages, undefined);
           assert.equal(reviews.at(-1)?.standingInstruction, undefined);
@@ -3517,7 +3383,7 @@ test(
             () => {
               throw new Error('Synthetic checker failure.');
             },
-            () => ({ run: true, because: 'Words the owner never wrote.' }),
+            () => ({ run: true, source: 'schedule:9' }),
           ]) {
             aligned = undecided;
             for (const turn of [event, authorized])
@@ -4031,7 +3897,7 @@ test(
               basis: {
                 kind: 'message',
                 messageId: download,
-                quote: 'Download my bank statement now',
+                quote: 'Download my bank statement now.',
               },
             },
           );
@@ -4091,7 +3957,7 @@ test(
       });
 
       await t.test(
-        'saved task authority excludes owner instructions addressed to other work',
+        'a task check sees its request, the question it answered and recent chat',
         async (t) => {
           const parent = await begin('Read my fixture flight dates.');
           const preTaskQuestion = randomUUID();
@@ -4157,15 +4023,20 @@ test(
                 .rows[0].revision,
             },
           });
-          const started = reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text);
-          assert.deepEqual(started.slice(-2), [
-            'Read my fixture flight dates.',
-            'Include the fixture taxes.',
-          ]);
-          assert.equal(
-            started.includes('Send the separate hotel request to hotel@example.test.'),
-            false,
+          const startedWords = reviews.at(-1)!.userMessages as Array<{
+            text: string;
+            replyTo?: string;
+          }>;
+          const recent = startedWords.slice(-3);
+          assert.deepEqual(
+            recent.map((item) => item.text),
+            [
+              'Read my fixture flight dates.',
+              'Include the fixture taxes.',
+              'Send the separate hotel request to hotel@example.test.',
+            ],
           );
+          assert.equal(recent[1]!.replyTo, 'Should I include the fixture taxes?');
           const oldApproval = await propose(turn, 'GMAIL_SEND_EMAIL', { to: 'hotel@example.test' });
           await db.pool.query(
             "INSERT INTO messages(id,owner_id,thread_id,role,text,reply_to_message_id) SELECT $1,$2,thread_id,'assistant','Saved task question',confirmation_message_id FROM approvals WHERE id=$3",
@@ -4177,10 +4048,7 @@ test(
           const mainReply = await running(mainReplySubmission.turnId);
           t.after(() => finish(mainReply.turnId, 'cancelled'));
           await trust.check(mainReply, 'GMAIL_SEND_EMAIL', { to: 'hotel@example.test' });
-          assert.equal(
-            reviews.at(-1)!.assistantMessageBeforeLatestUserMessage,
-            'Do you want the fixture summary?',
-          );
+          assert.equal(lastReply(reviews.at(-1)), 'Do you want the fixture summary?');
           await finish(mainReply.turnId, 'succeeded');
           const update = await messages.submit('Use the new fixture flight dates.', [], {
             replyToMessageId: task.messageId,
@@ -4202,15 +4070,8 @@ test(
           await db.pool.query("UPDATE approvals SET status='expired' WHERE id=$1", [freshApproval]);
           await trust.check(continued, 'GMAIL_FETCH_EMAILS', {});
           const words = reviews.at(-1)!.userMessages.map((item: { text: string }) => item.text);
-          assert.deepEqual(words.slice(-3), [
-            'Read my fixture flight dates.',
-            'Include the fixture taxes.',
-            'Use the new fixture flight dates.',
-          ]);
-          assert.equal(
-            words.includes('Send the separate hotel request to hotel@example.test.'),
-            false,
-          );
+          assert.equal(words.at(-1), 'Use the new fixture flight dates.');
+          assert.ok(words.includes('Read my fixture flight dates.'));
           await tasks.execute(
             continued,
             { action: 'finish', id: task.id, status: 'done', result: 'Dates checked' },
@@ -4220,18 +4081,7 @@ test(
           const chat = await begin('Summarise the fixture tasks.');
           t.after(() => finish(chat.turnId, 'cancelled'));
           await trust.check(chat, 'GMAIL_FETCH_EMAILS', {});
-          const chatMessages = reviews.at(-1)!.userMessages as Array<{
-            text: string;
-            canAuthorize: boolean;
-          }>;
-          assert.equal(
-            chatMessages.find((item) => item.text === 'Include the fixture taxes.')?.canAuthorize,
-            false,
-          );
-          assert.equal(
-            chatMessages.some((item) => item.text === 'Use the new fixture flight dates.'),
-            false,
-          );
+          assert.equal(reviews.at(-1)!.userMessages.at(-1).text, 'Summarise the fixture tasks.');
           await finish(chat.turnId, 'succeeded');
         },
       );
@@ -4280,7 +4130,7 @@ test(
       );
 
       await t.test(
-        'a relayed owner message shows a task only its own question, and only the main chat steers or stops tasks',
+        'a relayed owner message shows the question it answered, and only the main chat steers or stops tasks',
         async (t) => {
           const start = async (request: string, title: string) => {
             const parent = await begin(request);
@@ -4347,10 +4197,7 @@ test(
             "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text,hidden_at) VALUES($1,$2,$3,$4,'assistant','Retired schedule confirmation fixture',now())",
             [randomUUID(), ownerId, worker.threadId, worker.turnId],
           );
-          assert.equal(
-            (await relay('Yes.', dentist.id)).assistantMessageBeforeLatestUserMessage,
-            question,
-          );
+          assert.equal(lastReply(await relay('Yes.', dentist.id)), question);
           const chat = await begin('Anything else pending?');
           await db.pool.query(
             "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant','Shall I send the fixture summary to Ana now?')",
@@ -4358,8 +4205,8 @@ test(
           );
           await finish(chat.turnId, 'succeeded');
           assert.equal(
-            'assistantMessageBeforeLatestUserMessage' in (await relay('Yes.', dentist.id)),
-            false,
+            lastReply(await relay('Yes.', dentist.id)),
+            'Shall I send the fixture summary to Ana now?',
           );
           const parcel = await start('Watch the fixture parcel.', 'Fixture parcel');
           const backgrounds: string[] = [];

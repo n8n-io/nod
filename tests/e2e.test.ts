@@ -246,3 +246,69 @@ test(
     );
   },
 );
+
+test(
+  'end to end, an earlier request covers every step of a task started from a short reply',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 120_000 },
+  async (t) => {
+    const nod = await startNod({ checker: true });
+    t.after(() => nod.close());
+    for (const title of ['Synthetic alpha', 'Synthetic beta', 'Synthetic gamma'])
+      await nod.api('POST', '/api/schedules', {
+        title,
+        prompt: `Check ${title}.`,
+        kind: 'recurring',
+        cron: '0 9 * * *',
+        timeZone: 'UTC',
+      });
+    await nod.send('Pause my synthetic alpha, beta and gamma schedules.');
+    await nod.settle();
+    await nod.send('task: pause-all go ahead');
+    await nod.settle();
+    assert.deepEqual(await nod.query('SELECT title,enabled FROM schedules ORDER BY title'), [
+      { title: 'Synthetic alpha', enabled: false },
+      { title: 'Synthetic beta', enabled: false },
+      { title: 'Synthetic gamma', enabled: false },
+    ]);
+    assert.deepEqual(await nod.query('SELECT action,status FROM approvals'), []);
+    assert.deepEqual(await nod.violations(), []);
+  },
+);
+
+test(
+  'end to end, a step nobody asked for still waits for the approval card',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 120_000 },
+  async (t) => {
+    const nod = await startNod({ checker: true });
+    t.after(() => nod.close());
+    await nod.api('POST', '/api/schedules', {
+      title: 'Synthetic delta',
+      prompt: 'Check Synthetic delta.',
+      kind: 'recurring',
+      cron: '0 9 * * *',
+      timeZone: 'UTC',
+    });
+    await nod.send('task: pause-all go ahead');
+    await nod.until(
+      async () => (await nod.query("SELECT 1 FROM approvals WHERE status='pending'")).length === 1,
+    );
+    assert.deepEqual(await nod.query('SELECT enabled FROM schedules'), [{ enabled: true }]);
+    const [card] = await nod.query<{ id: string; confirmation_message_id: string }>(
+      "SELECT id,confirmation_message_id FROM approvals WHERE status='pending'",
+    );
+    const { threadId } = await nod.state();
+    await nod.api('POST', '/api/messages', {
+      text: 'Yes',
+      threadId,
+      clientMessageId: crypto.randomUUID(),
+      replyToMessageId: card!.confirmation_message_id,
+      approvalAnswer: { approvalId: card!.id, approved: true },
+    });
+    await nod.settle();
+    assert.deepEqual(await nod.query('SELECT enabled FROM schedules'), [{ enabled: false }]);
+    assert.deepEqual(await nod.query('SELECT action,status FROM approvals'), [
+      { action: 'NOD_schedule_pause', status: 'completed' },
+    ]);
+    assert.deepEqual(await nod.violations(), []);
+  },
+);

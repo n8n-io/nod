@@ -10,7 +10,13 @@ export type TrustBasis =
   | { kind: 'approved' };
 
 export interface TrustWords {
-  userMessages?: Array<{ id?: string; at: string; text: string; canAuthorize?: boolean }>;
+  userMessages?: Array<{
+    id?: string;
+    at: string;
+    text: string;
+    canAuthorize?: boolean;
+    replyTo?: string;
+  }>;
   assistantMessageBeforeLatestUserMessage?: string;
   scheduledInstructions?: ReadonlyArray<
     Omit<OwnerInput, 'id' | 'replyTo'> & { id?: string | null; replyTo?: { text: string } }
@@ -79,115 +85,76 @@ export function trustDecision(words: TrustWords) {
   };
 }
 
-const identifier = /[@/\\]|[\p{L}\p{N}]\p{M}*\.[\p{L}\p{N}]/u;
-
-const plain = (text: string) =>
-  text
-    .normalize('NFKD')
-    .split(/(\s+)/)
-    .map((word) => (identifier.test(word) ? word : word.replace(/(\p{L})[̀-ͯ]+/gu, '$1')))
-    .join('')
-    .normalize('NFC')
-    .toLowerCase()
-    .replace(/[“”«»„]/g, '"')
-    .replace(/[‘’‚]/g, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
+const ownSettings = new Set([
+  'NOD_schedule_create',
+  'NOD_schedule_update',
+  'NOD_schedule_pause',
+  'NOD_schedule_cancel',
+  'NOD_limits_update',
+  'NOD_bug_report_send',
+  'NOD_notification_preferences_update',
+  'NOD_memory_forget',
+  'NOD_memory_control',
+  'NOD_model_select',
+]);
 
 export function trustBasis(
   answer: unknown,
   words: TrustWords & { action?: { name: string; arguments?: Record<string, unknown> } },
 ): TrustBasis | undefined {
   if (!answer || typeof answer !== 'object') return undefined;
-  const { run, because, terms, source } = answer as {
+  const { run, because, source } = answer as {
     run?: unknown;
     because?: unknown;
-    terms?: unknown;
     source?: unknown;
   };
-  if (
-    terms !== undefined &&
-    (!Array.isArray(terms) ||
-      terms.some((term) => !term || typeof term !== 'object' || term.same !== true))
-  )
-    return undefined;
-  if (run !== true || typeof because !== 'string') return undefined;
-  const action = words.action;
-  const settings = [
-    'NOD_schedule_create',
-    'NOD_schedule_update',
-    'NOD_schedule_pause',
-    'NOD_schedule_cancel',
-    'NOD_limits_update',
-    'NOD_bug_report_send',
-    'NOD_notification_preferences_update',
-    'NOD_memory_forget',
-    'NOD_memory_control',
-    'NOD_model_select',
-  ].includes(action?.name ?? '');
-  const command = action?.arguments?.command;
-  const requiresQuote =
-    settings ||
-    ['NOD_sign_in', 'NOD_browser_session', 'NOD_vault_allow'].includes(action?.name ?? '') ||
-    opensContent(action?.name) ||
-    (action?.name === 'NOD_browser' &&
-      (action.arguments?.step === 'upload' ||
+  const cited = typeof source === 'string' ? source : because === 'read' ? 'read' : undefined;
+  if (run !== true || !cited) return undefined;
+  const name = words.action?.name ?? '';
+  const args = words.action?.arguments ?? {};
+  const command = args.command;
+  const opens =
+    opensContent(name) ||
+    ['NOD_sign_in', 'NOD_browser_session', 'NOD_vault_allow'].includes(name) ||
+    (name === 'NOD_browser' &&
+      (args.step === 'upload' ||
         (command &&
           typeof command === 'object' &&
           'action' in command &&
           command.action === 'upload')));
-  if (because === 'read') return requiresQuote ? undefined : { kind: 'read' };
-  if (because === 'schedule approval')
+  const settings = ownSettings.has(name);
+  const quote = (text: string) => text.slice(0, 300);
+  if (cited === 'read') return opens || settings ? undefined : { kind: 'read' };
+  if (cited === 'scheduleApproval')
     return !settings && words.scheduledApproval?.id
       ? { kind: 'scheduleApproval', approvalId: words.scheduledApproval.id }
       : undefined;
-  const quote = because
-    .trim()
-    .replace(/^["'“”«»„‘’‚.…]+|["'“”«»„‘’‚.!?…]+$/gu, '')
-    .trim();
-  const needle = plain(quote);
-  if (!needle) return undefined;
-  const said = (text: string | undefined) => text !== undefined && plain(text).includes(needle);
-  const kept = quote.slice(0, 300);
-  if (source !== undefined) {
-    const match = typeof source === 'string' && /^message:(0|[1-9]\d*)$/.exec(source);
-    if (match) {
-      const index = Number(match[1]);
-      return words.userMessages?.[index]?.id &&
-        words.userMessages?.[index]?.canAuthorize !== false &&
-        said(words.userMessages?.[index]?.text)
-        ? { kind: 'message', messageId: words.userMessages[index]!.id!, quote: kept }
-        : undefined;
-    }
-    const scheduled = typeof source === 'string' && /^schedule:(0|[1-9]\d*)$/.exec(source);
-    if (scheduled) {
-      const message = words.scheduledInstructions?.[Number(scheduled[1])];
-      return message?.canAuthorize !== false && said(message?.text)
-        ? { kind: 'schedule', quote: kept, ...(message?.id ? { messageId: message.id } : {}) }
-        : undefined;
-    }
-    if (!settings && source === 'standing' && said(words.standingInstruction))
-      return { kind: 'standing', quote: kept };
-    if (!settings && source === 'rules' && said(words.userRules))
-      return { kind: 'rule', quote: kept };
-    return undefined;
-  }
-  const index =
-    words.userMessages?.findLastIndex(
-      (message) => message.canAuthorize !== false && said(message.text),
-    ) ?? -1;
-  if (index >= 0)
-    return words.userMessages?.[index]?.id
-      ? { kind: 'message', messageId: words.userMessages[index]!.id!, quote: kept }
+  const message = /^message:(0|[1-9]\d*)$/.exec(cited);
+  if (message) {
+    const entry = words.userMessages?.[Number(message[1])];
+    return entry?.id && entry.canAuthorize !== false && entry.text.trim()
+      ? { kind: 'message', messageId: entry.id, quote: quote(entry.text) }
       : undefined;
-  const scheduled = words.scheduledInstructions?.findLast(
-    (message) => message.canAuthorize !== false && said(message.text),
-  );
-  if (scheduled)
-    return { kind: 'schedule', quote: kept, ...(scheduled.id ? { messageId: scheduled.id } : {}) };
-  if (said(words.standingInstruction))
-    return settings ? undefined : { kind: 'standing', quote: kept };
-  if (said(words.userRules)) return settings ? undefined : { kind: 'rule', quote: kept };
+  }
+  const scheduled = /^schedule:(0|[1-9]\d*)$/.exec(cited);
+  if (scheduled) {
+    const entry = words.scheduledInstructions?.[Number(scheduled[1])];
+    return entry && entry.canAuthorize !== false && entry.text.trim()
+      ? { kind: 'schedule', quote: quote(entry.text), ...(entry.id ? { messageId: entry.id } : {}) }
+      : undefined;
+  }
+  if (cited === 'standing')
+    return !settings && words.standingInstruction
+      ? { kind: 'standing', quote: quote(words.standingInstruction) }
+      : undefined;
+  if (cited === 'rules')
+    return words.userRules &&
+      !(
+        name === 'NOD_notification_preferences_update' &&
+        ('rules' in args || 'currentRules' in args)
+      )
+      ? { kind: 'rule', quote: quote(words.userRules) }
+      : undefined;
   return undefined;
 }
 

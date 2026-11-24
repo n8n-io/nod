@@ -380,11 +380,13 @@ export const approvalCases = inParts(
                   action?: { name?: string; arguments?: { recipient_email?: unknown } };
                 };
                 ownerWords.push(...(words.userMessages ?? []).map((message) => message.text));
-                const fileRequest = words.action?.name?.startsWith('LOCAL_FILES_')
-                  ? words.userMessages?.findLast(
-                      (message) => message.canAuthorize !== false && asked.has(message.text),
-                    )?.text
-                  : undefined;
+                const said = words.userMessages ?? [];
+                const fileIndex =
+                  words.action?.name?.startsWith('LOCAL_FILES_') &&
+                  asked.has(said.at(-1)?.text ?? '')
+                    ? said.length - 1
+                    : -1;
+                const fileRequest = fileIndex >= 0;
                 const metadataRead = [
                   'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID',
                   'GMAIL_GET_DRAFT',
@@ -406,10 +408,14 @@ export const approvalCases = inParts(
                 return run
                   ? {
                       run,
-                      because:
+                      source:
                         words.action?.name === 'GMAIL_FETCH_EMAILS' || metadataRead
                           ? 'read'
-                          : (fileRequest ?? words.userMessages?.at(-1)?.text ?? 'read'),
+                          : fileRequest
+                            ? `message:${fileIndex}`
+                            : said.length
+                              ? `message:${said.length - 1}`
+                              : 'read',
                     }
                   : { run, ...(readRequiresConsent ? { rule: true } : {}) };
               })()
@@ -1020,16 +1026,15 @@ export const approvalCases = inParts(
           calendarReview = (input) => {
             const { action, userMessages } = input as {
               action: { arguments: { website: string; control?: { name: string }[] } };
-              userMessages?: { text: string; canAuthorize?: boolean }[];
+              userMessages?: { text: string }[];
             };
             const label = action.arguments.control?.[0]?.name ?? '';
             checks.push(label);
+            const index = (userMessages ?? []).findLastIndex(({ text }) => text === ownerRequest);
             return action.arguments.website === origin &&
               editor.some(([name]) => label === name) &&
-              userMessages?.some(
-                ({ text, canAuthorize }) => text === ownerRequest && canAuthorize !== false,
-              )
-              ? { run: true, because: ownerRequest }
+              index >= 0
+              ? { run: true, source: `message:${index}` }
               : { run: false };
           };
           t.after(() => {
@@ -5012,7 +5017,7 @@ export const approvalCases = inParts(
                     connectionId,
                     JSON.stringify([{ ...paths[0], endpoint: `${origin}/replacement` }]),
                   ]);
-                return { run: true, because: 'read' };
+                return { run: true, source: 'read' };
               };
               const prompt = `Synthetic HTTP direct request ${randomUUID()}`;
               plans.set(prompt, {
@@ -5131,7 +5136,7 @@ export const approvalCases = inParts(
             const reply = 'Send the same synthetic request again.';
             plans.set(reply, { tool: 'apps', action: 'CONNECTED_HTTP', args });
             repeatDecision = 'new';
-            httpReview = async () => ({ run: true, because: 'read' });
+            httpReview = async () => ({ run: true, source: 'read' });
             wording.length = 0;
             const repeated = await request('POST', '/api/messages', {
               text: reply,
@@ -7990,8 +7995,7 @@ export const approvalCases = inParts(
                 if (
                   !changed &&
                   typeof input[0] === 'string' &&
-                  input[0].startsWith('WITH authority AS') &&
-                  input[1]?.[3] === taskId
+                  input[0].startsWith('WITH cleared AS')
                 ) {
                   changed = true;
                   assert.ok(progressId);

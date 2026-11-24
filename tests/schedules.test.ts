@@ -14,7 +14,7 @@ import type {
 } from '../src/shared/contracts.ts';
 import { modelPricingSignature, type ModelPricing } from '../src/shared/models.ts';
 import {
-  captureOwnerInstructions,
+  recentOwnerWords,
   mergeOwnerInstructions,
   validateOwnerInstructions,
 } from '../src/server/owner-instructions.ts';
@@ -211,22 +211,14 @@ test(
       ).rows[0];
       const captured =
         turn && provenance.sourceMessageId
-          ? await captureOwnerInstructions(
-              db.pool,
-              ownerId,
-              turn.thread_id,
-              [provenance.sourceMessageId],
-              turn.task_id,
-              new Date(Date.now() - 86_400_000),
-              provenance.turnId,
-            )
+          ? await recentOwnerWords(db.pool, ownerId, turn.thread_id, [provenance.sourceMessageId])
           : undefined;
       const prepared = await personal.prepareScheduleChange(action, args);
       return personal.manage(action, args, {
         ...provenance,
         instructionChange: {
           ...prepared,
-          evidence: captured?.evidence ?? { messages: [] },
+          evidence: captured?.evidence(provenance.sourceMessageId ?? undefined) ?? { messages: [] },
           previousEvidence: 'evidence' in prepared ? prepared.evidence : undefined,
         },
       });
@@ -2262,10 +2254,11 @@ test(
             )?.canAuthorize,
             true,
           );
-          assert.ok(
-            !authority.messages.some(
+          assert.equal(
+            authority.messages.find(
               (message: { id: string }) => message.id === unrelated.sourceMessageId,
-            ),
+            )?.canAuthorize ?? false,
+            false,
           );
           const proposalId = randomUUID();
           const proposal = 'Read the synthetic board every Friday?';

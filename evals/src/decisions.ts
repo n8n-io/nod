@@ -2665,6 +2665,9 @@ export function decisionAuthorization(
     scheduleFormat: source.includes('scheduledInstructions')
       ? ('entries' as const)
       : ('text' as const),
+    replyFormat: source.includes('replyTo is the assistant message')
+      ? ('message' as const)
+      : ('latest' as const),
     basisHash: basis ? hash(validators.basis!) : undefined,
     basisValidator,
     termsHash: terms ? hash(loaded.terms) : undefined,
@@ -2767,6 +2770,7 @@ export async function evaluateDecision(options: {
     termsInstructions?: string;
     basisValidator?: typeof trustBasis;
     scheduleFormat?: 'entries' | 'text';
+    replyFormat?: 'message' | 'latest';
   };
   review: (
     instructions: string,
@@ -2781,6 +2785,14 @@ export async function evaluateDecision(options: {
   const encoded = JSON.stringify(options.item.input);
   const input = (terms = false) => {
     const value = JSON.parse(encoded);
+    if (
+      options.authorization.replyFormat === 'message' &&
+      typeof value.assistantMessageBeforeLatestUserMessage === 'string'
+    ) {
+      const latest = value.userMessages?.at(-1);
+      if (latest) latest.replyTo = value.assistantMessageBeforeLatestUserMessage;
+      delete value.assistantMessageBeforeLatestUserMessage;
+    }
     if (!terms && options.authorization.scheduleFormat === 'text') {
       if (value.scheduledInstructions) {
         const entries = value.scheduledInstructions as NonNullable<

@@ -167,12 +167,11 @@ test(
               };
             }
             return task === 'review' && 'action' in input
-              ? {
-                  run: true,
-                  because:
-                    (input as { userMessages?: Array<{ text: string }> }).userMessages?.at(-1)
-                      ?.text ?? 'read',
-                }
+              ? (() => {
+                  const count =
+                    (input as { userMessages?: Array<{ text: string }> }).userMessages?.length ?? 0;
+                  return { run: true, source: count ? `message:${count - 1}` : 'read' };
+                })()
               : {};
           },
         },
