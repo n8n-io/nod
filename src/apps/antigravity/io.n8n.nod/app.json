@@ -9,7 +9,7 @@
       "source": "owner",
       "path": "/mcp"
     },
-    "authentication": ["bearer"],
+    "authentication": ["oauth2", "bearer"],
     "hints": {
       "token": "Enter your Antigravity Bridge API Key or leave blank for local loopback."
     }
