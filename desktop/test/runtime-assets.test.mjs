@@ -4256,6 +4256,7 @@ test('runtime command results are bounded by an explicit limit instead of trunca
 
 test('stopping a runtime command reports cancellation and timeouts', async () => {
   const { execute } = await import('../runtime/index.mjs');
+  const { startupErrorFacts } = await import('../../src/shared/startup-feedback-facts.mjs');
   await assert.rejects(
     execute(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], {
       signal: AbortSignal.timeout(200),
@@ -4264,8 +4265,17 @@ test('stopping a runtime command reports cancellation and timeouts', async () =>
   );
   await assert.rejects(
     execute(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], { timeout: 200 }),
-    { message: 'Nod runtime setup took too long. Please retry.' },
+    (error) => {
+      assert.equal(error.message, 'Nod runtime setup took too long. Please retry.');
+      assert.equal(startupErrorFacts(error).class, 'TimeoutError');
+      return true;
+    },
   );
+  await assert.rejects(execute(join(tmpdir(), 'nod-synthetic-missing-program'), []), (error) => {
+    assert.equal(error.code, undefined);
+    assert.equal(startupErrorFacts(error).errno, 'ENOENT');
+    return true;
+  });
 });
 
 test('runtime networks parse docker output that arrives with WSL diagnostics', async (t) => {
@@ -4602,9 +4612,10 @@ test('native runtime wrapper preserves handed-off storage through failed prepara
       resolve,
       preparing: new Map(),
       storageReady: new Map(),
-      prepare: async (options, started) => {
+      prepare: async (options, started, progress) => {
         started();
         attempts++;
+        progress.step = 'start';
         if (terminal === 'cleanup-failed') throw startupError;
         if (retired) throw new Error('Synthetic new attempt before storage');
         if (attempts === 2) throw new Error('Synthetic retry before storage handshake');
@@ -4638,6 +4649,7 @@ test('native runtime wrapper preserves handed-off storage through failed prepara
     if (terminal === 'cleanup-failed') {
       await assert.rejects(lifecycle.start(), (error) => {
         assert.equal(error.code, cleanupError.code);
+        assert.equal(error.step, 'start');
         assert.equal(error.errors[0], startupError);
         assert.equal(error.errors[1], cleanupError);
         assert.equal(error.cause, cleanupError);

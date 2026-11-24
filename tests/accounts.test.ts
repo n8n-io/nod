@@ -9708,7 +9708,7 @@ test('startup not-sent evidence binds an expired review and survives a clock cha
   assert.equal((await service.context()).notSentSubmissionId, undefined);
 });
 
-test('startup facts omit every prose shape without pattern matching or code inference', () => {
+test('startup facts omit every prose shape', () => {
   const values = [
     '/Applications/Synthetic Owner/profile/workspaces/synthetic-private-contract.docx',
     String.raw`C:\Synthetic Owner\profile\synthetic-private-contract.docx`,
@@ -9803,9 +9803,28 @@ test('startup facts keep only structured bounded codes and do not call getters o
   );
   assert.deepEqual(
     startupErrorFacts({
-      code: 'NOD_SYNTHETIC_PRIVATE_CODE',
+      name: 'HypotheticalVendorError',
+      code: 'NOD_HYPOTHETICAL_FAILURE',
+      errno: 'EAGAIN',
+      step: 'create',
+      wslCode: 'HCS_E_CONNECTION_TIMEOUT',
+    }),
+    {
+      detailsOmitted: true,
+      class: 'HypotheticalVendorError',
+      errno: 'EAGAIN',
+      code: 'NOD_HYPOTHETICAL_FAILURE',
+      step: 'create',
+      wslCode: 'HCS_E_CONNECTION_TIMEOUT',
+    },
+  );
+  assert.deepEqual(
+    startupErrorFacts({
+      name: 'Synthetic Owner Error',
+      code: 'nod synthetic-private code',
+      errno: 'synthetic-private@example.test',
       step: 'C:\\Users\\Synthetic Owner',
-      wslCode: 'SYNTHETIC_PRIVATE_WSL_CODE',
+      wslCode: 'C:\\Users\\Synthetic Owner\\ext4.vhdx',
     }),
     { detailsOmitted: true },
   );

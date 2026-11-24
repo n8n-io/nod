@@ -27,6 +27,7 @@ import type { ChannelLinkStatus } from '../../shared/contracts.ts';
 import { contactAttachment, locationAttachment } from './content.ts';
 import { canDeliverWhatsAppLiteral, whatsappText } from './format.ts';
 import { contactCards, sharedLocation } from '../../shared/channel-content.ts';
+import { errorCode } from '../../shared/error-code.ts';
 
 const silent: SocketConfig['logger'] = {
   level: 'silent',
@@ -113,9 +114,8 @@ export function createWhatsAppLinkedTransport(options: {
   };
 
   function stop(next: ChannelLinkStatus['state'], error: string, cause?: unknown) {
-    const code = (cause as { code?: unknown } | undefined)?.code;
-    if (typeof code === 'string' && /^(?:[0-9A-Z]{5}|[A-Z][A-Z0-9_]{0,31})$/.test(code))
-      error += ` Error code: ${code}.`;
+    const code = errorCode(cause);
+    if (code) error += ` Error code: ${code}.`;
     halted = true;
     channel.available = false;
     state = {

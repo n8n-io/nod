@@ -23,6 +23,7 @@ import {
   telegramUpdateTypes,
 } from './telegram.ts';
 import { modelServiceError } from '../model-error.ts';
+import { errorCode } from '../../shared/error-code.ts';
 import {
   canDeliverWhatsAppLiteral,
   hasLiteralBlock,
@@ -608,12 +609,8 @@ export function createChatSdkTransport(
         }
       } catch (cause) {
         const channel = channels.find((channel) => channel.id === 'telegram')!;
-        const source = cause as { code?: unknown; cause?: { code?: unknown } } | undefined;
-        const code = source?.code ?? source?.cause?.code;
-        const detail =
-          typeof code === 'string' && /^(?:[0-9A-Z]{5}|[A-Z][A-Z0-9_]{0,31})$/.test(code)
-            ? ` (${code})`
-            : '';
+        const code = errorCode(cause);
+        const detail = code ? ` (${code})` : '';
         const failure =
           cause instanceof MessagingConnectionError
             ? cause

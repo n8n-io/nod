@@ -18,6 +18,8 @@ import { logFailure } from './failure-log.ts';
 import { cancelTurnOperations } from './turn-cancellation.ts';
 import { modelFailureReason, modelQuotaFailure } from '../shared/model-quota.ts';
 import { appPages } from '../shared/app-links.ts';
+import { errorCode } from '../shared/error-code.ts';
+import { loopbackHost } from '../shared/loopback.ts';
 import { pendingAnswerChoicesSql } from './answer-choices.ts';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -1555,6 +1557,30 @@ function failureText(error: unknown) {
   return `${safe} ${advice}`;
 }
 
+function hostFailure(error: unknown) {
+  for (const value of [error, (error as { cause?: unknown } | null | undefined)?.cause]) {
+    const { code, address } = (value ?? {}) as { code?: unknown; address?: unknown };
+    if (code === 'ENOSPC' || code === 'EDQUOT')
+      return {
+        expected: true,
+        text: `This computer is out of disk space, so Nod couldn't save its work (${failureText(error)}). Free up some space, then reply to continue.`,
+      };
+    if (typeof code === 'string' && typeof address === 'string' && loopbackHost(address))
+      return {
+        expected: false,
+        text: `Nod lost the connection to a service it runs on this computer (${failureText(error)}). Restart Nod, then reply to continue. If it keeps happening, restart this computer.`,
+      };
+  }
+}
+
+function errorType(error: unknown) {
+  const name = error instanceof Error ? error.name : undefined;
+  return (
+    errorCode(error) ??
+    (name && name !== 'Error' && /^[A-Z][A-Za-z]{0,39}Error$/.test(name) ? name : undefined)
+  );
+}
+
 async function failTurn(
   turnId: string,
   present: ThreadDependencies['present'],
@@ -1565,12 +1591,14 @@ async function failTurn(
     contextExhausted,
     cause,
     expected = false,
+    type,
   }: {
     next?: string;
     failure?: 'model' | 'offline' | 'unknown';
     contextExhausted?: boolean;
     cause?: Pick<ScheduleRunPresentation, 'reason' | 'code' | 'link'>;
     expected?: boolean;
+    type?: string;
   } = {},
 ) {
   const modelFailure = failure === 'model' || failure === 'offline';
@@ -1679,7 +1707,7 @@ async function failTurn(
         client,
         ref,
         message.trim(),
-        'Nod stopped on an unexpected error while working on a request.',
+        `Nod stopped on an unexpected error${type ? ` (${type})` : ''} while working on a request.`,
         streamId,
       );
     else
@@ -2807,7 +2835,10 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     } else {
       const offline = offlineFailure(error, selectedModel?.provider);
       failure = offline ? 'offline' : error instanceof ModelRequestError ? 'model' : 'unknown';
-      const text = offline ? `${offline.reason} (${offline.code}).` : failureText(error);
+      const host = failure === 'unknown' ? hostFailure(error) : undefined;
+      const text = offline
+        ? `${offline.reason} (${offline.code}).`
+        : (host?.text ?? failureText(error));
       const alternative = failure === 'model' ? dependencies.modelAlternative?.() : undefined;
       const server = Boolean(offline && dependencies.desktopRuntime);
       logFailure('turn_failed', error, {
@@ -2823,7 +2854,9 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       });
       await failTurn(turnId, dependencies.present, text, {
         failure,
-        expected: error instanceof ToolFailureError || error instanceof OutputLimitError,
+        expected:
+          error instanceof ToolFailureError || error instanceof OutputLimitError || host?.expected,
+        type: errorType(error),
         next: alternative ?? (server ? offlineHint : undefined),
         contextExhausted: error instanceof ContextLimitError,
         cause: offline

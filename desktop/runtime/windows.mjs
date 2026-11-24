@@ -95,6 +95,18 @@ async function readComputerState(path, distribution) {
   return saved;
 }
 
+const unrepairableWslCodes = new Set([
+  'ERROR_FILE_EXISTS',
+  'ERROR_ALREADY_EXISTS',
+  'E_ILLEGAL_STATE_CHANGE',
+  'E_ACCESSDENIED',
+  'ERROR_ACCESS_DENIED',
+  'ERROR_DISK_FULL',
+  'WSL_E_IMPORT_FAILED',
+  '0x80072747',
+  '0x800705b4',
+]);
+
 async function runWsl(wsl, args, options, source = 'host') {
   try {
     return await execute(wsl, args, options);
@@ -102,14 +114,8 @@ async function runWsl(wsl, args, options, source = 'host') {
     options.signal?.throwIfAborted();
     const wslCode = startupWslCode(error.details?.match(/\bWsl\/(?:\w+\/)*(\w+)\b/)?.[1]);
     if (wslCode) error.wslCode = wslCode;
-    const repair =
-      wslCode === 'HCS_E_SERVICE_NOT_AVAILABLE' ||
-      wslCode === 'HCS_E_HYPERV_NOT_INSTALLED' ||
-      wslCode === 'WSL_E_WSL_OPTIONAL_COMPONENT_REQUIRED' ||
-      wslCode === 'ERROR_SERVICE_DISABLED' ||
-      wslCode === 'ERROR_SERVICE_DOES_NOT_EXIST';
     if (
-      (wslCode && !repair) ||
+      unrepairableWslCodes.has(wslCode) ||
       (source === 'guest'
         ? error.exitCode !== 4294967295
         : source === 'host' && !Number.isInteger(error.exitCode))

@@ -615,6 +615,18 @@ test(
           throw new OutputLimitError('Synthetic output limit.');
         if (context.prompt === 'tool refusal fixture')
           throw new ToolFailureError('The bash tool failed five times. Trust refused the command.');
+        if (context.prompt === 'disk full fixture')
+          throw Object.assign(new Error('ENOSPC: no space left on device, write'), {
+            code: 'ENOSPC',
+            syscall: 'write',
+          });
+        if (context.prompt === 'local connection fixture')
+          throw Object.assign(new Error('connect EADDRINUSE 127.0.0.1:59024'), {
+            code: 'EADDRINUSE',
+            syscall: 'connect',
+            address: '127.0.0.1',
+            port: 59024,
+          });
         if (context.prompt.startsWith('session-fixture')) {
           await sessionGates.get(context.prompt);
           return { status: 'succeeded' };
@@ -3593,6 +3605,42 @@ test(
           (await db.pool.query('SELECT count(*) FROM feedback_drafts')).rows[0].count,
           drafts,
         );
+      });
+
+      await t.test('host failures keep their cause and split bug reports by code', async () => {
+        const fail = async (prompt: string) => {
+          const failed = await thread.submitUserMessage(prompt);
+          await waitFor(settled(failed.turnId));
+          await waitFor(
+            async () =>
+              (
+                await db.pool.query(
+                  "SELECT 1 FROM messages WHERE turn_id=$1 AND role='assistant' AND stream_id=$2",
+                  [failed.turnId, `failure:${failed.turnId}`],
+                )
+              ).rowCount === 1,
+          );
+          return (
+            await db.pool.query(
+              `SELECT u.error,m.presentation FROM turns u JOIN messages m ON m.turn_id=u.id
+               WHERE u.id=$1 AND m.stream_id=$2`,
+              [failed.turnId, `failure:${failed.turnId}`],
+            )
+          ).rows[0];
+        };
+        const drafts = (await db.pool.query('SELECT count(*) FROM feedback_drafts')).rows[0].count;
+        const full = await fail('disk full fixture');
+        assert.match(full.error, /ENOSPC: no space left on device, write/);
+        assert.equal(full.presentation, null);
+        assert.equal(
+          (await db.pool.query('SELECT count(*) FROM feedback_drafts')).rows[0].count,
+          drafts,
+        );
+        const local = await fail('local connection fixture');
+        assert.match(local.error, /connect EADDRINUSE 127\.0\.0\.1:59024/);
+        assert.equal(local.presentation.type, 'bug-report');
+        assert.match(local.presentation.summary, /\(EADDRINUSE\)/);
+        assert.doesNotMatch(local.presentation.summary, /127\.0\.0\.1|59024/);
       });
 
       await t.test('a reached spending limit pauses all but owner messages', async (t) => {

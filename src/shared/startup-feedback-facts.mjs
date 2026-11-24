@@ -34,49 +34,6 @@ const events = new Set([
   'startup_failed',
   'update',
 ]);
-const classes = new Set([
-  'Error',
-  'TypeError',
-  'RangeError',
-  'SyntaxError',
-  'ReferenceError',
-  'AggregateError',
-  'AbortError',
-  'TimeoutError',
-  'ZodError',
-]);
-const errnos = new Set([
-  'EACCES',
-  'EPERM',
-  'EIO',
-  'ENOENT',
-  'ENOSPC',
-  'EDQUOT',
-  'EROFS',
-  'EEXIST',
-  'ENOTDIR',
-  'EISDIR',
-  'EINVAL',
-  'EMFILE',
-  'ENFILE',
-  'ELOOP',
-  'EBUSY',
-  'ENOTEMPTY',
-  'ENOSYS',
-  'ENOTSUP',
-  'EPIPE',
-  'ECONNREFUSED',
-  'ECONNRESET',
-  'ECONNABORTED',
-  'ETIMEDOUT',
-  'ENETUNREACH',
-  'EHOSTUNREACH',
-  'ENOTFOUND',
-  'EAI_AGAIN',
-  'EADDRINUSE',
-  'EADDRNOTAVAIL',
-  'ERR_CANCELED',
-]);
 const syscalls = new Set([
   'open',
   'read',
@@ -127,39 +84,8 @@ const steps = new Set([
   'memory',
   'apps',
   'listening',
-]);
-const codes = new Set([
-  'NOD_WSL_REQUIRED',
-  'RUNTIME_ARCHIVE_REQUIRED',
-  'NOD_RUNTIME_STOP_FAILED',
-  'NOD_CONTAINER_STOPPED',
-  'NOD_DATABASE_CONNECTION_FAILED',
-  'NOD_DATABASE_OUT_OF_MEMORY',
-  'NOD_DATABASE_STOPPED',
-  'NOD_DATABASE_NOT_READY',
-  'NOD_COMPUTER_PROTECTION_FAILED',
-  'NOD_COMPUTER_STORAGE_FULL',
-  'NOD_COMPUTER_CONFIGURATION_INVALID',
-  'NOD_COMPUTER_CONFIGURATION_MISSING',
-  'NOD_COMPUTER_NOT_READY',
-  'NOD_COMPUTER_REGISTRATION_MISSING',
-  'NOD_KVM_UNAVAILABLE',
-]);
-const wslCodes = new Set([
-  'HCS_E_SERVICE_NOT_AVAILABLE',
-  'HCS_E_HYPERV_NOT_INSTALLED',
-  'WSL_E_WSL_OPTIONAL_COMPONENT_REQUIRED',
-  'ERROR_SERVICE_DISABLED',
-  'ERROR_SERVICE_DOES_NOT_EXIST',
-  'ERROR_FILE_EXISTS',
-  'ERROR_ALREADY_EXISTS',
-  'E_ILLEGAL_STATE_CHANGE',
-  'E_ACCESSDENIED',
-  'ERROR_ACCESS_DENIED',
-  'ERROR_DISK_FULL',
-  'WSL_E_IMPORT_FAILED',
-  '0x80072747',
-  '0x800705b4',
+  'check',
+  'create',
 ]);
 const reasons = {
   status_regular: 'The saved report status is not one regular file.',
@@ -200,16 +126,24 @@ function data(value, key) {
 }
 
 const choice = (set, value) => (typeof value === 'string' && set.has(value) ? value : undefined);
+const shaped = (pattern, value) =>
+  typeof value === 'string' && pattern.test(value) ? value : undefined;
+const errorClass = /^(?:[A-Z][A-Za-z0-9]{0,39})?Error$/;
+const errnoShape = /^(?:E[A-Z0-9]{1,15}|EAI_[A-Z]{1,12}|(?:UND_)?ERR_[A-Z0-9_]{1,60})$/;
+const codeShape = /^[A-Z][A-Z0-9_]{2,63}$/;
+const wslShape = /^(?:[A-Z][A-Z0-9_]{1,63}|0x[0-9A-Fa-f]{8})$/;
 const integer = (value, min, max) =>
   Number.isSafeInteger(value) && value >= min && value <= max ? value : undefined;
 
-export const startupWslCode = (value) => choice(wslCodes, value);
+export const startupWslCode = (value) => shaped(wslShape, value);
 
 export function startupErrorFacts(value) {
   const result = { detailsOmitted: true };
+  const errno = shaped(errnoShape, data(value, 'errno')) ?? shaped(errnoShape, data(value, 'code'));
+  const code = shaped(codeShape, data(value, 'code'));
   for (const [key, selected] of [
-    ['class', choice(classes, data(value, 'class')) ?? choice(classes, data(value, 'name'))],
-    ['errno', choice(errnos, data(value, 'errno')) ?? choice(errnos, data(value, 'code'))],
+    ['class', shaped(errorClass, data(value, 'class')) ?? shaped(errorClass, data(value, 'name'))],
+    ['errno', errno],
     ['syscall', choice(syscalls, data(value, 'syscall'))],
     [
       'httpStatus',
@@ -219,7 +153,7 @@ export function startupErrorFacts(value) {
     ],
     ['exitCode', integer(data(value, 'exitCode'), -2147483648, 4294967295)],
     ['signal', choice(signals, data(value, 'signal'))],
-    ['code', choice(codes, data(value, 'code'))],
+    ['code', code === errno ? undefined : code],
     ['step', choice(steps, data(value, 'step'))],
     ['wslCode', startupWslCode(data(value, 'wslCode'))],
   ])
