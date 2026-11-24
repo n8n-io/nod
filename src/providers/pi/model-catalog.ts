@@ -7,7 +7,6 @@ import {
   cloudflareGatewayPattern,
   modelProviderInfo,
   modelProviderNames,
-  openRouterVariants,
   type OpenAIRegion,
   type ModelProvider,
   type OpenRouterVariant,
@@ -33,24 +32,17 @@ const catalogEndpoints = {
   nvidia: 'https://integrate.api.nvidia.com/v1/models',
 } as const;
 
+const openRouterSorts = { nitro: 'throughput', cost: 'price' } as const;
+
 export function openRouterRoute(
   definition: ModelDefinition,
   variant: OpenRouterVariant | undefined,
 ): ModelDefinition {
-  const { choice, spec } = definition;
-  if (
-    !variant ||
-    variant === 'standard' ||
-    !Object.hasOwn(openRouterVariants, variant) ||
-    choice.id.startsWith('openrouter/') ||
-    choice.id.includes(':')
-  )
-    return definition;
-  const suffix = `:${variant}`;
-  return {
-    choice: { ...choice, id: `${choice.id}${suffix}`, name: `${choice.name} · ${suffix}` },
-    spec: { ...spec, id: `${String(spec.id ?? choice.id)}${suffix}` },
-  };
+  const sort = variant && variant !== 'standard' ? openRouterSorts[variant] : undefined;
+  if (!sort) return definition;
+  const { spec } = definition;
+  const compat = spec.compat as Record<string, unknown> | undefined;
+  return { ...definition, spec: { ...spec, compat: { ...compat, openRouterRouting: { sort } } } };
 }
 
 export function openAIModels(region: OpenAIRegion = 'global'): Model<'openai-responses'>[] {

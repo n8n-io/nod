@@ -1354,7 +1354,11 @@ export async function createPiModelRuntime(
         const changed = await options?.onPayload?.(payload, target);
         const body = (changed ?? payload) as Record<string, unknown>;
         if (access.provider === 'openrouter')
-          body.provider = { require_parameters: true, allow_fallbacks: false };
+          body.provider = {
+            ...(body.provider as Record<string, unknown> | undefined),
+            require_parameters: true,
+            allow_fallbacks: false,
+          };
         if (
           access.provider === 'openai' &&
           !subscription &&

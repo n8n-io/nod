@@ -8281,46 +8281,75 @@ test('native OpenAI model discovery and requests keep each connection in its reg
   );
 });
 
-test('OpenRouter routing variants suffix model ids but keep routers and existing variants', async () => {
-  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+test('OpenRouter routing variants sort providers and keep model ids', async () => {
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
   const { modelKeyCredential } = await import('../src/server/models.ts');
-  const entry = (id: string) => ({
-    id,
-    name: id,
-    context_length: 100000,
-    supported_parameters: ['tools', 'reasoning'],
-    architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
-    pricing: { prompt: '0.000002', completion: '0.00001' },
-  });
   const backend = createPiModelBackend({
     fetch: async (input) => {
       if (String(input) === 'https://openrouter.ai/api/v1/key')
         return Response.json({ data: { is_management_key: false } });
       return Response.json({
-        data: ['openai/gpt-6.1-sol', 'openrouter/free', 'fixture/open-model:free'].map(entry),
+        data: [
+          {
+            id: 'openai/gpt-6.1-sol',
+            name: 'openai/gpt-6.1-sol',
+            context_length: 100000,
+            supported_parameters: ['tools', 'reasoning'],
+            reasoning: { supported_efforts: ['low', 'medium', 'high'] },
+            architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+            pricing: { prompt: '0.000002', completion: '0.00001' },
+          },
+        ],
       });
     },
   });
-  const ids = async (variant?: string) =>
-    (
-      await backend.catalog(
-        'openrouter',
-        'api_key',
-        modelKeyCredential('openrouter', 'fixture-router-key', variant ? { variant } : {}),
-      )
-    ).map((definition) => [definition.choice.id, definition.spec.id]);
-  const unchanged = [
-    ['openai/gpt-6.1-sol', 'openai/gpt-6.1-sol'],
-    ['openrouter/free', 'openrouter/free'],
-    ['fixture/open-model:free', 'fixture/open-model:free'],
-  ];
-  assert.deepEqual(await ids(), unchanged);
-  assert.deepEqual(await ids('standard'), unchanged);
-  assert.deepEqual(await ids('nitro'), [
-    ['openai/gpt-6.1-sol:nitro', 'openai/gpt-6.1-sol:nitro'],
-    ...unchanged.slice(1),
-  ]);
-  assert.deepEqual((await ids('cost'))[0], ['openai/gpt-6.1-sol:cost', 'openai/gpt-6.1-sol:cost']);
+  const chunk = (value: object) => `data: ${JSON.stringify(value)}\n\n`;
+  for (const [variant, sort] of [
+    ['standard', undefined],
+    ['nitro', 'throughput'],
+    ['cost', 'price'],
+  ] as const) {
+    const credential = modelKeyCredential('openrouter', 'fixture-router-key', { variant });
+    const [definition] = await backend.catalog('openrouter', 'api_key', credential);
+    assert.equal(definition.choice.id, 'openai/gpt-6.1-sol');
+    const { runtime, model } = await createPiModelRuntime({
+      provider: 'openrouter',
+      method: 'api_key',
+      definition,
+      effort: 'low',
+      read: async () => credential,
+    });
+    let body: { model?: string; provider?: unknown } = {};
+    const reply = await runtime.completeSimple(
+      model,
+      {
+        systemPrompt: 'Synthetic instructions',
+        messages: [{ role: 'user', content: 'Hello', timestamp: 1 }],
+      },
+      {
+        fetch: async (_input, init) => {
+          body = JSON.parse(String(init?.body));
+          return new Response(
+            chunk({
+              id: 'fixture',
+              choices: [{ index: 0, delta: { role: 'assistant', content: 'Synthetic answer' } }],
+            }) +
+              chunk({ id: 'fixture', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }) +
+              'data: [DONE]\n\n',
+            { headers: { 'content-type': 'text/event-stream' } },
+          );
+        },
+      },
+    );
+    assert.equal(reply.stopReason, 'stop', reply.errorMessage);
+    assert.equal(body.model, 'openai/gpt-6.1-sol');
+    assert.deepEqual(body.provider, {
+      ...(sort && { sort }),
+      require_parameters: true,
+      allow_fallbacks: false,
+    });
+  }
   assert.throws(
     () => modelKeyCredential('openrouter', 'fixture-router-key', { variant: 'fastest' }),
     /variant/,
