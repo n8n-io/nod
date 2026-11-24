@@ -3,5 +3,8 @@
   "previousTag": "nod-v0.9.5",
   "source": "6670bc233b6b7dddaa75b25b89b4a89f0e92bcac",
   "highlights": "## One request covers every step\n\nWhen you ask Nod for something, that request now covers each step of it. Moving a batch of emails, renaming several files, or a task you started with a short \"go ahead\" no longer asks you again for every part. Approvals that could not be answered before can now be answered. Actions you didn't ask for still need your yes, and an approved action still runs only once.\n\n## Fixed in this release\n\n- **Full disk:** When your computer runs out of space, Nod now says so and asks you to free some up, instead of reporting an unexpected error.\n- **Lost connection:** When Nod loses one of the services it runs on your computer, it tells you and asks you to restart Nod.\n- **Bug reports:** Reports now name the kind of error, and startup reports name the step that failed. If Nod doesn't start, select **Report bug** and send the report so we can find the cause.\n- **Mistral:** When you connect Mistral with a key it rejects, Nod now shows Mistral's reason.\n- **Model providers:** Your requests now show up as Nod in your OpenRouter and Vercel AI Gateway activity.",
-  "video": null
+  "video": {
+    "url": "https://github.com/user-attachments/assets/17d63452-06ef-4930-a63f-6cf96f3e7c86",
+    "releaseSha256": "ee4ed1215e2d29251140ebe83041bab2d820e55618283faa3641d8f4f7f32df6"
+  }
 }
