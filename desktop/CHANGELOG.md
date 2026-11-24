@@ -2,6 +2,26 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.9.6 - 2026-11-24
+
+### Fixes
+
+- **errors:** Name disk-full and local connection failures and keep startup error codes. [#1465](https://github.com/n8n-io/nod/pull/1465) (6670bc2)
+- **trust:** Let one request cover every step and keep approvals answerable. [#1464](https://github.com/n8n-io/nod/pull/1464) (853d473)
+- **models:** Preserve Mistral invalid-key discovery errors. [#1463](https://github.com/n8n-io/nod/pull/1463) (92987ee)
+- **models:** Identify Nod to every model, speech and decision service. [#1462](https://github.com/n8n-io/nod/pull/1462) (ef9d789)
+- **models:** Identify Nod's provider requests as nod instead of pi. [#1460](https://github.com/n8n-io/nod/pull/1460) (058889a)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.9.5...6670bc233b6b7dddaa75b25b89b4a89f0e92bcac)
+
+<details>
+<summary>Build details</summary>
+
+Source: `6670bc233b6b7dddaa75b25b89b4a89f0e92bcac`
+Previous release: `nod-v0.9.5`
+
+</details>
+
 ## 0.9.5 - 2026-11-23
 
 ### Features
