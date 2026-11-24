@@ -1559,13 +1559,17 @@ function failureText(error: unknown) {
 
 function hostFailure(error: unknown) {
   for (const value of [error, (error as { cause?: unknown } | null | undefined)?.cause]) {
-    const { code, address } = (value ?? {}) as { code?: unknown; address?: unknown };
+    const { code, address, syscall } = (value ?? {}) as {
+      code?: unknown;
+      address?: unknown;
+      syscall?: unknown;
+    };
     if (code === 'ENOSPC' || code === 'EDQUOT')
       return {
         expected: true,
         text: `This computer is out of disk space, so Nod couldn't save its work (${failureText(error)}). Free up some space, then reply to continue.`,
       };
-    if (typeof code === 'string' && typeof address === 'string' && loopbackHost(address))
+    if (syscall === 'connect' && typeof address === 'string' && loopbackHost(address))
       return {
         expected: false,
         text: `Nod lost the connection to a service it runs on this computer (${failureText(error)}). Restart Nod, then reply to continue. If it keeps happening, restart this computer.`,
@@ -1574,7 +1578,11 @@ function hostFailure(error: unknown) {
 }
 
 function errorType(error: unknown) {
-  const name = error instanceof Error ? error.name : undefined;
+  const name = !(error instanceof Error)
+    ? undefined
+    : error.name === 'Error'
+      ? error.constructor.name
+      : error.name;
   return (
     errorCode(error) ??
     (name && name !== 'Error' && /^[A-Z][A-Za-z]{0,39}Error$/.test(name) ? name : undefined)

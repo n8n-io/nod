@@ -178,15 +178,15 @@ export function execute(command, args, { env, signal, timeout = 120_000, input }
         Object.assign(new Error(message), facts, {
           details: [spawnError?.stack, output].filter(Boolean).join('\n'),
         });
+      if (timedOut)
+        return reject(
+          failure('Nod runtime setup took too long. Please retry.', { name: 'TimeoutError' }),
+        );
       if (spawnError)
         return reject(
           failure(`Nod could not launch its bundled runtime (${spawnError.code || 'unknown'}).`, {
             errno: spawnError.code,
           }),
-        );
-      if (timedOut)
-        return reject(
-          failure('Nod runtime setup took too long. Please retry.', { name: 'TimeoutError' }),
         );
       if (code !== 0) {
         const detail = output.replace(/\s+/g, ' ');
@@ -239,6 +239,7 @@ async function prepare(options, onComputerStart, progress = {}) {
   }
   if (!['darwin', 'linux'].includes(process.platform) || !['arm64', 'x64'].includes(process.arch))
     throw new Error('This Nod build requires a Mac or a 64-bit Linux computer.');
+  progress.step = 'check';
   if (process.platform === 'linux')
     await access('/dev/kvm', constants.R_OK | constants.W_OK).catch(() => {
       throw Object.assign(
@@ -376,6 +377,7 @@ async function prepare(options, onComputerStart, progress = {}) {
     execute(docker, args, { env: dockerEnvironment, signal, ...extra });
   const runLima = (args, extra = {}) =>
     execute(lima, args, { env: hostEnvironment, signal, ...extra });
+  progress.step = 'check';
   let exists = false;
   try {
     await access(join(limaHome, vm, 'lima.yaml'));
@@ -389,7 +391,6 @@ async function prepare(options, onComputerStart, progress = {}) {
     saved.initializing === undefined &&
     (await guestDiskIsEmpty(join(limaHome, vm, 'disk'), signal))
   ) {
-    progress.step = 'check';
     status('preparing', 'Checking your private computer…');
     if ((await runLima(['list', '--format', '{{.Status}}', vm])).trim() !== 'Stopped') {
       await runLima(['stop', '--tty=false', vm], { timeout: 90_000 });
