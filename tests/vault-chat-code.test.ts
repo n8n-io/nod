@@ -789,6 +789,33 @@ test(
           assert.equal(injected.length, 0);
         },
       );
+      await t.test('a code request ends with the turn that asked for it', async () => {
+        await reset();
+        const gifts = 'Gift ideas: https://shop.example.test/books/05382/some-book/';
+        const working = await seed({ status: 'running' });
+        assert.equal((await send(gifts)).statusCode, 409);
+        await db.pool.query("UPDATE turns SET status='cancelled',finished_at=now() WHERE id=$1", [
+          working.turnId,
+        ]);
+        assert.equal((await send(gifts)).statusCode, 200);
+        assert.equal((await send('What was invoice NS-1042 for?')).statusCode, 200);
+        for (const text of ['482913', 'my code is 482913']) {
+          const response = await send(text);
+          assert.equal(response.statusCode, 409, text);
+          assert.ok(!response.body.includes('482913'));
+        }
+        await db.pool.query(
+          "UPDATE turns SET finished_at=now()-interval '11 minutes' WHERE id=$1",
+          [working.turnId],
+        );
+        assert.equal((await send('2026')).statusCode, 200);
+        assert.deepEqual(ordinary, [gifts, 'What was invoice NS-1042 for?', '2026']);
+        assert.deepEqual(injected, []);
+        assert.doesNotMatch(
+          JSON.stringify((await db.pool.query('SELECT text FROM messages')).rows),
+          /482913/,
+        );
+      });
       await t.test(
         'an unavailable fingerprint key never routes pending codes or replays receipts',
         async () => {

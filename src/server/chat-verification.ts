@@ -256,7 +256,10 @@ export async function createChatVerification(
           await client.query<{ kind: 'otp' | 'payment'; channel: string }>(
             `SELECT r.kind,u.channel FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
              WHERE r.owner_id=$1 AND u.owner_id=$1 AND (u.channel=$2 OR r.kind='payment') AND r.thread_id=$3
-               AND r.status='pending' AND (r.turn_id=$6::uuid OR NOT ${supersededSql(
+               AND r.status='pending'
+               AND (u.status IN ('queued','running','waiting')
+                 OR ($7::boolean AND COALESCE(u.finished_at,u.created_at)>now()-interval '10 minutes'))
+               AND (r.turn_id=$6::uuid OR NOT ${supersededSql(
                  'u',
                  `newer.created_at>u.created_at AND (NOT $7::boolean OR newer.created_at<now()-interval '10 minutes')`,
                )})
