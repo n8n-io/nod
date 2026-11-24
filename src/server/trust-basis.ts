@@ -80,7 +80,9 @@ export function trustDecision(words: TrustWords) {
       if (value === 'read') return { run: true, because: 'read', ...details };
       if (value === 'rule' && words.userRules) return { run: false, rule: true, ...details };
       const quote = typeof value === 'string' ? sources.get(value) : undefined;
-      return quote ? { run: true, because: quote, source: value, ...details } : undefined;
+      return quote
+        ? { run: true, because: quote, source: value, terms: [], ...details }
+        : undefined;
     },
   };
 }
@@ -116,7 +118,7 @@ export function trustBasis(
   )
     return undefined;
   const cited = typeof source === 'string' ? source : because === 'read' ? 'read' : undefined;
-  if (run !== true || !cited) return undefined;
+  if (run !== true || !cited || (cited !== 'read' && !Array.isArray(terms))) return undefined;
   const name = words.action?.name ?? '';
   const args = words.action?.arguments ?? {};
   const command = args.command;

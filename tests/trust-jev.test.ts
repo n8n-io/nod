@@ -913,21 +913,24 @@ test('every checker must cite owner words for Nod settings, sign-in, uploads and
       undefined,
     );
     assert.equal(
-      trustBasis({ run: true, source: 'message:0' }, withOwnerIds(input, ['owner-message']))?.kind,
+      trustBasis(
+        { run: true, source: 'message:0', terms: [] },
+        withOwnerIds(input, ['owner-message']),
+      )?.kind,
       'message',
     );
   }
   const action = { name: 'NOD_limits_update' };
   assert.equal(
     trustBasis(
-      { run: true, source: 'standing' },
+      { run: true, source: 'standing', terms: [] },
       { action, standingInstruction: 'Set the task check-in to USD 7.' },
     ),
     undefined,
   );
   assert.equal(
     trustBasis(
-      { run: true, source: 'rules' },
+      { run: true, source: 'rules', terms: [] },
       { action, userRules: 'Set the task check-in to USD 7.' },
     )?.kind,
     'rule',

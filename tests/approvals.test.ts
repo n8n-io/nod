@@ -1886,7 +1886,7 @@ test(
         const index = (input.userMessages ?? []).findLastIndex(
           (message: { text: string }) => message.text === text,
         );
-        return index < 0 ? { run: false } : { run: true, source: `message:${index}` };
+        return index < 0 ? { run: false } : { run: true, source: `message:${index}`, terms: [] };
       };
       t.beforeEach(() => {
         aligned = false;
@@ -1932,7 +1932,7 @@ test(
           if (yes && typeof yes === 'object') return yes;
           return {
             run: yes,
-            ...(yes === true ? { source: cite(input) } : {}),
+            ...(yes === true ? { source: cite(input), terms: [] } : {}),
             ...(ruled ? { rule: true } : {}),
           };
         },
@@ -2404,7 +2404,7 @@ test(
         await finish(empty.turnId, 'cancelled');
 
         const invented = await begin('Email Ana the synthetic invoice.');
-        aligned = () => ({ run: true, source: 'message:99' });
+        aligned = () => ({ run: true, source: 'message:99', terms: [] });
         await checkWith(invented);
         assert.deepEqual(unusable(), [{ name: 'TrustCheckUnusable', code: 'basis_rejected' }]);
         await finish(invented.turnId, 'cancelled');
@@ -2442,7 +2442,7 @@ test(
               args.step === 'click' &&
               args.control?.[0]?.name === 'Create' &&
               index >= 0
-              ? { run: true, source: `message:${index}` }
+              ? { run: true, source: `message:${index}`, terms: [] }
               : false;
           };
 
@@ -2665,7 +2665,11 @@ test(
           const checking = createTrust({
             pool,
             ownerId,
-            review: async (_instructions, input) => ({ run: true, source: cite(input) }),
+            review: async (_instructions, input) => ({
+              run: true,
+              source: cite(input),
+              terms: [],
+            }),
           });
           const args = email('ana@example.test');
           const before = calls.length;
@@ -3404,7 +3408,7 @@ test(
             () => {
               throw new Error('Synthetic checker failure.');
             },
-            () => ({ run: true, source: 'schedule:9' }),
+            () => ({ run: true, source: 'schedule:9', terms: [] }),
           ]) {
             aligned = undecided;
             for (const turn of [event, authorized])

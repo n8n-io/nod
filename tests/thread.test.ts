@@ -6895,7 +6895,9 @@ test(
                   const index = (
                     (input as { userMessages?: Array<{ text: string }> }).userMessages ?? []
                   ).findIndex((message) => message.text === prompt);
-                  return index < 0 ? { run: false } : { run: true, source: `message:${index}` };
+                  return index < 0
+                    ? { run: false }
+                    : { run: true, source: `message:${index}`, terms: [] };
                 },
               }).check(
                 { threadId: creator.threadId, turnId: fresh.turnId },

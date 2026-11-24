@@ -1313,7 +1313,7 @@ test('trust decisions select only owner evidence and keep reply evidence separat
     ['schedule:9', undefined],
     ['message:0', undefined],
   ] as const)
-    assert.equal(trustBasis({ run: true, source }, scheduled)?.kind, kind, source);
+    assert.equal(trustBasis({ run: true, source, terms: [] }, scheduled)?.kind, kind, source);
   const owner = withOwnerIds(
     { userMessages: [{ at: '2026-11-03T09:00:00Z', text: 'Send the report.' }] },
     ['owner-message'],
@@ -1327,8 +1327,9 @@ test('trust decisions select only owner evidence and keep reply evidence separat
     ['standing', undefined],
     ['scheduleApproval', undefined],
   ] as const)
-    assert.equal(trustBasis({ run: true, source }, owner)?.kind, kind, source);
+    assert.equal(trustBasis({ run: true, source, terms: [] }, owner)?.kind, kind, source);
   assert.equal(trustBasis({ run: false, source: 'message:0' }, owner), undefined);
+  assert.equal(trustBasis({ run: true, source: 'message:0' }, owner), undefined);
   for (const terms of [
     null,
     {},
@@ -1353,7 +1354,10 @@ test('trust decisions select only owner evidence and keep reply evidence separat
     action: { name, arguments: args },
   });
   assert.equal(
-    trustBasis({ run: true, source: 'rules' }, { ...rules, ...act('NOD_schedule_pause') })?.kind,
+    trustBasis(
+      { run: true, source: 'rules', terms: [] },
+      { ...rules, ...act('NOD_schedule_pause') },
+    )?.kind,
     'rule',
   );
   for (const args of [
@@ -1363,18 +1367,21 @@ test('trust decisions select only owner evidence and keep reply evidence separat
   ])
     assert.equal(
       trustBasis(
-        { run: true, source: 'rules' },
+        { run: true, source: 'rules', terms: [] },
         { ...rules, ...act('NOD_notification_preferences_update', args) },
       ),
       undefined,
     );
   assert.equal(
-    trustBasis({ run: true, source: 'rules' }, { ...rules, ...act('NOD_bug_report_send') }),
+    trustBasis(
+      { run: true, source: 'rules', terms: [] },
+      { ...rules, ...act('NOD_bug_report_send') },
+    ),
     undefined,
   );
   assert.equal(
     trustBasis(
-      { run: true, source: 'standing' },
+      { run: true, source: 'standing', terms: [] },
       { standingInstruction: 'Pause my schedules.', ...act('NOD_schedule_pause') },
     ),
     undefined,

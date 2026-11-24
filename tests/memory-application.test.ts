@@ -170,7 +170,7 @@ test(
               ? (() => {
                   const count =
                     (input as { userMessages?: Array<{ text: string }> }).userMessages?.length ?? 0;
-                  return { run: true, source: count ? `message:${count - 1}` : 'read' };
+                  return { run: true, source: count ? `message:${count - 1}` : 'read', terms: [] };
                 })()
               : {};
           },

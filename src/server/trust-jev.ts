@@ -629,6 +629,10 @@ export async function checkJevTrust(
   );
   const run = !hard && (read ? privateAllowed : score >= model.threshold && Boolean(quote));
   return run
-    ? { run: true, because: read ? 'read' : quote, ...(!read ? { source: source?.source } : {}) }
+    ? {
+        run: true,
+        because: read ? 'read' : quote,
+        ...(!read ? { source: source?.source, terms: [] } : {}),
+      }
     : { run: false, ...(source?.rule ? { rule: true } : {}) };
 }

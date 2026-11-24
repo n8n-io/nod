@@ -217,7 +217,7 @@ async function serve() {
         (message) => message.canAuthorize !== false && /^pause my synthetic/i.test(message.text),
       );
       return input.action.name === 'NOD_schedule_pause' && index >= 0
-        ? { run: true, source: `message:${index}`, because: said[index]!.text }
+        ? { run: true, source: `message:${index}`, because: said[index]!.text, terms: [] }
         : { run: false };
     },
   };

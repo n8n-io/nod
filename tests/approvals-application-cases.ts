@@ -416,6 +416,7 @@ export const approvalCases = inParts(
                             : said.length
                               ? `message:${said.length - 1}`
                               : 'read',
+                      terms: [],
                     }
                   : { run, ...(readRequiresConsent ? { rule: true } : {}) };
               })()
@@ -1034,7 +1035,7 @@ export const approvalCases = inParts(
             return action.arguments.website === origin &&
               editor.some(([name]) => label === name) &&
               index >= 0
-              ? { run: true, source: `message:${index}` }
+              ? { run: true, source: `message:${index}`, terms: [] }
               : { run: false };
           };
           t.after(() => {

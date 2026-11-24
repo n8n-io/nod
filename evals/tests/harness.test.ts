@@ -834,7 +834,7 @@ test('decision term protocols reject malformed refusals and fabricated anchors w
 test('decision stages preserve original input and primary output while charging each receipt once', async () => {
   const item = selectDecisionCases(['send-requested'])[0]!;
   const original = JSON.stringify(item.input);
-  const primary = { run: true, source: 'message:0' };
+  const primary = { run: true, source: 'message:0', terms: [] };
   const secondary = {
     verdict: 'compatible',
     comparisons: [],
@@ -906,7 +906,7 @@ test('decision term refusals score only valid protocols and retain provider fail
     expected: false,
     holdout: false,
   };
-  const primary = { run: true, source: 'message:0' };
+  const primary = { run: true, source: 'message:0', terms: [] };
   const unresolved = {
     ...changedDecisionTerms,
     verdict: 'unresolved',
@@ -964,7 +964,7 @@ test('decision routing skips terms for reads, preparation, denials and historica
     ['basis-and-terms', { run: true, because: 'read' }, true, 'scored', 'read'],
     ['basis-and-terms', { run: false }, false, 'scored', 'denied'],
     ['basis-and-terms', { run: true, source: 'message:9' }, false, 'error', 'invalid-basis'],
-    ['basis', { run: true, source: 'message:0' }, true, 'scored', 'basis'],
+    ['basis', { run: true, source: 'message:0', terms: [] }, true, 'scored', 'basis'],
     ['raw', { run: true }, true, 'scored', 'raw'],
     ['raw', { run: 'read' }, true, 'scored', 'raw'],
     ['raw', { run: 'requested' }, true, 'scored', 'raw'],
@@ -994,7 +994,7 @@ test('decision routing skips terms for reads, preparation, denials and historica
 
 test('decision budget and unknown usage stop between stages without scoring partial authorization', async () => {
   const item = selectDecisionCases(['send-requested'])[0]!;
-  const primary = { run: true, source: 'message:0' };
+  const primary = { run: true, source: 'message:0', terms: [] };
   for (const reason of ['budget', 'unpriced'] as const) {
     let spent = 0;
     let calls = 0;
