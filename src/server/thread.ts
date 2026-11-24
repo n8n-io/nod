@@ -259,7 +259,7 @@ export interface ThreadDependencies {
     turn: TurnRef,
     action: string,
     args: Record<string, unknown>,
-    options: { signal: AbortSignal; admit?: (asks: boolean) => Promise<void> },
+    options: { signal: AbortSignal; admit?: (asks: boolean, read?: boolean) => Promise<void> },
   ) => Promise<unknown>;
   connections?: (
     action: 'list' | 'discover' | 'connect' | 'propose',
@@ -291,7 +291,7 @@ export interface ThreadDependencies {
     provenance: {
       sourceMessageId: string | null;
       signal: AbortSignal;
-      admit?: (asks: boolean) => Promise<void>;
+      admit?: (asks: boolean, read?: boolean) => Promise<void>;
     },
   ) => Promise<unknown>;
 }

@@ -118,7 +118,7 @@ const orderedTools = new Set([
 ]);
 const admissions = new AsyncLocalStorage<{
   asked: boolean;
-  admit(asks: boolean): Promise<void>;
+  admit(asks: boolean, read?: boolean): Promise<void>;
 }>();
 const browserTools = new Set(['browser', 'browser_session', 'sign_in', 'pay']);
 const confirmationNotice = 'The confirmation question is in chat. Wait for the reply.';
@@ -780,10 +780,12 @@ export function createAgentRuntime(dependencies: {
         decided = Promise.all([earlier, own]).then(([before, asks]) => before || asks);
         const gate = {
           asked: false,
-          admit: async (asks: boolean) => {
+          admit: async (asks: boolean, read = false) => {
             if (!asks) decide(false);
-            if (await earlier)
-              throw new Error("This turn is waiting for the owner's answer. Ask again after it.");
+            if (!read && (await earlier))
+              throw new Error(
+                "Not run, and no question was asked for it: an earlier call in this step is waiting for the owner's answer. Call it again after they answer.",
+              );
           },
         };
         return { gate, settle: () => decide(gate.asked) };
@@ -917,7 +919,7 @@ export function createAgentRuntime(dependencies: {
             action: string,
             args: Record<string, unknown>,
             callSignal?: AbortSignal,
-            admit?: (asks: boolean) => Promise<void>,
+            admit?: (asks: boolean, read?: boolean) => Promise<void>,
           ) => {
             const gate = admissions.getStore()?.admit;
             return context.integration(
@@ -925,9 +927,9 @@ export function createAgentRuntime(dependencies: {
               args,
               callSignal,
               admit
-                ? async (asks: boolean) => {
-                    await admit(asks);
-                    await gate?.(asks);
+                ? async (asks: boolean, read?: boolean) => {
+                    await admit(asks, read);
+                    await gate?.(asks, read);
                   }
                 : gate,
             );

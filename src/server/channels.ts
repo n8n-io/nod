@@ -1218,6 +1218,32 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       ON CONFLICT(message_id) DO NOTHING`,
       [ownerId],
     );
+    const approvals = Boolean(
+      (await pool.query("SELECT to_regclass('approvals') AS name")).rows[0]?.name,
+    );
+    await pool.query(
+      `INSERT INTO channel_outbox(message_id,source_id)
+      SELECT DISTINCT ON (m.id) m.id,i.source_id FROM messages m
+      JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id AND u.channel='web'
+      CROSS JOIN LATERAL (SELECT lu.channel FROM messages lm
+          JOIN turns lu ON lu.id=lm.turn_id AND lu.owner_id=lm.owner_id
+          WHERE lm.owner_id=m.owner_id AND lm.thread_id=m.thread_id AND lm.role='user'
+            AND lm.created_at<=m.created_at
+          ORDER BY lm.created_at DESC,lm.id DESC LIMIT 1) owner
+      JOIN channel_inbox i ON i.channel=owner.channel AND i.owner_id=m.owner_id AND i.created_at<=m.created_at
+      WHERE m.role='assistant' AND m.owner_id=$1 AND m.hidden_at IS NULL AND i.state='submitted'
+        AND owner.channel<>'web' AND m.created_at>now()-interval '1 day'
+        AND (m.answer_choices IS NOT NULL${
+          approvals
+            ? ` OR m.id IN (SELECT a.confirmation_message_id FROM approvals a
+              WHERE a.owner_id=$1 AND a.status='pending')`
+            : ''
+        })
+        AND NOT EXISTS (SELECT 1 FROM channel_outbox q WHERE q.message_id=m.id)
+      ORDER BY m.id,i.received_at DESC,i.source_id
+      ON CONFLICT(message_id) DO NOTHING`,
+      [ownerId],
+    );
   }
 
   async function currentMessage(
