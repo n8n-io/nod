@@ -9,20 +9,21 @@ permissions: {}
 jobs:
   team:
     name: Label n8n team PRs
-    if: >-
-      github.repository == 'n8n-io/nod' &&
-      contains(fromJSON('["MEMBER","OWNER"]'), github.event.pull_request.author_association)
+    if: github.repository == 'n8n-io/nod' && github.event.pull_request.user.type == 'User'
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
       issues: write
       pull-requests: write
     steps:
-      - name: Add the n8n team label
+      - name: Add the n8n team label for authors with write access
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          permission=$(gh api "repos/$GH_REPO/collaborators/$PR_AUTHOR/permission" --jq .permission)
+          case "$permission" in admin | write) ;; *) exit 0 ;; esac
           gh label create "n8n team" --color ffffff --description "Authored by the n8n team" --force
           gh api --method POST "repos/$GH_REPO/issues/$PR_NUMBER/labels" -f "labels[]=n8n team" --silent
