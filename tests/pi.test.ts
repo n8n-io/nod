@@ -1,6 +1,6 @@
 import { lightestEffort, type ModelSelection } from '../src/shared/models.ts';
 import type { Context, UserMessage } from '@earendil-works/pi-ai';
-import type { ModelAccess } from '../src/ports/models.ts';
+import { ModelAuthError, type ModelAccess } from '../src/ports/models.ts';
 import { createPiModelBackend, createPiModelRuntime } from '../src/providers/pi/models.ts';
 import type { Presentation } from '../src/shared/presentation.ts';
 import assert from 'node:assert/strict';
@@ -8989,6 +8989,39 @@ test('model discovery names why it failed instead of a generic retry message', a
         error.message,
       ) && !/didn’t accept|fixture-xai-key/.test(error.message),
   );
+});
+
+test('Mistral model discovery preserves detail reasons and redacts the connection key', async () => {
+  const key = 'fixture-mistral-key';
+  for (const [body, reason] of [
+    [{ detail: 'Invalid API Key' }, 'Invalid API Key'],
+    [
+      { detail: `Invalid API Key: ${key}`, input: 'private-extra-field' },
+      'Invalid API Key: [redacted]',
+    ],
+    [{ message: 'Account disabled', detail: 'Secondary reason' }, 'Account disabled'],
+    [{ detail: { input: 'private-extra-field' } }, undefined],
+  ] as const) {
+    const backend = createPiModelBackend({
+      fetch: async (input, init) => {
+        assert.equal(String(input), 'https://api.mistral.ai/v1/models');
+        assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
+        return Response.json(body, { status: 401 });
+      },
+    });
+    await assert.rejects(
+      backend.catalog('mistral', 'api_key', { type: 'api_key', key }),
+      (error: unknown) => {
+        assert.ok(error instanceof ModelAuthError);
+        assert.match(error.message, /Mistral model discovery failed.*HTTP 401/);
+        if (reason) assert.ok(error.message.includes(reason));
+        assert.ok(!error.message.includes(key));
+        assert.ok(!error.message.includes('private-extra-field'));
+        assert.ok(!error.message.includes('Secondary reason'));
+        return true;
+      },
+    );
+  }
 });
 
 test('native account catalogs never send a provider key to a different service or accept a failed listing', async () => {

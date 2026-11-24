@@ -60,14 +60,16 @@ export async function modelServiceError(
       const error = body.error ?? body;
       if (typeof error === 'string') reason = serviceReason = error;
       else if (error && typeof error === 'object') {
-        if (typeof error.message === 'string') serviceReason = error.message;
+        const message = typeof error.message === 'string' ? error.message : error.detail;
+        if (typeof message === 'string') serviceReason = message;
         else if (detailFields.includes('description') && typeof error.description === 'string')
           serviceReason = error.description;
-        const fields = detailFields.flatMap((name) =>
-          typeof error[name] === 'string' || typeof error[name] === 'number'
-            ? [`${name}: ${error[name]}`]
-            : [],
-        );
+        const fields = detailFields.flatMap((name) => {
+          const value = name === 'message' && typeof message === 'string' ? message : error[name];
+          return typeof value === 'string' || typeof value === 'number'
+            ? [`${name}: ${value}`]
+            : [];
+        });
         if (fields.length) reason = fields.join('; ');
       }
     }
