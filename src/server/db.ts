@@ -133,6 +133,7 @@ export async function initializeDatabase() {
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS display_text text;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS audio_caption text;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS suggestions jsonb;
+    CREATE INDEX IF NOT EXISTS messages_task_suggestions ON messages(thread_id) WHERE suggestions IS NOT NULL;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS presentation jsonb;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS answer_choices jsonb;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS question_answer jsonb;

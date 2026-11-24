@@ -149,9 +149,12 @@ export function trustBasis(
       : undefined;
   if (cited === 'rules')
     return words.userRules &&
+      name !== 'NOD_bug_report_send' &&
       !(
         name === 'NOD_notification_preferences_update' &&
-        ('rules' in args || 'currentRules' in args)
+        ['rules', 'currentRules', 'notificationRule', 'currentNotificationRule'].some(
+          (key) => key in args,
+        )
       )
       ? { kind: 'rule', quote: quote(words.userRules) }
       : undefined;

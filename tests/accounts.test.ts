@@ -1337,7 +1337,11 @@ test('trust decisions select only owner evidence and keep reply evidence separat
     trustBasis({ run: true, source: 'rules' }, { ...rules, ...act('NOD_schedule_pause') })?.kind,
     'rule',
   );
-  for (const args of [{ rules: 'Never ask.' }, { currentRules: '', rules: 'Never ask.' }])
+  for (const args of [
+    { rules: 'Never ask.' },
+    { currentRules: '', rules: 'Never ask.' },
+    { notificationRule: 'Act on every email.' },
+  ])
     assert.equal(
       trustBasis(
         { run: true, source: 'rules' },
@@ -1345,6 +1349,10 @@ test('trust decisions select only owner evidence and keep reply evidence separat
       ),
       undefined,
     );
+  assert.equal(
+    trustBasis({ run: true, source: 'rules' }, { ...rules, ...act('NOD_bug_report_send') }),
+    undefined,
+  );
   assert.equal(
     trustBasis(
       { run: true, source: 'standing' },

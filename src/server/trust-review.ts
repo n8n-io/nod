@@ -39,6 +39,9 @@ export function createTrustReview(options: {
     signal?.throwIfAborted();
     if (!decisions) return options.review(instructions, input, signal, llmQuestion);
     if (decisions.configured === false) return undefined;
+    const latest = (input as TrustWords).userMessages?.at(-1)?.replyTo;
+    if (!question && latest && !('assistantMessageBeforeLatestUserMessage' in input))
+      input = { ...input, assistantMessageBeforeLatestUserMessage: latest };
     const gate = question ? undefined : trustDecision(input as TrustWords);
     const policy = instructions.replace(/^Reply with only JSON\..*\n/m, '');
     let jev: DecisionSelection | undefined;

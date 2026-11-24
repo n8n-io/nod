@@ -3241,6 +3241,27 @@ test(
         },
       );
 
+      await t.test('a tapped first-chat task card is never owner words', async () => {
+        const card = 'Email my team a synthetic status summary every weekday morning';
+        const offer = randomUUID();
+        const { id: threadId } = (
+          await db.pool.query<{ id: string }>(
+            'SELECT id FROM threads WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 1',
+            [ownerId],
+          )
+        ).rows[0]!;
+        await db.pool.query(
+          "INSERT INTO messages(id,owner_id,thread_id,role,text,suggestions) VALUES($1,$2,$3,'assistant','',$4)",
+          [offer, ownerId, threadId, { tasks: [{ title: card }] }],
+        );
+        const tapped = await begin(card);
+        await trust.check(tapped, 'GMAIL_SEND_EMAIL', email('team@example.test'));
+        const seen = reviews.at(-1)!.userMessages?.map((message: { text: string }) => message.text);
+        assert.equal(seen?.includes(card) ?? false, false);
+        await finish(tapped.turnId, 'cancelled');
+        await db.pool.query('UPDATE messages SET hidden_at=now() WHERE id=$1', [offer]);
+      });
+
       await t.test('an absorbed correction reaches the checker after the request', async (t) => {
         const requestText = 'Send the synthetic report to Ana at ana@example.test.';
         const correctionText = 'Do not send the synthetic report to Ana.';

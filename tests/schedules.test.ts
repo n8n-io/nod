@@ -2125,10 +2125,10 @@ test(
               ?.text,
             'Check it every morning.',
           );
-          assert.equal(
-            first.messages.find((message: { id: string }) => message.id === context.sourceMessageId)
-              ?.canAuthorize,
-            false,
+          assert.ok(
+            !first.messages.some(
+              (message: { id: string }) => message.id === context.sourceMessageId,
+            ),
           );
           assert.ok(
             !first.messages.some(
@@ -2242,17 +2242,16 @@ test(
           const authority = (
             await db.pool.query('SELECT authority FROM schedules WHERE id=$1', [schedule.id])
           ).rows[0].authority;
-          assert.equal(
-            authority.messages.find(
+          assert.ok(
+            !authority.messages.some(
               (message: { id: string }) => message.id === background.sourceMessageId,
-            )?.canAuthorize,
-            false,
+            ),
           );
           assert.equal(
             authority.messages.find(
               (message: { id: string }) => message.id === asked.sourceMessageId,
-            )?.canAuthorize,
-            true,
+            )?.text,
+            'Check it every morning.',
           );
           assert.equal(
             authority.messages.find(

@@ -175,10 +175,12 @@ export function instructionMessages(evidence: OwnerInstructions) {
 
 const recentMessages = 20;
 
-const excerpt = (text: string, limit: number) =>
-  text.length > limit
-    ? `${text.slice(0, Math.ceil(limit / 2))}\n…\n${text.slice(-Math.floor(limit / 2))}`
+const excerpt = (text: string, limit: number) => {
+  const characters = Array.from(text);
+  return characters.length > limit
+    ? `${characters.slice(0, limit / 2).join('')}\n…\n${characters.slice(-limit / 2).join('')}`
     : text;
+};
 
 export async function recentOwnerWords(
   pool: Pick<Pool, 'query'>,
@@ -203,9 +205,10 @@ export async function recentOwnerWords(
            AND (m.text<>'' OR m.presentation IS NOT NULL)),
      requests AS (SELECT m.id,m.created_at FROM messages m WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.id=ANY($3::uuid[])),
      recent AS ((SELECT v.id FROM visible v,cleared WHERE v.created_at>=cleared.at
+           AND v.created_at>now()-interval '24 hours'
            ORDER BY v.created_at DESC,v.id DESC LIMIT ${recentMessages})
          UNION SELECT w.id FROM requests r,cleared,LATERAL (SELECT v.id FROM visible v
-           WHERE (v.created_at,v.id)<=(r.created_at,r.id)
+           WHERE (v.created_at,v.id)<=(r.created_at,r.id) AND v.created_at>r.created_at-interval '24 hours'
              AND v.created_at>=CASE WHEN r.created_at>=cleared.at THEN cleared.at ELSE '-infinity'::timestamptz END
            ORDER BY v.created_at DESC,v.id DESC LIMIT ${recentMessages}) w)
      SELECT m.id,m.text,m.created_at,r.id AS reply_id,r.text AS reply_text,r.presentation AS reply_presentation,
@@ -222,7 +225,7 @@ export async function recentOwnerWords(
          JOIN turns t ON t.id=a.turn_id AND t.owner_id=a.owner_id
          WHERE m.reply_to_message_id IS NULL AND a.owner_id=$1 AND a.thread_id=$2 AND a.role='assistant'
            AND a.hidden_at IS NULL AND (a.text<>'' OR a.presentation IS NOT NULL)
-           AND (a.created_at,a.id)<(m.created_at,m.id)
+           AND (a.created_at,a.id)<(m.created_at,m.id) AND a.created_at>m.created_at-interval '24 hours'
            AND a.created_at>=CASE WHEN m.created_at>=cleared.at THEN cleared.at ELSE '-infinity'::timestamptz END
            AND t.channel IS NOT DISTINCT FROM u.channel
          ORDER BY a.created_at DESC,a.id DESC LIMIT 1) implicit ON TRUE
@@ -231,6 +234,8 @@ export async function recentOwnerWords(
          COALESCE(explicit.withdrawn,implicit.withdrawn) AS withdrawn) r
      WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.role='user' AND m.text<>'' AND m.hidden_at IS NULL
        AND m.approval_answer IS NULL AND NOT ${withdrawnSql('m')}
+       AND m.text NOT IN (SELECT task->>'title' FROM messages offer,jsonb_array_elements(offer.suggestions->'tasks') task
+         WHERE offer.owner_id=$1 AND offer.thread_id=$2 AND offer.suggestions IS NOT NULL AND task->>'title' IS NOT NULL)
      ORDER BY m.created_at,m.id`,
     [ownerId, threadId, requestIds],
   );
@@ -252,18 +257,16 @@ export async function recentOwnerWords(
   });
   return {
     words: {
-      userMessages: messages.map(({ replyTo, text, answer, ...message }) => ({
+      userMessages: messages.map(({ replyTo, answer, ...message }) => ({
         ...message,
-        text: excerpt(text, 4000),
         ...(answer ? { canAuthorize: false } : {}),
         ...(replyTo ? { replyTo: excerpt(replyTo.text, 2000) } : {}),
       })),
     } satisfies TrustWords,
     evidence: (messageId?: string): OwnerInstructions => ({
-      messages: messages.map(({ answer, ...message }) => ({
-        ...message,
-        canAuthorize: !answer && message.id === messageId,
-      })),
+      messages: messages
+        .filter((message) => !message.answer && message.id === messageId)
+        .map(({ id, at, text, replyTo }) => ({ id, at, text, ...(replyTo ? { replyTo } : {}) })),
     }),
   };
 }

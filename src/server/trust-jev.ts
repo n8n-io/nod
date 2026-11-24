@@ -289,7 +289,15 @@ export async function checkJevTrust(
   const quote =
     source?.run &&
     source.because !== 'read' &&
-    !(ownSettings && ['standing', 'rules', 'scheduleApproval'].includes(String(first.choice)))
+    !(ownSettings && ['standing', 'scheduleApproval'].includes(String(first.choice))) &&
+    !(
+      first.choice === 'rules' &&
+      (action?.name === 'NOD_bug_report_send' ||
+        (action?.name === 'NOD_notification_preferences_update' &&
+          ['rules', 'currentRules', 'notificationRule', 'currentNotificationRule'].some(
+            (key) => key in (action.arguments ?? {}),
+          )))
+    )
       ? source.because
       : undefined;
   const facts = trustFacts(input).serverDateFacts;
