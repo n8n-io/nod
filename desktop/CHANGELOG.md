@@ -2,6 +2,38 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.9.7 - 2026-11-25
+
+### Features
+
+- **apps:** Add Qontext as a custom app. [#1473](https://github.com/n8n-io/nod/pull/1473) (08da5a7)
+
+### Fixes
+
+- Remove gates that hide tools and reject valid trust verdicts. [#1485](https://github.com/n8n-io/nod/pull/1485) (33136d5)
+- **desktop:** Repair Windows startup instead of refusing, keep the first failure's code, download through the system proxy. [#1483](https://github.com/n8n-io/nod/pull/1483) (2c133bb)
+- **feedback:** Create feedback issues as the Nod Feedback Linear app. [#1484](https://github.com/n8n-io/nod/pull/1484) (9e3e2d7)
+- **chat:** Give the main chat the browser and computer use again. [#1482](https://github.com/n8n-io/nod/pull/1482) (31e8f63)
+- **vault:** End a chat code request with the turn that asked for it. [#1469](https://github.com/n8n-io/nod/pull/1469) (40956c9)
+
+<details>
+<summary>Maintenance (2 changes)</summary>
+
+- Identify n8n team PRs by write access to the repository. [#1470](https://github.com/n8n-io/nod/pull/1470) (cb4b58b)
+- Label pull requests opened by the n8n team. [#1468](https://github.com/n8n-io/nod/pull/1468) (c96ae96)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.9.6...33136d52485c30ff6900c37f2f2b9c04df02c1c6)
+
+<details>
+<summary>Build details</summary>
+
+Source: `33136d52485c30ff6900c37f2f2b9c04df02c1c6`
+Previous release: `nod-v0.9.6`
+
+</details>
+
 ## 0.9.6 - 2026-11-24
 
 ### Fixes
