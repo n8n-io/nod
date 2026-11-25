@@ -501,7 +501,7 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
     ),
     collect(
       'schedules',
-      `SELECT s.id,s.kind,s.enabled,s.delivery_channel,s.next_run_at,
+      `SELECT s.id,s.kind,s.enabled,s.next_run_at,
        (SELECT count(*)::int FROM schedule_runs r WHERE r.owner_id=s.owner_id AND r.schedule_id=s.id
          AND r.created_at BETWEEN $2 AND $3) AS recent_runs,
        (SELECT count(*)::int FROM schedule_runs r JOIN turns t ON t.id=r.turn_id AND t.owner_id=r.owner_id
@@ -512,7 +512,6 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
         id: alias('schedule', row.id),
         kind: choice(row.kind, ['once', 'recurring']),
         enabled: row.enabled === true,
-        channel: choice(row.delivery_channel, channels, 'other'),
         overdue: row.enabled === true && timestamp(row.next_run_at) < now,
         recentRuns: amount(row.recent_runs),
         failedRuns: amount(row.failed_runs),

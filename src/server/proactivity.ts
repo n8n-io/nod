@@ -188,6 +188,7 @@ export function createProactivity(options: {
   redact?(text: string): string;
   read(turn: TurnRef, input: SourceQuery, signal: AbortSignal): Promise<unknown>;
   modelAvailable?(): Promise<boolean>;
+  ownerChannel?(client: PoolClient): Promise<string>;
   curator?: MemoryCurator;
 }) {
   const { pool, ownerId } = options;
@@ -1526,6 +1527,7 @@ export function createProactivity(options: {
           );
       const turnId = await enqueueTurn(prompt, {
         source: 'event',
+        channel: (await options.ownerChannel?.(client)) ?? 'web',
         sourceId: `proactivity:${randomUUID()}`,
         background: true,
         proactive: true,

@@ -21,6 +21,7 @@ import type {
   InboundMessage,
   InboundReaction,
   MessagingAttachment,
+  MessagingChannel,
   MessagingTransport,
 } from '../ports/messaging.ts';
 import type { ChatConfirmationInput } from './approvals.ts';
@@ -295,7 +296,13 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     ...channel,
     allowedSenderIds: [...channel.allowedSenderIds],
   }));
-  let configuration = channels.map((channel) => ({
+  let configuration: Array<{
+    provider: string;
+    status: MessagingChannel['status'];
+    missing: string[];
+    available?: boolean;
+    error?: string;
+  }> = channels.map((channel) => ({
     provider: channel.id,
     status: channel.status,
     missing: channel.missing,
@@ -500,6 +507,29 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         channel.accountId === row.account_id &&
         channel.allowedSenderIds.includes(row.sender_id),
     );
+  }
+
+  async function status() {
+    updateConfiguration();
+    const last = await pool.query<{ provider: string; at: Date }>(
+      'SELECT provider,max(created_at) AS at FROM channel_inbox WHERE owner_id=$1 GROUP BY provider',
+      [ownerId],
+    );
+    return configuration.map((channel) => ({
+      ...channel,
+      lastMessageAt:
+        last.rows.find((row) => row.provider === channel.provider)?.at.toISOString() ?? null,
+    }));
+  }
+
+  async function ownerChannel(client: Pool | PoolClient = pool) {
+    const rows = await client.query<ChannelIdentity & { channel: string }>(
+      `SELECT provider,account_id,sender_id,channel FROM channel_inbox
+       WHERE owner_id=$1 AND state='submitted' AND channel IS NOT NULL
+       GROUP BY provider,account_id,sender_id,channel ORDER BY max(created_at) DESC LIMIT 20`,
+      [ownerId],
+    );
+    return rows.rows.find((row) => permitted(row))?.channel ?? 'web';
   }
 
   async function accept(message: InboundMessage, channelId: string) {
@@ -1958,9 +1988,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   function registerRoutes(app: FastifyInstance) {
     app.addHook('onClose', close);
     app.get('/api/channels', async () => {
-      updateConfiguration();
       return {
-        channels: configuration,
+        channels: await status(),
         error: lastError,
         inbox: (
           await pool.query(
@@ -2034,6 +2063,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       );
     },
     announcePairing,
+    ownerChannel,
+    status,
     react,
     async pairing() {
       if (closed || replacing || !transport.pairing) throw new Error('QR pairing is unavailable.');

@@ -17,6 +17,7 @@ import { WhatsAppSetup } from '../components/whatsapp-setup';
 import type { ChannelProvider, ChannelSetupSummary } from '../../shared/contracts';
 import { telegramState, useChannelSettings } from '../hooks/use-channel-settings';
 import { channelSetupBody, telegramBotUrl } from '../lib/secondary-pages';
+import { formatDateTime } from '../lib/date-format';
 import {
   Button,
   Checkbox,
@@ -241,6 +242,7 @@ function ChannelCard({
   onReconnect,
   available,
   error,
+  lastMessageAt,
 }: {
   provider: (typeof providers)[number];
   setup?: ChannelSetupSummary;
@@ -252,6 +254,7 @@ function ChannelCard({
   onReconnect(): void;
   available?: boolean;
   error?: string;
+  lastMessageAt?: string | null;
 }) {
   const comingSoon = 'comingSoon' in provider;
   const needsDelivery = Boolean(
@@ -299,11 +302,17 @@ function ChannelCard({
       logo={<img src={`/logos/${provider.id}.svg`} alt="" width={24} height={24} />}
       description={provider.description}
       detail={
-        error
-          ? `${setup?.managed ? 'Managed by your server. ' : ''}${error}`
-          : setup?.managed
-            ? 'Managed by your server'
-            : undefined
+        [
+          setup?.managed ? 'Managed by your server.' : '',
+          error ||
+            (connected && !needsDelivery && !needsPairing
+              ? lastMessageAt
+                ? `Last message from you: ${formatDateTime(lastMessageAt)}.`
+                : 'No message from you yet.'
+              : ''),
+        ]
+          .filter(Boolean)
+          .join(' ') || undefined
       }
       badge={
         status && (
@@ -428,6 +437,7 @@ export function Channels() {
       connected: Boolean(setup?.enabled || configured),
       available: live?.available,
       error: live?.error,
+      lastMessageAt: live?.lastMessageAt,
     };
   });
   const telegramSetup = channels[0].setup;

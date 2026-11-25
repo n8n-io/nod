@@ -110,6 +110,7 @@ type ChannelStatus = {
   missing: string[];
   available?: boolean;
   error?: string;
+  lastMessageAt?: string | null;
 };
 export type ChannelResponse = { channels: ChannelStatus[]; error: string | null };
 export type ChannelSettings = { ready: boolean; channels: ChannelSetupSummary[] };
