@@ -15,19 +15,19 @@ With a [self-hosted server](/deploy/self-host/), channels stay connected while t
 
 If the desktop app runs Nod, quitting it stops Telegram and WhatsApp replies. The computer must stay awake. Reconnect cannot receive messages while Nod is stopped.
 
-Nod replies in the app you wrote from. A message from Telegram gets its answer on Telegram, and a schedule you set up there sends its results there too. Everything also shows in the chat in the Nod app.
+Nod replies in the app you wrote from. Schedule results, nudges and other messages Nod starts on its own go to the chat app you used last, Telegram or WhatsApp. Everything also shows in the chat in the Nod app.
 
 Nod uses your conversation language for pairing notices and private-step guidance. Its model writes the message; the server adds permitted file links and keeps private sign-in and payment links out of chat apps. If an attachment cannot be read, its caption still helps set the recovery message’s language; the failed attachment does not start a task.
 
 ## Before you start
 
-|                     | Telegram                            | WhatsApp with a QR code                     |
-| ------------------- | ----------------------------------- | ------------------------------------------- |
-| You need            | A Telegram bot, made with BotFather | A registered WhatsApp account               |
-| Works on a laptop   | Yes                                 | Yes                                         |
-| Who can message Nod | Only the Telegram account you pair  | Your personal number, or your own self-chat |
-| Files from Nod      | Images, documents, video and audio  | Images, documents, video and audio          |
-| When Nod can write  | While Nod runs                      | While Nod runs and WhatsApp is connected    |
+|                     | Telegram                                | WhatsApp with a QR code                            |
+| ------------------- | --------------------------------------- | -------------------------------------------------- |
+| You need            | A Telegram bot, made with BotFather     | A registered WhatsApp account                      |
+| Works on a laptop   | Yes                                     | Yes                                                |
+| Who can message Nod | The Telegram account that pressed Start | Message yourself, and a phone you link with a code |
+| Files from Nod      | Images, documents, video and audio      | Images, documents, video and audio                 |
+| When Nod can write  | While Nod runs                          | While Nod runs and WhatsApp is connected           |
 
 The QR connection does not need a Meta developer account, an API token, or a public callback address. It uses Baileys, an unofficial WhatsApp client, so there's a small risk of account restrictions, and a WhatsApp update can break the connection for a while. Nod only messages you. A separate bot number keeps your own chats safe. Check the WhatsApp terms before you connect.
 
@@ -48,15 +48,12 @@ On a self-hosted server, leave that channel's environment variables blank or uns
 
 1. In **Create a bot**, scan the code or select **Open Telegram** to open [BotFather](https://t.me/BotFather). Send `/newbot`, choose a name, then a username ending in `bot`, such as `my_nod_bot`.
 2. Select **I have my token**. Paste BotFather's reply, or just the token, into **Bot token**. Select **Connect bot**.
-3. In **Link your account**, scan the new code or select **Open Telegram**, then press **Start** in the bot's chat. This code works for 15 minutes. On desktop, Nod opens the Telegram app when it is available. If **Start** does not connect, select **Copy pairing command** and paste the command in your bot's chat. Keep that command private.
-4. In **Confirm account**, check your name and username, then select **Connect account**. Only this account can message Nod.
-5. Setup closes after your account connects. Open **Manage Telegram**. Under **Chat from Telegram**, select **Open on this computer** or **Scan on phone** to open your bot's chat. Nod must be running to reply.
+3. In **Link your account**, scan the new code or select **Open Telegram**, then press **Start** in the bot's chat. This code works for 15 minutes. On desktop, Nod opens the Telegram app when it is available. If **Start** does not connect, select **Copy pairing command** and paste the command in your bot's chat. Keep that command private. The account that presses **Start** is linked, and only it can message Nod.
+4. Setup closes after your account connects. Open **Manage Telegram**. Under **Chat from Telegram**, select **Open on this computer** or **Scan on phone** to open your bot's chat. Nod must be running to reply.
 
 </Steps>
 
 The account panel shows your bot and the name and username of the person allowed to message it, when Telegram provides them. The phone QR code opens the existing chat; it does not pair another account. Select **Disconnect Telegram** to remove the connection; Nod asks you to confirm first.
-
-If the link doesn't work for you, select **Enter your user ID instead** and use the ID that [@userinfobot](https://t.me/userinfobot) sends you.
 
 This setup works without a public callback URL. If your bot already uses a webhook, remove it before connecting here. To keep webhook delivery, use [Telegram webhooks in server configuration](/deploy/configuration/#telegram-webhooks).
 
@@ -65,15 +62,15 @@ This setup works without a public callback URL. If your bot already uses a webho
 
 <Steps>
 
-1. Choose **Separate bot number** or **Use my own number**.
-2. For a bot number, register a second number in WhatsApp or the WhatsApp Business app. Enter your personal number in Nod, with the country code and without `+` or spaces. Only your personal number can start work.
-3. Read the account risk and terms. Select **Show QR code**.
-4. On the phone for the account you will link, open **Settings → Linked Devices → Link a Device**. Scan the code in Nod. A code expires after one minute. The setup expires after five minutes.
-5. For a bot number, message the linked number from your personal WhatsApp. For your own number, open **Message yourself** and write there.
+1. Read the account risk and terms. Select **Show QR code**.
+2. On the phone whose WhatsApp Nod will use, open **Settings → Linked Devices → Link a Device**. Scan the code in Nod. A code expires after one minute. The setup expires after five minutes.
+3. On that phone, open **Message yourself** and write to Nod there.
 
 </Steps>
 
-Nod ignores groups, status updates, other senders and message history. In self-chat, Nod ignores its own replies. WhatsApp can hide a sender's phone number behind a private ID. With a bot number, Nod accepts these messages only when WhatsApp links the private ID to your personal number. Your other chats stay outside the Nod conversation.
+To keep your own chats apart, link a second number, such as one registered in the WhatsApp Business app. Then select **Write from another phone** in Nod, scan the code with your personal phone, and send the message that opens. The code works for 15 minutes. After that, your personal phone can message the linked number too.
+
+Nod ignores groups, status updates, other chats and message history. In **Message yourself**, Nod ignores its own replies. Nod remembers a phone you link with a code by the address WhatsApp uses for it, even when WhatsApp hides the number behind a private ID. Your other chats stay outside the Nod conversation.
 
 The QR code updates automatically. When WhatsApp accepts the code, Nod hides it while the connection starts. If the code expires or Nod cannot check the connection, Nod hides it until a new check succeeds. Select **Start again** if setup does not continue.
 
@@ -146,13 +143,15 @@ Nod saves the WhatsApp device keys encrypted in its database. The keys stay on t
 
 After a restart or network loss, Nod uses the saved link to connect again. Replies that have not started sending wait while WhatsApp is disconnected. A send with an unclear result is not repeated automatically. This prevents duplicate messages; check Nod if a reply does not arrive.
 
+Each connected channel shows when your last message from it reached Nod, or that none has yet. If you write and that line doesn't change, Nod isn't receiving your messages: check that you write from the linked account or chat. Nod can read the same line when you ask whether a chat app works.
+
 If messages stop, open **Channels** and select **Reconnect** for Telegram or WhatsApp. Nod restarts message delivery with the saved settings. It keeps your paired Telegram account and saved WhatsApp device keys. A saved Telegram webhook is registered again. Telegram polling errors show the service's status and reason on this page.
 
 **Reconnect** also works for server-managed channels. Their settings still come from the server environment. For WhatsApp, the connection panel opens after reconnecting. If WhatsApp has signed out the device, select **Start again** and scan a new code.
 
-Telegram can change its update numbers after seven days without messages. Nod stops using the saved update number after 24 hours without a received update. Telegram keeps pending updates for 24 hours.
+Nod keeps one request open to Telegram, so messages arrive as soon as they're sent. Telegram can change its update numbers after seven days without messages. Nod stops using the saved update number after 24 hours without a received update. Telegram keeps pending updates for 24 hours.
 
-The Channels page checks status every five seconds while visible. During Telegram pairing, or with the WhatsApp connection panel open, it checks every two seconds. **Connecting** means WhatsApp is trying to reconnect. **Connection failed** shows a stopped connection and its reason. WhatsApp errors distinguish a signed-out device, a replaced connection, a rejected session or device version, an incorrect bot account, and local storage or message errors. The connection panel shows the same reason. Connection failures also enter the local diagnostic log, without WhatsApp phone numbers, QR codes, or device keys. When the QR connection ignores an incoming WhatsApp message, the log records only a fixed reason, the connection mode, how WhatsApp addressed the chat (phone number, private ID or other), and how many similar messages it skipped. It records each reason and addressing type at most once a minute. The log never includes the message, the sender, or any number or ID.
+The Channels page checks status every five seconds while visible. During Telegram pairing, or with the WhatsApp connection panel open, it checks every two seconds. **Connecting** means WhatsApp is trying to reconnect. **Connection failed** shows a stopped connection and its reason. WhatsApp errors distinguish a signed-out device, a replaced connection, a rejected session or device version, an incorrect bot account, and local storage or message errors. The connection panel shows the same reason. Connection failures also enter the local diagnostic log, without WhatsApp phone numbers, QR codes, or device keys. When the QR connection ignores an incoming WhatsApp message, the log records only a fixed reason, how WhatsApp addressed the chat (phone number, private ID or other), and how many similar messages it skipped. It records each reason and addressing type at most once a minute. The log never includes the message, the sender, or any number or ID.
 
 ## Answer approval questions
 

@@ -134,23 +134,23 @@ Setting any nonempty variable for a channel makes that entire channel server-man
 
 Set `TELEGRAM_ENABLED=false` or `WHATSAPP_ENABLED=false` to disable a channel explicitly. Otherwise, supplying channel settings enables it. Remove or clear every variable for that channel to return to its previous saved setup. Credentials from the environment are never copied into the database.
 
-| Variable                        | What it does                                                                                                                     | Default                                 |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| `TELEGRAM_ENABLED`              | `true` enables Telegram; `false` disables it. Either value makes the channel server-managed.                                     | Unset; follows supplied configuration   |
-| `TELEGRAM_MODE`                 | `polling` receives messages through outbound requests. `webhook` needs a public HTTPS address and a registered Telegram webhook. | `polling` for environment-managed setup |
-| `TELEGRAM_BOT_TOKEN`            | The bot token from BotFather.                                                                                                    | Empty                                   |
-| `TELEGRAM_WEBHOOK_SECRET_TOKEN` | The secret Telegram sends with each webhook call: 16 to 256 letters, digits, `_` or `-`. Required for webhook mode.              | Generated in memory for polling         |
-| `TELEGRAM_ALLOWED_USER_ID`      | The only Telegram user ID Nod answers.                                                                                           | Empty                                   |
-| `WHATSAPP_ENABLED`              | `true` enables WhatsApp; `false` disables it. Either value makes the channel server-managed.                                     | Unset; follows supplied configuration   |
-| `WHATSAPP_MODE`                 | `bot` links a separate number. `self-chat` links your own number. `cloud` uses Meta Cloud API.                                   | `cloud` for environment-managed setup   |
-| `WHATSAPP_POLICY_CONFIRMED`     | `true` confirms your use is allowed under the WhatsApp terms. Required.                                                          | `false`                                 |
-| `WHATSAPP_ACCESS_TOKEN`         | The WhatsApp Cloud API access token from Meta.                                                                                   | Empty                                   |
-| `WHATSAPP_APP_SECRET`           | The Meta app secret. Nod uses it to check webhook signatures.                                                                    | Empty                                   |
-| `WHATSAPP_PHONE_NUMBER_ID`      | The ID of the business sender number.                                                                                            | Empty                                   |
-| `WHATSAPP_VERIFY_TOKEN`         | The token Meta sends when it verifies the webhook.                                                                               | Empty                                   |
-| `WHATSAPP_ALLOWED_NUMBER`       | Your personal number, with country code, 7 to 15 digits. Required for `bot` and Cloud API. Self-chat uses the linked number.     | Empty                                   |
+| Variable                        | What it does                                                                                                                                                       | Default                                 |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------- |
+| `TELEGRAM_ENABLED`              | `true` enables Telegram; `false` disables it. Either value makes the channel server-managed.                                                                       | Unset; follows supplied configuration   |
+| `TELEGRAM_MODE`                 | `polling` receives messages through outbound requests. `webhook` needs a public HTTPS address and a registered Telegram webhook.                                   | `polling` for environment-managed setup |
+| `TELEGRAM_BOT_TOKEN`            | The bot token from BotFather.                                                                                                                                      | Empty                                   |
+| `TELEGRAM_WEBHOOK_SECRET_TOKEN` | The secret Telegram sends with each webhook call: 16 to 256 letters, digits, `_` or `-`. Required for webhook mode.                                                | Generated in memory for polling         |
+| `TELEGRAM_ALLOWED_USER_ID`      | The only Telegram user ID Nod answers.                                                                                                                             | Empty                                   |
+| `WHATSAPP_ENABLED`              | `true` enables WhatsApp; `false` disables it. Either value makes the channel server-managed.                                                                       | Unset; follows supplied configuration   |
+| `WHATSAPP_MODE`                 | `linked` links a WhatsApp account with a QR code; earlier `bot` and `self-chat` values mean the same. `cloud` uses Meta Cloud API.                                 | `cloud` for environment-managed setup   |
+| `WHATSAPP_POLICY_CONFIRMED`     | `true` confirms your use is allowed under the WhatsApp terms. Required.                                                                                            | `false`                                 |
+| `WHATSAPP_ACCESS_TOKEN`         | The WhatsApp Cloud API access token from Meta.                                                                                                                     | Empty                                   |
+| `WHATSAPP_APP_SECRET`           | The Meta app secret. Nod uses it to check webhook signatures.                                                                                                      | Empty                                   |
+| `WHATSAPP_PHONE_NUMBER_ID`      | The ID of the business sender number.                                                                                                                              | Empty                                   |
+| `WHATSAPP_VERIFY_TOKEN`         | The token Meta sends when it verifies the webhook.                                                                                                                 | Empty                                   |
+| `WHATSAPP_ALLOWED_NUMBER`       | Your personal number, with country code, 7 to 15 digits. Required for Cloud API. With `linked`, a second phone that can write to Nod besides **Message yourself**. | Empty                                   |
 
-For QR setup, use **Channels** to scan the code. The `bot` and `self-chat` modes do not use the Meta access token, app secret, business phone number ID or webhook token. The saved device keys stay encrypted in the database. See [WhatsApp setup](/use/channels/#set-up-a-channel).
+For QR setup, use **Channels** to scan the code. The `linked` mode does not use the Meta access token, app secret, business phone number ID or webhook token. The saved device keys stay encrypted in the database. See [WhatsApp setup](/use/channels/#set-up-a-channel).
 
 The smallest Telegram configuration needs `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_USER_ID`; it uses polling.
 

@@ -277,7 +277,7 @@ Links stay inline in the reply. Hover over a link, or focus it with the keyboard
 
 ## Replies go back where you wrote
 
-Nod answers each request in the app you sent it from. A message from Telegram gets its reply on Telegram. Everything also appears in the chat in Nod's own app. See [Telegram and WhatsApp](/use/channels/).
+Nod answers each request in the app you sent it from. A message from Telegram gets its reply on Telegram. Schedule results and messages Nod starts on its own go to the chat app you used last. Everything also appears in the chat in Nod's own app. See [Telegram and WhatsApp](/use/channels/).
 
 ## Report a bug
 
