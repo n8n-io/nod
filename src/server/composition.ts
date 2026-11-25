@@ -2416,6 +2416,7 @@ async function initializeApplication(
   const submittedMessages = createUserMessageService({
     confirmAction: approvals.chat,
     taskReply: tasks.resolveReply,
+    startChat: tasks.startChat,
     accepted: ownerMessageAccepted,
   });
   const userMessages = {

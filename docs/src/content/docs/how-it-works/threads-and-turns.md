@@ -27,6 +27,8 @@ A turn is one run of the agent. Each turn is a row in the `turns` table with a `
 | `event`    | A source batch or observer task                                                                                        | The observer or the task                     |
 | `resume`   | A completed secure form, payment approval, app connection, or your reply or reaction confirming or declining an action | The session that asked                       |
 
+A message sent with **New chat** in the web or desktop app starts a `user` turn in a new task session. See [Start a task with New chat](/how-it-works/task-sessions/#start-a-task-with-new-chat).
+
 A recurring schedule skips a firing while an earlier run is queued, running or still needs your answer. An earlier waiting turn no longer holds a firing after a later turn starts in that run's session. A schedule run can't create schedules.
 
 Creating a turn also queues a `thread-drain` job in the same transaction. Unless the turn waits for a start time, such as a task held until quiet hours end, the worker is woken as soon as that transaction commits instead of waiting for its next poll.
@@ -108,7 +110,7 @@ The next turn checks server status for sign-in forms referenced by its recent ch
 | Session                                | Key                                                             | Reports to the conversation                                                                                                                                                                                                                       |
 | -------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Main chat                              | The thread ID.                                                  | Streams its opening line, shows the text it writes between tool calls as live status, then posts its final reply. That text is posted only when a turn ends without a reply. See [Message cadence](/how-it-works/agent-runtime/#message-cadence). |
-| Task started from chat                 | The task ID, stored in `tasks.session_id`.                      | Sends questions, files and its final reply to the task's message.                                                                                                                                                                                 |
+| Task started from chat or **New chat** | The task ID, stored in `tasks.session_id`.                      | Sends questions, files and its final reply to the task's message. On web, its replies stream in the task's chat.                                                                                                                                  |
 | Background observer                    | A saved session ID on the active thread.                        | Saves qualified nudges and starts separate tasks for outside actions or waits.                                                                                                                                                                    |
 | Schedule or event outside the observer | Its first turn. A task record created there keeps that session. | Uses explicit delivery tools; a linked task also delivers its final reply.                                                                                                                                                                        |
 
@@ -139,7 +141,7 @@ See [Task sessions](/how-it-works/task-sessions/) for the ledger, shared context
 
 A session opens its browser on its first browser call, so a session that never browses never starts one. Sessions never share a browser.
 
-- A chat or background session can hand its browser to you. The handoff identifies the exact turn and browser. It closes when that session continues. The developer browser page shows the chat browser.
+- A chat or background session can hand its browser to you. The handoff identifies the exact turn and browser. It closes when that session continues. The developer browser page shows the chat browser, or a task's browser when opened with `?task=<task ID>`.
 - A background session's browser is deleted when the session ends without waiting, or when **Stop** or reset cancels it. If you later continue that task, it starts a fresh, signed-out browser. A reset conversation's browser never comes back.
 - The browser container keeps four browsers live at once. At that limit, a new browser replaces the least recently used one that has been idle for five minutes. A browser waiting for you is never replaced during its 30-minute hold. The replaced browser closes and keeps its profile until it's used again.
 - A browser used in the last five minutes is never closed for another. One idle for longer can be, even while its session or subagent is still running, for example during a long model step. Browsers don't close just because they're idle.

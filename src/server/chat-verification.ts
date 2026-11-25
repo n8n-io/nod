@@ -14,6 +14,7 @@ interface VerificationInput {
   replyToMessageId?: string;
   verificationRequestId?: string;
   receiptOnly?: boolean;
+  newChat?: boolean;
   attachmentIds?: string[];
   signal?: AbortSignal;
   persistOrdinary?: (client: PoolClient) => Promise<void>;
@@ -250,6 +251,8 @@ export async function createChatVerification(
            ORDER BY u.created_at,r.id LIMIT 2`,
         [options.ownerId, channel, turnId ?? null, requestId ?? null, thread.id],
       );
+      if (input.newChat && requests.rowCount)
+        throw conflict('Reply to the verification request you want to complete.');
       if (!requests.rowCount) {
         if (requestId) throw conflict(unavailableMessage);
         const waiting = (

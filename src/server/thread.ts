@@ -30,6 +30,7 @@ import type { Pool, PoolClient } from 'pg';
 import { cancellationTransaction, pool } from './db.ts';
 import { afterCommit, afterRollback, transaction } from './transaction.ts';
 import {
+  chatTaskSql,
   laterSupersedingTurnSql,
   turnChainSql,
   withdrawnSql,
@@ -133,6 +134,7 @@ interface EnqueueTurnOptions {
 interface SubmitUserMessageOptions {
   chatClearedAt?: string | null;
   threadId?: string;
+  sessionId?: string;
   sourceId?: string;
   channel?: string;
   client?: PoolClient;
@@ -659,6 +661,7 @@ export function createUserMessageService(
   options: {
     confirmAction?: ConfirmAction;
     taskReply?: TaskReply;
+    startChat?: StartChat;
     accepted?: () => (channel: string) => void;
   } = {},
 ) {
@@ -671,6 +674,7 @@ export function createUserMessageService(
         options.confirmAction,
         options.taskReply,
         options.accepted?.(),
+        options.startChat,
       ),
     answer: (text: string, input: SubmitUserMessageOptions = {}) =>
       readAnswer(text, false, input, options.confirmAction),
@@ -759,6 +763,10 @@ type TaskReply = (
   | { id: string; session_id: string; background: boolean; record(turnId: string): Promise<void> }
   | undefined
 >;
+type StartChat = (
+  client: PoolClient,
+  chat: { turnId: string; sessionId: string; messageId: string; text: string; live: boolean },
+) => Promise<void>;
 
 export async function submitUserMessage(
   text: string,
@@ -767,10 +775,21 @@ export async function submitUserMessage(
   confirmAction?: ConfirmAction,
   taskReply?: TaskReply,
   onAccepted?: (channel: string) => void,
+  startChat?: StartChat,
 ): Promise<SubmitUserMessageResult> {
   const stop = options.stopSignal ?? stopSignal();
   validateSource(options.sourceId, options.channel);
   const channel = options.channel ?? 'web';
+  const newChat = options.sessionId !== undefined;
+  if (newChat && !startChat) throw httpError('New chats are unavailable on this server.', 503);
+  if (
+    newChat &&
+    (options.replyToMessageId ||
+      options.replyQuote !== undefined ||
+      options.questionAnswer ||
+      options.approvalAnswer)
+  )
+    throw httpError('A new chat starts without a reply. Send it as a new message.', 400);
   const confirmation = {
     text,
     displayText: options.displayText,
@@ -795,7 +814,9 @@ export async function submitUserMessage(
       ? options.approvalAnswer
       : options.client
         ? options.answer
-        : await readAnswer(text, confirmation.hasAttachments, options, confirmAction, stop);
+        : newChat
+          ? undefined
+          : await readAnswer(text, confirmation.hasAttachments, options, confirmAction, stop);
   let inserted = false;
   const markInserted = () => {
     inserted = true;
@@ -886,7 +907,7 @@ export async function submitUserMessage(
       throw httpError('Select a passage of 4,000 characters or fewer.');
     const live = !stop.aborted;
     const confirmed =
-      options.questionAnswer || !live
+      options.questionAnswer || !live || newChat
         ? undefined
         : await confirmAction?.accept(
             client,
@@ -914,22 +935,24 @@ export async function submitUserMessage(
       live &&
       options.replyToMessageId &&
       (await taskReply?.(client, thread.id, options.replyToMessageId));
-    const question = live
-      ? taskTarget ||
-        choiceQuestion ||
-        confirmed?.waiting ||
-        (
-          await client.query(
-            `SELECT u.id,u.session_id,u.background FROM turns u JOIN messages m ON m.turn_id=u.id AND m.owner_id=u.owner_id
+    const question =
+      live && !newChat
+        ? taskTarget ||
+          choiceQuestion ||
+          confirmed?.waiting ||
+          (
+            await client.query(
+              `SELECT u.id,u.session_id,u.background FROM turns u JOIN messages m ON m.turn_id=u.id AND m.owner_id=u.owner_id
        WHERE u.owner_id=$1 AND u.thread_id=$2 AND (u.channel=$3 OR $4::uuid IS NOT NULL) AND u.status='waiting' AND u.waiting_reason='question'
          AND m.role='assistant' AND (($4::uuid IS NOT NULL AND m.id=$4) OR ($4::uuid IS NULL AND u.session_id=$2))
          AND m.id=(SELECT q.id FROM messages q WHERE q.turn_id=u.id AND q.owner_id=u.owner_id AND q.role='assistant' ORDER BY q.created_at DESC,q.id DESC LIMIT 1)
          AND NOT ${laterSupersedingTurnSql}
        ORDER BY m.created_at DESC,m.id DESC LIMIT 1`,
-            [ownerId, thread.id, channel, options.replyToMessageId ?? null],
-          )
-        ).rows[0]
-      : undefined;
+              [ownerId, thread.id, channel, options.replyToMessageId ?? null],
+            )
+          ).rows[0]
+        : undefined;
+    const sessionId = options.sessionId ?? question?.session_id ?? thread.id;
     await client.query(
       `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel,session_id,background,parent_turn_id,status,finished_at,withdrawn)
        VALUES($1,$2,$3,'user',$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $11='cancelled' THEN now() END,$11='cancelled')`,
@@ -941,14 +964,14 @@ export async function submitUserMessage(
         messageId,
         options.prompt ?? text,
         channel,
-        question?.session_id ?? thread.id,
-        question?.background ?? false,
+        sessionId,
+        newChat || (question?.background ?? false),
         question?.id ?? null,
         live ? 'queued' : 'cancelled',
       ],
     );
     if (taskTarget) await taskTarget.record(turnId);
-    if (live) await confirmAction?.close(client, question?.session_id ?? thread.id, turnId);
+    if (live) await confirmAction?.close(client, sessionId, turnId);
     const prepared = (await options.prepareAttachments?.(client, thread.id)) ?? [];
     await client.query(
       "INSERT INTO messages(id,owner_id,role,text,display_text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote,audio_caption,question_answer) VALUES($1,$2,'user',$3,$4,$5,$6,$7,$8,$9,$10,$11)",
@@ -966,6 +989,14 @@ export async function submitUserMessage(
         options.questionAnswer ? JSON.stringify(options.questionAnswer) : null,
       ],
     );
+    if (options.sessionId && startChat)
+      await startChat(client, {
+        turnId,
+        sessionId: options.sessionId,
+        messageId,
+        text: options.prompt ?? text,
+        live,
+      });
     if (live) await sendDrain(client, thread.id);
     markInserted();
     return { threadId: thread.id, turnId, messageId };
@@ -1935,6 +1966,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
     confirmedActions,
     restarted,
     language,
+    chat,
   ] = await Promise.all([
     loadMessage(sourceMessageId),
     pool.query(
@@ -1980,6 +2012,10 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
         )
       : undefined,
     loadConversationLanguage(pool, ownerId, threadId),
+    pool.query<{ id: string | null }>(
+      `SELECT ${chatTaskSql('u')} AS id FROM turns u WHERE u.id=$1 AND u.owner_id=$2`,
+      [turn.id, ownerId],
+    ),
   ]);
   const preference = preferences.rows[0];
   const historyTurnIds = [
@@ -2000,6 +2036,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
   const timeZone: string | undefined = preference?.time_zone || undefined;
   return {
     sourceMessageId,
+    chatId: chat.rows[0]?.id ?? undefined,
     ...source,
     history: history.rows,
     context: {
@@ -2514,8 +2551,17 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         shared.splice(0, pending.length);
       },
       delta: (text, streamId, done) => {
-        if (!signal.aborted && !turn.background && turn.channel === 'web')
-          delta({ ownerId, channel: turn.channel, threadId, turnId, text, streamId, done });
+        if (!signal.aborted && (!turn.background || loaded.chatId) && turn.channel === 'web')
+          delta({
+            ownerId,
+            channel: turn.channel,
+            threadId,
+            turnId,
+            text,
+            streamId,
+            done,
+            ...(loaded.chatId ? { taskId: loaded.chatId } : {}),
+          });
       },
       reactToMessage:
         reactToMessage &&

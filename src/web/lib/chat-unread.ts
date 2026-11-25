@@ -69,9 +69,10 @@ export async function reconcileUnreadChat(
   load: (before: MessageMarker, signal: AbortSignal) => Promise<MessageHistoryPage>,
   signal: AbortSignal,
   progress: (count: number) => void,
+  loaded: MessageMarker[] = messages,
 ) {
   const unread = unreadChatMessageIds(messages, cursor);
-  let page = { messages, hasMore: hasEarlier };
+  let page = { messages: loaded, hasMore: hasEarlier };
   while (unread.size < 100 && hasUnreadHistory(page.messages, page.hasMore, cursor)) {
     signal.throwIfAborted();
     const before = page.messages[0];

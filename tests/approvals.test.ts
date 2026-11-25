@@ -2894,7 +2894,9 @@ test(
           return worker;
         };
         const drafting = await start(
-          await begin('Draft a reply to Ana saying the synthetic report is ready.'),
+          await begin('Draft a reply to Ana saying the synthetic report is ready.', {
+            channel: 'telegram:synthetic',
+          }),
           'Synthetic draft',
         );
         const draft = 'Saved an unsent draft to ana@example.test: The synthetic report is ready.';
@@ -2903,7 +2905,10 @@ test(
           [randomUUID(), ownerId, drafting.threadId, drafting.turnId, draft],
         );
         await finish(drafting.turnId, 'succeeded');
-        const sending = await start(await begin('Looks good, send it.'), 'Synthetic send');
+        const sending = await start(
+          await begin('Looks good, send it.', { channel: 'telegram:synthetic' }),
+          'Synthetic send',
+        );
         const marked = async () => (await row(sending.turnId)).outside_action_at instanceof Date;
         assert.equal(
           (await trust.check(sending, 'GMAIL_SEND_EMAIL', email('ana@example.test'))).confirm,
@@ -4220,7 +4225,7 @@ test(
             "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text,hidden_at) VALUES($1,$2,$3,$4,'assistant','Retired schedule confirmation fixture',now())",
             [randomUUID(), ownerId, worker.threadId, worker.turnId],
           );
-          assert.equal(lastReply(await relay('Yes.', dentist.id)), question);
+          assert.equal(lastReply(await relay('Yes.', dentist.id)), 'Working on Fixture dentist.');
           const chat = await begin('Anything else pending?');
           await db.pool.query(
             "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'assistant','Shall I send the fixture summary to Ana now?')",

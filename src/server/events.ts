@@ -10,6 +10,7 @@ type DeltaEvent = {
   text: string;
   streamId?: string;
   done?: boolean;
+  taskId?: string;
 };
 type ActivityEvent = { type: 'activity'; ownerId: string; items: Activity[] };
 export type ServerEvent = { type: 'refresh' } | { type: 'working' } | DeltaEvent | ActivityEvent;

@@ -53,6 +53,8 @@ const icons = {
 const closed = (task: Task) => task.status === 'done' || task.status === 'cancelled';
 const showMessage = (messageId: string) =>
   window.dispatchEvent(new window.CustomEvent('nod:focus-message', { detail: { messageId } }));
+const openChat = (taskId: string) =>
+  window.dispatchEvent(new window.CustomEvent('nod:open-chat', { detail: { taskId } }));
 
 function TaskActivity({ id }: { id: string }) {
   const data = usePageData<TaskDetail>(`/api/tasks/${id}`);
@@ -139,7 +141,15 @@ function TaskCommands({ id }: { id: string }) {
   );
 }
 
-export function TaskCard({ task, live }: { task: Task; live?: Activity }) {
+export function TaskCard({
+  task,
+  live,
+  pinned = false,
+}: {
+  task: Task;
+  live?: Activity;
+  pinned?: boolean;
+}) {
   const headingId = useId();
   const [expanded, setExpanded] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
@@ -160,12 +170,12 @@ export function TaskCard({ task, live }: { task: Task; live?: Activity }) {
         : 'todo';
   const chevron = <ChevronDown size={16} aria-hidden="true" className="task-preview-chevron" />;
   const handoffMessage = task.browserHandoff ? task.questionMessageId : null;
-  const startMessage = task.questionMessageId ?? task.messageId;
   const line =
-    expanded && task.status === 'needs_you'
+    !pinned && expanded && task.status === 'needs_you'
       ? task.now || 'Waiting for your answer'
       : taskHeadline(task);
   const showLive = live && (task.status === 'working' || task.status === 'queued') ? live : null;
+  const shownInChat = pinned && ['needs_you', 'done', 'cancelled'].includes(task.status);
   return (
     <article className="task-preview" data-status={task.status} aria-labelledby={headingId}>
       <h2 className="task-preview-heading">
@@ -193,7 +203,7 @@ export function TaskCard({ task, live }: { task: Task; live?: Activity }) {
             </span>
             {chevron}
           </span>
-          {!showLive && (
+          {!showLive && !shownInChat && (
             <span className="task-preview-line">
               <Markdown allowedElements={[]} unwrapDisallowed>
                 {line}
@@ -227,7 +237,7 @@ export function TaskCard({ task, live }: { task: Task; live?: Activity }) {
                 await pageDataCache.refresh('/api/tasks', true);
               }}
             />
-            {task.status === 'needs_you' && task.question && (
+            {!pinned && task.status === 'needs_you' && task.question && (
               <div className="task-preview-question">
                 <MessageText text={task.question} />
               </div>
@@ -310,17 +320,17 @@ export function TaskCard({ task, live }: { task: Task; live?: Activity }) {
                   Open browser
                 </Button>
               ) : (
-                startMessage && (
+                !pinned && (
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => {
-                      captureAnalytics('task_action', { action: 'show_in_chat' });
-                      showMessage(startMessage);
+                      captureAnalytics('task_action', { action: 'open_chat' });
+                      openChat(task.id);
                     }}
                   >
                     <MessageSquare size={16} aria-hidden="true" />
-                    Show in chat
+                    Open chat
                   </Button>
                 )
               )}

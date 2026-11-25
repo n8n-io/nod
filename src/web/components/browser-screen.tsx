@@ -8,9 +8,11 @@ import { browserErrorMessage } from '../../shared/browser-errors';
 
 export function BrowserScreen({
   data,
+  task,
   onStopped,
 }: {
   data: { currentBrowser?: CurrentBrowser | null } | null;
+  task?: string;
   onStopped(browserId: string): void;
 }) {
   const browserId = data?.currentBrowser?.browserId;
@@ -56,11 +58,14 @@ export function BrowserScreen({
       setCapturePaused(false);
       const requestedActivity = activity.current ?? '';
       try {
-        const response = await apiResponse('/api/browser/screen', {
-          cache: 'no-store',
-          credentials: 'same-origin',
-          signal: controller.signal,
-        });
+        const response = await apiResponse(
+          task ? `/api/browser/screen?task=${encodeURIComponent(task)}` : '/api/browser/screen',
+          {
+            cache: 'no-store',
+            credentials: 'same-origin',
+            signal: controller.signal,
+          },
+        );
         if (stopped) return;
         if (!response.ok) {
           setScreen('');
@@ -115,7 +120,7 @@ export function BrowserScreen({
       if (imageUrl.current) URL.revokeObjectURL(imageUrl.current);
       imageUrl.current = '';
     };
-  }, [browserId, captureAttempt]);
+  }, [browserId, captureAttempt, task]);
   return (
     <>
       {error && <Notice>{error}</Notice>}
@@ -153,7 +158,9 @@ export function BrowserScreen({
                   onClick={() => {
                     const id = browserId;
                     setStoppingBrowser(id);
-                    void post('/api/thread/stop')
+                    void post(
+                      task ? `/api/tasks/${encodeURIComponent(task)}/stop` : '/api/thread/stop',
+                    )
                       .then(() => {
                         setError('');
                         onStopped(id);

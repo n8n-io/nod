@@ -186,20 +186,27 @@ export function createUnreadBadge({ request, readCursor, writeCursor, onCount, i
       throw new Error('The saved read state could not be read.');
     const read = new Set(cursor.messageIds);
     const unread = new Set();
+    const tasks = (Array.isArray(snapshot.tasks) ? snapshot.tasks : []).reduce(
+      (total, task) =>
+        total + (Number.isInteger(task?.unread) && task.unread > 0 ? task.unread : 0),
+      0,
+    );
     function collect(page) {
       for (const message of page)
         if (
           message.role === 'assistant' &&
+          !message.taskId &&
           (message.createdAt > cursor.createdAt ||
             (message.createdAt === cursor.createdAt && !read.has(message.id)))
         )
           unread.add(message.id);
-      if (active() && unread.size > 0) publish(Math.min(Math.max(count ?? 0, unread.size), 100));
+      const total = unread.size + tasks;
+      if (active() && total > 0) publish(Math.min(Math.max(count ?? 0, total), 100));
     }
     let page = { messages: snapshot.messages, hasMore: snapshot.hasEarlierMessages === true };
     collect(page.messages);
     while (
-      unread.size < 100 &&
+      unread.size + tasks < 100 &&
       page.hasMore &&
       page.messages.length &&
       page.messages[0].createdAt >= cursor.createdAt
@@ -209,6 +216,7 @@ export function createUnreadBadge({ request, readCursor, writeCursor, onCount, i
         threadId: selected.threadId,
         before: before.createdAt,
         beforeId: before.id,
+        task: 'main',
       });
       const response = await request(`/api/messages?${query}`, { signal, redirect: 'error' });
       if (!active()) return;
@@ -227,7 +235,7 @@ export function createUnreadBadge({ request, readCursor, writeCursor, onCount, i
       collect(next.messages);
       page = next;
     }
-    if (active()) publish(Math.min(unread.size, 100));
+    if (active()) publish(Math.min(unread.size + tasks, 100));
   }
 
   function update(snapshot) {

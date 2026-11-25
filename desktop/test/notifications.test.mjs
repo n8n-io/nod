@@ -292,6 +292,16 @@ function unreadFixture(t, options = {}) {
   return { badge, counts, writes, saved };
 }
 
+test('unread badges count the main chat by its read position and each task chat by its own count', async (t) => {
+  const read = message(1);
+  const f = unreadFixture(t, { cursor: position(read) });
+  await f.badge.update({
+    ...snapshot([read, message(2), { ...message(3), taskId: 'synthetic-task' }]),
+    tasks: [{ id: 'synthetic-task', unread: 2 }, { id: 'synthetic-read-task' }],
+  });
+  assert.equal(f.counts.at(-1), 3);
+});
+
 test('unread badges ignore first-run history and count committed assistant messages until read', async (t) => {
   const historical = message(1);
   const f = unreadFixture(t);
@@ -437,6 +447,7 @@ test('unread badges reconcile history with timestamp and ID pagination, stop at 
       threadId: 'synthetic-thread-1',
       before: timestamp,
       beforeId: sameTime[3].id,
+      task: 'main',
     },
   ]);
   await f.badge.update(snapshot([message(0), ...sameTime], true));

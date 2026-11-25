@@ -5,6 +5,11 @@ export const browserOf = (turn: TurnRef) => turn.browserId ?? turn.threadId;
 export const taskMessageSql =
   '(t.message_id=m.id OR mt.task_id=t.id OR m.reply_to_message_id=t.message_id OR pt.task_id=t.id)';
 
+export const chatTaskSql = (turn: string) =>
+  `(CASE WHEN ${turn}.session_id<>${turn}.thread_id THEN COALESCE(
+    (SELECT k.id FROM tasks k WHERE k.id=${turn}.task_id AND k.owner_id=${turn}.owner_id),
+    (SELECT k.id FROM tasks k WHERE k.id=${turn}.session_id AND k.session_id=k.id AND k.owner_id=${turn}.owner_id)) END)`;
+
 export function supersededSql(alias: string, newer: string) {
   return `EXISTS(SELECT 1 FROM turns newer WHERE newer.owner_id=${alias}.owner_id AND newer.session_id=${alias}.session_id
     AND newer.id<>${alias}.id AND ${newer})`;

@@ -816,6 +816,20 @@ test(
           /482913/,
         );
       });
+      await t.test('a new chat never completes another chat’s code request', async () => {
+        await reset();
+        await seed();
+        const submissions = async () =>
+          (await db.pool.query('SELECT count(*)::int AS count FROM chat_verification_submissions'))
+            .rows[0].count;
+        const refused = await send('482913', { newChat: true });
+        assert.equal(refused.statusCode, 409);
+        assert.ok(!refused.body.includes('482913'));
+        assert.equal(await submissions(), 0);
+        assert.deepEqual(ordinary, []);
+        assert.equal((await send('482913')).statusCode, 200);
+        assert.equal(await submissions(), 1);
+      });
       await t.test(
         'an unavailable fingerprint key never routes pending codes or replays receipts',
         async () => {

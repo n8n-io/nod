@@ -157,6 +157,7 @@ export function useAppState(accountId?: string) {
             turnId?: string;
             text?: string;
             streamId?: string;
+            taskId?: string;
             done?: boolean;
             items?: Activity[];
           };
@@ -192,6 +193,7 @@ export function useAppState(accountId?: string) {
               turnId: data.turnId,
               text: typeof data.text === 'string' ? data.text : '',
               ...(typeof data.streamId === 'string' ? { streamId: data.streamId } : {}),
+              ...(typeof data.taskId === 'string' ? { taskId: data.taskId } : {}),
               done: data.done === true,
             });
           }
@@ -222,7 +224,7 @@ export function useAppState(accountId?: string) {
   }, [state]);
 
   const streams = Object.fromEntries(
-    Object.entries(streamState.active).map(([id, stream]) => [id, stream.text]),
+    Object.entries(streamState.active).map(([id, { text, taskId }]) => [id, { text, taskId }]),
   );
   return { state, streams, error, connected, refresh, resetConversation };
 }

@@ -12,7 +12,7 @@ import rateLimit from '@fastify/rate-limit';
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import type { SpeechService } from './speech.ts';
-import { messageInput, registerAudioMessages } from './audio-messages.ts';
+import { messageInput, registerAudioMessages, startsWithoutReply } from './audio-messages.ts';
 import { messageTooLongError } from '../shared/message-limits.ts';
 import type { ServerResponse } from 'node:http';
 import { z } from 'zod';
@@ -44,7 +44,7 @@ import {
   stopThread,
   submitUserMessage,
 } from './thread.ts';
-import { reactionReplySql } from './turn-chain.ts';
+import { chatTaskSql, reactionReplySql } from './turn-chain.ts';
 import { isMessageReaction } from '../shared/emoji.ts';
 import { accessKey, registerLocalAccess } from './access.ts';
 import { logFailure, withFailureLog, type FailureLogSink } from './failure-log.ts';
@@ -67,7 +67,8 @@ import { registerAnalyticsRoutes, snapshotAnalytics, type CaptureAnalytics } fro
 import { messagePreview } from './message-preview.ts';
 import { validateRequestText } from './request-text.ts';
 
-const messageFields = `m.id,m.role,m.text,CASE WHEN m.role='user' THEN m.display_text END AS "displayText",m.audio_caption AS "audioCaption",m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,m.presentation,m.answer_choices AS "answerChoices",(${pendingAnswerChoicesSql}) AS "answerChoicesPending",
+const messageTaskSql = `(SELECT ${chatTaskSql('w')} FROM turns w WHERE w.id=m.turn_id AND w.owner_id=m.owner_id)`;
+const messageFields = `m.id,m.role,m.text,${messageTaskSql} AS "taskId",CASE WHEN m.role='user' THEN m.display_text END AS "displayText",m.audio_caption AS "audioCaption",m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,m.presentation,m.answer_choices AS "answerChoices",(${pendingAnswerChoicesSql}) AS "answerChoicesPending",
  (m.role='user' AND (m.approval_answer IS NOT NULL OR (m.question_answer IS NOT NULL AND m.text<>'' AND jsonb_array_length(m.attachments)=0))) AS "cardAnswer",
  CASE WHEN m.role='assistant' AND m.answer_choices IS NOT NULL THEN (SELECT json_build_object('answer',a.question_answer,'text',a.text) FROM messages a
    WHERE a.reply_to_message_id=m.id AND a.owner_id=m.owner_id AND a.role='user' AND a.question_answer IS NOT NULL AND a.text<>'' AND jsonb_array_length(a.attachments)=0 ORDER BY a.created_at,a.id LIMIT 1) END AS "choiceAnswer",
@@ -222,7 +223,7 @@ export interface AppDependencies {
   >;
   configuration?: () => Configuration;
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
-  taskLedger?: () => Promise<import('../shared/contracts.ts').Task[]>;
+  taskLedger?: (threadId?: string) => Promise<import('../shared/contracts.ts').Task[]>;
   activity?: () => Promise<Activity[]>;
   planningTasks?: () => string | undefined;
   rateLimit?: boolean;
@@ -435,7 +436,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       threadId: thread.id,
       ...(cleared ? { chatClearedAt: cleared } : {}),
       ...(recovery ? { chatRecovery: recovery } : {}),
-      tasks: await dependencies.taskLedger?.(),
+      tasks: await dependencies.taskLedger?.(thread.id),
       hasEarlierMessages,
       hiddenMessageCount: hiddenMessages.rows[0]!.count,
       hiddenMessageIds: hiddenMessages.rows[0]!.ids,
@@ -512,6 +513,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
         before: z.iso.datetime({ offset: true }).optional(),
         beforeId: z.uuid().optional(),
         threadId: z.uuid().optional(),
+        task: z.union([z.literal('main'), z.uuid()]).optional(),
       })
       .parse(request.query);
     const thread = await activeThread(pool);
@@ -520,12 +522,23 @@ export async function createApp(dependencies: AppDependencies = {}) {
         new Error('This conversation has been reset. Reload it before continuing.'),
         { statusCode: 409 },
       );
+    const task = query.task === 'main' ? null : (query.task ?? null);
     const rows = await pool.query(
       `SELECT ${messageFields} FROM messages m
       LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id AND target.hidden_at IS NULL
-      WHERE m.owner_id=$1 AND m.thread_id=$4 AND m.hidden_at IS NULL AND m.created_at>=COALESCE((SELECT chat_cleared_at FROM threads WHERE id=$4 AND owner_id=$1),'-infinity') AND ${chatMessageSql} AND ($2::timestamptz IS NULL OR date_trunc('milliseconds',m.created_at) < $2 OR (date_trunc('milliseconds',m.created_at) = $2 AND $3::uuid IS NOT NULL AND m.id < $3))
+      WHERE m.owner_id=$1 AND m.thread_id=$4 AND m.hidden_at IS NULL AND ${chatMessageSql} AND ($2::timestamptz IS NULL OR date_trunc('milliseconds',m.created_at) < $2 OR (date_trunc('milliseconds',m.created_at) = $2 AND $3::uuid IS NOT NULL AND m.id < $3))
+        AND (m.created_at>=COALESCE((SELECT chat_cleared_at FROM threads WHERE id=$4 AND owner_id=$1),'-infinity') OR ${messageTaskSql} IS NOT NULL)
+        AND (NOT $6::boolean OR ${messageTaskSql} IS NULL)
+        AND ($5::uuid IS NULL OR ${messageTaskSql}=$5 OR m.id=(SELECT t.message_id FROM tasks t WHERE t.id=$5 AND t.owner_id=$1))
       ORDER BY date_trunc('milliseconds',m.created_at) DESC,m.id DESC LIMIT 61`,
-      [ownerId, query.before ?? null, query.beforeId ?? null, thread.id],
+      [
+        ownerId,
+        query.before ?? null,
+        query.beforeId ?? null,
+        thread.id,
+        task,
+        query.task === 'main',
+      ],
     );
     const page = rows.rows.slice(0, 60);
     return {
@@ -571,6 +584,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
   app.post('/api/messages', textMessageOptions, async (request) => {
     const arrival = stopSignal();
     const input = messageInput
+      .refine(startsWithoutReply)
       .refine((value) => value.text.length > 0 || value.attachmentIds.length > 0)
       .refine(
         (value) =>
@@ -642,6 +656,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
         clientMessageId,
         questionAnswer: input.questionAnswer,
         approvalAnswer: input.approvalAnswer,
+        ...(input.newChat ? { sessionId: randomUUID() } : {}),
         stopSignal: arrival,
       },
     );
@@ -681,6 +696,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
                   text: event.text,
                   streamId: event.streamId,
                   done: event.done,
+                  taskId: event.taskId,
                 }
               : undefined;
       if (payload && !reply.raw.destroyed) reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -760,15 +776,27 @@ export async function createApp(dependencies: AppDependencies = {}) {
     reply.header('Content-Length', file.size);
     return reply.send(await artifacts.readArtifact(file.id));
   });
-  async function readCurrentBrowser() {
+  async function browserScope(query: unknown) {
+    const { task } = z.object({ task: z.uuid().optional() }).parse(query);
     const thread = await activeThread(pool);
+    if (!task) return { threadId: thread.id };
+    const row = (
+      await pool.query<{ session_id: string }>(
+        'SELECT t.session_id FROM tasks t JOIN turns u ON u.id=t.turn_id AND u.owner_id=t.owner_id WHERE t.id=$1 AND t.owner_id=$2 AND u.thread_id=$3',
+        [task, ownerId, thread.id],
+      )
+    ).rows[0];
+    if (!row) throw Object.assign(new Error('Task not found.'), { statusCode: 404 });
+    return { threadId: thread.id, sessionId: row.session_id };
+  }
+  async function readCurrentBrowser(scope: { threadId: string; sessionId?: string }) {
     const latest = await pool.query(
       `SELECT u.session_id AS "browserId",left(COALESCE(m.text,u.prompt),100) AS title,u.status,COALESCE(e.created_at,u.created_at) AS "lastActivityAt"
        FROM turns u LEFT JOIN messages m ON m.id=u.message_id
        LEFT JOIN LATERAL (SELECT created_at FROM turn_events WHERE turn_id=u.id AND type IN ('tool_start','tool_complete') AND (summary='browser' OR summary LIKE 'browser %') ORDER BY created_at DESC LIMIT 1) e ON true
-       WHERE u.owner_id=$1 AND u.thread_id=$2 AND e.created_at IS NOT NULL
+       WHERE u.owner_id=$1 AND u.thread_id=$2 AND ($3::uuid IS NULL OR u.session_id=$3) AND e.created_at IS NOT NULL
        ORDER BY e.created_at IS NULL,COALESCE(e.created_at,u.created_at) DESC LIMIT 1`,
-      [ownerId, thread.id],
+      [ownerId, scope.threadId, scope.sessionId ?? null],
     );
     const row = latest.rows[0];
     if (!row) return undefined;
@@ -779,7 +807,9 @@ export async function createApp(dependencies: AppDependencies = {}) {
       lastActivityAt: row.lastActivityAt,
     };
   }
-  app.get('/api/browser', async () => ({ currentBrowser: (await readCurrentBrowser()) ?? null }));
+  app.get('/api/browser', async (request) => ({
+    currentBrowser: (await readCurrentBrowser(await browserScope(request.query))) ?? null,
+  }));
   async function credentialEntryOpen(threadId: string, sessionId: string) {
     const latest = await pool.query(
       "SELECT status,waiting_reason FROM turns WHERE owner_id=$1 AND thread_id=$2 AND session_id=$3 AND status<>'queued' ORDER BY created_at DESC,id DESC LIMIT 1",
@@ -797,10 +827,11 @@ export async function createApp(dependencies: AppDependencies = {}) {
     return latest.rows[0]?.handoff_browser_id as string | undefined;
   }
   const handoffClosed = 'The browser opens here when Nod hands it to you.';
-  async function readBrowserScreen(reply: FastifyReply) {
-    const thread = await activeThread(pool);
-    const browserId = (await readCurrentBrowser())?.browserId ?? thread.id;
-    const blocked = () => credentialEntryOpen(thread.id, browserId);
+  async function readBrowserScreen(reply: FastifyReply, query: unknown) {
+    const scope = await browserScope(query);
+    const browserId =
+      scope.sessionId ?? (await readCurrentBrowser(scope))?.browserId ?? scope.threadId;
+    const blocked = () => credentialEntryOpen(scope.threadId, browserId);
     const paused = 'Browser observations are paused during credential entry.';
     if (await blocked()) return reply.code(423).send({ error: paused });
     let screen: Buffer | null | undefined;
@@ -814,7 +845,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       throw error;
     }
     const current = await activeThread(pool);
-    if (current.id !== thread.id)
+    if (current.id !== scope.threadId)
       return reply.code(409).send({ error: 'The browser session changed. Request a new view.' });
     if (await blocked()) return reply.code(423).send({ error: paused });
     if (!screen) return reply.code(404).send({ error: 'There is no browser screen yet.' });
@@ -823,7 +854,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     if (screenStatus?.capturedAt) reply.header('X-Screen-Captured-At', screenStatus.capturedAt);
     return reply.type('image/png').send(screen);
   }
-  app.get('/api/browser/screen', (_request, reply) => readBrowserScreen(reply));
+  app.get('/api/browser/screen', (request, reply) => readBrowserScreen(reply, request.query));
   app.get('/api/browser-handoff/stream', async (request, reply) => {
     const view = dependencies.computer?.view;
     if (!view) return reply.code(404).send({ error: 'The browser is unavailable.' });

@@ -328,6 +328,7 @@ test(
     const userMessages = thread.createUserMessageService({
       confirmAction: approvals.chat,
       taskReply: (client, threadId, messageId) => tasks.resolveReply(client, threadId, messageId),
+      startChat: (client, chat) => tasks.startChat(client, chat),
       accepted: () => {
         const capture = snapshotAnalytics(captureAnalytics);
         return (channel) => {
@@ -815,8 +816,13 @@ test(
         )
       ).rows[0].count,
     });
-    const deltas: Array<{ turnId?: string; threadId?: string }> = [];
-    const onEvent = (event: { type: string; turnId?: string; threadId?: string }) => {
+    const deltas: Array<{ turnId?: string; threadId?: string; taskId?: string }> = [];
+    const onEvent = (event: {
+      type: string;
+      turnId?: string;
+      threadId?: string;
+      taskId?: string;
+    }) => {
       if (event.type === 'delta') deltas.push(event);
     };
     events.on('event', onEvent);
@@ -2373,6 +2379,486 @@ test(
             );
             assert.equal((await tasks.read()).find(({ id }) => id === task.id)?.status, 'done');
           }
+        },
+      );
+
+      await t.test(
+        'a new chat starts its own task session and answers no other session’s approval',
+        async (t) => {
+          const previousObserver = inspectObserver;
+          const consent = 'Yes, go ahead with the synthetic chat.';
+          const chatApprovals = await createApprovals(
+            async () => ({}),
+            undefined,
+            async (reply) => (reply === consent ? true : undefined),
+            async () => 'Confirm the synthetic chat action?',
+          );
+          const chatMessages = thread.createUserMessageService({
+            confirmAction: chatApprovals.chat,
+            taskReply: (client, threadId, messageId) =>
+              tasks.resolveReply(client, threadId, messageId),
+            startChat: (client, chat) => tasks.startChat(client, chat),
+          });
+          inspectObserver = async (context) => {
+            if (context.prompt !== 'Synthetic chat approval') return;
+            await chatApprovals.request(
+              { turnId: context.turnId, threadId: context.threadId },
+              'NOD_synthetic_action',
+              {},
+            );
+            return { status: 'waiting_user', waitingFor: 'approval' };
+          };
+          t.after(() => {
+            inspectObserver = previousObserver;
+          });
+          const asking = await thread.enqueueTurn('Synthetic chat approval', {
+            source: 'event',
+            background: true,
+          });
+          await waitFor(settled(asking));
+          const approval = (
+            await db.pool.query<{ id: string; confirmation_message_id: string }>(
+              'SELECT id,confirmation_message_id FROM approvals WHERE turn_id=$1',
+              [asking],
+            )
+          ).rows[0]!;
+          const approvalStatus = async () =>
+            (await db.pool.query('SELECT status FROM approvals WHERE id=$1', [approval.id])).rows[0]
+              .status;
+          assert.deepEqual(await chatMessages.answer(consent), {
+            approvalId: approval.id,
+            approved: true,
+          });
+          await assert.rejects(
+            chatMessages.submit(consent, [], {
+              sessionId: randomUUID(),
+              replyToMessageId: approval.confirmation_message_id,
+            }),
+            (error: unknown) => (error as { statusCode?: number }).statusCode === 400,
+          );
+          const sessionId = randomUUID();
+          const started = await chatMessages.submit(consent, [], { sessionId });
+          assert.deepEqual(
+            (
+              await db.pool.query(
+                'SELECT source,session_id,background,parent_turn_id,task_id FROM turns WHERE id=$1',
+                [started.turnId],
+              )
+            ).rows[0],
+            {
+              source: 'user',
+              session_id: sessionId,
+              background: true,
+              parent_turn_id: null,
+              task_id: sessionId,
+            },
+          );
+          assert.equal(await approvalStatus(), 'pending');
+          await waitFor(settled(started.turnId));
+          assert.equal(ran(started.turnId)?.taskContext?.id, sessionId);
+          assert.equal((await tasks.read()).find(({ id }) => id === sessionId)?.title, consent);
+          assert.equal(await approvalStatus(), 'pending');
+          const confirmed = await chatMessages.submit(consent, [], {
+            replyToMessageId: approval.confirmation_message_id,
+          });
+          assert.equal(await approvalStatus(), 'confirmed');
+          await waitFor(settled(confirmed.turnId));
+          const asked = await chatMessages.submit('Synthetic chat approval', [], {
+            sessionId: randomUUID(),
+          });
+          await waitFor(settled(asked.turnId));
+          const hidden = (
+            await db.pool.query<{ id: string; confirmation_message_id: string }>(
+              'SELECT id,confirmation_message_id FROM approvals WHERE turn_id=$1',
+              [asked.turnId],
+            )
+          ).rows[0]!;
+          const hiddenStatus = async () =>
+            (await db.pool.query('SELECT status FROM approvals WHERE id=$1', [hidden.id])).rows[0]
+              .status;
+          assert.notEqual((await chatMessages.answer(consent))?.approvalId, hidden.id);
+          const plain = await chatMessages.submit(consent);
+          assert.equal(await hiddenStatus(), 'pending');
+          assert.equal(await turnStatus(asked.turnId), 'waiting');
+          await waitFor(settled(plain.turnId));
+          const answered = await chatMessages.submit(consent, [], {
+            replyToMessageId: hidden.confirmation_message_id,
+          });
+          assert.equal(await hiddenStatus(), 'confirmed');
+          await waitFor(settled(answered.turnId));
+          const streamedChat = randomUUID();
+          const streamed = await chatMessages.submit('Fresh conversation', [], {
+            sessionId: streamedChat,
+          });
+          await waitFor(settled(streamed.turnId));
+          assert.deepEqual(
+            [
+              ...new Set(
+                deltas
+                  .filter(({ turnId }) => turnId === streamed.turnId)
+                  .map(({ taskId }) => taskId),
+              ),
+            ],
+            [streamedChat],
+          );
+        },
+      );
+
+      await t.test(
+        'new chats run in parallel, stop alone and reopen in their session after closing',
+        async (t) => {
+          const previousObserver = inspectObserver;
+          inspectObserver = async (context) => {
+            if (context.prompt !== 'Synthetic chat finish' || !context.taskContext) return;
+            await context.task!({
+              action: 'finish',
+              id: context.taskContext.id,
+              status: 'done',
+              result: 'Synthetic chat result.',
+            });
+            return { status: 'succeeded' };
+          };
+          t.after(() => {
+            inspectObserver = previousObserver;
+          });
+          const start = async (text: string) => {
+            const payload = { clientMessageId: randomUUID(), text, newChat: true };
+            const response = await sendJson(payload);
+            assert.equal(response.statusCode, 200, response.body);
+            const receipt = response.json<SubmitMessageResponse>();
+            assert.deepEqual((await sendJson(payload)).json(), receipt);
+            const task = (
+              await db.pool.query<{ task_id: string }>('SELECT task_id FROM turns WHERE id=$1', [
+                receipt.turnId,
+              ])
+            ).rows[0]!.task_id;
+            return { ...receipt, task };
+          };
+          const taskState = async (id: string) =>
+            (await db.pool.query('SELECT state FROM tasks WHERE id=$1', [id])).rows[0]?.state;
+          const latestReply = async (turnId: string) =>
+            (
+              await db.pool.query<{ id: string }>(
+                "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant' ORDER BY created_at DESC,id DESC LIMIT 1",
+                [turnId],
+              )
+            ).rows[0]!.id;
+          block('Synthetic chat A');
+          block('Synthetic chat B');
+          const first = await start('Synthetic chat A');
+          const second = await start('Synthetic chat B');
+          assert.notEqual(first.task, second.task);
+          await waitFor(
+            async () =>
+              (await turnStatus(first.turnId)) === 'running' &&
+              (await turnStatus(second.turnId)) === 'running',
+          );
+          assert.equal((await request('POST', `/api/tasks/${first.task}/stop`)).statusCode, 200);
+          await waitFor(settled(first.turnId));
+          assert.equal(await turnStatus(first.turnId), 'cancelled');
+          assert.equal(await turnStatus(second.turnId), 'running');
+          assert.equal(await taskState(first.task), 'cancelled');
+          assert.equal(await taskState(second.task), 'open');
+          release('Synthetic chat B');
+          await waitFor(settled(second.turnId));
+          assert.equal(await turnStatus(second.turnId), 'succeeded');
+          const archive = (id: string) => request('PATCH', `/api/tasks/${id}`, { archived: true });
+          assert.equal((await archive(second.task)).statusCode, 409);
+          const finish = await userMessages.submit('Synthetic chat finish', [], {
+            replyToMessageId: await latestReply(second.turnId),
+          });
+          await waitFor(settled(finish.turnId));
+          assert.equal(await taskState(second.task), 'done');
+          assert.equal((await archive(second.task)).statusCode, 200);
+          assert.equal((await archive(randomUUID())).statusCode, 404);
+          assert.ok((await tasks.read()).find(({ id }) => id === second.task)?.archivedAt);
+          const followUp = await userMessages.submit('Synthetic chat follow-up', [], {
+            replyToMessageId: await latestReply(second.turnId),
+          });
+          await waitFor(settled(followUp.turnId));
+          assert.equal(ran(followUp.turnId)?.sessionId, second.task);
+          assert.equal(ran(followUp.turnId)?.taskContext?.id, second.task);
+          const reopened = (await tasks.read()).find(({ id }) => id === second.task);
+          assert.equal(reopened?.archivedAt, undefined);
+          assert.notEqual(reopened?.status, 'done');
+          const page = (query: string) =>
+            request('GET', `/api/messages?${query}`).then((response) =>
+              response.json<{ messages: Array<{ id: string; text: string; taskId?: string }> }>(),
+            );
+          const chat = (await page(`task=${second.task}`)).messages;
+          assert.deepEqual(
+            chat.map(({ text }) => text),
+            [
+              'Synthetic chat B',
+              'done: Synthetic chat B',
+              'Synthetic chat finish',
+              'Synthetic chat follow-up',
+              'done: Synthetic chat follow-up',
+            ],
+          );
+          assert.ok(chat.every(({ taskId }) => taskId === second.task));
+          const main = new Set((await page('task=main')).messages.map(({ id }) => id));
+          assert.ok(chat.every(({ id }) => !main.has(id)));
+          assert.equal((await page(`task=${first.task}`)).messages[0]?.text, 'Synthetic chat A');
+          assert.equal((await request('GET', `/api/browser?task=${second.task}`)).statusCode, 200);
+          assert.equal((await request('GET', `/api/browser?task=${randomUUID()}`)).statusCode, 404);
+          const sessionId = randomUUID();
+          const stopped = await userMessages.submit('Synthetic chat after Stop', [], {
+            sessionId,
+            stopSignal: AbortSignal.abort(),
+          });
+          assert.deepEqual(
+            (
+              await db.pool.query('SELECT status,withdrawn,task_id FROM turns WHERE id=$1', [
+                stopped.turnId,
+              ])
+            ).rows[0],
+            { status: 'cancelled', withdrawn: true, task_id: sessionId },
+          );
+          assert.equal(await taskState(sessionId), 'cancelled');
+          assert.equal(ran(stopped.turnId), undefined);
+        },
+      );
+
+      await t.test('closed chats leave the 100-task window before any other task', async (t) => {
+        const current = (await thread.activeThread(db.pool)).id;
+        const [turn, kept] = [randomUUID(), randomUUID()];
+        t.after(async () => {
+          await db.pool.query('DELETE FROM tasks WHERE turn_id=$1', [turn]);
+          await db.pool.query('DELETE FROM turns WHERE id=$1', [turn]);
+        });
+        await db.pool.query(
+          "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status) VALUES($1,$2,$3,$3,'user','Synthetic window','succeeded')",
+          [turn, ownerId, current],
+        );
+        await db.pool.query(
+          `INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text,state,closed_at,archived_at)
+           SELECT CASE WHEN n=0 THEN $1::uuid ELSE gen_random_uuid() END,$2,$3,gen_random_uuid(),'Synthetic window task',
+             'Checked','Done','done',now()-interval '1 day'+n*interval '1 minute',CASE WHEN n>0 THEN now() END
+           FROM generate_series(0,100) n`,
+          [kept, ownerId, turn],
+        );
+        assert.ok((await tasks.read(current)).some(({ id }) => id === kept));
+      });
+
+      await t.test(
+        'a task started inside another session takes only its own turns from the main chat',
+        async (t) => {
+          const session = randomUUID();
+          const [before, linked, task] = [randomUUID(), randomUUID(), randomUUID()];
+          const [report, update] = [randomUUID(), randomUUID()];
+          t.after(async () => {
+            await db.pool.query('UPDATE turns SET task_id=NULL WHERE id=$1', [linked]);
+            await db.pool.query('DELETE FROM tasks WHERE id=$1', [task]);
+            await db.pool.query('DELETE FROM messages WHERE id=ANY($1::uuid[])', [
+              [report, update],
+            ]);
+            await db.pool.query('DELETE FROM turns WHERE id=ANY($1::uuid[])', [[before, linked]]);
+          });
+          await db.pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,background)
+             VALUES($1,$3,$4,$5,'schedule','Synthetic run','succeeded',true),
+               ($2,$3,$4,$5,'resume','Synthetic run follow-up','succeeded',true)`,
+            [before, linked, ownerId, threadId, session],
+          );
+          await db.pool.query(
+            `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
+             VALUES($1,$3,'assistant','Synthetic run report',$4,$5),
+               ($2,$3,'assistant','Synthetic run task update',$4,$6)`,
+            [report, update, ownerId, threadId, before, linked],
+          );
+          await db.pool.query(
+            "INSERT INTO tasks(id,owner_id,turn_id,session_id,title,done_when,now_text) VALUES($1,$2,$3,$4,'Synthetic run task','Checked','Checking')",
+            [task, ownerId, linked, session],
+          );
+          await db.pool.query('UPDATE turns SET task_id=$1 WHERE id=$2', [task, linked]);
+          const page = async (query: string) =>
+            (await request('GET', `/api/messages?${query}`)).json<{
+              messages: Array<{ id: string; taskId?: string | null }>;
+            }>().messages;
+          assert.deepEqual(
+            (await page(`task=${task}`)).map(({ id, taskId }) => ({ id, taskId })),
+            [{ id: update, taskId: task }],
+          );
+          const main = await page('task=main');
+          assert.equal(main.find(({ id }) => id === report)?.taskId, null);
+          assert.equal(
+            main.some(({ id }) => id === update),
+            false,
+          );
+        },
+      );
+
+      await t.test(
+        'a web message without a reply pairs only with a Nod message from its own chat',
+        async (t) => {
+          const { recentOwnerWords } = await import('../src/server/owner-instructions.ts');
+          const current = (await thread.activeThread(db.pool)).id;
+          const [askTurn, pairTask, pairTurn, resumeTurn, yesTurn, freshTask, freshTurn] = [
+            randomUUID(),
+            randomUUID(),
+            randomUUID(),
+            randomUUID(),
+            randomUUID(),
+            randomUUID(),
+            randomUUID(),
+          ];
+          const turns = [askTurn, pairTurn, resumeTurn, yesTurn, freshTurn];
+          t.after(async () => {
+            await db.pool.query('UPDATE turns SET task_id=NULL WHERE id=ANY($1::uuid[])', [turns]);
+            await db.pool.query('DELETE FROM tasks WHERE id=ANY($1::uuid[])', [
+              [pairTask, freshTask],
+            ]);
+            await db.pool.query('DELETE FROM messages WHERE turn_id=ANY($1::uuid[])', [turns]);
+            await db.pool.query('DELETE FROM turns WHERE id=ANY($1::uuid[])', [turns]);
+          });
+          const addTurn = (id: string, session: string) =>
+            db.pool.query(
+              "INSERT INTO turns(id,owner_id,thread_id,session_id,source,prompt,status,background) VALUES($1,$2,$3,$4,'user','Synthetic pairing','succeeded',$5)",
+              [id, ownerId, current, session, session !== current],
+            );
+          const addMessage = async (turnId: string, role: string, text: string) => {
+            const id = randomUUID();
+            await db.pool.query(
+              'INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,$3,$4,$5,$6)',
+              [id, ownerId, role, text, current, turnId],
+            );
+            return id;
+          };
+          const addChat = async (task: string, turn: string, text: string) => {
+            await addTurn(turn, task);
+            const start = await addMessage(turn, 'user', text);
+            await db.pool.query(
+              "INSERT INTO tasks(id,owner_id,turn_id,session_id,source_message_id,title,done_when,now_text) VALUES($1,$2,$3,$1,$4,$5,'Checked','Checking')",
+              [task, ownerId, turn, start, text],
+            );
+            await db.pool.query('UPDATE turns SET task_id=$1 WHERE id=$2', [task, turn]);
+            return start;
+          };
+          const checked = async (messageId: string, task: string | null) =>
+            (
+              (await recentOwnerWords(db.pool, ownerId, current, [messageId], task)).words
+                .userMessages ?? []
+            )
+              .filter(({ id }) => id === messageId)
+              .map(({ text, replyTo }) => ({ text, replyTo }));
+          await addTurn(askTurn, current);
+          await addMessage(askTurn, 'assistant', 'Shall I archive the synthetic receipts?');
+          await addChat(pairTask, pairTurn, 'Synthetic pairing chat');
+          await addMessage(pairTurn, 'assistant', 'Shall I sell the synthetic bicycle?');
+          await addTurn(resumeTurn, pairTask);
+          await addMessage(resumeTurn, 'assistant', 'Shall I ship the synthetic bicycle?');
+          await addTurn(yesTurn, current);
+          const yes = await addMessage(yesTurn, 'user', 'yes');
+          assert.deepEqual(await checked(yes, null), [
+            { text: 'yes', replyTo: 'Shall I archive the synthetic receipts?' },
+          ]);
+          const fresh = await addChat(freshTask, freshTurn, 'yes, do it');
+          assert.deepEqual(await checked(fresh, freshTask), [
+            { text: 'yes, do it', replyTo: undefined },
+          ]);
+        },
+      );
+
+      await t.test(
+        'a task’s bug report and browser handoff stay in its own chat and browser',
+        async (t) => {
+          const previousObserver = inspectObserver;
+          const prompt = 'Set up synthetic X access';
+          const question = 'Synthetic X needs a sign-in. Use the Browser panel below.';
+          inspectObserver = async (context) => {
+            if (context.prompt !== prompt) return;
+            if (!context.taskContext) {
+              await context.task!({
+                action: 'start',
+                title: prompt,
+                message: 'Setting up synthetic X access.',
+                doneWhen: 'Access works',
+                now: 'Opening synthetic X',
+              });
+              return { status: 'succeeded' };
+            }
+            await thread.withTurnLock(context.turnId, (client) =>
+              thread.insertBugReportDraft(
+                client,
+                { threadId: context.threadId, turnId: context.turnId },
+                '',
+                'Synthetic bug summary',
+              ),
+            );
+            return {
+              status: 'waiting_user',
+              message: question,
+              handoffBrowserId: context.sessionId,
+            };
+          };
+          t.after(() => {
+            inspectObserver = previousObserver;
+          });
+          const main = await userMessages.submit(prompt);
+          await waitFor(settled(main.turnId));
+          const task = (
+            await db.pool.query<{ id: string; message_id: string }>(
+              'SELECT id,message_id FROM tasks WHERE source_message_id=$1',
+              [main.messageId],
+            )
+          ).rows[0]!;
+          const worker = (
+            await db.pool.query<{ id: string }>(
+              "SELECT id FROM turns WHERE session_id=$1 AND source='task'",
+              [task.id],
+            )
+          ).rows[0]!.id;
+          await waitFor(settled(worker));
+          t.after(async () => {
+            await request('POST', `/api/tasks/${task.id}/stop`);
+          });
+          assert.deepEqual(
+            (
+              await db.pool.query('SELECT status,handoff_browser_id FROM turns WHERE id=$1', [
+                worker,
+              ])
+            ).rows[0],
+            { status: 'waiting', handoff_browser_id: task.id },
+          );
+          const state = (await request('GET', '/api/state')).json<{
+            messages: Array<{
+              id: string;
+              text: string;
+              turnId: string | null;
+              taskId?: string | null;
+              presentation?: { type: string };
+            }>;
+            turns: Array<{ id: string; handoffMessageId?: string | null }>;
+          }>();
+          const posted = state.messages.filter(({ turnId }) => turnId === worker);
+          assert.deepEqual(
+            posted.map(({ text, presentation, taskId }) => ({
+              text,
+              type: presentation?.type ?? null,
+              taskId,
+            })),
+            [
+              { text: '', type: 'bug-report', taskId: task.id },
+              { text: question, type: null, taskId: task.id },
+            ],
+          );
+          assert.equal(
+            state.turns.find(({ id }) => id === worker)?.handoffMessageId,
+            posted[1]!.id,
+          );
+          assert.equal(state.messages.find(({ id }) => id === task.message_id)?.taskId, null);
+          const page = async (query: string) =>
+            (await request('GET', `/api/messages?${query}`))
+              .json<{ messages: Array<{ id: string }> }>()
+              .messages.map(({ id }) => id);
+          const mainIds = await page('task=main');
+          assert.ok(mainIds.includes(task.message_id));
+          assert.ok(posted.every(({ id }) => !mainIds.includes(id)));
+          assert.deepEqual(await page(`task=${task.id}`), [
+            task.message_id,
+            ...posted.map(({ id }) => id),
+          ]);
         },
       );
 

@@ -1,6 +1,6 @@
 interface StreamState {
   threadId: string;
-  active: Record<string, { turnId: string; text: string }>;
+  active: Record<string, { turnId: string; text: string; taskId?: string }>;
   completed: string[];
 }
 
@@ -12,6 +12,7 @@ export type StreamAction =
       streamId?: string;
       done?: boolean;
       threadId?: string;
+      taskId?: string;
     }
   | {
       type: 'persisted';
@@ -63,7 +64,11 @@ export function streamReducer(state: StreamState, action: StreamAction): StreamS
     ...state,
     active: {
       ...state.active,
-      [id]: { turnId: action.turnId, text: (current?.text ?? '') + action.text },
+      [id]: {
+        turnId: action.turnId,
+        text: (current?.text ?? '') + action.text,
+        ...(action.taskId ? { taskId: action.taskId } : {}),
+      },
     },
   };
 }

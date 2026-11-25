@@ -161,16 +161,12 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
       label: `Preview ${file.name}`,
       action: () => drawer.open(file.id),
     })),
-    ...tasks
-      .filter((task) => task.messageId)
-      .map((task) => ({
-        id: task.id,
-        label: `Go to ${task.title}`,
-        action: () =>
-          window.dispatchEvent(
-            new CustomEvent('nod:focus-message', { detail: { messageId: task.messageId } }),
-          ),
-      })),
+    ...tasks.map((task) => ({
+      id: task.id,
+      label: `Go to ${task.title}`,
+      action: () =>
+        window.dispatchEvent(new CustomEvent('nod:open-chat', { detail: { taskId: task.id } })),
+    })),
   ]
     .filter((item) => item.label.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
     .slice(0, 30);

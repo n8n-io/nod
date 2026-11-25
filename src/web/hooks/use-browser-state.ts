@@ -4,7 +4,7 @@ import { api, errorMessage } from '../lib/api';
 
 type BrowserState = { currentBrowser: CurrentBrowser | null };
 
-export function useBrowserState() {
+export function useBrowserState(task?: string) {
   const [data, setData] = useState<BrowserState | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -12,7 +12,10 @@ export function useBrowserState() {
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
       try {
-        const next = await api<BrowserState>('/api/browser', { signal: controller.signal });
+        const next = await api<BrowserState>(
+          task ? `/api/browser?task=${encodeURIComponent(task)}` : '/api/browser',
+          { signal: controller.signal },
+        );
         if (!controller.signal.aborted) {
           setData(next);
           setError('');
@@ -31,7 +34,7 @@ export function useBrowserState() {
       controller.abort();
       clearTimeout(timer);
     };
-  }, []);
+  }, [task]);
   function browserStopped(browserId: string) {
     setData((current) =>
       current?.currentBrowser?.browserId === browserId

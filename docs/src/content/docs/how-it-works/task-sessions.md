@@ -25,7 +25,7 @@ flowchart TD
 
 The conversation is the owner's view of the work. The coordinator assigns work and routes ordinary follow-ups. A task session does the work, asks its own questions and delivers its own results. The coordinator does not rewrite each result through another model call.
 
-Explicit replies go to the selected task before the coordinator runs. The task's message identifies which work the owner is answering.
+Explicit replies go to the selected task before the coordinator runs. The task's message identifies which work the owner is answering. The web and desktop apps also let the owner start a task directly with **New chat**, without the coordinator.
 
 ## Three separate concepts
 
@@ -51,7 +51,7 @@ The `tasks` table is the source of truth for task state. Task messages, web card
 | `turn_events` | Tool and helper activity for the task's activity view.                                                                            |
 | `model_usage` | Model requests and their cost.                                                                                                    |
 
-Each turn sees up to 100 tasks of the active conversation, open ones first, then finished ones with their results, newest first. After a conversation reset in a development build, tasks from the archived conversation stay saved and on the Tasks page, which lists up to 100, open ones first, but leave the turn context.
+Each turn sees up to 100 tasks of the active conversation, open ones first, then finished ones with their results, newest first. When more than 100 qualify, closed chats are left out first. The web chat list shows the same tasks. After a conversation reset in a development build, tasks from the archived conversation stay saved and on the Tasks page, which lists up to 100, open ones first, but leave the turn context.
 
 A model-written task list in the workspace does not replace the ledger. The existing turn queue runs the sessions. The task system does not add another scheduler or cost ledger.
 
@@ -69,6 +69,16 @@ Each owner update has a revision. The server records delivery at a model boundar
 The background observer starts a separate task for an outside action, question, or approval. A stable key for the source record and change returns the existing task. The task keeps event authority and the normal Trust check. Its wait leaves the observer free. A task started during quiet hours begins when they end; its first turn stays queued until then.
 
 A schedule or other event session can also create a task record for its work. It keeps its existing session.
+
+## Start a task with New chat
+
+**New chat** in the web and desktop apps starts a task without the coordinator:
+
+1. The owner's message is saved as a `user` turn in a new session, marked as background work for that session.
+2. The same transaction saves a task whose ID is that session ID. Its title is the message's first line, its brief is the message, and its source owner message is that message. It has no completion condition, first task message or steps until the task writes them.
+3. The turn runs as that task. When it ends with its final answer, the task closes as done, like any task.
+
+A new chat skips reading confirmation replies, the confirmation lookup, task reply targets and waiting questions, so its first message never answers another session's approval or question. It can't carry a reply, a quote or an answer to a card. A new chat sent while Stop is catching arriving messages is saved with its turn cancelled and its task stopped. Like any task's turn, its turns load the recent conversation as described in [Threads and turns](/how-it-works/threads-and-turns/#sessions).
 
 ## Shared information, separate histories
 
@@ -94,13 +104,19 @@ Shared storage does not put every change into every active model context. The se
 
 Coordination goes through the main session and ledger. Task sessions cannot forward owner updates to other tasks. They can read shared outputs. `delegate` is different: it runs temporary helpers inside a turn, returns their results to the parent and does not create saved task records.
 
-Shared information does not grant permission. For a task started from chat, the trust check uses the conversation that led to the task, including the original request, and the messages sent to that task. Other task reports, files, briefs and memory cannot authorize an outside action. See [Approvals](/trust/approvals/).
+Shared information does not grant permission. For a task started from chat, the trust check uses the conversation that led to the task, including the original request, and the messages sent to that task. On web, an owner message without a reply target is paired with the latest Nod message in its own chat: a main chat message never with a message from a task's chat, and a **New chat** message only with one from that chat. Other task reports, files, briefs and memory cannot authorize an outside action. See [Approvals](/trust/approvals/).
 
 ## One task across web and chat apps
 
 In web chat, a task has a chip under its first message and a card that opens from the tasks line, with its current work, steps, completion condition, **Reply** and **Stop**. **Scheduled** shows a compact preview for each open and finished task. Expand it for steps, activity, the completion condition and task controls. Activity shows tool and helper events, not private model reasoning. In web and desktop chat, each message the task posts quotes the owner message it belongs to: the latest owner message the task had taken in when it posted, or else the one that started it. Selecting the quote jumps to that message.
 
 Telegram shows the task as messages Nod writes. If its first message arrives as one short text message, a quoted progress section in your language updates there without another notification, then is removed when work stops. Other message types keep typing status only; see [While Nod works](/use/channels/#while-nod-works). Each task keeps its own message and reply target. Its questions and result reply to that first message. `/tasks` sends a replyable status message for each open task. Reply with `/status` to inspect it or `/stop` to stop it. Native reply links for text parts and files select the same saved task in Telegram and WhatsApp.
+
+The web chat list shows **Main** and one chat per task of the active conversation. A message belongs to a task's chat when its turn is linked to that task, or ran in a session that task owns. Other messages belong to **Main**, including a task's first message, which shows there with the task's chip. A task's chat shows the task's card, then its own messages; `GET /api/messages?task=<task ID>` pages through them and `task=main` pages through **Main**. Each message the owner sends in a task's chat is an explicit reply to the chat's latest Nod message, so it takes the reply path above: it continues the task's session, answers only that task's question or confirmation, and reopens a finished task. On web, a main chat message without a reply target never answers a confirmation from a task's chat.
+
+Each task saves when its chat was last read in `tasks.read_at`, set by `POST /api/tasks/:id/read` when the owner reaches the chat's latest message. A task's unread count is its chat's Nod messages after that, up to 100, and a closed chat counts none. **Main** keeps its own read position on each device.
+
+Closing a chat sets `tasks.archived_at`, which hides it from the list. Only a finished or stopped task can be closed; closing an open one is refused. A later owner input to the task clears it, so a reopened task shows again. A rename uses `PATCH /api/tasks/:id` with `title`, as the Tasks page does.
 
 These are views of one task record and session. A pending approval remains bound to its exact question and action. An old status message cannot approve a later action. Private sign-in and payment steps remain in Nod's private forms.
 
@@ -112,7 +128,7 @@ See [Track tasks](/use/tasks/) for controls and screenshots.
 - **Main Stop** stops active work and closes all open tasks. Schedules stay configured.
 - **Stop everything from chat** (`task stop` without an ID) cancels the running, queued and waiting turns of every session except the main chat, which includes tasks, scheduled runs and app checks, and closes all open tasks. The chat turn that asked keeps running to report, and later chat messages stay queued. Schedules stay configured.
 - **Restart** keeps task records, saved transcripts and waiting questions. A run interrupted during execution fails and is not retried. Its task can continue from a new owner message. The task's interruption notice names the task and replies to its own message when the model can prepare it, so you can tell it apart from a chat request that was interrupted at the same time. If the chat had already handed every request to a task that is still open, only the task sends a notice. It says nothing was sent, submitted or deleted since your last message only when the trust check let no outside action run and no confirmed action ran in that work.
-- **Reset** archives the conversation, closes its open tasks and gives the next conversation a new workspace and chat session. Earlier records remain stored.
+- **Reset** archives the conversation, closes its open tasks and gives the next conversation a new workspace and chat session. The chat list then starts empty. Earlier records remain stored.
 
 ## Code and related guides
 

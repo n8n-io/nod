@@ -13,13 +13,18 @@ import {
 } from '../lib/chat-unread';
 
 export function useChatUnread(ownerId: string, state: AppState | null) {
+  const loaded = state?.messages;
+  const messages = useMemo(
+    () => state?.messages.filter((message) => !message.taskId),
+    [state?.messages],
+  );
   const scope = useMemo(
     () =>
       state
         ? {
             ownerId,
             threadId: state.threadId,
-            initial: latestChatReadCursor(state.messages),
+            initial: latestChatReadCursor(messages!),
             pending: null as ChatReadCursor | null,
             cursor: null as ChatReadCursor | null,
             writing: false,
@@ -90,11 +95,10 @@ export function useChatUnread(ownerId: string, state: AppState | null) {
     };
   }, []);
   const cursor = read?.scope === scope ? read.cursor : null;
-  const messages = state?.messages;
   const earlier = state?.hasEarlierMessages === true;
   const count = cursor && messages ? Math.min(unreadChatMessageIds(messages, cursor).size, 100) : 0;
   const missing =
-    !!cursor && !!messages && count < 100 && hasUnreadHistory(messages, earlier, cursor);
+    !!cursor && !!messages && count < 100 && hasUnreadHistory(loaded!, earlier, cursor);
   useEffect(() => {
     if (!scope || !cursor || !messages || !missing) return;
     const controller = new AbortController();
@@ -112,16 +116,18 @@ export function useChatUnread(ownerId: string, state: AppState | null) {
           threadId: scope.threadId,
           before: before.createdAt,
           beforeId: before.id,
+          task: 'main',
         });
         return api<MessageHistoryPage>(`/api/messages?${query}`, { signal });
       },
       signal,
       (count) => update(count, count < 100),
+      loaded,
     )
       .then((count) => update(count, false))
       .catch(() => {});
     return () => controller.abort();
-  }, [scope, cursor, messages, earlier, missing, attempt]);
+  }, [scope, cursor, messages, loaded, earlier, missing, attempt]);
   const markRead = useCallback(
     (threadId: string) => {
       if (!scope || current.current !== scope || threadId !== scope.threadId || !messages) return;
@@ -137,13 +143,37 @@ export function useChatUnread(ownerId: string, state: AppState | null) {
     },
     [scope, messages, persist],
   );
+  const taskCounts = useMemo(
+    () =>
+      Object.fromEntries(
+        (state?.tasks ?? []).flatMap((task) => (task.unread ? [[task.id, task.unread]] : [])),
+      ) as Record<string, number>,
+    [state?.tasks],
+  );
+  const marking = useRef(new Set<string>());
+  const markTaskRead = useCallback(
+    (taskId: string) => {
+      if (!taskCounts[taskId] || marking.current.has(taskId)) return;
+      marking.current.add(taskId);
+      void api(`/api/tasks/${encodeURIComponent(taskId)}/read`, { method: 'POST' })
+        .catch(() => {})
+        .finally(() => marking.current.delete(taskId));
+    },
+    [taskCounts],
+  );
   const reconciled =
     history?.scope === scope && history.cursor === cursor && history.messages === messages;
   return {
     cursor,
     unavailable: unavailable === scope && !cursor,
-    count: reconciled ? history.count : count,
+    count: Math.min(
+      (reconciled ? history.count : count) +
+        Object.values(taskCounts).reduce((total, value) => total + value, 0),
+      100,
+    ),
     pending: (!!scope && unavailable === scope) || (reconciled ? history.pending : missing),
     markRead,
+    taskCounts,
+    markTaskRead,
   };
 }

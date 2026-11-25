@@ -41,6 +41,7 @@ export interface Message {
   approval?: MessageApproval;
   cardAnswer?: true;
   work?: { kind: 'task' | 'schedule'; id: string; title: string; turnId?: string };
+  taskId?: string | null;
 }
 export type ApprovalState = 'pending' | 'working' | 'done' | 'declined' | 'expired' | 'uncertain';
 export interface MessageApproval {
@@ -317,6 +318,8 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   closedAt: string | null;
+  archivedAt?: string;
+  unread?: number;
   messageId?: string | null;
   steps?: string[];
   stepIndex?: number;

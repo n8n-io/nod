@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft } from './components/icons';
 import { Chat } from './pages/chat';
+import { ChatList } from './components/chat-list';
 import { Usage } from './pages/usage';
 import { Vault } from './pages/vault';
 import { Apps } from './pages/apps';
@@ -125,7 +126,28 @@ function Workspace({
     media?.addEventListener('change', update);
     return () => media?.removeEventListener('change', update);
   }, []);
-  const [pendingMessageFocus, setPendingMessageFocus] = useState(initialFocusMessageId);
+  const [chat, setChat] = useState<{ id?: string; fresh?: true; focus?: string }>(() => ({
+    focus: initialFocusMessageId,
+  }));
+  const mainChat = !chat.id && !chat.fresh;
+  const { markTaskRead } = unread;
+  const readTask = useMemo(
+    () => (chat.id ? () => markTaskRead(chat.id!) : undefined),
+    [chat.id, markTaskRead],
+  );
+  useEffect(() => {
+    if (chat.id && state && !state.tasks?.some((task) => task.id === chat.id)) setChat({});
+  }, [chat.id, state?.tasks]);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const id = (event as CustomEvent<{ taskId?: unknown }>).detail?.taskId;
+      if (typeof id !== 'string') return;
+      setChat({ id });
+      navigate('/');
+    };
+    window.addEventListener('nod:open-chat', open);
+    return () => window.removeEventListener('nod:open-chat', open);
+  }, []);
   useEffect(() => {
     if (initialFocusMessageId) onFocusMessageHandled();
   }, [initialFocusMessageId]);
@@ -136,6 +158,7 @@ function Workspace({
   const [chatRequests, setChatRequests] = useState<Array<{ id: string; text: string }>>([]);
   const askInChat = (text: string) => {
     setChatRequests((current) => [...current, { id: crypto.randomUUID(), text }]);
+    setChat({});
     navigate('/');
   };
   useEffect(() => subscribeDesktopFocusMessage(setNotificationTarget), []);
@@ -155,7 +178,7 @@ function Workspace({
     const focusMessage = (event: Event) => {
       const detail = (event as CustomEvent<{ messageId?: unknown }>).detail;
       if (typeof detail?.messageId === 'string') {
-        if (!state) setPendingMessageFocus(detail.messageId);
+        if (!state) setChat({ focus: detail.messageId });
         navigate('/');
       }
     };
@@ -225,32 +248,50 @@ function Workspace({
           <main id="workspace" className="main-workspace" tabIndex={-1}>
             <div className="chat-route" hidden={path !== '/'}>
               {state ? (
-                <Chat
-                  ownerId={session.user!.id}
-                  state={state}
-                  streams={streams}
-                  connected={connected}
-                  refresh={refresh}
-                  initialFocusMessageId={pendingMessageFocus}
-                  onReturnToMemory={onReturnToMemory}
-                  toolbarActions={
-                    path === '/'
-                      ? !desktopSettingsAvailable() && mobileHeader
-                        ? mobileActions
-                        : toolbarActions
-                      : null
-                  }
-                  visible={path === '/'}
-                  readCursor={unread.cursor}
-                  readUnavailable={unread.unavailable}
-                  onReadLatest={unread.markRead}
-                  onFeedback={onFeedback}
-                  onDismissFeedbackDiscovery={onDismissFeedbackDiscovery}
-                  requestedMessage={chatRequests[0]}
-                  onRequestHandled={(id) =>
-                    setChatRequests((current) => current.filter((request) => request.id !== id))
-                  }
-                />
+                <div className="chat-split">
+                  <ChatList
+                    tasks={state.tasks ?? []}
+                    chat={chat.id}
+                    fresh={Boolean(chat.fresh)}
+                    unread={unread.taskCounts}
+                    onChat={(id) => setChat({ id })}
+                    onNewChat={() => setChat({ fresh: true })}
+                    refresh={refresh}
+                  />
+                  <div className="chat-main">
+                    <Chat
+                      key={chat.fresh ? 'new' : (chat.id ?? 'main')}
+                      ownerId={session.user!.id}
+                      state={state}
+                      streams={streams}
+                      connected={connected}
+                      refresh={refresh}
+                      initialFocusMessageId={chat.focus}
+                      onReturnToMemory={onReturnToMemory}
+                      toolbarActions={
+                        path === '/'
+                          ? !desktopSettingsAvailable() && mobileHeader
+                            ? mobileActions
+                            : toolbarActions
+                          : null
+                      }
+                      visible={path === '/'}
+                      readCursor={mainChat ? unread.cursor : undefined}
+                      readUnavailable={mainChat && unread.unavailable}
+                      onReadLatest={readTask ?? (mainChat ? unread.markRead : undefined)}
+                      onFeedback={onFeedback}
+                      onDismissFeedbackDiscovery={onDismissFeedbackDiscovery}
+                      requestedMessage={mainChat ? chatRequests[0] : undefined}
+                      onRequestHandled={(id) =>
+                        setChatRequests((current) => current.filter((request) => request.id !== id))
+                      }
+                      chatId={chat.id}
+                      startsChat={Boolean(chat.fresh)}
+                      browserLink={session.capabilities.developer}
+                      onOpenChat={(id, focus) => setChat({ id, focus })}
+                    />
+                  </div>
+                </div>
               ) : error ? (
                 <div className="initial-loading">
                   <Notice>{error}</Notice>

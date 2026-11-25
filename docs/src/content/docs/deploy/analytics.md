@@ -133,7 +133,7 @@ Model `request_kind` separates `chat`, `task`, `observer`, `helper`, `compaction
 | `chat_message_sent`                               | Attachment/reply booleans, text/voice input, and composer/task-card/ask-Nod/task-reply/answer-choice/approval-card source.                          |
 | `owner_message_accepted`                          | Newly committed owner message by bounded channel. Excludes duplicates, commands, private verification, message text, and private message/turn IDs.  |
 | `chat_stop_requested`                             | Stop requested in the app.                                                                                                                          |
-| `task_card_started`, `task_action`                | Card kind, learned/common/fixed origin, and bounded position, or fixed task control, including Show commands. Command text and output are excluded. |
+| `task_card_started`, `task_action`                | Card kind, learned/common/fixed origin and bounded position, or fixed task or chat list control, such as Show commands. No command text or output.  |
 | `setup_link_clicked`, `link_opened`               | Setup kind or text/tooltip source and optional bounded position. No link destination.                                                               |
 | `browser_handoff_action`                          | Successful done, back, reload, expand, or collapse operation.                                                                                       |
 | `message_reaction_changed`, `message_action`      | Fixed reaction/action, input method, and assistant/user role. Copy follows clipboard success.                                                       |
