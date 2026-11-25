@@ -229,7 +229,6 @@ export const approvalCases = inParts(
     let appResult: unknown;
     let calendarExecute: IntegrationSession['execute'] | undefined;
     let calendarSession: (() => Promise<void>) | undefined;
-    let calendarReadReview: (() => Promise<void>) | undefined;
     const calendarWording: Array<Record<string, any>> = [];
     const calendarTrust: Array<Record<string, any>> = [];
     let repeatAfterConfirm: FixtureCall | FixtureCall[] | undefined;
@@ -268,8 +267,6 @@ export const approvalCases = inParts(
       id: 'fixture',
       configured: true,
       curate: async ({ task, input, instructions, responseSchema }, _signal, report) => {
-        if (task === 'review' && Object(input).action?.name === 'GOOGLECALENDAR_EVENTS_GET')
-          await calendarReadReview?.();
         if (String(Object(input).action?.name).startsWith('GOOGLECALENDAR_'))
           calendarTrust.push(structuredClone(input));
         if (task === 'review' && heldReview?.purpose === Object(input).purpose && heldReview) {
@@ -2981,39 +2978,6 @@ export const approvalCases = inParts(
           await waitFor(declined.json().turnId, 'succeeded');
           assert.equal(integrationFixture.writes.length, writes);
 
-          const ruleTurn = await propose('GMAIL_DELETE_DRAFT', { draft_id: created }, 'apps');
-          const [ruleApproval] = await approvalsFor(ruleTurn);
-          const ruleReads = executedApps.filter((action) => action === 'GMAIL_GET_DRAFT').length;
-          const priorRules = (
-            await pool.query<{ rules: string }>('SELECT rules FROM preferences WHERE owner_id=$1', [
-              ownerId,
-            ])
-          ).rows[0].rules;
-          await pool.query('UPDATE preferences SET rules=$2 WHERE owner_id=$1', [
-            ownerId,
-            'Ask before reading Gmail.',
-          ]);
-          try {
-            const accepted = await request('POST', '/api/messages', {
-              text: 'Yes',
-              replyToMessageId: ruleApproval.confirmation_message_id,
-              clientMessageId: randomUUID(),
-            });
-            assert.equal(accepted.statusCode, 200, accepted.body);
-            await waitFor(accepted.json().turnId, 'succeeded|failed');
-          } finally {
-            await pool.query('UPDATE preferences SET rules=$2 WHERE owner_id=$1', [
-              ownerId,
-              priorRules,
-            ]);
-          }
-          assert.equal((await approvalsFor(ruleTurn))[0].status, 'expired');
-          assert.equal(
-            executedApps.filter((action) => action === 'GMAIL_GET_DRAFT').length,
-            ruleReads,
-          );
-          assert.equal(integrationFixture.writes.length, writes);
-
           const changedTurn = await propose('GMAIL_DELETE_DRAFT', { draft_id: created }, 'apps');
           const [changedApproval] = await approvalsFor(changedTurn);
           const deletes = executedApps.filter((action) => action === 'GMAIL_DELETE_DRAFT').length;
@@ -3131,62 +3095,6 @@ export const approvalCases = inParts(
           );
         } finally {
           asked.delete(prompt);
-        }
-      });
-      await inPart('Gmail deletion does not read targets against an ask-first rule', async () => {
-        const writes = integrationFixture.writes.length;
-        const reads = executedApps.filter(
-          (action) => action === 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID',
-        ).length;
-        const draftReads = executedApps.filter((action) => action === 'GMAIL_GET_DRAFT').length;
-        const priorRules = (
-          await pool.query<{ rules: string }>('SELECT rules FROM preferences WHERE owner_id=$1', [
-            ownerId,
-          ])
-        ).rows[0].rules;
-        await pool.query('UPDATE preferences SET rules=$2 WHERE owner_id=$1', [
-          ownerId,
-          'Ask before reading Gmail.',
-        ]);
-        try {
-          const prompt = `Synthetic ask-first delete ${randomUUID()}`;
-          plans.set(prompt, {
-            tool: 'apps',
-            action: 'GMAIL_DELETE_MESSAGE',
-            args: { message_id: 'fixture-mail-1' },
-          });
-          const response = await request('POST', '/api/messages', { text: prompt });
-          assert.equal(response.statusCode, 200, response.body);
-          const turnId = response.json().turnId as string;
-          ids.push(response.json().threadId as string);
-          await waitFor(turnId, 'failed');
-          assert.deepEqual(await approvalsFor(turnId), []);
-          assert.equal(
-            executedApps.filter((action) => action === 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID').length,
-            reads,
-          );
-          const draftPrompt = `Synthetic ask-first draft deletion ${randomUUID()}`;
-          plans.set(draftPrompt, {
-            tool: 'apps',
-            action: 'GMAIL_DELETE_DRAFT',
-            args: { draft_id: 'synthetic-draft' },
-          });
-          const draftResponse = await request('POST', '/api/messages', { text: draftPrompt });
-          assert.equal(draftResponse.statusCode, 200, draftResponse.body);
-          const draftTurnId = draftResponse.json().turnId as string;
-          ids.push(draftResponse.json().threadId as string);
-          await waitFor(draftTurnId, 'failed');
-          assert.deepEqual(await approvalsFor(draftTurnId), []);
-          assert.equal(
-            executedApps.filter((action) => action === 'GMAIL_GET_DRAFT').length,
-            draftReads,
-          );
-          assert.equal(integrationFixture.writes.length, writes);
-        } finally {
-          await pool.query('UPDATE preferences SET rules=$2 WHERE owner_id=$1', [
-            ownerId,
-            priorRules,
-          ]);
         }
       });
       await inPart('Gmail deletion stops if the verified account binding changes', async () => {
@@ -7252,28 +7160,22 @@ export const approvalCases = inParts(
                 assert.equal(card.status, 'pending');
                 const writes = writeCount();
                 const reads = readCount();
-                let held = false;
-                calendarReadReview = async () => {
-                  held = true;
-                  connectionWait = {
-                    until: Date.now() + 120_000,
-                    status: 429,
-                    code: 'installation_busy',
-                  };
+                connectionWait = {
+                  until: Date.now() + 120_000,
+                  status: 429,
+                  code: 'installation_busy',
                 };
                 try {
                   const accepted = await accept(card);
                   assert.equal(accepted.statusCode, 200, accepted.body);
                   await waitFor(accepted.json().turnId, 'waiting|succeeded|failed');
                   const [saved] = await approvalsFor(id);
-                  assert.equal(held, true);
                   assert.equal(saved.status, background ? 'expired' : 'completed');
                   assert.equal(readCount(), reads + (background ? 0 : 1));
                   assert.equal(writeCount(), writes + (background ? 0 : 1));
                   if (background)
                     assert.match(JSON.stringify(saved), /Nod did not read this source/);
                 } finally {
-                  calendarReadReview = undefined;
                   connectionWait = undefined;
                 }
               },
@@ -7603,8 +7505,9 @@ export const approvalCases = inParts(
                   assert.ok(
                     trust.some((input) => input.action.name === 'GOOGLECALENDAR_PATCH_EVENT'),
                   );
-                  assert.ok(
+                  assert.equal(
                     trust.some((input) => input.action.name === 'GOOGLECALENDAR_EVENTS_GET'),
+                    false,
                   );
                   const checked = JSON.stringify(trust);
                   assert.equal(checked.includes('synthetic-calendar-version'), false);

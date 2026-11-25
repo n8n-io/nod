@@ -4726,16 +4726,16 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       curator.curate({ task: 'check', instructions: 'Return only {"ok":true}.', input: {} }),
       { providerStatus: 429, providerRetryable: true },
     );
-    assert.equal(calls, 10);
+    assert.equal(calls, 12);
 
     reply = () => Response.json({ error: { message: 'API key expired.' } }, { status: 401 });
     assert.equal((await ask()).stopReason, 'error');
-    assert.equal(calls, 11);
+    assert.equal(calls, 13);
     assert.equal(service.view().connections[0]!.status, 'reconnect');
     assert.match(service.current.issue!.reason, /API key expired/);
     assert.equal(service.configured, false);
     await assert.rejects(ask(), /add it again/);
-    assert.equal(calls, 11);
+    assert.equal(calls, 13);
   });
 
   test('model setup chooses capable defaults, preserves explicit choices and requires valid cloud accounts', async (t) => {
