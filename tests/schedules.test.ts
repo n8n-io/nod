@@ -2043,6 +2043,21 @@ test(
             { channel: origin.channel, channel_source_id: null },
           );
           await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [manualTurn]);
+          const [replyId, fileId] = [randomUUID(), randomUUID()];
+          const file = { id: randomUUID(), name: 'fixture.csv', mimeType: 'text/csv', size: 13 };
+          for (const [id, text, seconds, attachments] of [
+            [replyId, 'The synthetic reminder went to the chat app.', 0, []],
+            [fileId, '', 1, [{ ...file, url: `/api/artifacts/${file.id}` }]],
+          ] as const)
+            await db.pool.query(
+              `INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text,created_at,attachments)
+               SELECT $1,owner_id,thread_id,id,'assistant',$3,now()+$4 * interval '1 second',$5::jsonb
+               FROM turns WHERE id=$2`,
+              [id, manualTurn, text, seconds, JSON.stringify(attachments)],
+            );
+          const history = (await runs(schedule.id)).find((run) => run.turnId === manualTurn);
+          assert.equal(history?.messageText, 'The synthetic reminder went to the chat app.');
+          assert.equal(history?.attachmentMessageId, fileId);
           const moved = await receive('Hello from my other chat app.', 'phone-thread', 'whatsapp');
           assert.notEqual(moved.channel, origin.channel);
           const later = await runNow(await saved(schedule.id));

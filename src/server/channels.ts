@@ -1039,17 +1039,22 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     }
   }
 
-  async function completePairing(request: ChannelPairingRequest) {
+  function completePairing(request: ChannelPairingRequest) {
     const pair = options.pair;
-    if (closed || !pair) return;
+    if (closed || !pair) return Promise.resolve();
     const task = (async () => {
       if (!(await pair(request)) || closed) return;
       transport.link?.(request);
       updateConfiguration();
-      await announcePairing(request);
-    })().catch((cause) => logFailure('channel_pairing_failed', cause));
+      await announcePairing(request).catch((cause) =>
+        logFailure('channel_pairing_notice_failed', cause),
+      );
+    })();
     pairings.add(task);
-    void task.finally(() => pairings.delete(task));
+    void task
+      .catch((cause) => logFailure('channel_pairing_failed', cause))
+      .finally(() => pairings.delete(task));
+    return task;
   }
 
   async function announcePairing(request: ChannelPairingRequest) {
@@ -1896,7 +1901,9 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           try {
             await transport.poll?.(
               (message) => accept(message, message.channelId),
-              completePairing,
+              async (request) => {
+                void completePairing(request).catch(() => {});
+              },
               (reaction) => acceptReaction(reaction, reaction.channelId),
               (approval) => acceptApproval(approval, approval.channelId),
             );
@@ -2055,7 +2062,13 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             for (const approval of result.approvals ?? [])
               await acceptApproval(approval, channelId);
             if (result.messages?.length) void drain();
-            if (result.pairing?.channelId === channelId) await completePairing(result.pairing);
+            if (result.pairing?.channelId === channelId)
+              await completePairing(result.pairing).catch(() => {
+                throw Object.assign(
+                  new Error('Channel processing is temporarily unavailable. Try again.'),
+                  { statusCode: 503 },
+                );
+              });
           }
           if (result.contentType) reply.type(result.contentType);
           return reply.code(result.status).send(result.body);

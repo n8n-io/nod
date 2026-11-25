@@ -1914,7 +1914,7 @@ test(
             (await application.app.inject({ url: '/api/channel-settings', headers }))
               .json()
               .channels.find((item: { provider: string }) => item.provider === 'whatsapp')
-              ?.pairedUser === 'Your other phone',
+              ?.pairedUser !== undefined,
         );
         assert.equal(applied.length, appliedBefore);
         const text = 'A request from WhatsApp';

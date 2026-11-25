@@ -3526,25 +3526,29 @@ test(
     let release!: () => void;
     gate = new Promise((resolve) => (release = resolve));
     const disconnect = app.inject({ method: 'DELETE', url: '/api/channel-settings/telegram' });
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    let settled = false;
-    const pairing = settings
-      .pair({
-        channelId: 'telegram',
-        accountId: token.split(':')[0]!,
-        senderId: '123',
-        senderName: 'Synthetic owner',
-        messageId: '123:1',
-        threadId: '123',
-        code: new URL(connected.json().pairingUrl).searchParams.get('start')!,
-        sentAt: new Date(),
-      })
-      .finally(() => {
-        settled = true;
-      });
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    assert.equal(settled, false);
-    release();
+    let pairing: Promise<boolean> | undefined;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      let settled = false;
+      pairing = settings
+        .pair({
+          channelId: 'telegram',
+          accountId: token.split(':')[0]!,
+          senderId: '123',
+          senderName: 'Synthetic owner',
+          messageId: '123:1',
+          threadId: '123',
+          code: new URL(connected.json().pairingUrl).searchParams.get('start')!,
+          sentAt: new Date(),
+        })
+        .finally(() => {
+          settled = true;
+        });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.equal(settled, false);
+    } finally {
+      release();
+    }
     assert.equal((await disconnect).statusCode, 200);
     assert.equal(await pairing, false);
     assert.equal((await settings.environment()).TELEGRAM_ALLOWED_USER_ID, undefined);
