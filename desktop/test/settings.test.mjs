@@ -1349,7 +1349,15 @@ test('native local setup observes early runtime failure and recovery without pri
     version: '0.1.17',
     prepareRuntime: async ({ onStatus, onStorageReady }) => {
       onStatus({ stage: privateText, message: privateText, progress: 0.1 });
-      if (++attempts === 1) throw new Error(privateText);
+      if (++attempts === 1)
+        throw Object.assign(
+          new Error(privateText, {
+            cause: Object.assign(new Error(privateText), {
+              code: 'NOD_COMPUTER_REGISTRATION_MISSING',
+            }),
+          }),
+          { code: privateText, step: 'wsl' },
+        );
       onStatus({ stage: privateText, message: privateText, progress: 0.2 });
       const runtime = { env: {} };
       await onStorageReady(runtime);
@@ -1379,6 +1387,8 @@ test('native local setup observes early runtime failure and recovery without pri
     assert.equal(observations()[0].properties.runtime_status, 'failed');
     assert.equal(observations()[0].properties.startup_status, 'idle');
     assert.equal(observations()[0].properties.setup_available, false);
+    assert.equal(observations()[0].properties.failure_code, 'NOD_COMPUTER_REGISTRATION_MISSING');
+    assert.equal(observations()[0].properties.failure_step, 'wsl');
     await f.handlers.get('nod:prepare')(event, { retry: true });
     assert.equal(f.status().engineReady, true, JSON.stringify(f.status()));
     await waitFor(() => assert.ok(observations().some((item) => item.properties.setup_available)), {
@@ -1423,7 +1433,13 @@ test('native local setup observes early runtime failure and recovery without pri
               !['analytics_schema', 'environment', 'surface', 'app_version', 'route'].includes(key),
           )
           .sort(),
-        ['platform', 'runtime_status', 'setup_available', 'startup_status'],
+        [
+          ...(item.properties.runtime_status === 'failed' ? ['failure_code', 'failure_step'] : []),
+          'platform',
+          'runtime_status',
+          'setup_available',
+          'startup_status',
+        ],
       );
   } finally {
     await f.close();

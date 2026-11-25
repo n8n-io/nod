@@ -61,6 +61,7 @@ export function createDesktopLifecycle({
       phase: 'error',
       message: error.message,
       details: startupErrorDetails(error),
+      failure: error,
       needsRuntimeArchive: error.code === 'RUNTIME_ARCHIVE_REQUIRED',
       needsWsl: error.code === 'NOD_WSL_REQUIRED',
       needsStorage: error.code === 'NOD_COMPUTER_STORAGE_FULL',

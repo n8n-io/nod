@@ -363,6 +363,7 @@ const lifecycle = createDesktopLifecycle({
       ...value,
       message: bounded(value.message),
       details: value.details ? bounded(value.details, 256 * 1024) : undefined,
+      failure: value.failure ? startupErrorFacts(value.failure) : undefined,
     };
     if (value.phase === 'error')
       void writeDiagnostic([runtime.message, runtime.details].filter(Boolean).join('\n')).catch(
@@ -1664,11 +1665,18 @@ function captureLocalSetup() {
       : ['idle', 'preparing', 'starting', 'ready'].includes(value)
         ? value
         : 'unknown';
+  const failure =
+    (status.phase === 'error' && status.failure) ||
+    (status.runtime?.phase === 'error' && status.runtime.failure) ||
+    {};
+  const code = failure.code ?? failure.errno;
   const properties = {
     runtime_status: phase(status.runtime?.phase),
     startup_status: phase(status.phase),
     setup_available: status.engineReady === true,
     platform: ['darwin', 'win32', 'linux'].includes(process.platform) ? process.platform : 'other',
+    ...(code && { failure_code: code }),
+    ...(failure.step && { failure_step: failure.step }),
   };
   const key = JSON.stringify(properties);
   if (observation.previous === key) return;
