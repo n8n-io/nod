@@ -1588,9 +1588,9 @@ test('a context restart drops old model input once and keeps later turns through
 });
 
 test('real Pi sessions persist a credential pause and resume without replaying chat history', async (t) => {
-  for (const kind of ['background', 'task'] as const)
+  for (const kind of ['chat', 'background', 'task'] as const)
     await t.test(`${kind} session`, async () => {
-      const background = true;
+      const background = kind !== 'chat';
       const directory = await mkdtemp(join(tmpdir(), 'nod-pi-'));
       const id = 'test-' + randomUUID();
       const replies: string[] = [];
@@ -12862,7 +12862,6 @@ test('invalid tool calls stop before another model request and a valid repair re
       const run = () =>
         runtime.runTurn({
           ...context(directory),
-          ...(toolName === 'sign_in' ? { background: true } : {}),
           turnId: randomUUID(),
           task: async () => {
             writes++;

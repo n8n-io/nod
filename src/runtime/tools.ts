@@ -1042,7 +1042,6 @@ export function nodTools(
     if (appConfirmation in verdict) return { output: await confirm(verdict) };
     return { output: verdict.result };
   };
-  const work = Boolean(context.taskContext || context.background);
   return [
     ...(context.proactivity
       ? [
@@ -1199,176 +1198,159 @@ export function nodTools(
         };
       return context.reactToMessage(p.messageId, p.reaction);
     }),
-    ...(work
-      ? [
-          bind(toolDefinitions.browser, async ({ action, name, ...rest }) => {
-            if (action === 'handoff') {
-              if (turn.execution.parentRunId)
-                throw new Error(
-                  'Return the browser blocker to the parent agent. A subagent cannot hand over its browser.',
-                );
-              const text = rest.text?.trim();
-              if (!text) throw new Error('Say what the user needs to do on the current page.');
-              await computer.currentPage(browserId);
-              signal.throwIfAborted();
-              await pause('browser', text);
-              return 'The browser is in chat. Wait for the user to return control.';
-            }
-            if (action === 'screenshot') {
-              const bytes = await screenshot();
-              if (!bytes) return 'Open a browser URL first.';
-              return {
-                content: [{ type: 'image', data: bytes.toString('base64'), mimeType: 'image/png' }],
-                details: {},
-              };
-            }
-            if (action === 'share_screenshot') {
-              if (!context.publishScreenshot)
-                throw new Error('Screenshot publishing is unavailable.');
-              const bytes = await screenshot();
-              if (!bytes) throw new Error('The browser does not have an available screenshot.');
-              return {
-                ...(await context.publishScreenshot(bytes, name)),
-                delivery:
-                  'Captured and staged for your next message or turn completion. Use this id in an image or booking presentation; do not share the file again.',
-              };
-            }
-            if (action === 'download') {
-              if (!context.publishBrowserFile)
-                throw new Error('Browser file delivery is unavailable.');
-              let file;
-              try {
-                file = await computer.download(
-                  browserId,
-                  { selector: rest.selector, url: rest.url, name },
-                  signal,
-                );
-              } catch (error) {
-                if (!(
-                  error instanceof BrowserActionError && error.code === 'browser_download_control'
-                ))
-                  throw error;
-                const checked = await check({ action: 'click', selector: rest.selector });
-                if ('output' in checked) return checked.output;
-                file = await computer.download(
-                  browserId,
-                  { selector: rest.selector, name, ...checked.binding },
-                  signal,
-                );
-                await checked.record?.();
-              }
-              signal.throwIfAborted();
-              if (!file.bytes.length || file.bytes.length > fileBytes)
-                throw new Error('Browser file delivery exceeds the download limit.');
-              return context.publishBrowserFile(file);
-            }
-            if (action === 'upload') {
-              if (!context.readWorkspaceFile)
-                throw new Error('Browser file upload is unavailable.');
-              if (!rest.selector || !rest.path) throw new Error('Choose a file and upload field.');
-              const bytes = await context.readWorkspaceFile(rest.path, fileBytes);
-              const checked = await check({ action, selector: rest.selector, path: rest.path });
-              if ('output' in checked) return checked.output;
-              const page = await computer.upload(
-                browserId,
-                { selector: rest.selector, name: basename(rest.path), bytes, ...checked.binding },
-                signal,
-              );
-              await checked.record?.();
-              return observed({ action }, page);
-            }
-            const step = { action, ...rest } as BrowserAction;
-            if (action === 'evaluate' && context.browserStep)
-              try {
-                return observed(
-                  step,
-                  await computer.act(browserId, { ...step, readOnly: true }, signal),
-                );
-              } catch (error) {
-                if (!(
-                  error instanceof BrowserActionError && error.code === 'browser_script_writes'
-                ))
-                  throw error;
-              }
-            const checked = commits(step) ? await check(step) : { binding: {} };
-            if ('output' in checked) return checked.output;
-            const page = await computer.act(browserId, { ...step, ...checked.binding }, signal);
-            if ('record' in checked) await checked.record?.();
-            return observed(step, page, checked.choice);
-          }),
-          bind(toolDefinitions.sign_in, async ({ message, action, ...request }) => {
-            const result = await context.requestCredential(request);
-            if (appConfirmation in result) return confirm(result);
-            if ('filled' in result) {
-              signal.throwIfAborted();
-              try {
-                return {
-                  filled: true,
-                  observation: observed(
-                    { action: 'snapshot' },
-                    await computer.act(browserId, { action: 'snapshot' }, signal),
-                  ),
-                };
-              } catch {
-                signal.throwIfAborted();
-                return { filled: true };
-              }
-            }
-            await pause(
-              'credentials',
-              vaultInvitation(request.origin, result.url, message, action),
+    bind(toolDefinitions.browser, async ({ action, name, ...rest }) => {
+      if (action === 'handoff') {
+        if (turn.execution.parentRunId)
+          throw new Error(
+            'Return the browser blocker to the parent agent. A subagent cannot hand over its browser.',
+          );
+        const text = rest.text?.trim();
+        if (!text) throw new Error('Say what the user needs to do on the current page.');
+        await computer.currentPage(browserId);
+        signal.throwIfAborted();
+        await pause('browser', text);
+        return 'The browser is in chat. Wait for the user to return control.';
+      }
+      if (action === 'screenshot') {
+        const bytes = await screenshot();
+        if (!bytes) return 'Open a browser URL first.';
+        return {
+          content: [{ type: 'image', data: bytes.toString('base64'), mimeType: 'image/png' }],
+          details: {},
+        };
+      }
+      if (action === 'share_screenshot') {
+        if (!context.publishScreenshot) throw new Error('Screenshot publishing is unavailable.');
+        const bytes = await screenshot();
+        if (!bytes) throw new Error('The browser does not have an available screenshot.');
+        return {
+          ...(await context.publishScreenshot(bytes, name)),
+          delivery:
+            'Captured and staged for your next message or turn completion. Use this id in an image or booking presentation; do not share the file again.',
+        };
+      }
+      if (action === 'download') {
+        if (!context.publishBrowserFile) throw new Error('Browser file delivery is unavailable.');
+        let file;
+        try {
+          file = await computer.download(
+            browserId,
+            { selector: rest.selector, url: rest.url, name },
+            signal,
+          );
+        } catch (error) {
+          if (!(error instanceof BrowserActionError && error.code === 'browser_download_control'))
+            throw error;
+          const checked = await check({ action: 'click', selector: rest.selector });
+          if ('output' in checked) return checked.output;
+          file = await computer.download(
+            browserId,
+            { selector: rest.selector, name, ...checked.binding },
+            signal,
+          );
+          await checked.record?.();
+        }
+        signal.throwIfAborted();
+        if (!file.bytes.length || file.bytes.length > fileBytes)
+          throw new Error('Browser file delivery exceeds the download limit.');
+        return context.publishBrowserFile(file);
+      }
+      if (action === 'upload') {
+        if (!context.readWorkspaceFile) throw new Error('Browser file upload is unavailable.');
+        if (!rest.selector || !rest.path) throw new Error('Choose a file and upload field.');
+        const bytes = await context.readWorkspaceFile(rest.path, fileBytes);
+        const checked = await check({ action, selector: rest.selector, path: rest.path });
+        if ('output' in checked) return checked.output;
+        const page = await computer.upload(
+          browserId,
+          { selector: rest.selector, name: basename(rest.path), bytes, ...checked.binding },
+          signal,
+        );
+        await checked.record?.();
+        return observed({ action }, page);
+      }
+      const step = { action, ...rest } as BrowserAction;
+      if (action === 'evaluate' && context.browserStep)
+        try {
+          return observed(step, await computer.act(browserId, { ...step, readOnly: true }, signal));
+        } catch (error) {
+          if (!(error instanceof BrowserActionError && error.code === 'browser_script_writes'))
+            throw error;
+        }
+      const checked = commits(step) ? await check(step) : { binding: {} };
+      if ('output' in checked) return checked.output;
+      const page = await computer.act(browserId, { ...step, ...checked.binding }, signal);
+      if ('record' in checked) await checked.record?.();
+      return observed(step, page, checked.choice);
+    }),
+    bind(toolDefinitions.sign_in, async ({ message, action, ...request }) => {
+      const result = await context.requestCredential(request);
+      if (appConfirmation in result) return confirm(result);
+      if ('filled' in result) {
+        signal.throwIfAborted();
+        try {
+          return {
+            filled: true,
+            observation: observed(
+              { action: 'snapshot' },
+              await computer.act(browserId, { action: 'snapshot' }, signal),
+            ),
+          };
+        } catch {
+          signal.throwIfAborted();
+          return { filled: true };
+        }
+      }
+      await pause('credentials', vaultInvitation(request.origin, result.url, message, action));
+      return 'Waiting for secure input.';
+    }),
+    bind(toolDefinitions.pay, async (p) => {
+      if (!context.requestPayment) throw new Error('Payments are unavailable.');
+      const result = await context.requestPayment(p);
+      await pause(
+        'credentials',
+        result.url
+          ? paymentInvitation(result.url, result.question, result.action)
+          : paymentExplanation(result.question),
+      );
+      return 'Waiting for private payment approval.';
+    }),
+    bind(toolDefinitions.browser_session, async (p) => {
+      if (!context.browserConnection) throw new Error('Browser connections are unavailable.');
+      const outcome = await context.browserConnection(p);
+      if (outcome && typeof outcome === 'object' && appConfirmation in outcome)
+        return confirm(outcome);
+      const result = outcome as Record<string, unknown>;
+      if (result.status === 'rejected') {
+        switch (result.code) {
+          case 'invalid_browser_connection_arguments':
+            throw new Error(
+              'Invalid browser session input. Valid forms: connect {url, label?}; use {url, connectionId}; save {url, connectionId, signedIn:true}.',
             );
-            return 'Waiting for secure input.';
-          }),
-          bind(toolDefinitions.pay, async (p) => {
-            if (!context.requestPayment) throw new Error('Payments are unavailable.');
-            const result = await context.requestPayment(p);
-            await pause(
-              'credentials',
-              result.url
-                ? paymentInvitation(result.url, result.question, result.action)
-                : paymentExplanation(result.question),
+          case 'browser_connection_origin_mismatch':
+            throw new Error(
+              'This browser connection belongs to a different website. Use a saved connection for the current origin.',
             );
-            return 'Waiting for private payment approval.';
-          }),
-          bind(toolDefinitions.browser_session, async (p) => {
-            if (!context.browserConnection) throw new Error('Browser connections are unavailable.');
-            const outcome = await context.browserConnection(p);
-            if (outcome && typeof outcome === 'object' && appConfirmation in outcome)
-              return confirm(outcome);
-            const result = outcome as Record<string, unknown>;
-            if (result.status === 'rejected') {
-              switch (result.code) {
-                case 'invalid_browser_connection_arguments':
-                  throw new Error(
-                    'Invalid browser session input. Valid forms: connect {url, label?}; use {url, connectionId}; save {url, connectionId, signedIn:true}.',
-                  );
-                case 'browser_connection_origin_mismatch':
-                  throw new Error(
-                    'This browser connection belongs to a different website. Use a saved connection for the current origin.',
-                  );
-                case 'browser_connection_unavailable':
-                  throw new Error(
-                    'This browser connection is unavailable for the current task. List saved connections and inspect the current page before choosing one.',
-                  );
-                case 'browser_connection_busy':
-                  throw new Error(
-                    'This browser profile is open in another task, waiting for the user to finish signing in. Open public pages with browser instead, or try again later.',
-                  );
-                default:
-                  throw new Error(
-                    'The browser session request was rejected. Check the current page and saved connection before trying again.',
-                  );
-              }
-            }
-            if (p.action === 'connect' || result.status === 'needs_sign_in') {
-              const { url: _url, ...safe } = result;
-              return safe;
-            }
-            return result;
-          }),
-        ]
-      : []),
+          case 'browser_connection_unavailable':
+            throw new Error(
+              'This browser connection is unavailable for the current task. List saved connections and inspect the current page before choosing one.',
+            );
+          case 'browser_connection_busy':
+            throw new Error(
+              'This browser profile is open in another task, waiting for the user to finish signing in. Open public pages with browser instead, or try again later.',
+            );
+          default:
+            throw new Error(
+              'The browser session request was rejected. Check the current page and saved connection before trying again.',
+            );
+        }
+      }
+      if (p.action === 'connect' || result.status === 'needs_sign_in') {
+        const { url: _url, ...safe } = result;
+        return safe;
+      }
+      return result;
+    }),
     ...(context.localFiles
       ? [
           bind(toolDefinitions.files, async ({ action, ...args }) => {
@@ -1390,7 +1372,7 @@ export function nodTools(
           }),
         ]
       : []),
-    ...(context.computerUse && work && !turn.execution.parentRunId
+    ...(context.computerUse && !turn.execution.parentRunId
       ? [
           bind(toolDefinitions.computer, async ({ action, ...args }) => {
             const result = await context.integration(

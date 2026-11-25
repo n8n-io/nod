@@ -328,7 +328,7 @@ test('command output removes whole secrets before taking a bounded tail', async 
   assert.equal(records[5]?.output, '{"name":"password","value":"[redacted]"}');
 });
 
-test('partial delivery continues across app reads in chat and browser reads in saved tasks', async () => {
+test('partial delivery continues across browser and app reads in chat and saved tasks', async () => {
   for (const task of [false, true]) {
     const delivered: string[] = [];
     const first = 'The public plan costs EUR 12 per seat. The account price is not checked yet.';
@@ -336,8 +336,7 @@ test('partial delivery continues across app reads in chat and browser reads in s
     let reads = 0;
     const { result, aborted } = await fixture(
       async (tools, _emit, options) => {
-        if (task)
-          await call(tools, 'browser', { action: 'open', url: 'https://example.com/pricing' });
+        await call(tools, 'browser', { action: 'open', url: 'https://example.com/pricing' });
         await call(tools, 'send_message', { text: first, intent: 'update' });
         assert.deepEqual(delivered, [first]);
         assert.equal(options.shouldStop(), false);
@@ -380,7 +379,7 @@ test('partial delivery continues across app reads in chat and browser reads in s
         }),
       },
     );
-    assert.equal(reads, task ? 2 : 1);
+    assert.equal(reads, 2);
     assert.deepEqual(delivered, [first, final]);
     assert.equal(result.status, 'succeeded');
     assert.equal(aborted, false);
