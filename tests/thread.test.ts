@@ -12277,22 +12277,25 @@ test(
       curator.curate = curate;
 
       const tea = 'I drink synthetic green tea every morning.';
-      const unquoted = add('about', 'coffee', 'Drinks synthetic black coffee.');
+      const uncited = (m: number) => ({
+        ...add('about', 'coffee', 'Drinks synthetic black coffee.')(m),
+        m: [m + 1],
+      });
       const secret = 'The store key is sk-fixturefixture1234.';
       const leaked = (m: number) => ({ ...add('about', 'key', secret)(m), quote: tea });
       const notesBefore = (await memory.view()).notes.length;
       await assert.rejects(
-        remember([unquoted, leaked], await post(tea)),
+        remember([uncited, leaked], await post(tea)),
         (error: Error) =>
-          /quote/.test(error.message) &&
+          /cites none/.test(error.message) &&
           /secret/.test(error.message) &&
           /Nothing was saved/.test(error.message) &&
           !error.message.includes('sk-fixture'),
       );
       assert.equal((await memory.view()).notes.length, notesBefore);
       await assert.rejects(
-        remember([add('about', 'tea', tea), unquoted], await post(tea)),
-        /quote/,
+        remember([add('about', 'tea', tea), uncited], await post(tea)),
+        /cites none/,
       );
       assert.equal((await memory.view()).notes.length, notesBefore);
       await remember([add('about', 'tea', tea)], await post(tea));
@@ -12307,7 +12310,7 @@ test(
               m: [m],
               quote: moved,
             }),
-            unquoted,
+            uncited,
             add('about', 'switch', moved),
           ],
           await post(moved),
@@ -12315,6 +12318,22 @@ test(
         /Nothing was saved/,
       );
       assert.ok((await memory.view()).notes.some((note) => note.path === 'about/tea'));
+      const spanish = 'Háblame en español, por favor.';
+      const spoken = await post(spanish);
+      const translated = (m: number) => ({
+        ...add('preferences', 'idioma-español', 'Prefers replies in Spanish.')(m),
+        quote: 'Speak to me in Spanish, please.',
+      });
+      assert.deepEqual(await remember([translated], spoken), {
+        saved: [{ path: 'preferences/idioma-espanol', text: 'Prefers replies in Spanish.' }],
+        archived: [],
+      });
+      const evidence = await memory.read({ path: 'preferences/idioma-espanol' });
+      assert.ok('sources' in evidence);
+      assert.deepEqual(
+        evidence.sources.map(({ id, text }) => ({ id, text })),
+        [{ id: spoken.sourceMessageId, text: null }],
+      );
 
       const older = await post('My synthetic library card renews in March.');
       for (let index = 0; index < 10; index++) await post(`Synthetic filler ${index}.`);

@@ -6,47 +6,46 @@ import {
   fits,
   factSchema,
   foldQuote,
-  freeSlug,
   line,
   lines,
   locate,
-  path,
   pathOf,
   same,
-  slug,
+  slugFor,
   unsafe,
   type Entry,
   type Tree,
 } from './memory-tree.ts';
 
-const ordinals = z.array(z.number().int().min(1).max(40)).min(1);
+const ordinals = z.array(z.number().int()).min(1);
+const support = lines().optional().catch(undefined);
 
 const reflectOp = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('add'),
     area,
-    slug,
+    slug: z.string(),
     text: lines(),
     abstract: line(120).optional().catch(undefined),
     expires: z.iso.date().optional().catch(undefined),
     m: ordinals,
-    quote: lines(),
+    quote: support,
     sensitive: z.boolean(),
     fact: factSchema.optional().catch(undefined),
-    replaces: z.array(path).max(8).optional(),
+    replaces: z.array(z.string()).max(8).optional(),
   }),
   z.object({
     op: z.literal('archive'),
-    path,
+    path: z.string(),
     reason: z.enum(['obsolete', 'contradicted']),
     m: ordinals,
-    quote: lines(),
+    quote: support,
   }),
 ]);
 
 const union = (...lists: string[][]) => [...new Set(lists.flat())].slice(-5);
 
-export type Rejection = 'invalid' | 'quote' | 'secret' | 'missing' | 'full';
+export type Rejection = 'invalid' | 'source' | 'quote' | 'secret' | 'full';
 
 export function applyOps(
   tree: Tree,
@@ -66,11 +65,6 @@ export function applyOps(
   const replace = (op: Extract<z.infer<typeof reflectOp>, { op: 'add' }>, target: string) => {
     for (const previous of op.replaces ?? []) {
       const entry = locate(tree, previous);
-      if (
-        !entry &&
-        !applied.some(({ operation, path }) => operation === 'archive' && path === previous)
-      )
-        rejected.push('missing');
       if (!entry || previous === target || (origin === 'inferred' && entry.origin !== 'inferred'))
         continue;
       archive(tree, entry, 'superseded', now, target);
@@ -82,8 +76,13 @@ export function applyOps(
     ...ops.filter(({ op }) => op === 'add'),
   ]) {
     const cited = op.m.flatMap((n) => messages[n - 1] ?? []);
-    const quoted = cited.filter((m) => foldQuote(m.text).includes(foldQuote(op.quote)));
-    if (cited.length !== op.m.length || !quoted.length || !foldQuote(op.quote).trim()) {
+    const quote = op.quote && foldQuote(op.quote).trim() ? op.quote : undefined;
+    const quoted = quote ? cited.filter((m) => foldQuote(m.text).includes(foldQuote(quote))) : [];
+    if (!cited.length) {
+      rejected.push('source');
+      continue;
+    }
+    if (origin === 'inferred' && !quoted.length) {
       rejected.push('quote');
       continue;
     }
@@ -91,14 +90,11 @@ export function applyOps(
       rejected.push('secret');
       continue;
     }
-    const sources = union(quoted.map((m) => m.id));
+    const sources = union((quoted.length ? quoted : cited).map((m) => m.id));
+    const kept = quoted.length && quote && quote.length <= 400 ? quote : undefined;
     if (op.op === 'archive') {
       const entry = locate(tree, op.path);
-      if (!entry) {
-        rejected.push('missing');
-        continue;
-      }
-      if (origin === 'inferred' && entry.origin !== 'inferred') continue;
+      if (!entry || (origin === 'inferred' && entry.origin !== 'inferred')) continue;
       archive(tree, entry, op.reason, now);
       applied.push({ operation: 'archive', path: op.path, text: entry.text });
       continue;
@@ -114,7 +110,7 @@ export function applyOps(
     if (match) {
       if (origin === 'inferred' && match.origin !== 'inferred') continue;
       entry = { ...match, sources: union(match.sources, sources), updated: now };
-      if (op.quote.length <= 400) entry.quote = op.quote;
+      if (kept) entry.quote = kept;
       if (origin === 'stated') {
         entry.origin = 'stated';
         if (op.expires) entry.expires = op.expires;
@@ -124,13 +120,13 @@ export function applyOps(
     } else {
       entry = {
         area: op.area,
-        slug: freeSlug(tree, op.area, op.slug),
+        slug: slugFor(tree, op.area, op.slug),
         text: op.text,
         ...(op.abstract ? { abstract: op.abstract } : {}),
         origin,
         updated: now,
         sources,
-        ...(op.quote.length <= 400 ? { quote: op.quote } : {}),
+        ...(kept ? { quote: kept } : {}),
         ...(op.expires ? { expires: op.expires } : {}),
         ...(op.fact ? { fact: op.fact } : {}),
       };

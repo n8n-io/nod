@@ -384,7 +384,7 @@ test(
             area: 'about',
             slug: 'refunds',
             text: 'Refunds go to account 1.',
-            m: [1],
+            m: [99],
             quote: 'Remember that refunds go to account 1.',
             sensitive: false,
           },
@@ -922,6 +922,7 @@ test('memory notes keep their line breaks from every writer while other control 
         add('Bell\u0007', 'Cheers', 'bell'),
         add('Carriage\rreturn', 'Cheers', 'carriage'),
         add('Sign-off reused', 'Cheers,\nAlex', 'not-verbatim'),
+        add('Prefers Spanish replies', 'Speak to me in Spanish', 'idioma-español'),
       ],
       said,
       '2026-02-01T00:00:00.000Z',
@@ -930,9 +931,16 @@ test('memory notes keep their line breaks from every writer while other control 
   );
   assert.deepEqual(
     learned.applied.map(({ path }) => path),
-    ['preferences/email-signoff', 'preferences/formal-signoff'],
+    [
+      'preferences/email-signoff',
+      'preferences/formal-signoff',
+      'preferences/not-verbatim',
+      'preferences/idioma-espanol',
+    ],
   );
-  assert.deepEqual(learned.rejected, ['invalid', 'invalid', 'quote']);
+  assert.deepEqual(learned.rejected, ['invalid', 'invalid']);
+  const unquoted = (await memory.load()).entries.find((entry) => entry.slug === 'idioma-espanol');
+  assert.deepEqual([unquoted?.sources, unquoted?.quote], [[ids[1]], undefined]);
   const signoff = (await memory.load()).entries.find((entry) => entry.slug === 'email-signoff');
   assert.equal(signoff?.text, 'Email sign-off: "Cheers,\nSam"; formal: "Kind regards,\nSam"');
   assert.equal(signoff?.quote, 'Cheers,\nSam\n\nunless it is formal');
@@ -1026,22 +1034,27 @@ test('memory notes keep their line breaks from every writer while other control 
   for (const [said, quoted, m] of [
     ['I\u2019m allergic to peanuts', "I'm allergic to cashews", [1]],
     ['I\u2019m allergic to peanuts', "I'm allergic to peanuts", [2]],
-    ['Use short reports.', 'Use', [1, 2]],
     ['Use short—clear reports.', 'Use short-clear reports.', [1]],
     ['Use short… reports.', 'Use short... reports.', [1]],
     ['Iʼm ready', "I'm ready", [1]],
-  ] as const)
-    assert.deepEqual(
-      applyOps(
-        emptyTree(),
-        [{ ...add('Synthetic quote preference', quoted), m }],
-        [{ id: ids[1], text: said }],
-        when,
-        'stated',
-      ).rejected,
-      ['quote'],
-      said,
-    );
+  ] as const) {
+    const uncited = !(m as readonly number[]).includes(1);
+    for (const origin of ['inferred', 'stated'] as const) {
+      const tree = emptyTree();
+      assert.deepEqual(
+        applyOps(
+          tree,
+          [{ ...add('Synthetic quote preference', quoted), m }],
+          [{ id: ids[1], text: said }],
+          when,
+          origin,
+        ).rejected,
+        uncited ? ['source'] : origin === 'inferred' ? ['quote'] : [],
+        `${origin}: ${said}`,
+      );
+      assert.equal(tree.entries[0]?.quote, undefined, said);
+    }
+  }
   assert.deepEqual(
     applyOps(
       emptyTree(),
@@ -1077,7 +1090,7 @@ test('memory notes keep their line breaks from every writer while other control 
       '2026-02-01T00:00:00.000Z',
       'stated',
     ).rejected;
-  assert.deepEqual(replacing(['preferences/missing-signoff']), ['missing']);
+  assert.deepEqual(replacing(['preferences/missing-signoff']), []);
   assert.deepEqual(replacing(['about/old-signoff'], ['about/old-signoff']), []);
 });
 
