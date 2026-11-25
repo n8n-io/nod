@@ -2,6 +2,28 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.9.8 - 2026-11-25
+
+### Features
+
+- **analytics:** Record the setup failure code and step. [#1488](https://github.com/n8n-io/nod/pull/1488) (502baeb)
+
+### Fixes
+
+- **channels:** Prove the owner from their own chat and send Nod's messages where they last wrote. [#1493](https://github.com/n8n-io/nod/pull/1493) (b444e27)
+- **apps:** Tidy connect page. [#1491](https://github.com/n8n-io/nod/pull/1491) (b51f38d)
+- **memory:** Save what the owner asks to remember, in any language. [#1490](https://github.com/n8n-io/nod/pull/1490) (1423455)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.9.7...b444e276b36c8d213d4fdd3db47f90ec4f73b285)
+
+<details>
+<summary>Build details</summary>
+
+Source: `b444e276b36c8d213d4fdd3db47f90ec4f73b285`
+Previous release: `nod-v0.9.7`
+
+</details>
+
 ## 0.9.7 - 2026-11-25
 
 ### Features

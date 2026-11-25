@@ -1,10 +1,7 @@
 {
-  "version": "0.9.7",
-  "previousTag": "nod-v0.9.6",
-  "source": "33136d52485c30ff6900c37f2f2b9c04df02c1c6",
-  "highlights": "## Use the browser right from chat 🌐\n\nNod can use its browser and sign in to websites right in the chat again, so it no longer tells you the browser is missing. When **Computer use** is on, the same goes for apps on your computer. Bigger jobs still run as their own task.\n\n## Fixed in this release\n\n- **Saved rules:** When Nod's check finds that one of your saved rules covers an action, Nod no longer asks you again.\n- **Windows startup:** If Windows loses track of Nod's private computer, Nod registers it again from its saved disk and your data stays. If that can't work, Nod sets up a new one instead of asking you to restart Windows.\n- **Company networks:** Runtime and update downloads now follow your system's proxy settings.\n- **Numbers in messages:** After you stop a sign-in that asked for a code, messages with numbers in them, such as a shop link, reach Nod again.\n- **Starting tasks:** Nod always has its task tool now, so it shouldn't send you looking for a **New task** button.\n- **Local models:** Nod waits longer for a local or reasoning model to answer its first check before calling it unavailable.\n- **Bug reports:** When Nod fails to start, the report now names the first error, not the cleanup after it.\n\n## Also in this release\n\n- **Qontext:** Connect Qontext in **Apps** to let Nod search, read and update your company knowledge.",
-  "video": {
-    "url": "https://github.com/user-attachments/assets/05faeb60-3e7b-44de-b43c-a1e7184b9527",
-    "releaseSha256": "74f3e4a75c24c688d1a7f8a00ff6df8274f15bc003f14dff6ea782742ad047ac"
-  }
+  "version": "0.9.8",
+  "previousTag": "nod-v0.9.7",
+  "source": "b444e276b36c8d213d4fdd3db47f90ec4f73b285",
+  "highlights": "## Nod reaches you on Telegram and WhatsApp 📱\n\nSchedule results, nudges and other messages Nod starts on its own now also go to Telegram or WhatsApp. They go to the one you wrote from last. Everything still shows in the Nod app.\n\nLinking now checks that it's really you. On Telegram, you press **Start** in your bot's chat. On WhatsApp, you write in **Message yourself** on the linked phone. To write from another phone, select **Write from another phone** and send the message that opens.\n\n**Channels** shows when your last message arrived. When you ask Nod why a channel is quiet, it can now check that channel instead of guessing.\n\nIf Telegram or WhatsApp stopped answering you, link again in **Channels**. On Telegram, open **Manage Telegram**, select **Link another account** and press **Start**. On WhatsApp, write in **Message yourself**, or select **Write from another phone**.\n\n## Fixed in this release\n\n- **Remembering:** When you ask Nod to remember something, it now saves it in any language. Before, it often saved nothing.\n- **Computer clock:** Telegram and WhatsApp messages no longer go missing when your computer's clock is wrong.",
+  "video": null
 }
