@@ -804,10 +804,17 @@ export function createChatSdkTransport(
             dropped('telegram', 'unsupported_message');
           return accepted();
         }
-        if (
-          env.TELEGRAM_ALLOWED_USER_ID &&
-          String(parsed.data.from.id) !== env.TELEGRAM_ALLOWED_USER_ID
-        ) {
+        const pairing = telegramPairing(parsed.data, telegramAccountId!, (data) =>
+          telegram.parseMessage({
+            message_id: data.message_id,
+            date: data.date,
+            chat: data.chat,
+            from: data.from,
+            text: data.text,
+          }),
+        );
+        if (pairing) return { ...accepted(), pairing };
+        if (String(parsed.data.from.id) !== env.TELEGRAM_ALLOWED_USER_ID) {
           dropped('telegram', 'unknown_sender');
           return accepted();
         }
@@ -817,8 +824,7 @@ export function createChatSdkTransport(
           dropped('telegram', 'unsupported_type');
           return accepted();
         }
-        const start = /^\/start(?:\s+(\S+))?$/.exec(parsed.data.text);
-        if (env.TELEGRAM_ALLOWED_USER_ID && start) return accepted();
+        if (/^\/start(?:\s+\S+)?$/.test(parsed.data.text)) return accepted();
         const replied = parsed.data.reply_to_message;
         const message = telegram.parseMessage({
           message_id: parsed.data.message_id,
@@ -834,14 +840,6 @@ export function createChatSdkTransport(
               date: parsed.data.date,
             }).id
           : undefined;
-        if (!env.TELEGRAM_ALLOWED_USER_ID) {
-          const pairing = telegramPairing(
-            parsed.data,
-            env.TELEGRAM_BOT_TOKEN!.split(':')[0],
-            () => message,
-          );
-          return { ...accepted(), ...(pairing ? { pairing } : {}) };
-        }
         return accepted([
           {
             channelId: 'telegram',

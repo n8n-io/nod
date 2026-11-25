@@ -12,7 +12,7 @@ import {
   UserRound,
 } from '../components/icons';
 import { IntegrationCard } from '../components/integration-card';
-import { TelegramSetup } from '../components/telegram-setup';
+import { TelegramLink, TelegramSetup } from '../components/telegram-setup';
 import { WhatsAppSetup } from '../components/whatsapp-setup';
 import type { ChannelProvider, ChannelSetupSummary } from '../../shared/contracts';
 import { telegramState, useChannelSettings } from '../hooks/use-channel-settings';
@@ -264,7 +264,7 @@ function ChannelCard({
   );
   const needsPairing = Boolean(
     setup?.enabled &&
-    ((provider.id === 'telegram' && (!setup.allowedUserId || setup.pairingExpiresAt)) ||
+    ((provider.id === 'telegram' && !setup.allowedUserId) ||
       (setup.mode === 'linked' && setup.connectionState !== 'connected')),
   );
   const retrying =
@@ -739,6 +739,23 @@ export function Channels() {
                   </div>
                 </div>
               )}
+              {editing === 'telegram' &&
+                !telegramSetup?.managed &&
+                (telegramStatus.waiting && pairingUrl ? (
+                  <TelegramLink url={pairingUrl} title="Scan to link another Telegram account">
+                    Open the bot from the account you want to use and press <strong>Start</strong>.
+                    The code works for 15 minutes.
+                  </TelegramLink>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void pairingLink('telegram')}
+                  >
+                    Link another account
+                  </Button>
+                ))}
               {editing === 'telegram' && telegramUrl ? (
                 <TelegramChat key={telegramUrl} url={telegramUrl} />
               ) : editing === 'whatsapp' ? (
@@ -825,9 +842,7 @@ export function Channels() {
                   setStep(0);
                 }}
                 onDone={close}
-                onPhone={
-                  selected?.setup?.managed ? undefined : () => pairingLink('whatsapp')
-                }
+                onPhone={selected?.setup?.managed ? undefined : () => pairingLink('whatsapp')}
               />
             </>
           ) : (

@@ -5,7 +5,7 @@ import type { ChannelSetupSummary } from '../../shared/contracts';
 import { telegramState } from '../hooks/use-channel-settings';
 import { Button, Field, Input, Notice } from './ui';
 
-function TelegramLink({
+export function TelegramLink({
   url,
   title,
   children,

@@ -9,8 +9,8 @@ export function telegramState(setup: ChannelSetupSummary | undefined) {
   const saved = Boolean(setup?.enabled);
   const needsDelivery = saved && setup?.webhookStatus === 'registration_pending';
   const ready = saved && !needsDelivery;
-  const paired = Boolean(ready && setup?.allowedUserId && !setup.pairingExpiresAt);
-  const expiry = saved && !paired ? setup?.pairingExpiresAt : undefined;
+  const paired = Boolean(ready && setup?.allowedUserId);
+  const expiry = saved ? setup?.pairingExpiresAt : undefined;
   const expired = Boolean(expiry && Date.parse(expiry) <= Date.now());
   return {
     saved,

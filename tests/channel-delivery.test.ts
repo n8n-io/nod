@@ -3685,16 +3685,21 @@ test(
       assert.equal(inbox.includes(secondCode), false);
       assert.equal(inbox.includes('Fixture intruder request'), false);
       assert.equal(sent.length, 1);
-      assert.equal(
-        (
-          await app.inject({
-            method: 'POST',
-            url: '/api/channel-settings/telegram/pairing',
-            payload: {},
-          })
-        ).statusCode,
-        400,
-      );
+      const relink = await app.inject({
+        method: 'POST',
+        url: '/api/channel-settings/telegram/pairing',
+        payload: {},
+      });
+      assert.equal(relink.statusCode, 200);
+      assert.equal((await telegram())?.allowedUserId, '123');
+      await deliver(123, 'Fixture owner request while a new code waits');
+      await waitFor(() => submitted.length === 2);
+      await deliver(555, `/start ${new URL(relink.json().pairingUrl).searchParams.get('start')}`);
+      await waitFor(async () => (await settings.environment()).TELEGRAM_ALLOWED_USER_ID === '555');
+      await deliver(123, 'Fixture former owner request');
+      await deliver(555, 'Fixture new owner request');
+      await waitFor(() => submitted.length === 3);
+      assert.deepEqual(submitted.slice(-1), ['Fixture new owner request']);
     } finally {
       await app.close();
       await pool.end();
