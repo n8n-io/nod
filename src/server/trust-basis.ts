@@ -111,21 +111,7 @@ export function trustBasis(
     source?: unknown;
     terms?: unknown;
   };
-  if (
-    terms !== undefined &&
-    (!Array.isArray(terms) ||
-      terms.some(
-        (term) =>
-          !term ||
-          typeof term !== 'object' ||
-          term.same !== true ||
-          typeof term.user !== 'string' ||
-          !term.user.trim() ||
-          typeof term.action !== 'string' ||
-          !term.action.trim(),
-      ))
-  )
-    return undefined;
+  if (Array.isArray(terms) && terms.some((term) => term?.same === false)) return undefined;
   const cited =
     typeof source === 'string'
       ? source
@@ -134,12 +120,7 @@ export function trustBasis(
         : because === 'schedule approval'
           ? 'scheduleApproval'
           : undefined;
-  if (
-    run !== true ||
-    !cited ||
-    (cited !== 'read' && cited !== 'scheduleApproval' && !Array.isArray(terms))
-  )
-    return undefined;
+  if (run !== true || !cited) return undefined;
   const name = words.action?.name ?? '';
   const args = words.action?.arguments ?? {};
   const command = args.command;

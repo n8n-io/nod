@@ -357,6 +357,7 @@ export const toolDefinitions = {
       messageId: Type.String({ pattern: '^[0-9a-fA-F-]{36}$' }),
       reaction: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
     }),
+    true,
   ),
   browser: defineTool(
     'browser',
@@ -703,6 +704,7 @@ export const toolDefinitions = {
         { additionalProperties: false },
       ),
     ]),
+    true,
   ),
   share_file: defineTool(
     'share_file',
@@ -1130,10 +1132,6 @@ export function nodTools(
             JSON.stringify(await context.manage('skill_read', { name: p.name })),
           );
         }
-        if (turn.execution.parentRunId)
-          throw new Error(
-            'A subagent cannot save skills. Include what you learned in your answer to the parent agent.',
-          );
         const { action, ...args } = p;
         return context.manage(`skill_${action}`, { action, ...args });
       }),

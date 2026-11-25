@@ -166,8 +166,7 @@ export function createPiMemoryCurator(options: {
           }
         }
       const traceTurnId = crypto.randomUUID();
-      const bounded =
-        task === 'classify' || task === 'attention' || task === 'check' || task === 'activity';
+      const bounded = task === 'classify' || task === 'attention' || task === 'activity';
       const turnBound =
         signal !== undefined && ['review', 'access', 'skill', 'remember'].includes(task);
       if (options.resolve) loaded = undefined;

@@ -69,7 +69,7 @@ After a model list refresh or a connection is saved again, an unsupported saved 
 
 If Ollama does not report its thinking controls, Nod uses the server's default instead of sending an effort value.
 
-Nod corrects saved Ollama boolean effort values when it opens a model connection. A model that advertises only On keeps thinking enabled. Its selected-model check can still fail if reasoning uses the check's 512-token limit.
+Nod corrects saved Ollama boolean effort values when it opens a model connection. A model that advertises only On keeps thinking enabled.
 
 Helper requests use Pi's bounded retry policy. Invalid requests, account limits, and authentication failures do not get unconditional retries. Provider-client retries remain off. A model retry does not repeat a turn or a completed tool action.
 
