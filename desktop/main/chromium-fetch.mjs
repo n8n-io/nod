@@ -36,15 +36,20 @@ export function chromiumFetch(url, init = {}) {
         settle();
         request.abort();
       });
-      const headers = new Headers();
-      for (const [name, value] of Object.entries(response.headers))
-        for (const item of [value].flat()) headers.append(name, item);
-      resolve(
-        new Response([204, 304].includes(response.statusCode) ? null : Readable.toWeb(response), {
-          status: response.statusCode,
-          headers,
-        }),
-      );
+      try {
+        const headers = new Headers();
+        for (const [name, value] of Object.entries(response.headers))
+          for (const item of [value].flat()) headers.append(name, item);
+        resolve(
+          new Response(
+            [204, 205, 304].includes(response.statusCode) ? null : Readable.toWeb(response),
+            { status: response.statusCode, headers },
+          ),
+        );
+      } catch (error) {
+        request.abort();
+        reject(error);
+      }
     });
     request.on('error', (error) => {
       settle();

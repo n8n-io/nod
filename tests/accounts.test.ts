@@ -9848,7 +9848,6 @@ test('startup facts keep only structured bounded codes and do not call getters o
   assert.deepEqual(
     startupErrorFacts(
       Object.assign(new AggregateError([primary, cleanup], 'synthetic', { cause: cleanup }), {
-        code: primary.code,
         step: 'start',
       }),
     ),

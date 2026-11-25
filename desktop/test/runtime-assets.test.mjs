@@ -2577,6 +2577,114 @@ test('runtime installation refuses insufficient storage without removing saved c
   assert.equal(await readFile(join(saved, 'saved'), 'utf8'), 'preserved');
 });
 
+test(
+  'Chromium downloads hand redirects back, resume a range, stop on abort and name network errors',
+  { skip: process.platform === 'linux' && !process.env.DISPLAY },
+  async (t) => {
+    const { createServer: createHttpServer } = await import('node:http');
+    const directory = await mkdtemp(join(tmpdir(), 'nod-chromium-fetch-'));
+    const body = Buffer.alloc(1024 * 1024, 'synthetic runtime bytes ');
+    let followed = 0;
+    let slowClosed;
+    const slowEnded = new Promise((resolve) => {
+      slowClosed = resolve;
+    });
+    const server = createHttpServer((request, response) => {
+      if (request.url === '/start') return response.writeHead(302, { location: '/file' }).end();
+      if (request.url === '/reset') return response.writeHead(205).end();
+      if (request.url === '/slow') {
+        response.writeHead(200);
+        const timer = setInterval(() => response.write(body.subarray(0, 16 * 1024)), 20);
+        response.on('close', () => {
+          clearInterval(timer);
+          slowClosed();
+        });
+        return;
+      }
+      followed++;
+      const start = Number(/^bytes=(\d+)-$/.exec(request.headers.range ?? '')?.[1] ?? 0);
+      response.writeHead(
+        start ? 206 : 200,
+        start ? { 'content-range': `bytes ${start}-${body.length - 1}/${body.length}` } : {},
+      );
+      response.end(body.subarray(start));
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const closed = createServer();
+    await new Promise((resolve) => closed.listen(0, '127.0.0.1', resolve));
+    const refused = closed.address().port;
+    await new Promise((resolve) => closed.close(resolve));
+    t.after(async () => {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+      await rm(directory, { recursive: true, force: true });
+    });
+    const script = join(directory, 'probe.mjs');
+    await writeFile(
+      script,
+      `import { app } from 'electron';
+import { createHash } from 'node:crypto';
+import { chromiumFetch } from ${JSON.stringify(new URL('../main/chromium-fetch.mjs', import.meta.url).href)};
+app.setPath('userData', ${JSON.stringify(join(directory, 'user-data'))});
+app.dock?.hide();
+const origin = process.env.NOD_FETCH_ORIGIN;
+const result = {};
+app.whenReady().then(async () => {
+  const redirect = await chromiumFetch(origin + '/start', { redirect: 'manual' });
+  result.redirect = { status: redirect.status, location: redirect.headers.get('location') };
+  const ranged = await chromiumFetch(origin + '/file', { redirect: 'manual', headers: { range: 'bytes=1000-' } });
+  const bytes = Buffer.from(await ranged.arrayBuffer());
+  result.ranged = { status: ranged.status, range: ranged.headers.get('content-range'), length: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+  const reset = await chromiumFetch(origin + '/reset', { redirect: 'manual' });
+  result.reset = { status: reset.status, body: reset.body };
+  const controller = new AbortController();
+  const slow = await chromiumFetch(origin + '/slow', { redirect: 'manual', signal: controller.signal });
+  const reader = slow.body.getReader();
+  await reader.read();
+  controller.abort(new Error('synthetic stop'));
+  result.aborted = await reader.read().then(() => 'kept reading', (error) => error.message);
+  result.refused = await chromiumFetch('http://127.0.0.1:${refused}/', { redirect: 'manual' }).then(() => 'answered', (error) => error.code);
+  process.stdout.write('NOD_FETCH_RESULT=' + JSON.stringify(result) + '\\n');
+  app.exit(0);
+}).catch((error) => {
+  process.stderr.write(error.stack + '\\n');
+  app.exit(1);
+});
+`,
+    );
+    const environment = {
+      ...process.env,
+      NOD_FETCH_ORIGIN: `http://127.0.0.1:${server.address().port}`,
+    };
+    delete environment.ELECTRON_RUN_AS_NODE;
+    const { default: electron } = await import('../node_modules/electron/index.js');
+    const output = await new Promise((resolve, reject) =>
+      execFile(
+        electron,
+        [script],
+        { env: environment, timeout: 60_000, windowsHide: true },
+        (error, stdout) => (error ? reject(error) : resolve(stdout)),
+      ),
+    );
+    const result = JSON.parse(/NOD_FETCH_RESULT=([^\r\n]+)/.exec(output)[1]);
+    assert.deepEqual(result.redirect, {
+      status: 302,
+      location: `${environment.NOD_FETCH_ORIGIN}/file`,
+    });
+    assert.deepEqual(result.ranged, {
+      status: 206,
+      range: `bytes 1000-${body.length - 1}/${body.length}`,
+      length: body.length - 1000,
+      sha256: createHash('sha256').update(body.subarray(1000)).digest('hex'),
+    });
+    assert.equal(followed, 1);
+    assert.deepEqual(result.reset, { status: 205, body: null });
+    assert.notEqual(result.aborted, 'kept reading');
+    await slowEnded;
+    assert.equal(result.refused, 'ERR_CONNECTION_REFUSED');
+  },
+);
+
 test('runtime download rejects an insecure redirect without fetching it or leaving partial bytes', async (t) => {
   const options = await fixture(t);
   options.release.url = 'https://runtime.example.invalid/fixture.tar.gz';
