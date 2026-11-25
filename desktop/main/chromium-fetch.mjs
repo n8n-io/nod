@@ -32,8 +32,10 @@ export function chromiumFetch(url, init = {}) {
       resolve(new Response(null, { status, headers: { location } }));
     });
     request.on('response', (response) => {
-      response.once('end', settle);
-      response.once('error', settle);
+      response.once('close', () => {
+        settle();
+        request.abort();
+      });
       const headers = new Headers();
       for (const [name, value] of Object.entries(response.headers))
         for (const item of [value].flat()) headers.append(name, item);
