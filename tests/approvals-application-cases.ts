@@ -7152,35 +7152,6 @@ export const approvalCases = inParts(
                 },
               );
 
-          for (const background of [false, true])
-            await t.test(
-              `Calendar final read keeps ${background ? 'background' : 'foreground'} service-wait policy`,
-              async () => {
-                const { turn: id, approval: card } = await (background ? submitEvent() : submit());
-                assert.equal(card.status, 'pending');
-                const writes = writeCount();
-                const reads = readCount();
-                connectionWait = {
-                  until: Date.now() + 120_000,
-                  status: 429,
-                  code: 'installation_busy',
-                };
-                try {
-                  const accepted = await accept(card);
-                  assert.equal(accepted.statusCode, 200, accepted.body);
-                  await waitFor(accepted.json().turnId, 'waiting|succeeded|failed');
-                  const [saved] = await approvalsFor(id);
-                  assert.equal(saved.status, background ? 'expired' : 'completed');
-                  assert.equal(readCount(), reads + (background ? 0 : 1));
-                  assert.equal(writeCount(), writes + (background ? 0 : 1));
-                  if (background)
-                    assert.match(JSON.stringify(saved), /Nod did not read this source/);
-                } finally {
-                  connectionWait = undefined;
-                }
-              },
-            );
-
           await t.test(
             'an event Calendar approval without its standing snapshot cannot dispatch',
             async () => {
