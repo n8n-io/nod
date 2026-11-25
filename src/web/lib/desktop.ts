@@ -77,6 +77,8 @@ type DesktopAppOpening = {
   uuid: string;
   entry: 'native_setup' | 'app_ui';
   serverConnectionTelemetryAvailable?: true;
+  loginItem?: 'registered' | 'not_registered' | 'unknown';
+  sinceBoot?: 'under_5m' | 'under_1h' | 'over_1h';
 };
 
 type DesktopWindow = Window & {

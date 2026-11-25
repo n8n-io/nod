@@ -25,7 +25,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { appendFile, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { homedir } from 'node:os';
+import { homedir, uptime } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
@@ -187,8 +187,23 @@ let freshAppOpenCapture;
 let appOpeningDeferred = false;
 let appOpeningConsentVersion = 0;
 let localSetupObservation;
+const secondsSinceBootAtLaunch = uptime();
 const claimedAppOpens = new Set();
 const appUIOpenings = new Map();
+function loginItemState() {
+  try {
+    return opensAtLogin() ? 'registered' : 'not_registered';
+  } catch {
+    return 'unknown';
+  }
+}
+function sinceBootAtLaunch() {
+  return secondsSinceBootAtLaunch < 300
+    ? 'under_5m'
+    : secondsSinceBootAtLaunch < 3600
+      ? 'under_1h'
+      : 'over_1h';
+}
 function deferAppOpening() {
   appOpeningDeferred = true;
   appOpeningConsentVersion++;
@@ -3522,7 +3537,9 @@ else {
             openedAt: native?.openedAt ?? Date.now(),
             uuid: native?.uuid ?? randomUUID(),
             entry: native ? 'native_setup' : 'app_ui',
-            ...(native ? { serverConnectionTelemetryAvailable: true } : {}),
+            ...(native
+              ? { serverConnectionTelemetryAvailable: true }
+              : { loginItem: loginItemState(), sinceBoot: sinceBootAtLaunch() }),
           };
           appUIOpenings.set(distinctId, opening);
         }

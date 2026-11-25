@@ -403,6 +403,12 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
+      event: z.literal('runtime_stopped'),
+      properties: z.object({ uptime: z.enum(['under_1h', 'under_1d', 'over_1d']) }).strict(),
+    })
+    .strict(),
+  z
+    .object({
       event: z.literal('vault_imported'),
       properties: z
         .object({

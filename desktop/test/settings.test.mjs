@@ -706,6 +706,7 @@ async function runningDesktop(
     fileURLToPath,
     pathToFileURL,
     homedir,
+    uptime: () => 7200,
     mkdir,
     appendFile: appendDiagnostic,
     readFile: (file, ...args) =>
@@ -1706,6 +1707,8 @@ test('native first open waits for consent on disabled and returning profiles', a
           const opening = await take(engineEvent, true, 'local:' + randomUUID());
           assert.equal(opening.entry, 'app_ui');
           assert.ok(opening.openedAt >= enabledAt);
+          assert.equal(opening.loginItem, 'not_registered');
+          assert.equal(opening.sinceBoot, 'over_1h');
         }
       } finally {
         await f.close();

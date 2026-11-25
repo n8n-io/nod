@@ -327,14 +327,24 @@ test(
       await t.test(
         'startup saves a redacted failure when the trace key is unavailable',
         async () => {
+          const shared = events.length;
           await application.app.close();
+          assert.equal(
+            events.slice(shared).filter((event) => event.event === 'runtime_stopped').length,
+            1,
+          );
           assert.match(await readFile(join(dataDirectory, 'trace-key'), 'utf8'), /^[\w-]{43}$/);
           await writeFile(join(dataDirectory, 'trace-key'), 'invalid-synthetic-trace-key', {
             mode: 0o600,
           });
           application = await start();
           await sharing(false);
+          const unshared = events.length;
           await application.app.close();
+          assert.equal(
+            events.slice(unshared).some((event) => event.event === 'runtime_stopped'),
+            false,
+          );
           const failureLog = await readFile(
             join(
               dataDirectory,

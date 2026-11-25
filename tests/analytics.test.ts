@@ -299,8 +299,8 @@ window.nodDesktop={
   calls.push({consented,distinctId});
   if(!consented)return Promise.resolve(null);
   if(++accepted===1)return first;
-  if(nativeFallback)return Promise.resolve({openedAt:1700000002000,uuid:accepted===3?'00000000-0000-4000-8000-000000000004':'00000000-0000-4000-8000-000000000006',entry:'native_setup',...(nativeMarker?{serverConnectionTelemetryAvailable:true}:{})});
-  return Promise.resolve({openedAt:1700000001000,uuid:'00000000-0000-4000-8000-000000000002',entry:'app_ui'});
+  if(nativeFallback)return Promise.resolve({openedAt:1700000002000,uuid:accepted===3?'00000000-0000-4000-8000-000000000004':'00000000-0000-4000-8000-000000000006',entry:'native_setup',loginItem:'registered',sinceBoot:'under_5m',...(nativeMarker?{serverConnectionTelemetryAvailable:true}:{})});
+  return Promise.resolve({openedAt:1700000001000,uuid:'00000000-0000-4000-8000-000000000002',entry:'app_ui',loginItem:'registered',sinceBoot:'under_5m'});
  },
 };
 const client={
@@ -330,6 +330,8 @@ assert.deepEqual(calls.map(call=>call.consented),[true,false,true]);
 assert.equal(captured.length,1);
 assert.equal(captured[0].properties.entry,'app_ui');
 assert.equal(captured[0].properties.route,'/onboarding');
+assert.equal(captured[0].properties.login_item,'registered');
+assert.equal(captured[0].properties.since_boot,'under_5m');
 assert.equal(captured[0].uuid,'00000000-0000-4000-8000-000000000002');
 assert.equal(new Date(captured[0].timestamp).getTime(),1700000001000);
 nativeFallback=true;
@@ -341,6 +343,8 @@ assert.equal(captured.length,2);
 assert.equal(captured[1].properties.entry,'native_setup');
 assert.equal(captured[1].properties.route,'/onboarding');
 assert.equal(captured[1].properties.server_connection_telemetry_available,undefined);
+assert.equal(captured[1].properties.login_item,undefined);
+assert.equal(captured[1].properties.since_boot,undefined);
 assert.equal(captured[1].uuid,'00000000-0000-4000-8000-000000000004');
 nativeMarker=true;
 setRequestAccount('owner-three');

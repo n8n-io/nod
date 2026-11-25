@@ -3653,6 +3653,15 @@ async function initializeApplication(
       () => runtime.dispose(),
       () => ledger.flush(),
       () => artifacts.close(),
+      () => {
+        const seconds = process.uptime();
+        captureAnalytics({
+          event: 'runtime_stopped',
+          properties: {
+            uptime: seconds < 3600 ? 'under_1h' : seconds < 86_400 ? 'under_1d' : 'over_1d',
+          },
+        });
+      },
       () => analytics.shutdown(),
       () => adapters.telemetry?.shutdown(),
       () => diagnostics.log?.close(),
