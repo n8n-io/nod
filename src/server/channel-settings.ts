@@ -256,19 +256,23 @@ function createLock() {
     pending = new Promise<void>((done) => {
       resolve = done;
     });
+    let stop: (() => void) | undefined;
     try {
       await (signal
         ? Promise.race([
             previous,
             new Promise<never>((_, reject) => {
-              if (signal.aborted) reject(signal.reason);
-              signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+              stop = () => reject(signal.reason);
+              if (signal.aborted) stop();
+              else signal.addEventListener('abort', stop, { once: true });
             }),
           ])
         : previous);
     } catch (error) {
       void previous.then(resolve);
       throw error;
+    } finally {
+      if (stop) signal?.removeEventListener('abort', stop);
     }
     try {
       return await action();
