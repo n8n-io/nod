@@ -3629,12 +3629,12 @@ test(
     };
     const telegram = async () => (await settings.status()).channels[0];
     let updateId = 1;
-    const deliver = async (from: number, text: string) => {
+    const deliver = async (from: number, text: string, ahead = 0) => {
       const update = {
         update_id: updateId,
         message: {
           message_id: updateId++,
-          date: Math.floor(Date.now() / 1000),
+          date: Math.floor(Date.now() / 1000) + ahead,
           text,
           from: {
             id: from,
@@ -3743,7 +3743,7 @@ test(
       await deliver(999, 'Fixture intruder request');
       await deliver(123, `/start ${secondCode}`);
       assert.equal((await settings.environment()).TELEGRAM_ALLOWED_USER_ID, '123');
-      await deliver(123, 'Fixture owner request');
+      await deliver(123, 'Fixture owner request', 600);
       await waitFor(() => submitted.length === 1);
       assert.deepEqual(submitted, ['Fixture owner request']);
       const inbox = JSON.stringify((await pool.query('SELECT * FROM channel_inbox')).rows);

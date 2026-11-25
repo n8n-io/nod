@@ -970,6 +970,10 @@ test(
                 envelope('unmapped-lid', '77777777@lid'),
                 envelope('unmapped-intruder', '88888888@lid', false),
                 envelope('unmapped-stranger', '99999999@lid', false),
+                {
+                  ...envelope('ahead-of-local-clock'),
+                  messageTimestamp: Math.floor(Date.now() / 1000) + 600,
+                },
                 ...(mode === 'own-number'
                   ? [
                       {
@@ -1002,8 +1006,8 @@ test(
             assert.deepEqual(
               collected.map((message) => message.messageId),
               mode === 'other-phone'
-                ? ['owner', 'image', 'quoted', 'lid', 'unmapped-lid']
-                : ['owner', 'image', 'quoted', 'lid'],
+                ? ['owner', 'image', 'quoted', 'lid', 'unmapped-lid', 'ahead-of-local-clock']
+                : ['owner', 'image', 'quoted', 'lid', 'ahead-of-local-clock'],
             );
             if (mode === 'other-phone') assert.equal(collected[4].threadId, '77777777@lid');
             assert.deepEqual(
