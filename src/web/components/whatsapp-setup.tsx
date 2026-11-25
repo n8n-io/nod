@@ -224,13 +224,26 @@ export function WhatsAppSetup({
                       />
                     </div>
                     <p>
-                      Scan with your other phone and send the message that opens. The code works
-                      for 15 minutes.
+                      Scan with your other phone and send the message that opens. The code works for
+                      15 minutes.
                     </p>
                   </div>
-                ) : setup?.pairedUser ? (
-                  <p>Also from {setup.pairedUser}.</p>
-                ) : null}
+                ) : (
+                  <>
+                    {setup?.pairedUser && <p>Also from {setup.pairedUser}.</p>}
+                    {onPhone && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={busy}
+                        onClick={async () => setPhoneUrl(await onPhone())}
+                      >
+                        Write from another phone
+                      </Button>
+                    )}
+                  </>
+                )}
               </>
             ) : state === 'awaiting_scan' ? (
               <>
@@ -282,16 +295,6 @@ export function WhatsAppSetup({
                   onClick={onDisconnect}
                 >
                   Disconnect
-                </Button>
-              )}
-              {state === 'connected' && onPhone && !(phoneUrl && waitingPhone) && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={async () => setPhoneUrl(await onPhone())}
-                >
-                  Write from another phone
                 </Button>
               )}
               {state === 'connected' && (
