@@ -3561,7 +3561,7 @@ test(
         replacement.signal,
       );
       replacement.abort();
-      await assert.rejects(abandoned);
+      await assert.rejects(abandoned, { name: 'AbortError' });
     } finally {
       release();
     }

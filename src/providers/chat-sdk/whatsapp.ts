@@ -690,7 +690,7 @@ export function createWhatsAppLinkedTransport(options: {
       inputListener = listener;
     },
     link(request) {
-      if (request.channelId !== 'whatsapp') return;
+      if (request.channelId !== 'whatsapp' || request.accountId !== channel.accountId) return;
       allowedNumber = request.senderId.endsWith('@lid') ? undefined : request.senderId;
       allowedLid = request.threadId.endsWith('@lid') ? request.threadId : undefined;
       otherPhone = allowedNumber ?? allowedLid;

@@ -647,7 +647,8 @@ export function createChatSdkTransport(
     },
     link(request) {
       const channel = channels.find((item) => item.id === request.channelId);
-      if (request.channelId !== 'telegram' || !channel) return;
+      if (request.channelId !== 'telegram' || !channel || request.accountId !== telegramAccountId)
+        return;
       env.TELEGRAM_ALLOWED_USER_ID = request.senderId;
       channel.allowedSenderIds = [request.senderId];
       channel.missing = channel.missing.filter((name) => name !== 'TELEGRAM_ALLOWED_USER_ID');

@@ -1040,6 +1040,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
 
   async function completePairing(request: ChannelPairingRequest) {
     if (closed || !options.pair) return;
+    const current = transport;
     try {
       if (!(await options.pair(request, receiving.signal))) return;
     } catch (cause) {
@@ -1048,6 +1049,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         statusCode: 503,
       });
     }
+    if (closed || replacing || transport !== current) return;
     transport.link?.(request);
     updateConfiguration();
     await announcePairing(request).catch((cause) =>
