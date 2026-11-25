@@ -210,7 +210,9 @@ export function createWhatsAppLinkedTransport(options: {
       return { phone: otherPhone!, jid: normalizedJid };
     let phone = numberOf(jid) ?? numberOf(message.key.remoteJidAlt);
     if (!phone && jid.endsWith('@lid'))
-      phone = numberOf(await current.signalRepository.lidMapping.getPNForLID(jid).catch(() => null));
+      phone = numberOf(
+        await current.signalRepository.lidMapping.getPNForLID(jid).catch(() => null),
+      );
     const allowedNumber = options.allowedNumber;
     if (!phone && allowedNumber && jid.endsWith('@lid')) {
       const lid = await current.signalRepository.lidMapping
@@ -496,10 +498,7 @@ export function createWhatsAppLinkedTransport(options: {
         };
       if (update.connection === 'open') {
         if (!identity()) {
-          stop(
-            'failed',
-            'WhatsApp did not provide a usable account number. Select Reconnect.',
-          );
+          stop('failed', 'WhatsApp did not provide a usable account number. Select Reconnect.');
           return;
         }
         clearTimeout(expiry);
