@@ -126,7 +126,7 @@ interface ChannelOptions {
     expiredConfirmation: string,
   ) => Promise<'new' | 'stale' | 'uncertain'>;
   attributeMediaUsage?(client: PoolClient, ids: string[], turnId: string): Promise<void>;
-  pair?: (request: ChannelPairingRequest) => Promise<boolean>;
+  pair?: (request: ChannelPairingRequest, signal: AbortSignal) => Promise<boolean>;
   activeThread?: (client: PoolClient) => Promise<{ id: string }>;
   activity?: () => Promise<LiveWork[]>;
   commandReply?: (
@@ -372,7 +372,6 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   let lastError: string | null = null;
   let receiving = new AbortController();
   const pendingMedia = new Map<string, Promise<void>>();
-  const pairings = new Set<Promise<void>>();
   async function saveReply(
     client: PoolClient,
     sourceId: string,
@@ -1039,22 +1038,21 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     }
   }
 
-  function completePairing(request: ChannelPairingRequest) {
-    const pair = options.pair;
-    if (closed || !pair) return Promise.resolve();
-    const task = (async () => {
-      if (!(await pair(request)) || closed) return;
-      transport.link?.(request);
-      updateConfiguration();
-      await announcePairing(request).catch((cause) =>
-        logFailure('channel_pairing_notice_failed', cause),
-      );
-    })();
-    pairings.add(task);
-    void task
-      .catch((cause) => logFailure('channel_pairing_failed', cause))
-      .finally(() => pairings.delete(task));
-    return task;
+  async function completePairing(request: ChannelPairingRequest) {
+    if (closed || !options.pair) return;
+    try {
+      if (!(await options.pair(request, receiving.signal))) return;
+    } catch (cause) {
+      logFailure('channel_pairing_failed', cause);
+      throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {
+        statusCode: 503,
+      });
+    }
+    transport.link?.(request);
+    updateConfiguration();
+    await announcePairing(request).catch((cause) =>
+      logFailure('channel_pairing_notice_failed', cause),
+    );
   }
 
   async function announcePairing(request: ChannelPairingRequest) {
@@ -1901,9 +1899,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           try {
             await transport.poll?.(
               (message) => accept(message, message.channelId),
-              async (request) => {
-                void completePairing(request).catch(() => {});
-              },
+              completePairing,
               (reaction) => acceptReaction(reaction, reaction.channelId),
               (approval) => acceptApproval(approval, approval.channelId),
             );
@@ -1968,7 +1964,6 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     await running;
     await presenceRunning;
     await Promise.allSettled(pendingMedia.values());
-    await Promise.allSettled(pairings);
     await sendFencePool?.end();
     await transport.close();
   }
@@ -2062,13 +2057,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             for (const approval of result.approvals ?? [])
               await acceptApproval(approval, channelId);
             if (result.messages?.length) void drain();
-            if (result.pairing?.channelId === channelId)
-              await completePairing(result.pairing).catch(() => {
-                throw Object.assign(
-                  new Error('Channel processing is temporarily unavailable. Try again.'),
-                  { statusCode: 503 },
-                );
-              });
+            if (result.pairing?.channelId === channelId) await completePairing(result.pairing);
           }
           if (result.contentType) reply.type(result.contentType);
           return reply.code(result.status).send(result.body);

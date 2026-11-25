@@ -250,13 +250,26 @@ async function databaseStore(pool: Pool, owner: string) {
 
 function createLock() {
   let pending = Promise.resolve();
-  return async <T>(action: () => Promise<T>) => {
+  return async <T>(action: () => Promise<T>, signal?: AbortSignal) => {
     let resolve: () => void = () => {};
     const previous = pending;
     pending = new Promise<void>((done) => {
       resolve = done;
     });
-    await previous;
+    try {
+      await (signal
+        ? Promise.race([
+            previous,
+            new Promise<never>((_, reject) => {
+              if (signal.aborted) reject(signal.reason);
+              signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+            }),
+          ])
+        : previous);
+    } catch (error) {
+      void previous.then(resolve);
+      throw error;
+    }
     try {
       return await action();
     } finally {
@@ -557,7 +570,7 @@ export async function createChannelSettings(
       ...(request.threadId.endsWith('@lid') ? { WHATSAPP_ALLOWED_LID: request.threadId } : {}),
     };
   }
-  async function pair(request: ChannelPairingRequest) {
+  async function pair(request: ChannelPairingRequest, signal?: AbortSignal) {
     const provider = providerSchema.safeParse(request.channelId);
     if (
       !provider.success ||
@@ -601,7 +614,7 @@ export async function createChannelSettings(
         },
       );
       return true;
-    });
+    }, signal);
     return paired;
   }
   async function restartPairing(provider: ChannelProvider) {

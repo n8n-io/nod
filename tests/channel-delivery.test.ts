@@ -3546,12 +3546,141 @@ test(
         });
       await new Promise((resolve) => setTimeout(resolve, 200));
       assert.equal(settled, false);
+      const replacement = new AbortController();
+      const abandoned = settings.pair(
+        {
+          channelId: 'telegram',
+          accountId: token.split(':')[0]!,
+          senderId: '456',
+          senderName: 'Synthetic owner',
+          messageId: '456:1',
+          threadId: '456',
+          code: new URL(connected.json().pairingUrl).searchParams.get('start')!,
+          sentAt: new Date(),
+        },
+        replacement.signal,
+      );
+      replacement.abort();
+      await assert.rejects(abandoned);
     } finally {
       release();
     }
     assert.equal((await disconnect).statusCode, 200);
     assert.equal(await pairing, false);
     assert.equal((await settings.environment()).TELEGRAM_ALLOWED_USER_ID, undefined);
+  },
+);
+
+test(
+  'Telegram polling links the Start sender before the rest of its batch',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const schema = `test_channel_poll_pairing_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const threadId = await createFixtureTables(pool, 'local-development');
+    const base = `https://api.telegram.org/bot${token}`;
+    const updates: { update_id: number }[] = [];
+    const sent: Record<string, unknown>[] = [];
+    t.mock.method(
+      globalThis,
+      'fetch',
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = input instanceof Request ? input.url : String(input);
+        const body =
+          typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : {};
+        if (url === `${base}/getMe`)
+          return Response.json({
+            ok: true,
+            result: { id: 987, is_bot: true, first_name: 'Fixture bot', username: 'fixture_bot' },
+          });
+        if (url === `${base}/getWebhookInfo`)
+          return Response.json({ ok: true, result: { url: '' } });
+        if (url === `${base}/getUpdates`) {
+          const pending = () => updates.filter((update) => update.update_id >= Number(body.offset));
+          if (!pending().length) await new Promise((resolve) => setTimeout(resolve, 50));
+          return Response.json({ ok: true, result: pending() });
+        }
+        if (url.startsWith(`${base}/send`)) {
+          sent.push(body);
+          return Response.json({
+            ok: true,
+            result: {
+              message_id: 500 + sent.length,
+              date: Math.floor(Date.now() / 1000),
+              chat: { id: 123, type: 'private' },
+              text: 'Fixture reply',
+            },
+          });
+        }
+        return Response.json({ ok: true, result: true });
+      },
+    );
+    const submitted: string[] = [];
+    const app = Fastify();
+    const key = randomBytes(32);
+    let channels: Awaited<ReturnType<typeof createChannels>> | undefined;
+    const settings = await createChannelSettings(pool, {
+      ownerId: 'local-development',
+      keyStore: { id: 'fixture', configured: true, getKey: async () => key },
+      verifier: createChatSdkSetupVerifier(),
+      apply: async (environment) =>
+        channels!.replaceTransport(createChatSdkTransport(pool, environment)),
+    });
+    channels = await createChannels(pool, {
+      ownerId: 'local-development',
+      present: async () => 'Connected.',
+      transport: createChatSdkTransport(pool, await settings.environment()),
+      subscribe: () => () => {},
+      intervalMs: 600000,
+      pair: settings.pair,
+      submit: async (text, sourceId, client, channel) => {
+        submitted.push(text);
+        const turnId = randomUUID();
+        await client.query(
+          "INSERT INTO turns(id,owner_id,thread_id,source_id,channel) VALUES($1,'local-development',$2,$3,$4)",
+          [turnId, threadId, sourceId, channel],
+        );
+        return turnId;
+      },
+    });
+    settings.registerRoutes(app);
+    try {
+      const saved = await app.inject({
+        method: 'PUT',
+        url: '/api/channel-settings/telegram',
+        payload: { botToken: token },
+      });
+      assert.equal(saved.statusCode, 200);
+      const code = new URL(saved.json().pairingUrl).searchParams.get('start')!;
+      for (const text of [`/start ${code}`, 'Hello right after Start'])
+        updates.push({
+          update_id: updates.length + 1,
+          message: {
+            message_id: updates.length + 1,
+            date: Math.floor(Date.now() / 1000),
+            text,
+            from: { id: 123, is_bot: false, first_name: 'Fixture' },
+            chat: { id: 123, type: 'private' },
+          },
+        } as { update_id: number });
+      for (let attempt = 0; attempt < 100 && !submitted.length; attempt++) {
+        await channels.drain();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      assert.deepEqual(submitted, ['Hello right after Start']);
+      assert.equal((await settings.environment()).TELEGRAM_ALLOWED_USER_ID, '123');
+    } finally {
+      await channels.close();
+      await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
   },
 );
 
