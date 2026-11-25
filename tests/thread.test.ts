@@ -13118,7 +13118,7 @@ test(
       CREATE TABLE spending_limits(owner_id text,monthly_usd double precision,task_usd double precision,preparation_usd double precision);
       CREATE TABLE channel_settings(owner_id text,provider text,enabled boolean,summary jsonb,updated_at timestamptz DEFAULT now());
       CREATE TABLE integration_events(id text,owner_id text,slug text,state text,created_at timestamptz DEFAULT now());
-      CREATE TABLE schedules(id uuid,owner_id text,kind text,enabled boolean,delivery_channel text,next_run_at timestamptz,created_at timestamptz DEFAULT now());
+      CREATE TABLE schedules(id uuid,owner_id text,kind text,enabled boolean,next_run_at timestamptz,created_at timestamptz DEFAULT now());
       CREATE TABLE schedule_runs(id uuid,owner_id text,schedule_id uuid,turn_id uuid,created_at timestamptz DEFAULT now());
       CREATE TABLE channel_inbox(source_id text,owner_id text,provider text,state text,turn_id uuid,created_at timestamptz DEFAULT now());
       CREATE TABLE channel_outbox(source_id text,state text,reason text,updated_at timestamptz DEFAULT now());
@@ -13287,7 +13287,7 @@ test(
       await f.pool.query(`INSERT INTO spending_limits VALUES($1,200,5,5)`, [owner]);
       await f.pool.query(
         `INSERT INTO channel_settings(owner_id,provider,enabled,summary) VALUES($1,'whatsapp',true,$2)`,
-        [owner, { accountName: privateText, linkMode: 'self-chat', connectionState: 'logged_out' }],
+        [owner, { accountName: privateText, connectionState: 'logged_out' }],
       );
       await f.pool.query(
         `INSERT INTO integration_events(id,owner_id,slug,state) VALUES($1,$2,'gmail','processing')`,
@@ -13295,7 +13295,7 @@ test(
       );
       const schedule = owner === ownerId ? scheduleId : randomUUID();
       await f.pool.query(
-        `INSERT INTO schedules(id,owner_id,kind,enabled,delivery_channel,next_run_at) VALUES($1,$2,'recurring',true,'web',now()-interval '1 minute')`,
+        `INSERT INTO schedules(id,owner_id,kind,enabled,next_run_at) VALUES($1,$2,'recurring',true,now()-interval '1 minute')`,
         [schedule, owner],
       );
       await f.pool.query(
@@ -13689,7 +13689,6 @@ test(
     assert.equal(report.settings[0].timeZone, 'Europe/Lisbon');
     assert.equal(report.settings[0].notificationRuleSet, true);
     assert.equal(report.settings[0].monthlyLimitUsd, 200);
-    assert.equal(report.channelSettings[0].linkMode, 'self-chat');
     assert.equal(report.channelSettings[0].connectionState, 'logged_out');
     assert.equal(report.clientErrors.length, 1);
     assert.match(report.clientErrors[0].data.message, /Could not open account/);
