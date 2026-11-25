@@ -1720,6 +1720,28 @@ async function initializeApplication(
                                 ? { user_id: args.user_id }
                                 : {}),
                             };
+                            const readVerdict = await trust
+                              .check(
+                                { threadId: provenance.threadId, turnId: provenance.turnId },
+                                'GMAIL_GET_DRAFT',
+                                readArgs,
+                                provenance.signal,
+                              )
+                              .catch((error: unknown) => {
+                                throw Object.assign(
+                                  new Error(
+                                    `Nod could not recheck permission to read the Gmail draft before deletion: ${safeIntegrationFailure(error)}`,
+                                  ),
+                                  { notRun: true },
+                                );
+                              });
+                            if (readVerdict.confirm)
+                              throw Object.assign(
+                                new Error(
+                                  'Nod could not authorize a fresh Gmail draft read before deletion.',
+                                ),
+                                { notRun: true },
+                              );
                             const current = await integrations
                               .execute(
                                 ownerId,
@@ -1739,7 +1761,7 @@ async function initializeApplication(
                                 );
                               });
                             await ledger
-                              .action(provenance.turnId, 'GMAIL_GET_DRAFT', { kind: 'read' })
+                              .action(provenance.turnId, 'GMAIL_GET_DRAFT', readVerdict.basis)
                               .catch((error: unknown) => {
                                 throw Object.assign(
                                   new Error(
@@ -2255,6 +2277,13 @@ async function initializeApplication(
       max_attendees: 1,
     };
     await integrations.assertOffered(ownerId, readAction, signal);
+    const verdict = await trust.check(turn, readAction, readArgs, signal);
+    if (verdict.confirm)
+      throw new Error(
+        verdict.reason === 'rule'
+          ? 'Your rules require confirmation before reading this Calendar event, so Nod did not identify it or propose a change.'
+          : 'Nod could not authorize the Calendar read needed to identify this event, so it did not propose a change.',
+      );
     let observed: unknown;
     try {
       observed = await integrations.execute(
@@ -2279,7 +2308,7 @@ async function initializeApplication(
       throw new Error(
         'Nod cannot verify the Calendar event, its dates and its version, so it did not propose or make a change.',
       );
-    await ledger.action(turn.turnId, readAction, { kind: 'read' });
+    await ledger.action(turn.turnId, readAction, verdict.basis);
     signal?.throwIfAborted();
     return target;
   }
@@ -2313,8 +2342,34 @@ async function initializeApplication(
         (item) => item.id === input.sourceId && item.readable,
       );
       if (!source) throw new Error('This source has no supported activity reader.');
-      const result = await observations.read({ ...input, revision: source.revision }, signal);
-      await ledger.action(turn.turnId, 'NOD_read_source', { kind: 'read' });
+      const bound = { ...input, revision: source.revision };
+      if (source.tools) {
+        const result = await observations.read(bound, signal);
+        await ledger.action(turn.turnId, 'NOD_read_source', { kind: 'read' });
+        return result;
+      }
+      const verdict = await trust.check(
+        turn,
+        'NOD_read_source',
+        {
+          ...bound,
+          source: source.label,
+          description: source.description,
+          operation: 'Read current records from this registered read-only source.',
+        },
+        signal,
+      );
+      if (verdict.confirm)
+        throw Object.assign(
+          new Error(
+            verdict.reason === 'rule'
+              ? "The owner's rules ask before reading this source, so private preparation skips it."
+              : 'The trust check did not allow this read. Private preparation will try again later.',
+          ),
+          { blocked: verdict.reason === 'rule' },
+        );
+      const result = await observations.read(bound, signal);
+      await ledger.action(turn.turnId, 'NOD_read_source', verdict.basis);
       return result;
     },
   });
@@ -3122,6 +3177,15 @@ async function initializeApplication(
               ...(deletingDraft ? { draft_id: itemId } : { message_id: itemId }),
               ...(typeof prepared.user_id === 'string' ? { user_id: prepared.user_id } : {}),
             };
+            const readVerdict = await trust.check(turn, readAction, metadataArgs, options.signal);
+            if (readVerdict.confirm)
+              throw new Error(
+                readVerdict.reason === 'rule'
+                  ? `Your rules require confirmation before reading this Gmail ${item}, so Nod did not identify it or propose deletion. Allow this read in your rules before asking to delete it.`
+                  : deletingDraft
+                    ? 'Nod could not authorize the Gmail draft read needed to identify this draft, so it did not propose deletion.'
+                    : 'Nod could not authorize the Gmail metadata read needed to identify this message, so it did not propose deletion.',
+              );
             let observed: unknown;
             try {
               observed = await integrations.execute(
@@ -3139,7 +3203,7 @@ async function initializeApplication(
                 `The Gmail ${deletingDraft ? 'draft' : 'metadata'} read failed: ${safeIntegrationFailure(error)} Nod did not ask for approval or delete the ${item}.`,
               );
             }
-            await ledger.action(turn.turnId, readAction, { kind: 'read' });
+            await ledger.action(turn.turnId, readAction, readVerdict.basis);
             if (deletingDraft) {
               const draft = gmailDraftTarget(observed, itemId);
               if (draft) {
