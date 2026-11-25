@@ -75,6 +75,7 @@ test(
         return id;
       },
       refresh() {},
+      ownerChannel: (client) => channels?.ownerChannel(client) ?? Promise.resolve('web'),
       clearBrowser: async (id) => {
         clearedBrowsers.push(id);
       },
@@ -2007,7 +2008,7 @@ test(
       const origin = await receive('Remind me in a minute.');
 
       await t.test(
-        'resumed schedules retain their owned source route and instruction',
+        'scheduled runs start in the chat app the owner used last and keep their instruction',
         async () => {
           const continuation = await thread.enqueueTurn('Synthetic continuation.', {
             source: 'resume',
@@ -2015,13 +2016,8 @@ test(
           const provenance = { ...origin, turnId: continuation };
           const schedule = await createRouted(provenance);
           const stored = (
-            await db.pool.query(
-              'SELECT delivery_channel,channel_source_id,authority FROM schedules WHERE id=$1',
-              [schedule.id],
-            )
+            await db.pool.query('SELECT authority FROM schedules WHERE id=$1', [schedule.id])
           ).rows[0];
-          assert.equal(stored.delivery_channel, origin.channel);
-          assert.equal(stored.channel_source_id, origin.sourceId);
           assert.equal(
             stored.authority.messages.find(
               (message: { id: string }) => message.id === origin.sourceMessageId,
@@ -2037,10 +2033,7 @@ test(
                 manualTurn,
               ])
             ).rows[0],
-            {
-              channel: origin.channel,
-              channel_source_id: origin.sourceId,
-            },
+            { channel: origin.channel, channel_source_id: null },
           );
           assert.deepEqual(
             (
@@ -2059,7 +2052,7 @@ test(
             [provenance, { prompt: 'Send the reworded synthetic reminder.' }, true],
             [provenance, { title: 'Reworded synthetic reminder' }, true],
             [sameThread, {}, true],
-            [otherThread, {}, false],
+            [otherThread, {}, true],
             [
               provenance,
               { title: 'Another synthetic reminder', prompt: 'Send another synthetic reminder.' },
@@ -2116,11 +2109,10 @@ test(
           await assert.rejects(
             personal.manage('schedule_update', { id: schedule.id, deliveryChannel: 'web' }),
           );
-          for (const source of [
-            { ...origin, sourceMessageId: randomUUID() },
-            { turnId: origin.turnId, sourceMessageId: null },
-          ])
-            await assert.rejects(createRouted(source), /unavailable/);
+          await assert.rejects(
+            createRouted({ ...origin, sourceMessageId: randomUUID() }),
+            /unavailable/,
+          );
           const foreign = randomUUID();
           const foreignThread = randomUUID();
           await db.pool.query("INSERT INTO threads(id,owner_id) VALUES($1,'foreign')", [

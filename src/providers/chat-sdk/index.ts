@@ -509,37 +509,44 @@ export function createChatSdkTransport(
   let closed = false;
   let polling = false;
   let offsetsReady: Promise<unknown> | undefined;
-  const transport: MessagingTransport = {
-    channels,
-    canDeliverLiteral({ channelId, text, literal }) {
-      if (channelId === 'telegram' && telegram) {
-        return hasLiteralBlock(text, literal) && telegram.canDeliverLiteral(text);
+  const lifetime = new AbortController();
+  let fetching: Promise<void> | undefined;
+  let fetched: Array<{ update_id: number }> = [];
+  let fetchFailure: MessagingConnectionError | undefined;
+  let processed: (() => void) | undefined;
+  let inputListener: (() => void) | undefined;
+  async function savedOffset(accountId: string) {
+    offsetsReady ??= pool
+      .query(
+        `CREATE TABLE IF NOT EXISTS channel_poll_offsets(provider text NOT NULL,account_id text NOT NULL,next_offset bigint NOT NULL,PRIMARY KEY(provider,account_id));
+         ALTER TABLE channel_poll_offsets ADD COLUMN IF NOT EXISTS updated_at timestamptz`,
+      )
+      .catch((error) => {
+        offsetsReady = undefined;
+        throw error;
+      });
+    await offsetsReady;
+    const saved = await pool.query<{ next_offset: string }>(
+      "SELECT CASE WHEN updated_at > now() - interval '24 hours' THEN next_offset ELSE 0 END AS next_offset FROM channel_poll_offsets WHERE provider='telegram' AND account_id=$1",
+      [accountId],
+    );
+    return Number(saved.rows[0]?.next_offset ?? 0);
+  }
+  async function fetchUpdates() {
+    const channel = channels.find((item) => item.id === 'telegram')!;
+    const accountId = env.TELEGRAM_BOT_TOKEN!.split(':')[0];
+    let failures = 0;
+    while (!closed) {
+      if (fetched.length) {
+        await new Promise<void>((resolve) => {
+          processed = resolve;
+        });
+        continue;
       }
-      if (channelId === 'whatsapp' && whatsapp) {
-        return canDeliverWhatsAppLiteral(text, literal);
-      }
-      return false;
-    },
-    async poll(accept, pair, react, approve) {
-      if (closed || polling || !telegram || env.TELEGRAM_MODE !== 'polling') return;
-      polling = true;
       let requesting = false;
+      let retryAfter = 0;
       try {
-        offsetsReady ??= pool
-          .query(
-            `CREATE TABLE IF NOT EXISTS channel_poll_offsets(provider text NOT NULL,account_id text NOT NULL,next_offset bigint NOT NULL,PRIMARY KEY(provider,account_id));
-             ALTER TABLE channel_poll_offsets ADD COLUMN IF NOT EXISTS updated_at timestamptz`,
-          )
-          .catch((error) => {
-            offsetsReady = undefined;
-            throw error;
-          });
-        await offsetsReady;
-        const accountId = env.TELEGRAM_BOT_TOKEN!.split(':')[0];
-        const saved = await pool.query<{ next_offset: string }>(
-          "SELECT CASE WHEN updated_at > now() - interval '24 hours' THEN next_offset ELSE 0 END AS next_offset FROM channel_poll_offsets WHERE provider='telegram' AND account_id=$1",
-          [accountId],
-        );
+        const offset = await savedOffset(accountId);
         requesting = true;
         const response = await request(
           `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getUpdates`,
@@ -547,12 +554,12 @@ export function createChatSdkTransport(
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              offset: Number(saved.rows[0]?.next_offset ?? 0),
+              offset,
               limit: 100,
-              timeout: 0,
+              timeout: 25,
               allowed_updates: telegramUpdateTypes,
             }),
-            signal: AbortSignal.timeout(10_000),
+            signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(35_000)]),
           },
         );
         const body: unknown = await response.json().catch(() => undefined);
@@ -561,8 +568,10 @@ export function createChatSdkTransport(
             .object({
               description: z.string().max(2000).optional(),
               error_code: z.number().optional(),
+              parameters: z.object({ retry_after: z.number().optional() }).optional(),
             })
             .safeParse(body);
+          retryAfter = failure.success ? (failure.data.parameters?.retry_after ?? 0) : 0;
           let reason = failure.success
             ? (failure.data.description ?? response.statusText)
             : response.statusText;
@@ -582,12 +591,75 @@ export function createChatSdkTransport(
               .max(100),
           })
           .parse(body);
-        requesting = false;
-        const channel = channels.find((channel) => channel.id === 'telegram')!;
+        failures = 0;
+        fetchFailure = undefined;
         channel.available = true;
         channel.error = undefined;
-        for (const update of updates.result) {
-          if (closed) break;
+        if (updates.result.length) {
+          fetched = updates.result;
+          inputListener?.();
+        }
+      } catch (cause) {
+        if (closed) return;
+        const code = errorCode(cause);
+        const detail = code ? ` (${code})` : '';
+        fetchFailure =
+          cause instanceof MessagingConnectionError
+            ? cause
+            : new MessagingConnectionError(
+                requesting
+                  ? `Telegram could not receive messages${detail}. Select Reconnect.`
+                  : `Telegram message processing failed${detail}.`,
+              );
+        if (requesting) {
+          channel.available = false;
+          channel.error = fetchFailure.message;
+        }
+        inputListener?.();
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(
+            resolve,
+            retryAfter ? retryAfter * 1000 : Math.min(30_000, 1000 * 2 ** failures++),
+          );
+          lifetime.signal.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timer);
+              resolve();
+            },
+            { once: true },
+          );
+        });
+      }
+    }
+  }
+  const transport: MessagingTransport = {
+    channels,
+    canDeliverLiteral({ channelId, text, literal }) {
+      if (channelId === 'telegram' && telegram) {
+        return hasLiteralBlock(text, literal) && telegram.canDeliverLiteral(text);
+      }
+      if (channelId === 'whatsapp' && whatsapp) {
+        return canDeliverWhatsAppLiteral(text, literal);
+      }
+      return false;
+    },
+    onInput(listener) {
+      inputListener = listener;
+    },
+    async poll(accept, pair, react, approve) {
+      if (closed || polling || !telegram || env.TELEGRAM_MODE !== 'polling') return;
+      fetching ??= fetchUpdates();
+      polling = true;
+      try {
+        if (fetchFailure) {
+          const failure = fetchFailure;
+          fetchFailure = undefined;
+          throw failure;
+        }
+        const accountId = env.TELEGRAM_BOT_TOKEN!.split(':')[0];
+        while (fetched.length && !closed) {
+          const update = fetched[0]!;
           const parsed = await transport.receive({
             channelId: 'telegram',
             method: 'POST',
@@ -606,24 +678,18 @@ export function createChatSdkTransport(
             ON CONFLICT(provider,account_id) DO UPDATE SET next_offset=CASE WHEN channel_poll_offsets.updated_at > now() - interval '24 hours' THEN GREATEST(channel_poll_offsets.next_offset,EXCLUDED.next_offset) ELSE EXCLUDED.next_offset END,updated_at=now()`,
             [accountId, update.update_id + 1],
           );
+          fetched.shift();
+        }
+        if (!fetched.length) {
+          processed?.();
+          processed = undefined;
         }
       } catch (cause) {
-        const channel = channels.find((channel) => channel.id === 'telegram')!;
+        if (cause instanceof MessagingConnectionError) throw cause;
         const code = errorCode(cause);
-        const detail = code ? ` (${code})` : '';
-        const failure =
-          cause instanceof MessagingConnectionError
-            ? cause
-            : new MessagingConnectionError(
-                requesting
-                  ? `Telegram could not receive messages${detail}. Select Reconnect.`
-                  : `Telegram message processing failed${detail}.`,
-              );
-        if (requesting) {
-          channel.available = false;
-          channel.error = failure.message;
-        }
-        throw failure;
+        throw new MessagingConnectionError(
+          `Telegram message processing failed${code ? ` (${code})` : ''}.`,
+        );
       } finally {
         polling = false;
       }
@@ -1213,6 +1279,9 @@ export function createChatSdkTransport(
     async close() {
       if (!closed) {
         closed = true;
+        lifetime.abort();
+        processed?.();
+        await fetching;
         await bot.shutdown();
       }
     },

@@ -706,7 +706,6 @@ function describeChannelSchedule(
 test('channel transports check literal instructions against their actual formatting and split rules', async (t) => {
   const sdk = createChatSdkTransport({} as pg.Pool, fixtureEnv);
   const linked = createWhatsAppLinkedTransport({
-    mode: 'bot',
     store: {
       open: async () => {
         throw new Error('This check must not open a linked account.');
@@ -778,7 +777,7 @@ test('channel transports check literal instructions against their actual formatt
 });
 
 test(
-  'WhatsApp links privately, admits only its owner, fences echoes across restart, and reconnects without repeating sends',
+  'WhatsApp links privately, admits its own chat and linked phone, fences echoes across restart, and reconnects without repeating sends',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000, concurrency: true },
   async (t) => {
     const schema = `test_whatsapp_link_${randomUUID().replaceAll('-', '')}`;
@@ -798,7 +797,7 @@ test(
       }).open();
       await setup.close();
       const modes: Promise<void>[] = [];
-      for (const mode of ['bot', 'self-chat'] as const) {
+      for (const mode of ['other-phone', 'own-number'] as const) {
         const subtest = t.test(mode, async () => {
           type Options = Parameters<typeof createWhatsAppLinkedTransport>[0];
           type Factory = NonNullable<Options['createSocket']>;
@@ -823,7 +822,7 @@ test(
           let abortDownload: AbortController | undefined;
           let lateStream: PassThrough | undefined;
           let oversizedDownload = false;
-          const own = mode === 'self-chat' ? '12345678' : '99999999';
+          const own = mode === 'own-number' ? '12345678' : '99999999';
           const owner = '12345678';
           const accountId = `linked:${own}`;
           const jid = `${owner}@s.whatsapp.net`;
@@ -886,8 +885,7 @@ test(
           }) as NonNullable<Options['download']>;
           const open = () =>
             createWhatsAppLinkedTransport({
-              mode,
-              allowedNumber: owner,
+              ...(mode === 'other-phone' ? { allowedNumber: owner } : {}),
               store: {
                 async open() {
                   const session = await store.open();
@@ -933,7 +931,7 @@ test(
             await sockets[0].config.auth.keys.set({
               session: { fixture: Uint8Array.from([1, 2, 3]) },
             });
-            const envelope = (id: string, remoteJid = jid, fromMe = mode === 'self-chat') => ({
+            const envelope = (id: string, remoteJid = jid, fromMe = mode === 'own-number') => ({
               key: { id, remoteJid, fromMe },
               messageTimestamp: Math.floor(Date.now() / 1000),
               message: { conversation: 'Fixture request' },
@@ -944,7 +942,6 @@ test(
                 envelope('owner'),
                 envelope('intruder', '87654321@s.whatsapp.net', false),
                 envelope('group', '12345678@g.us'),
-                { ...envelope('old'), messageTimestamp: Math.floor(Date.now() / 1000) - 3600 },
                 {
                   ...envelope('image'),
                   message: {
@@ -973,7 +970,7 @@ test(
                 envelope('unmapped-lid', '77777777@lid'),
                 envelope('unmapped-intruder', '88888888@lid', false),
                 envelope('unmapped-stranger', '99999999@lid', false),
-                ...(mode === 'self-chat'
+                ...(mode === 'own-number'
                   ? [
                       {
                         ...envelope('other-lid', '66666666@lid'),
@@ -1004,19 +1001,22 @@ test(
             );
             assert.deepEqual(
               collected.map((message) => message.messageId),
-              mode === 'bot'
+              mode === 'other-phone'
                 ? ['owner', 'image', 'quoted', 'lid', 'unmapped-lid']
                 : ['owner', 'image', 'quoted', 'lid'],
             );
-            if (mode === 'bot') assert.equal(collected[4].threadId, '77777777@lid');
+            if (mode === 'other-phone') assert.equal(collected[4].threadId, '77777777@lid');
             assert.deepEqual(
               dropped.filter((drop) => drop.addressing === 'lid'),
-              mode === 'bot'
+              mode === 'other-phone'
                 ? [
-                    { reason: 'lid_lookup_failed', mode: 'bot', addressing: 'lid', suppressed: 0 },
-                    { reason: 'sender_unmatched', mode: 'bot', addressing: 'lid', suppressed: 0 },
+                    { reason: 'lid_lookup_failed', addressing: 'lid', suppressed: 0 },
+                    { reason: 'not_owner', addressing: 'lid', suppressed: 0 },
                   ]
-                : [{ reason: 'self_chat_mismatch', mode: 'own', addressing: 'lid', suppressed: 0 }],
+                : [
+                    { reason: 'from_me', addressing: 'lid', suppressed: 0 },
+                    { reason: 'not_owner', addressing: 'lid', suppressed: 0 },
+                  ],
             );
             assert.ok(dropped.some((drop) => drop.reason === 'resend_ignored'));
             assert.doesNotMatch(JSON.stringify(dropped), /\d{5,}|@/);
@@ -1130,7 +1130,7 @@ test(
               status: 'Synthetic live work',
             });
             assert.deepEqual(presence, [['composing', jid]]);
-            if (mode === 'self-chat') {
+            if (mode === 'own-number') {
               await assert.rejects(
                 transport.post({
                   channelId: 'whatsapp',
@@ -1625,7 +1625,7 @@ test('Telegram voice, contact and location replies still send when the message t
   ]);
 });
 
-test('WhatsApp bot mode accepts a confirmed private ID when mapping lookups miss', async (t) => {
+test('WhatsApp accepts the linked phone by a confirmed private ID when mapping lookups miss', async (t) => {
   type Factory = NonNullable<Parameters<typeof createWhatsAppLinkedTransport>[0]['createSocket']>;
   const events = new EventEmitter();
   const allowedNumber = '12025550101';
@@ -1640,7 +1640,6 @@ test('WhatsApp bot mode accepts a confirmed private ID when mapping lookups miss
   const getLIDForPN = t.mock.fn(async (_pn: string) => lookupLid);
   const dropped: WhatsAppDrop['reason'][] = [];
   const transport = createWhatsAppLinkedTransport({
-    mode: 'bot',
     allowedNumber,
     store: {
       open: async () => ({
@@ -1683,7 +1682,7 @@ test('WhatsApp bot mode accepts a confirmed private ID when mapping lookups miss
   upsert('before-mapping', lid);
   await transport.poll!(accept);
   assert.equal(accepted.length, 0);
-  assert.deepEqual(dropped, ['sender_unmatched']);
+  assert.deepEqual(dropped, ['not_owner']);
   assert.deepEqual(getPNForLID.mock.calls[0]?.arguments, [lid]);
   assert.deepEqual(getLIDForPN.mock.calls[0]?.arguments, [allowedJid]);
 
@@ -1987,6 +1986,9 @@ test(
       assert.match(String(deliveries.at(-1)?.text), /reply.*yes.*no/i);
       const polled = await polling.post(approval);
       assert.equal(webhookChecks, 3);
+      const tapped = new Promise<void>((resolve) => polling.onInput!(resolve));
+      await polling.poll!(async () => assert.fail('Nothing has arrived yet.'));
+      await tapped;
       await polling.poll!(
         async () => assert.fail('An approval tap must not be treated as a message.'),
         undefined,

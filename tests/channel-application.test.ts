@@ -1339,13 +1339,13 @@ test(
         verifier,
         create: (environment) => {
           applied.push(environment);
-          if (environment.WHATSAPP_MODE === 'bot') {
+          if (environment.WHATSAPP_MODE === 'linked') {
             type Factory = NonNullable<
               Parameters<typeof createWhatsAppLinkedTransport>[0]['createSocket']
             >;
             return createWhatsAppLinkedTransport({
-              mode: 'bot',
-              allowedNumber: environment.WHATSAPP_ALLOWED_NUMBER,
+              allowedNumber: environment.WHATSAPP_ALLOWED_NUMBER || undefined,
+              allowedLid: environment.WHATSAPP_ALLOWED_LID || undefined,
               store: createChannelSessionStore({ pool, ownerId, keyStore }),
               createSocket: () =>
                 ({
@@ -1868,40 +1868,63 @@ test(
       assert.equal(disabled.statusCode, 200);
       assert.deepEqual(applied.at(-1), { TELEGRAM_ENABLED: 'false' });
       assert.equal((await send(3, 'New task')).statusCode, 404);
-      await t.test('WhatsApp private-ID messages appear in chat and receive replies', async () => {
+      await t.test('WhatsApp links another phone by its code and replies to it', async () => {
         const linked = await application.app.inject({
           method: 'PUT',
           url: '/api/channel-settings/whatsapp',
           headers,
-          payload: { mode: 'bot', allowedNumber, policyConfirmed: true },
+          payload: { mode: 'linked', policyConfirmed: true },
         });
         assert.equal(linked.statusCode, 200, linked.body);
         const channels = application.channels!;
+        const waitFor = async (check: () => Promise<boolean> | boolean) => {
+          for (let attempt = 0; attempt < 100 && !(await check()); attempt++)
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          assert.equal(await check(), true);
+        };
         await channels.pairing();
         whatsapp.emit('connection.update', { connection: 'open' });
         assert.equal((await channels.pairing()).state, 'connected');
-        const lid = '77777777@lid';
-        const text = 'A request from WhatsApp';
-        whatsapp.emit('lid-mapping.update', { lid, pn: `${allowedNumber}@s.whatsapp.net` });
-        whatsapp.emit('messages.upsert', {
-          type: 'notify',
-          messages: [
-            {
-              key: { id: 'private-request', remoteJid: lid, fromMe: false, addressingMode: 'lid' },
-              messageTimestamp: Math.floor(Date.now() / 1000),
-              message: { conversation: text },
-            },
-          ],
+        const phone = await application.app.inject({
+          method: 'POST',
+          url: '/api/channel-settings/whatsapp/phone',
+          headers,
+          payload: {},
         });
+        assert.equal(phone.statusCode, 200, phone.body);
+        const code = new URL(phone.json().pairingUrl).searchParams.get('text')!;
+        const lid = '77777777@lid';
+        const upsert = (id: string, text: string) =>
+          whatsapp.emit('messages.upsert', {
+            type: 'notify',
+            messages: [
+              {
+                key: { id, remoteJid: lid, fromMe: false, addressingMode: 'lid' },
+                messageTimestamp: Math.floor(Date.now() / 1000),
+                message: { conversation: text },
+              },
+            ],
+          });
+        upsert('before-code', 'A request before linking');
+        upsert('code', code);
+        await channels.drain();
+        await waitFor(() => applied.at(-1)?.WHATSAPP_ALLOWED_LID === lid);
+        await waitFor(async () => {
+          whatsapp.emit('connection.update', { connection: 'open' });
+          return (await channels.pairing().catch(() => undefined))?.state === 'connected';
+        });
+        const text = 'A request from WhatsApp';
+        upsert('private-request', text);
         await channels.drain();
         const history = await application.app.inject({ url: '/api/messages', headers });
         assert.equal(history.statusCode, 200);
-        const message = history
-          .json()
-          .messages.find(
-            (item: { role: string; text: string }) => item.role === 'user' && item.text === text,
-          );
+        const messages: { role: string; text: string; id: string }[] = history.json().messages;
+        const message = messages.find((item) => item.role === 'user' && item.text === text);
         assert.ok(message);
+        assert.equal(
+          messages.some((item) => item.text.includes('before linking') || item.text.includes(code)),
+          false,
+        );
         const reply = 'A reply from Nod';
         await pool.query(
           `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
@@ -1909,7 +1932,8 @@ test(
           [randomUUID(), reply, message.id],
         );
         await channels.drain();
-        assert.deepEqual(whatsappReplies, [{ jid: lid, text: reply }]);
+        assert.deepEqual(whatsappReplies.at(-1), { jid: lid, text: reply });
+        assert.ok(whatsappReplies.every((item) => item.jid === lid));
       });
     } finally {
       try {

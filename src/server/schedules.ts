@@ -1007,7 +1007,18 @@ export function createSchedules(dependencies: ScheduleDependencies) {
   }
 
   async function sourceProvenance(client: PoolClient, provenance?: ScheduleProvenance) {
-    if (!provenance?.sourceMessageId) return provenance;
+    if (!provenance?.turnId) return provenance;
+    if (!provenance.sourceMessageId) {
+      const turn = (
+        await client.query(
+          `SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id
+           WHERE u.id=$1 AND u.owner_id=$2 AND th.archived_at IS NULL FOR SHARE OF u`,
+          [z.uuid().parse(provenance.turnId), ownerId],
+        )
+      ).rows[0];
+      if (!turn) throw invalid('The schedule instruction is unavailable.');
+      return provenance;
+    }
     const source = (
       await client.query<{ turn_id: string }>(
         `SELECT m.turn_id FROM turns u JOIN messages m ON m.thread_id=u.thread_id AND m.owner_id=u.owner_id
@@ -1098,10 +1109,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       );
   }
 
-  async function duplicate(
-    client: PoolClient,
-    input: ReturnType<typeof validateCreate>,
-  ) {
+  async function duplicate(client: PoolClient, input: ReturnType<typeof validateCreate>) {
     await lockKey(client, `schedules:${ownerId}`);
     return (
       await client.query<ScheduleRow>(
