@@ -117,7 +117,8 @@ export function createDesktopLifecycle({
         return runtime;
       })
       .catch((error) => {
-        if (error.code === 'NOD_RUNTIME_STOP_FAILED') cleanupRequired = true;
+        if ([error.code, error.cause?.code].includes('NOD_RUNTIME_STOP_FAILED'))
+          cleanupRequired = true;
         runtimeFailure(error);
         throw error;
       })

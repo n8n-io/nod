@@ -8584,6 +8584,7 @@ async function updatePreparation({
       engine: undefined,
       closingEngine: false,
       pendingPreload: undefined,
+      chromiumFetch: request,
       updateEvent: async () => {},
       loadRuntime: async (url) =>
         url.endsWith('/windows.mjs')

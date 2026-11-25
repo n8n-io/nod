@@ -9828,6 +9828,37 @@ test('startup facts keep only structured bounded codes and do not call getters o
     }),
     { detailsOmitted: true },
   );
+  const connection = Object.assign(new Error('synthetic-private connect detail'), {
+    code: 'UND_ERR_CONNECT_TIMEOUT',
+  });
+  assert.deepEqual(
+    startupErrorFacts(
+      new Error('synthetic-private wrapper', {
+        cause: new TypeError('fetch failed', { cause: connection }),
+      }),
+    ),
+    { detailsOmitted: true, class: 'Error', errno: 'UND_ERR_CONNECT_TIMEOUT' },
+  );
+  const cleanup = Object.assign(new Error('synthetic-private stop'), {
+    code: 'NOD_RUNTIME_STOP_FAILED',
+  });
+  const primary = Object.assign(new Error('synthetic-private start'), {
+    code: 'NOD_COMPUTER_PROTECTION_FAILED',
+  });
+  assert.deepEqual(
+    startupErrorFacts(
+      Object.assign(new AggregateError([primary, cleanup], 'synthetic', { cause: cleanup }), {
+        code: primary.code,
+        step: 'start',
+      }),
+    ),
+    {
+      detailsOmitted: true,
+      class: 'Error',
+      code: 'NOD_COMPUTER_PROTECTION_FAILED',
+      step: 'start',
+    },
+  );
   const poisoned = Object.defineProperties(
     {},
     Object.fromEntries(
@@ -9844,6 +9875,8 @@ test('startup facts keep only structured bounded codes and do not call getters o
         'error',
         'failure',
         'message',
+        'cause',
+        'errors',
       ].map((key) => [
         key,
         {

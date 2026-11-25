@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
@@ -315,42 +325,23 @@ if (process.env.WORKSPACE_CONTAINER) {
       receipt.browser = true;
       receipt.workspaceFiles = true;
       console.log('Windows application, browser and workspace verified.');
-      console.log('Checking that missing or invalid configuration keeps the saved computer.');
-      const originalState = await readFile(configPath, 'utf8');
-      for (const content of [
-        undefined,
-        JSON.stringify({ ...JSON.parse(originalState), version: 2, initializing: true }),
-      ]) {
-        try {
-          if (content === undefined) await rm(configPath);
-          else await writeFile(configPath, content);
-          let changed = false;
-          await assert.rejects(
-            runtime.prepareWindowsRuntime({ dataRoot: profile, resourcesPath: engine }, () => {
-              changed = true;
-            }),
-            {
-              code:
-                content === undefined
-                  ? 'NOD_COMPUTER_CONFIGURATION_MISSING'
-                  : 'NOD_COMPUTER_CONFIGURATION_INVALID',
-            },
-          );
-          assert.equal(changed, false, 'An uncertain computer must stay unchanged.');
-          assert.match(
-            await run(wsl, ['--list', '--quiet', '--all'], {
-              env: { ...process.env, WSL_UTF8: '1' },
-            }),
-            new RegExp(distribution),
-          );
-          assert.ok((await stat(join(saved.computerPath, 'ext4.vhdx'))).size);
-        } finally {
-          await writeFile(configPath, originalState);
-        }
-      }
-      receipt.savedComputer = true;
-      console.log('Checking a relaunch without admin rights after the PC went off.');
+      console.log(
+        'Checking a relaunch without admin rights after the PC went off and WSL lost the computer.',
+      );
       await run(wsl, ['--terminate', prepared.env.NOD_WSL_DISTRIBUTION]);
+      await run(wsl, ['--shutdown']);
+      const disk = join(saved.computerPath, 'ext4.vhdx');
+      const kept = join(elsewhere, 'synthetic-kept-ext4.vhdx');
+      await copyFile(disk, kept);
+      await run(wsl, ['--unregister', distribution]);
+      assert.doesNotMatch(
+        await run(wsl, ['--list', '--quiet', '--all'], {
+          env: { ...process.env, WSL_UTF8: '1' },
+        }),
+        new RegExp(distribution),
+      );
+      await mkdir(saved.computerPath, { recursive: true });
+      await rename(kept, disk);
       await run(join(process.env.SYSTEMROOT, 'System32/WindowsPowerShell/v1.0/powershell.exe'), [
         '-NoProfile',
         '-NonInteractive',
@@ -378,6 +369,7 @@ if (process.env.WORKSPACE_CONTAINER) {
         /Windows application and browser verified\./,
       );
       receipt.reopened = true;
+      receipt.reattached = true;
     } finally {
       await run(system('WindowsPowerShell/v1.0/powershell.exe'), [
         '-NoProfile',

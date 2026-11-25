@@ -47,6 +47,7 @@ import { createAppPreferencesStore } from './app-preferences.mjs';
 import { createComputerHelper } from './computer-helper.mjs';
 import { createComputerOverlay } from './computer-overlay.mjs';
 import { createChatReadCursorStore } from './chat-read-cursors.mjs';
+import { chromiumFetch } from './chromium-fetch.mjs';
 import { registerArtifactFileHandlers } from './artifact-file-handlers.mjs';
 import { saveArtifactDownload } from './downloads.mjs';
 import { createDesktopLifecycle, startupErrorDetails } from './lifecycle.mjs';
@@ -323,6 +324,7 @@ const lifecycle = createDesktopLifecycle({
         preserveRuntimeCache: testInstall,
         computerDirectory: await settings.computerDirectory(),
         resolveDownloadUrl: updateSource?.runtimeDownloadUrl,
+        fetch: chromiumFetch,
         signal,
         onStatus: (value) => {
           step = typeof value === 'string' ? value : value?.message;
@@ -3194,7 +3196,10 @@ else {
         const windows = process.platform === 'win32';
         if (windows)
           await clearInstalledWindowsUpdates(windowsUpdates, app.getVersion()).catch(() => {});
-        updateSource = createUpdateSource({ sourceUrl: nodBuild?.updateSourceUrl });
+        updateSource = createUpdateSource({
+          sourceUrl: nodBuild?.updateSourceUrl,
+          fetch: chromiumFetch,
+        });
         updates = createDesktopUpdater({
           source: updateSource,
           currentVersion: app.getVersion(),
@@ -3224,6 +3229,7 @@ else {
                 directory: windowsUpdates,
                 resourcesPath: engineRoot,
                 signal,
+                fetch: chromiumFetch,
                 includeRuntime,
                 onProgress: (progress) => report('downloading', progress),
               });
@@ -3243,6 +3249,7 @@ else {
               resourcesPath: engineRoot,
               downloadUrl: candidate.downloadUrl,
               signal,
+              fetch: chromiumFetch,
               onStatus: ({ progress }) => {
                 if (Number.isFinite(progress)) report('downloading', progress);
               },

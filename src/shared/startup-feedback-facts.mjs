@@ -139,6 +139,22 @@ export const startupWslCode = (value) => shaped(wslShape, value);
 
 export function startupErrorFacts(value) {
   const result = { detailsOmitted: true };
+  const errors = data(value, 'errors');
+  const chain = [];
+  for (
+    let item = Array.isArray(errors) ? data(errors, '0') : value;
+    item && typeof item === 'object' && chain.length < 5;
+    item = data(item, 'cause')
+  )
+    chain.push(item);
+  chain.push(value);
+  for (const item of chain)
+    for (const [key, selected] of Object.entries(ownErrorFacts(item))) result[key] ??= selected;
+  return result;
+}
+
+function ownErrorFacts(value) {
+  const result = {};
   const errno = shaped(errnoShape, data(value, 'errno')) ?? shaped(errnoShape, data(value, 'code'));
   const code = shaped(codeShape, data(value, 'code'));
   for (const [key, selected] of [

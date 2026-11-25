@@ -261,6 +261,7 @@ async function prepare(options, onComputerStart, progress = {}) {
     resourcesPath,
     onStatus,
     signal,
+    fetch: options.fetch,
     resolveDownloadUrl: options.resolveDownloadUrl,
   });
   let downloading = runtimeAssets.paths.length > 0;
@@ -1084,11 +1085,13 @@ export function prepareRuntime(options) {
               await stopRuntime(options);
             } catch (cleanupError) {
               throw Object.assign(
-                new AggregateError([error, cleanupError], cleanupError.message, {
-                  cause: cleanupError,
-                }),
+                new AggregateError(
+                  [error, cleanupError],
+                  `${error.message} ${cleanupError.message}`,
+                  { cause: cleanupError },
+                ),
                 {
-                  code: cleanupError.code,
+                  code: error.code,
                   step: error.step,
                   details: [
                     error.stack || error.message,

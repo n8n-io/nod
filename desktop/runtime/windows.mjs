@@ -74,25 +74,18 @@ async function readComputerState(path, distribution) {
   try {
     saved = JSON.parse(await readFile(path, 'utf8'));
   } catch (error) {
-    if (error.code === 'ENOENT') return;
-    throw Object.assign(
-      new Error('The Nod computer configuration needs recovery.', { cause: error }),
-      { code: 'NOD_COMPUTER_CONFIGURATION_INVALID' },
-    );
+    if (error.code === 'ENOENT' || error instanceof SyntaxError) return;
+    throw error;
   }
   if (
-    !saved ||
-    saved.version !== 1 ||
-    saved.distribution !== distribution ||
-    (saved.initializing !== undefined && typeof saved.initializing !== 'boolean') ||
-    (saved.computerPath !== undefined &&
-      (typeof saved.computerPath !== 'string' || !isAbsolute(saved.computerPath))) ||
-    !/^[a-f0-9]{64}$/.test(saved.password)
+    saved?.version === 1 &&
+    saved.distribution === distribution &&
+    (saved.initializing === undefined || typeof saved.initializing === 'boolean') &&
+    (saved.computerPath === undefined ||
+      (typeof saved.computerPath === 'string' && isAbsolute(saved.computerPath))) &&
+    /^[a-f0-9]{64}$/.test(saved.password)
   )
-    throw Object.assign(new Error('The Nod computer configuration needs recovery.'), {
-      code: 'NOD_COMPUTER_CONFIGURATION_INVALID',
-    });
-  return saved;
+    return saved;
 }
 
 const unrepairableWslCodes = new Set([
@@ -144,13 +137,7 @@ async function distributions(wsl, env, signal) {
       .map((value) => value.trim())
       .filter(Boolean);
   const ready = await list();
-  const registered = await list('--all');
-  if (ready.some((name) => !registered.includes(name)))
-    throw Object.assign(
-      new Error('WSL returned conflicting computer states. The files were kept. Try again.'),
-      { code: 'NOD_COMPUTER_NOT_READY' },
-    );
-  return { ready, registered };
+  return { ready, registered: [...new Set([...ready, ...(await list('--all'))])] };
 }
 
 export async function installWsl({ signal } = {}) {
@@ -382,29 +369,30 @@ async function prepareWindows(options, onComputerStart, progress) {
   let saved = await readComputerState(configPath, distribution);
   progress.step = 'wsl';
   const { ready, registered } = await distributions(wsl, hostEnvironment, signal);
-  let existing = ready.includes(distribution);
-  if (!saved && registered.includes(distribution))
-    throw Object.assign(
-      new Error(
-        'Nod found an existing private computer without its saved configuration. Its files were kept. Restore the configuration, then try again.',
-      ),
-      { code: 'NOD_COMPUTER_CONFIGURATION_MISSING' },
-    );
-  if (saved && !existing && saved.initializing !== true)
-    throw Object.assign(
-      new Error(
-        'WSL did not report the saved Nod computer as ready. Its files were kept. Restart Windows, then try again.',
-      ),
-      {
-        code: registered.includes(distribution)
-          ? 'NOD_COMPUTER_NOT_READY'
-          : 'NOD_COMPUTER_REGISTRATION_MISSING',
+  const finished = saved !== undefined && saved.initializing !== true;
+  let existing = finished && ready.includes(distribution);
+  if (registered.includes(distribution) && !existing)
+    await host(['--unregister', distribution], { timeout: 300_000 });
+  else if (finished && !existing)
+    existing = await execute(
+      wsl,
+      [
+        '--import-in-place',
+        distribution,
+        join(saved.computerPath ?? join(controlRoot, 'wsl'), 'ext4.vhdx'),
+      ],
+      { env: hostEnvironment, signal, timeout: 300_000 },
+    ).then(
+      () => true,
+      (error) => {
+        signal?.throwIfAborted();
+        status({
+          phase: 'installing',
+          message: `Nod could not reopen its private computer, so it is setting up a new one. The old disk was kept. ${error.message}`,
+        });
+        return false;
       },
     );
-  if (registered.includes(distribution) && saved.initializing === true) {
-    await host(['--unregister', distribution], { timeout: 300_000 });
-    existing = false;
-  }
   if (saved?.initializing === true && generatedComputerPath(saved.computerPath, distribution))
     await rm(saved.computerPath, { recursive: true, force: true });
   progress.step = 'assets';

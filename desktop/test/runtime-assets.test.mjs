@@ -4592,6 +4592,7 @@ test('native runtime wrapper preserves handed-off storage through failed prepara
     let engineStops = 0;
     let retired = false;
     const startupError = Object.assign(new Error('Synthetic startup failure'), {
+      code: 'NOD_COMPUTER_PROTECTION_FAILED',
       details: 'Synthetic startup command details',
     });
     const stopError = new Error('Synthetic stop command failure');
@@ -4648,7 +4649,8 @@ test('native runtime wrapper preserves handed-off storage through failed prepara
     });
     if (terminal === 'cleanup-failed') {
       await assert.rejects(lifecycle.start(), (error) => {
-        assert.equal(error.code, cleanupError.code);
+        assert.equal(error.code, startupError.code);
+        assert.match(error.message, /Synthetic startup failure.*Synthetic stop failure/);
         assert.equal(error.step, 'start');
         assert.equal(error.errors[0], startupError);
         assert.equal(error.errors[1], cleanupError);
@@ -4911,7 +4913,7 @@ test(
     await writeFile(
       join(system, 'System32', 'wsl.exe'),
       `#!${process.execPath}
-const { readFileSync, writeFileSync } = require('node:fs');
+const { existsSync, readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const path = ${JSON.stringify(statePath)};
 const state = JSON.parse(readFileSync(path, 'utf8'));
@@ -4937,6 +4939,15 @@ if (args[0] === '--import') {
     state.registered = state.ready = [args[1]];
     state.imported = args[2];
     writeFileSync(join(args[2], 'ext4.vhdx'), 'synthetic computer disk');
+  }
+}
+if (args[0] === '--import-in-place') {
+  if (existsSync(args[2])) {
+    state.registered = state.ready = [args[1]];
+    state.attached = args[2];
+  } else {
+    process.stdout.write(Buffer.from('Synthetic missing disk.\\r\\nError code: Wsl/Service/RegisterDistro/ERROR_FILE_NOT_FOUND\\r\\n', 'utf16le'));
+    code = 1;
   }
 }
 if (args[0] === '--distribution') {
@@ -5095,82 +5106,84 @@ process.exit(code);
     assert.equal(await readFile(join(computer, 'ext4.vhdx'), 'utf8'), 'synthetic computer disk');
     const original = await readFile(configPath, 'utf8');
     const { initializing, ...legacy } = JSON.parse(original);
+    const replaced = [`--unregister ${distribution}`, `--import ${distribution}`];
     for (const scenario of [
-      { name: 'missing configuration', code: 'NOD_COMPUTER_CONFIGURATION_MISSING' },
-      { name: 'null configuration', value: null, code: 'NOD_COMPUTER_CONFIGURATION_INVALID' },
+      { name: 'missing configuration', expected: replaced },
+      { name: 'unreadable configuration', bytes: '{', expected: replaced },
+      { name: 'null configuration', value: null, expected: replaced },
       {
         name: 'relative computer path',
         value: { ...JSON.parse(original), computerPath: 'relative', initializing: true },
-        code: 'NOD_COMPUTER_CONFIGURATION_INVALID',
+        expected: replaced,
       },
       {
         name: 'invalid version',
-        code: 'NOD_COMPUTER_CONFIGURATION_INVALID',
-        value: { ...JSON.parse(original), version: 2, initializing: true },
+        value: { ...JSON.parse(original), version: 2 },
+        expected: replaced,
       },
       {
         name: 'invalid password',
-        code: 'NOD_COMPUTER_CONFIGURATION_INVALID',
-        value: { ...JSON.parse(original), password: 'invalid', initializing: true },
+        value: { ...JSON.parse(original), password: 'invalid' },
+        expected: replaced,
       },
       {
         name: 'invalid marker',
         value: { ...JSON.parse(original), initializing: 'false' },
-        code: 'NOD_COMPUTER_CONFIGURATION_INVALID',
+        expected: replaced,
       },
       {
         name: 'completed computer is not ready',
         value: JSON.parse(original),
         hidden: true,
-        code: 'NOD_COMPUTER_NOT_READY',
+        expected: replaced,
+      },
+      { name: 'older computer is not ready', value: legacy, hidden: true, expected: replaced },
+      {
+        name: 'conflicting WSL status reads',
+        value: { ...JSON.parse(original), computerPath: undefined, initializing: true },
+        absent: true,
+        expected: replaced,
       },
       {
-        name: 'completed computer is not registered',
-        code: 'NOD_COMPUTER_REGISTRATION_MISSING',
+        name: 'completed computer lost its registration',
         value: JSON.parse(original),
         hidden: true,
         absent: true,
+        expected: [`--import-in-place ${distribution}`],
       },
       {
-        name: 'conflicting WSL status reads',
-        code: 'NOD_COMPUTER_NOT_READY',
-        value: { ...JSON.parse(original), initializing: true },
-        absent: true,
-      },
-      {
-        name: 'older computer is not ready',
-        value: legacy,
+        name: 'completed computer lost its registration and its disk',
+        value: { ...JSON.parse(original), computerPath: join(elsewhere, 'missing') },
         hidden: true,
-        code: 'NOD_COMPUTER_NOT_READY',
+        absent: true,
+        expected: [`--import-in-place ${distribution}`, `--import ${distribution}`],
       },
     ]) {
-      const bytes = scenario.value === undefined ? undefined : JSON.stringify(scenario.value);
-      if (bytes === undefined) await rm(configPath);
-      else await writeFile(configPath, bytes);
+      if (scenario.value === undefined && scenario.bytes === undefined) await rm(configPath);
+      else await writeFile(configPath, scenario.bytes ?? JSON.stringify(scenario.value));
       await wsl({
         ready: scenario.hidden ? [] : [distribution],
         registered: scenario.absent ? [] : [distribution],
       });
-      await assert.rejects(prepare(), (error) => {
-        assert.equal(error.code, scenario.code, scenario.name);
-        assert.equal(startupErrorFacts(error).code, scenario.code, scenario.name);
-        return true;
-      });
-      if (scenario.code === 'NOD_COMPUTER_CONFIGURATION_INVALID')
-        await assert.rejects(removeWindowsComputer(profile));
-      assert.ok(
-        (await wsl()).every((call) => !/^--(?:unregister|import) /.test(call)),
+      await assert.rejects(prepare(), { step: 'start', exitCode: 7 }, scenario.name);
+      assert.deepEqual(
+        (await wsl()).filter((call) => /^--(?:unregister|import|import-in-place) /.test(call)),
+        scenario.expected,
         scenario.name,
       );
-      assert.equal(
-        await readFile(configPath, 'utf8').catch((error) => {
-          if (error.code !== 'ENOENT') throw error;
-        }),
-        bytes,
-        scenario.name,
-      );
+      const repaired = await saved();
+      assert.equal(repaired.initializing, false, scenario.name);
+      if (scenario.expected.includes(`--import ${distribution}`))
+        assert.notEqual(repaired.computerPath, computer, scenario.name);
+      else assert.equal(repaired.computerPath, computer, scenario.name);
       assert.equal(await readFile(join(computer, 'ext4.vhdx'), 'utf8'), 'synthetic computer disk');
+      await writeFile(configPath, original);
     }
+    await writeFile(configPath, '{');
+    await wsl({ ready: [distribution], registered: [distribution] });
+    await removeWindowsComputer(profile);
+    assert.ok((await wsl()).includes(`--unregister ${distribution}`));
+    assert.equal(await readFile(join(computer, 'ext4.vhdx'), 'utf8'), 'synthetic computer disk');
     await writeFile(configPath, original);
     await wsl({ ready: [distribution], registered: [distribution] });
     await writeFile(join(elsewhere, 'keep.txt'), 'synthetic owner file');

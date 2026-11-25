@@ -115,9 +115,12 @@ On Windows, Nod replaces only a recorded, unfinished import. The next attempt re
 
 Before another import, Nod removes a partial disk only from a generated folder named in its valid unfinished-import record. Older and unknown folders are kept.
 
-If the saved configuration is missing or invalid, setup stops and keeps the existing computer. Restore a missing configuration from your backup. If there is no backup or the configuration is invalid, keep the files and report the failure with the startup log.
+Startup repairs the private computer instead of stopping:
 
-If a completed computer loses its registration or WSL does not report it as ready, restart Windows, then try again. Conflicting WSL status reads also stop startup without changing files. If the problem continues, keep the files and report the failure. An older unfinished import can need recovery because it has no setup record.
+- If WSL no longer lists a completed computer, Nod registers its saved disk again. Your data stays.
+- If that disk is gone or WSL can't open it, Nod sets up a new computer and leaves the old disk where it was.
+- If the saved configuration is missing or unreadable, Nod can't open the old computer's database, so it replaces that computer.
+- If WSL lists the computer but doesn't report it as ready, Nod replaces it.
 
 If setup needs more disk space, select a folder on another drive or free space. A different folder on the same drive still needs space for both the setup files and the private computer. Nod keeps a verified download for the next attempt.
 
@@ -127,7 +130,7 @@ On Windows, database errors show whether PostgreSQL stopped, reached a memory li
 
 During use, Nod waits up to 30 seconds for each query reply after it gets a database connection. The wait for a connection has a separate timeout. If the connection stops returning data, Nod closes it and reports the failure. Nod does not repeat the failed work. After the connection is restored, a new request can use a new connection. Check the result of an action before you ask Nod to do it again.
 
-On a Mac, **Technical details** and the startup log also show the cause of a runtime download failure. This includes a connection error inside `fetch failed` or a damaged archive error. Select **Try again** after you restore the connection. If Nod can keep the saved part, an interrupted download resumes. Otherwise it starts again.
+**Technical details** and the startup log also show the cause of a runtime download failure, such as a connection error or a damaged archive. Downloads use the same network settings as the app window, including your system proxy. Select **Try again** after you restore the connection. If Nod can keep the saved part, an interrupted download resumes. Otherwise it starts again.
 
 Quit Nod and open it again. If the error continues, restart Windows. Keep your app data. WSL setup errors also include the original Windows error.
 
@@ -244,7 +247,7 @@ If the workspace crashes, use **Report bug** on the error screen before **Reload
 
 In the desktop app, if Nod's background service or its window stops, Nod shows its error screen. Select **Report bug** there. A separate report form opens without restarting the failed service. The menu bar **Report bug…** entry opens the same form while startup has failed.
 
-Describe the failure, then select **Review**. The startup report contains only fixed startup states and steps, error classes and codes, exit codes, versions, counts and event ages. Nod omits startup prose, log text, paths, URLs, account details and message content. It keeps up to 100 technical events and 48 KB in memory. It does not read a log file or earlier disk history for the report. Unknown fields are omitted. The report reads error codes only from structured fields. The Windows runtime puts WSL error codes in a separate field. The report keeps the step that failed, the exit code, and values shaped like error codes or class names, such as `ENOSPC`, `NOD_WSL_REQUIRED`, `ERROR_FILE_EXISTS` or `TimeoutError`. It drops values with spaces, lowercase text, paths or other characters. A runtime command that runs out of time is marked as a timeout. Your description stays exactly as you wrote it. Review the exact attachment, then select **Send report**. You can untick **Include startup report** to send only your description. Keep the form open until you send it; the startup form does not save an unsent draft.
+Describe the failure, then select **Review**. The startup report contains only fixed startup states and steps, error classes and codes, exit codes, versions, counts and event ages. Nod omits startup prose, log text, paths, URLs, account details and message content. It keeps up to 100 technical events and 48 KB in memory. It does not read a log file or earlier disk history for the report. Unknown fields are omitted. The report reads error codes only from structured fields. The Windows runtime puts WSL error codes in a separate field. The report keeps the step that failed, the exit code, and values shaped like error codes or class names, such as `ENOSPC`, `NOD_WSL_REQUIRED`, `ERROR_FILE_EXISTS` or `TimeoutError`. It drops values with spaces, lowercase text, paths or other characters. A runtime command that runs out of time is marked as a timeout. The report also reads codes from an error's cause, such as the connection error behind a failed download. If cleanup fails after a startup failure, the report keeps the startup failure's code. Your description stays exactly as you wrote it. Review the exact attachment, then select **Send report**. You can untick **Include startup report** to send only your description. Keep the form open until you send it; the startup form does not save an unsent draft.
 
 If the send result is unknown, select **Check status** while the startup form is open. An unknown or rejected result shows the collector's HTTP status when it is available. The code alone does not confirm delivery. If Nod restarts into the startup error screen, reopen **Report bug** to check the saved submission instead of sending it again. **Show startup log** still opens the local log when you need it.
 
