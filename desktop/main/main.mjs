@@ -465,7 +465,7 @@ function update(value) {
     message: bounded(value.message || status.message),
   };
   if (value.phase === 'ready' || value.phase === 'error') status.unlockingKeys = false;
-  if (value.phase && value.phase !== 'error') delete status.failure;
+  if (value.phase && (value.phase !== 'error' || !value.failure)) delete status.failure;
   if (value.error) status.error = bounded(value.error);
   else if (Object.hasOwn(value, 'error') || (value.phase && value.phase !== 'error'))
     delete status.error;
