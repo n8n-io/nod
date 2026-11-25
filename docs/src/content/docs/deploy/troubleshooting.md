@@ -119,7 +119,7 @@ Startup repairs the private computer instead of stopping:
 
 - If WSL no longer lists a completed computer, Nod registers its saved disk again. Your data stays.
 - If that disk is gone or WSL can't open it, Nod sets up a new computer and leaves the old disk where it was.
-- If the saved configuration is missing, unreadable or invalid, Nod can't open the old computer's database. It removes that computer, which deletes its data, and sets up a new one.
+- If the saved configuration is missing, damaged or invalid while WSL still lists the computer, Nod can't open its database. It removes that computer, which deletes its data, and sets up a new one.
 - If WSL lists the computer but still reports it as installing or uninstalling, its disk is unfinished. Nod removes it, which deletes its data, and sets up a new one.
 
 If setup needs more disk space, select a folder on another drive or free space. A different folder on the same drive still needs space for both the setup files and the private computer. Nod keeps a verified download for the next attempt.
