@@ -3469,10 +3469,6 @@ async function initializeApplication(
           if (!channels) throw new Error('Messaging is not ready.');
           await channels.replaceTransport(setup.create(environment));
         },
-        paired: async (request) => {
-          if (!channels) throw new Error('Messaging is not ready.');
-          await channels.announcePairing(request);
-        },
         observed: () => {
           const consent = analytics.consent(ownerId);
           return (states) => {

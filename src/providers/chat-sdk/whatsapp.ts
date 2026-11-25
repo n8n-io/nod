@@ -99,7 +99,9 @@ export function createWhatsAppLinkedTransport(options: {
   const reactions: InboundReaction[] = [];
   const pairings: ChannelPairingRequest[] = [];
   let inputListener: (() => void) | undefined;
-  const otherPhone = options.allowedNumber ?? options.allowedLid;
+  let allowedNumber = options.allowedNumber;
+  let allowedLid = options.allowedLid;
+  let otherPhone = allowedNumber ?? allowedLid;
   let received = Promise.resolve();
   let queued = 0;
   const drops = new Map<string, { at: number; suppressed: number }>();
@@ -206,14 +208,13 @@ export function createWhatsAppLinkedTransport(options: {
         ? { phone: own, jid: normalizedJid }
         : 'from_me';
     if (revokedLids.has(normalizedJid)) return 'not_owner';
-    if (options.allowedLid && normalizedJid === options.allowedLid)
+    if (allowedLid && normalizedJid === allowedLid)
       return { phone: otherPhone!, jid: normalizedJid };
     let phone = numberOf(jid) ?? numberOf(message.key.remoteJidAlt);
     if (!phone && jid.endsWith('@lid'))
       phone = numberOf(
         await current.signalRepository.lidMapping.getPNForLID(jid).catch(() => null),
       );
-    const allowedNumber = options.allowedNumber;
     if (!phone && allowedNumber && jid.endsWith('@lid')) {
       const lid = await current.signalRepository.lidMapping
         .getLIDForPN(`${allowedNumber}@s.whatsapp.net`)
@@ -352,9 +353,7 @@ export function createWhatsAppLinkedTransport(options: {
         channelId: 'whatsapp',
         accountId: channel.accountId!,
         senderId: source.stranger,
-        senderName:
-          message.pushName?.trim().slice(0, 200) ||
-          (source.stranger.endsWith('@lid') ? 'Your other phone' : `+${source.stranger}`),
+        senderName: message.pushName?.trim().slice(0, 200) || 'Your other phone',
         messageId: id,
         threadId: source.jid,
         code,
@@ -447,20 +446,26 @@ export function createWhatsAppLinkedTransport(options: {
     });
     socket = current;
     learnedLid = undefined;
-    if (options.allowedNumber)
-      current.ev.on('lid-mapping.update', ({ lid, pn }) => {
-        if (closed || halted || socket !== current || !/^\d+(?::\d+)?@lid$/.test(lid)) return;
-        const phone = numberOf(pn);
-        if (!phone) return;
-        const jid = jidNormalizedUser(lid);
-        if (phone === options.allowedNumber) {
-          revokedLids.delete(jid);
-          learnedLid = jid;
-        } else {
-          revokedLids.add(jid);
-          if (learnedLid === jid) learnedLid = undefined;
-        }
-      });
+    current.ev.on('lid-mapping.update', ({ lid, pn }) => {
+      if (
+        closed ||
+        halted ||
+        socket !== current ||
+        !allowedNumber ||
+        !/^\d+(?::\d+)?@lid$/.test(lid)
+      )
+        return;
+      const phone = numberOf(pn);
+      if (!phone) return;
+      const jid = jidNormalizedUser(lid);
+      if (phone === allowedNumber) {
+        revokedLids.delete(jid);
+        learnedLid = jid;
+      } else {
+        revokedLids.add(jid);
+        if (learnedLid === jid) learnedLid = undefined;
+      }
+    });
     current.ev.on('creds.update', (update) => {
       if (closed || halted || socket !== current) return;
       Object.assign(auth.creds, update);
@@ -683,6 +688,15 @@ export function createWhatsAppLinkedTransport(options: {
     },
     onInput(listener) {
       inputListener = listener;
+    },
+    link(request) {
+      if (request.channelId !== 'whatsapp') return;
+      allowedNumber = request.senderId.endsWith('@lid') ? undefined : request.senderId;
+      allowedLid = request.threadId.endsWith('@lid') ? request.threadId : undefined;
+      otherPhone = allowedNumber ?? allowedLid;
+      learnedLid = undefined;
+      revokedLids.clear();
+      identity();
     },
     async poll(accept, pair, react) {
       await start();

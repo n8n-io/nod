@@ -138,6 +138,13 @@ test(
           accountId: 'fixture-bot',
           allowedSenderIds: ['fixture-owner'],
         },
+        {
+          id: 'whatsapp',
+          status: 'configured',
+          missing: [],
+          accountId: 'fixture-phone',
+          allowedSenderIds: ['fixture-owner'],
+        },
       ],
       async poll(accept) {
         for (const message of inbox.splice(0)) await accept(message);
@@ -168,11 +175,11 @@ test(
             })
           ).turnId,
       });
-    const receive = async (text: string, threadId = 'original-thread') => {
+    const receive = async (text: string, threadId = 'original-thread', channelId = 'telegram') => {
       const messageId = randomUUID();
       inbox.push({
-        channelId: 'telegram',
-        accountId: 'fixture-bot',
+        channelId,
+        accountId: channelId === 'telegram' ? 'fixture-bot' : 'fixture-phone',
         senderId: 'fixture-owner',
         messageId,
         threadId,
@@ -180,7 +187,7 @@ test(
         sentAt: new Date(),
       });
       await channels!.drain();
-      const sourceId = `channel:telegram:fixture-bot:${messageId}`;
+      const sourceId = `channel:${channelId}:${channelId === 'telegram' ? 'fixture-bot' : 'fixture-phone'}:${messageId}`;
       const row = (
         await db.pool.query(
           `SELECT i.turn_id,i.message_id,u.channel,m.text FROM channel_inbox i
@@ -2034,6 +2041,16 @@ test(
               ])
             ).rows[0],
             { channel: origin.channel, channel_source_id: null },
+          );
+          await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [manualTurn]);
+          const moved = await receive('Hello from my other chat app.', 'phone-thread', 'whatsapp');
+          assert.notEqual(moved.channel, origin.channel);
+          const later = await runNow(await saved(schedule.id));
+          assert.equal(later.statusCode, 200, later.body);
+          assert.equal(
+            (await db.pool.query('SELECT channel FROM turns WHERE id=$1', [later.json().turnId]))
+              .rows[0].channel,
+            moved.channel,
           );
           assert.deepEqual(
             (

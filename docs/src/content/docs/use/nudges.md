@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-Nod prepares useful work from your connected sources on its own and messages you when it's worth an interruption. That message is a nudge: what changed, what's ready and, when there's a next step, one short question that offers it, such as "Want me to send it?". The first nudge about a kind of thing also says, once, that Nod will keep flagging things like it. Nudges arrive in the chat app you used last, Telegram or WhatsApp, and always in Nod. You answer in words, in Nod, Telegram or WhatsApp.
+Nod prepares useful work from your connected sources on its own and messages you when it's worth an interruption. That message is a nudge: what changed, what's ready and, when there's a next step, one short question that offers it, such as "Want me to send it?". The first nudge about a kind of thing also says, once, that Nod will keep flagging things like it. Nudges always appear in Nod, and also in the chat app you used last, Telegram or WhatsApp, if you've written from one. You answer in words, in Nod, Telegram or WhatsApp.
 
 Turn on **Automatic preparation** in **Settings → Notifications**. New profiles start with it off. Existing choices stay as saved.
 

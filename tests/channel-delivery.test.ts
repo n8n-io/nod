@@ -933,7 +933,13 @@ test(
         assert.equal((await linked.environment()).WHATSAPP_ALLOWED_NUMBER, '34611111111');
         assert.equal(
           (await linked.status()).channels.find((item) => item.provider === 'whatsapp')?.pairedUser,
-          'Synthetic phone',
+          '+34611111111',
+        );
+        assert.equal(
+          JSON.stringify((await pool.query('SELECT * FROM channel_settings')).rows).includes(
+            '34611111111',
+          ),
+          false,
         );
         const savedLink = await linked.environment();
         const savedPairingId = link.pairingId;
@@ -3470,6 +3476,66 @@ for (const provider of ['telegram', 'whatsapp'])
   );
 
 test(
+  'linking an owner while a settings change holds the channel fails fast instead of hanging',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 20_000 },
+  async (t) => {
+    const schema = `test_channel_pair_lock_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const app = Fastify();
+    t.after(async () => {
+      await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    const key = randomBytes(32);
+    let gate: Promise<void> | undefined;
+    const settings = await createChannelSettings(pool, {
+      ownerId: 'pair-lock-fixture',
+      keyStore: { id: 'fixture', configured: true, getKey: async () => key },
+      verifier: createChatSdkSetupVerifier({
+        fetch: async (url) =>
+          String(url).endsWith('/getMe')
+            ? Response.json({
+                ok: true,
+                result: {
+                  id: 987,
+                  is_bot: true,
+                  first_name: 'Fixture bot',
+                  username: 'fixture_bot',
+                },
+              })
+            : Response.json({ ok: true, result: { url: '' } }),
+      }),
+      apply: async () => {
+        await gate;
+      },
+    });
+    settings.registerRoutes(app);
+    const connected = await app.inject({
+      method: 'PUT',
+      url: '/api/channel-settings/telegram',
+      payload: { botToken: token },
+    });
+    assert.equal(connected.statusCode, 200);
+    let release!: () => void;
+    gate = new Promise((resolve) => (release = resolve));
+    const disconnect = app.inject({ method: 'DELETE', url: '/api/channel-settings/telegram' });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const started = Date.now();
+    await assert.rejects(pairTelegramOwner(settings, connected.json().pairingUrl, '123'));
+    assert.ok(Date.now() - started < 10_000);
+    release();
+    assert.equal((await disconnect).statusCode, 200);
+  },
+);
+
+test(
   'Telegram webhook setup binds the account that sends the live Start code',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
@@ -3530,7 +3596,6 @@ test(
       verifier: createChatSdkSetupVerifier(),
       apply: async (environment) =>
         channels!.replaceTransport(createChatSdkTransport(pool, environment)),
-      paired: (request) => channels!.announcePairing(request),
       observed: () => (states) => {
         observedChannels.push(states);
       },

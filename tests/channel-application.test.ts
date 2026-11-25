@@ -1905,14 +1905,18 @@ test(
               },
             ],
           });
+        const appliedBefore = applied.length;
         upsert('before-code', 'A request before linking');
         upsert('code', code);
         await channels.drain();
-        await waitFor(() => applied.at(-1)?.WHATSAPP_ALLOWED_LID === lid);
-        await waitFor(async () => {
-          whatsapp.emit('connection.update', { connection: 'open' });
-          return (await channels.pairing().catch(() => undefined))?.state === 'connected';
-        });
+        await waitFor(
+          async () =>
+            (await application.app.inject({ url: '/api/channel-settings', headers }))
+              .json()
+              .channels.find((item: { provider: string }) => item.provider === 'whatsapp')
+              ?.pairedUser === 'Your other phone',
+        );
+        assert.equal(applied.length, appliedBefore);
         const text = 'A request from WhatsApp';
         upsert('private-request', text);
         await channels.drain();
@@ -1932,7 +1936,10 @@ test(
           [randomUUID(), reply, message.id],
         );
         await channels.drain();
-        assert.deepEqual(whatsappReplies.at(-1), { jid: lid, text: reply });
+        assert.deepEqual(
+          whatsappReplies.filter((item) => item.text === reply),
+          [{ jid: lid, text: reply }],
+        );
         assert.ok(whatsappReplies.every((item) => item.jid === lid));
       });
     } finally {

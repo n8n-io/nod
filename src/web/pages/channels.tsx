@@ -305,7 +305,7 @@ function ChannelCard({
         [
           setup?.managed ? 'Managed by your server.' : '',
           error ||
-            (connected && !needsDelivery && !needsPairing
+            (connected && !needsDelivery && !needsPairing && lastMessageAt !== undefined
               ? lastMessageAt
                 ? `Last message from you: ${formatDateTime(lastMessageAt)}.`
                 : 'No message from you yet.'
@@ -744,7 +744,7 @@ export function Channels() {
                 (telegramStatus.waiting && pairingUrl ? (
                   <TelegramLink url={pairingUrl} title="Scan to link another Telegram account">
                     Open the bot from the account you want to use and press <strong>Start</strong>.
-                    The code works for 15 minutes.
+                    It replaces the current account. The code works for 15 minutes.
                   </TelegramLink>
                 ) : (
                   <Button

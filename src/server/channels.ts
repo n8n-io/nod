@@ -126,7 +126,7 @@ interface ChannelOptions {
     expiredConfirmation: string,
   ) => Promise<'new' | 'stale' | 'uncertain'>;
   attributeMediaUsage?(client: PoolClient, ids: string[], turnId: string): Promise<void>;
-  pair?: (request: ChannelPairingRequest) => Promise<unknown>;
+  pair?: (request: ChannelPairingRequest) => Promise<boolean>;
   activeThread?: (client: PoolClient) => Promise<{ id: string }>;
   activity?: () => Promise<LiveWork[]>;
   commandReply?: (
@@ -509,27 +509,36 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     );
   }
 
-  async function status() {
+  function owned(row: ChannelIdentity) {
     updateConfiguration();
-    const last = await pool.query<{ provider: string; at: Date }>(
-      'SELECT provider,max(created_at) AS at FROM channel_inbox WHERE owner_id=$1 GROUP BY provider',
+    const channel = channels.find((item) => item.id === row.provider);
+    if (!channel || channel.status === 'disabled') return false;
+    return channel.allowedSenderIds.length && channel.accountId
+      ? permitted(row)
+      : channel.status === 'setup_required';
+  }
+
+  async function recentOwners(client: Pool | PoolClient, submitted: boolean) {
+    const rows = await client.query<ChannelIdentity & { channel: string; at: Date }>(
+      `SELECT provider,account_id,sender_id,channel,max(created_at) AS at FROM channel_inbox
+       WHERE owner_id=$1 AND channel IS NOT NULL ${submitted ? "AND state='submitted'" : ''}
+       GROUP BY provider,account_id,sender_id,channel ORDER BY max(created_at) DESC LIMIT 20`,
       [ownerId],
     );
+    return rows.rows.filter(owned);
+  }
+
+  async function status() {
+    const recent = await recentOwners(pool, false);
     return configuration.map((channel) => ({
       ...channel,
       lastMessageAt:
-        last.rows.find((row) => row.provider === channel.provider)?.at.toISOString() ?? null,
+        recent.find((row) => row.provider === channel.provider)?.at.toISOString() ?? null,
     }));
   }
 
   async function ownerChannel(client: Pool | PoolClient = pool) {
-    const rows = await client.query<ChannelIdentity & { channel: string }>(
-      `SELECT provider,account_id,sender_id,channel FROM channel_inbox
-       WHERE owner_id=$1 AND state='submitted' AND channel IS NOT NULL
-       GROUP BY provider,account_id,sender_id,channel ORDER BY max(created_at) DESC LIMIT 20`,
-      [ownerId],
-    );
-    return rows.rows.find((row) => permitted(row))?.channel ?? 'web';
+    return (await recentOwners(client, true))[0]?.channel ?? 'web';
   }
 
   async function accept(message: InboundMessage, channelId: string) {
@@ -1029,7 +1038,12 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   async function completePairing(request: ChannelPairingRequest) {
     if (closed || !options.pair) return;
     try {
-      await options.pair(request);
+      if (!(await options.pair(request))) return;
+      transport.link?.(request);
+      updateConfiguration();
+      await announcePairing(request).catch((cause) =>
+        logFailure('channel_pairing_notice_failed', cause),
+      );
     } catch (cause) {
       logFailure('channel_pairing_failed', cause);
       throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {
@@ -2062,7 +2076,6 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         (transport.canDeliverLiteral?.({ channelId, text, literal }) ?? false)
       );
     },
-    announcePairing,
     ownerChannel,
     status,
     react,

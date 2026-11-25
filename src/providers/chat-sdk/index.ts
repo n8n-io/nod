@@ -617,18 +617,16 @@ export function createChatSdkTransport(
         }
         inputListener?.();
         await new Promise<void>((resolve) => {
+          const done = () => {
+            clearTimeout(timer);
+            lifetime.signal.removeEventListener('abort', done);
+            resolve();
+          };
           const timer = setTimeout(
-            resolve,
+            done,
             retryAfter ? retryAfter * 1000 : Math.min(30_000, 1000 * 2 ** failures++),
           );
-          lifetime.signal.addEventListener(
-            'abort',
-            () => {
-              clearTimeout(timer);
-              resolve();
-            },
-            { once: true },
-          );
+          lifetime.signal.addEventListener('abort', done, { once: true });
         });
       }
     }
@@ -646,6 +644,14 @@ export function createChatSdkTransport(
     },
     onInput(listener) {
       inputListener = listener;
+    },
+    link(request) {
+      const channel = channels.find((item) => item.id === request.channelId);
+      if (request.channelId !== 'telegram' || !channel) return;
+      env.TELEGRAM_ALLOWED_USER_ID = request.senderId;
+      channel.allowedSenderIds = [request.senderId];
+      channel.missing = channel.missing.filter((name) => name !== 'TELEGRAM_ALLOWED_USER_ID');
+      if (!channel.missing.length) channel.status = 'configured';
     },
     async poll(accept, pair, react, approve) {
       if (closed || polling || !telegram || env.TELEGRAM_MODE !== 'polling') return;

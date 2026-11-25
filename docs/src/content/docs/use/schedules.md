@@ -67,7 +67,7 @@ flowchart TD
   due[Schedule is due]:::accent --> run[Nod runs it<br/>in the background]
   run --> check[Trust check<br/>against your instruction]
   check --> useful{{Something you asked to get,<br/>a useful result or a question?}}
-  useful -- yes --> send[Message in the chat<br/>where you set it up]:::go
+  useful -- yes --> send[Message in Nod and the<br/>chat app you used last]:::go
   useful -- no --> quiet[Stays quiet]:::muted
 ```
 
@@ -75,7 +75,7 @@ flowchart TD
 - **Follow a run in Scheduled.** The schedule shows what Nod is doing, such as reading files or using an app. Open the live line to see recent completed activity when it is available.
 - **What you asked to get arrives every time.** A summary, brief or reminder comes on every run. A watch or check-in messages you only when something needs you, such as a real price drop, a problem or a question. Routine checks stay quiet.
 - **A failed run tells you.** If a run stops on an error, Nod sends a short message that names the schedule and says what stopped it, so a missing summary never goes unnoticed.
-- **It finds you where you are.** A schedule sends its results to the chat app you used last, Telegram or WhatsApp. They always show in Nod too.
+- **It finds you where you are.** A schedule's results always show in Nod, and also go to the chat app you used last, Telegram or WhatsApp, if you've written from one.
 - **Corrections keep the rest.** Nod keeps the owner request and later changes used to set up the schedule. “Every hour instead” changes timing. “Send it to Lena instead” changes the recipient. Other limits stay in effect, and a later “only summarize” removes an earlier send request. Timing changes keep their owner request even when the work instruction stays the same. There is no ten-change reset.
 - **Approvals still apply.** Each outside action passes the same [trust check](/trust/approvals/). The checker gets the saved owner inputs in order, the exact proposal a reply answered, and the run time. Earlier eligible owner messages can explain “it” or “that folder”; they cannot grant another action. Chat, tasks and schedules use the same source-selection rules. LLM and decision-model checks receive the same evidence. If your instructions do not cover an action, Nod asks first. If the check cannot decide, the action does not run and Nod does not ask.
 - **A complete instruction approval has a clear scope.** When you approve a new complete schedule instruction, Nod shows its future work, targets, timing and limits. That approval can cover the recurring work it describes. Approving a name or timing change changes only those fields. Approving one email never grants recurring sends.

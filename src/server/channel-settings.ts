@@ -18,7 +18,6 @@ import type {
 } from '../shared/contracts.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { ChannelPairingRequest } from '../ports/messaging.ts';
-import { logFailure } from './failure-log.ts';
 
 const providerSchema = z.enum(['telegram', 'whatsapp']);
 const linkedModes = new Set(['linked', 'bot', 'self-chat']);
@@ -233,18 +232,21 @@ async function databaseStore(pool: Pool, owner: string) {
       ).rows[0]?.summary;
     },
     async replace(previous: ChannelSettingsRow, next: ChannelSettingsRow) {
-      const updated = await pool.query(
-        `UPDATE channel_settings SET ciphertext=$2,summary=$3::jsonb || CASE WHEN summary ? 'webhookStatus' THEN jsonb_build_object('webhookStatus',summary->'webhookStatus') ELSE '{}'::jsonb END,updated_at=now()
-         WHERE owner_id=$1 AND provider=$5 AND enabled=true AND ciphertext=$4`,
-        [
-          owner,
-          next.ciphertext,
-          JSON.stringify(next.summary),
-          previous.ciphertext,
-          previous.provider,
-        ],
-      );
-      if (updated.rowCount !== 1) throw new ChannelSetupFailure('pairing_unavailable');
+      await transaction(async (client) => {
+        await client.query("SET LOCAL lock_timeout = '2s'");
+        const updated = await client.query(
+          `UPDATE channel_settings SET ciphertext=$2,summary=$3::jsonb || CASE WHEN summary ? 'webhookStatus' THEN jsonb_build_object('webhookStatus',summary->'webhookStatus') ELSE '{}'::jsonb END,updated_at=now()
+           WHERE owner_id=$1 AND provider=$5 AND enabled=true AND ciphertext=$4`,
+          [
+            owner,
+            next.ciphertext,
+            JSON.stringify(next.summary),
+            previous.ciphertext,
+            previous.provider,
+          ],
+        );
+        if (updated.rowCount !== 1) throw new ChannelSetupFailure('pairing_unavailable');
+      }, pool);
     },
   };
 }
@@ -318,7 +320,6 @@ export async function createChannelSettings(
     linkStatus?(): Promise<ChannelLinkStatus>;
     cancelPairing?(pairingId: string, restart?: boolean): Promise<boolean>;
     unlink?(): Promise<void>;
-    paired?(request: ChannelPairingRequest): Promise<void>;
     observed?(): (channels: ChannelConnectionObservation[]) => void;
   },
 ) {
@@ -382,20 +383,29 @@ export async function createChannelSettings(
     )
       ? await options.linkStatus?.().catch(() => undefined)
       : undefined;
+    const savedNumber = async (row: ChannelSettingsRow) => {
+      if (row.provider !== 'whatsapp' || !linked || !row.ciphertext) return undefined;
+      const number = openChannelSettings(await encryptionKey(), owner, row).WHATSAPP_ALLOWED_NUMBER;
+      return number ? `+${number}` : undefined;
+    };
     const result = {
       ready: options.keyStore.configured,
-      channels: rows.map((row) =>
-        summarySchema.parse({
-          ...row.summary,
-          provider: row.provider,
-          enabled: row.enabled,
-          ...(row.provider === 'whatsapp' && linked
-            ? {
-                connectionState: linked.state,
-                accountHandle: linked.accountHandle,
-                accountName: linked.accountName,
-              }
-            : {}),
+      channels: await Promise.all(
+        rows.map(async (row) => {
+          const pairedUser = await savedNumber(row).catch(() => undefined);
+          return summarySchema.parse({
+            ...row.summary,
+            provider: row.provider,
+            enabled: row.enabled,
+            ...(pairedUser ? { pairedUser } : {}),
+            ...(row.provider === 'whatsapp' && linked
+              ? {
+                  connectionState: linked.state,
+                  accountHandle: linked.accountHandle,
+                  accountName: linked.accountName,
+                }
+              : {}),
+          });
         }),
       ),
     };
@@ -596,16 +606,7 @@ export async function createChannelSettings(
       );
       return true;
     });
-    if (paired) void connectPaired(request);
     return paired;
-  }
-  async function connectPaired(request: ChannelPairingRequest) {
-    try {
-      await exclusive(async () => options.apply(await environment()));
-      await options.paired?.(request);
-    } catch (error) {
-      logFailure('channel_pairing_failed', error);
-    }
   }
   async function restartPairing(provider: ChannelProvider) {
     return exclusive(async () => {
