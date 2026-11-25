@@ -2929,7 +2929,10 @@ async function initializeApplication(
             JSON.stringify(
               (await channels?.status())?.map((channel) => ({
                 channel: channel.provider,
-                connected: channel.status === 'configured' && channel.available !== false,
+                connected:
+                  channel.status === 'configured' &&
+                  channel.ownerLinked &&
+                  channel.available !== false,
                 ...(channel.error ? { error: channel.error } : {}),
                 lastMessageFromOwner: channel.lastMessageAt,
               })) ?? [],

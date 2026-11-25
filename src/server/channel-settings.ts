@@ -157,7 +157,7 @@ export function managedChannelEnvironment(environment: Record<string, string | u
   for (const provider of ['telegram', 'whatsapp'] as const) {
     const values = Object.fromEntries(
       [...fields[provider]]
-        .filter((name) => !name.includes('_PAIRING_'))
+        .filter((name) => !name.includes('_PAIRING_') && name !== 'WHATSAPP_ALLOWED_LID')
         .map((name) => [name, environment[name]] as const)
         .filter((entry): entry is [string, string] => Boolean(entry[1])),
     );
@@ -232,21 +232,18 @@ async function databaseStore(pool: Pool, owner: string) {
       ).rows[0]?.summary;
     },
     async replace(previous: ChannelSettingsRow, next: ChannelSettingsRow) {
-      await transaction(async (client) => {
-        await client.query("SET LOCAL lock_timeout = '2s'");
-        const updated = await client.query(
-          `UPDATE channel_settings SET ciphertext=$2,summary=$3::jsonb || CASE WHEN summary ? 'webhookStatus' THEN jsonb_build_object('webhookStatus',summary->'webhookStatus') ELSE '{}'::jsonb END,updated_at=now()
-           WHERE owner_id=$1 AND provider=$5 AND enabled=true AND ciphertext=$4`,
-          [
-            owner,
-            next.ciphertext,
-            JSON.stringify(next.summary),
-            previous.ciphertext,
-            previous.provider,
-          ],
-        );
-        if (updated.rowCount !== 1) throw new ChannelSetupFailure('pairing_unavailable');
-      }, pool);
+      const updated = await pool.query(
+        `UPDATE channel_settings SET ciphertext=$2,summary=$3::jsonb || CASE WHEN summary ? 'webhookStatus' THEN jsonb_build_object('webhookStatus',summary->'webhookStatus') ELSE '{}'::jsonb END,updated_at=now()
+         WHERE owner_id=$1 AND provider=$5 AND enabled=true AND ciphertext=$4`,
+        [
+          owner,
+          next.ciphertext,
+          JSON.stringify(next.summary),
+          previous.ciphertext,
+          previous.provider,
+        ],
+      );
+      if (updated.rowCount !== 1) throw new ChannelSetupFailure('pairing_unavailable');
     },
   };
 }
@@ -327,7 +324,6 @@ export async function createChannelSettings(
   const managed = options.managed ?? {};
   const store = await databaseStore(pool, owner);
   const exclusive = createLock();
-  const pairingExclusive = createLock();
   let key: Promise<Buffer> | undefined;
   let statusObservationSequence = 0;
   function encryptionKey() {
@@ -569,7 +565,7 @@ export async function createChannelSettings(
       !pairingSender[provider.data].safeParse(request).success
     )
       return false;
-    const paired = await pairingExclusive(async () => {
+    const paired = await exclusive(async () => {
       const current = await savedRow(provider.data);
       if (!current) return false;
       const { row, configured } = current;
@@ -631,23 +627,21 @@ export async function createChannelSettings(
           throw new ChannelSetupFailure('activation_pending');
         }
       }
-      return pairingExclusive(async () => {
-        const latest = await savedRow(provider);
-        if (!latest) throw new ChannelSetupFailure('pairing_unavailable');
-        const channel = summarySchema.parse(latest.row.summary);
-        if (recovering && latest.configured.TELEGRAM_ALLOWED_USER_ID) return { ok: true, channel };
-        const pairing = issuePairing(channel, address);
-        await replaceRow(
-          latest.row,
-          { ...withoutPairing(latest.configured), ...pairing.environment },
-          pairing.summary,
-        );
-        return {
-          ok: true,
-          channel: summarySchema.parse(pairing.summary),
-          pairingUrl: pairing.pairingUrl,
-        };
-      });
+      const latest = await savedRow(provider);
+      if (!latest) throw new ChannelSetupFailure('pairing_unavailable');
+      const channel = summarySchema.parse(latest.row.summary);
+      if (recovering && latest.configured.TELEGRAM_ALLOWED_USER_ID) return { ok: true, channel };
+      const pairing = issuePairing(channel, address);
+      await replaceRow(
+        latest.row,
+        { ...withoutPairing(latest.configured), ...pairing.environment },
+        pairing.summary,
+      );
+      return {
+        ok: true,
+        channel: summarySchema.parse(pairing.summary),
+        pairingUrl: pairing.pairingUrl,
+      };
     });
   }
   function registerRoutes(app: FastifyInstance) {

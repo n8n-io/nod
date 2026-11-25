@@ -372,6 +372,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   let lastError: string | null = null;
   let receiving = new AbortController();
   const pendingMedia = new Map<string, Promise<void>>();
+  const pairings = new Set<Promise<void>>();
   async function saveReply(
     client: PoolClient,
     sourceId: string,
@@ -532,6 +533,9 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     const recent = await recentOwners(pool, false);
     return configuration.map((channel) => ({
       ...channel,
+      ownerLinked: Boolean(
+        channels.find((item) => item.id === channel.provider)?.allowedSenderIds.length,
+      ),
       lastMessageAt:
         recent.find((row) => row.provider === channel.provider)?.at.toISOString() ?? null,
     }));
@@ -1036,20 +1040,16 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   }
 
   async function completePairing(request: ChannelPairingRequest) {
-    if (closed || !options.pair) return;
-    try {
-      if (!(await options.pair(request))) return;
+    const pair = options.pair;
+    if (closed || !pair) return;
+    const task = (async () => {
+      if (!(await pair(request)) || closed) return;
       transport.link?.(request);
       updateConfiguration();
-      await announcePairing(request).catch((cause) =>
-        logFailure('channel_pairing_notice_failed', cause),
-      );
-    } catch (cause) {
-      logFailure('channel_pairing_failed', cause);
-      throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {
-        statusCode: 503,
-      });
-    }
+      await announcePairing(request);
+    })().catch((cause) => logFailure('channel_pairing_failed', cause));
+    pairings.add(task);
+    void task.finally(() => pairings.delete(task));
   }
 
   async function announcePairing(request: ChannelPairingRequest) {
@@ -1961,6 +1961,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     await running;
     await presenceRunning;
     await Promise.allSettled(pendingMedia.values());
+    await Promise.allSettled(pairings);
     await sendFencePool?.end();
     await transport.close();
   }
