@@ -17,6 +17,7 @@ import { splitMessage } from '@chat-adapter/whatsapp';
 import type { ChannelSession, ChannelSessionStore } from '../../ports/channel-session.ts';
 import { MessagingAttachmentError } from '../../ports/messaging.ts';
 import type {
+  ChannelPairingRequest,
   InboundMessage,
   InboundReaction,
   MessagingAttachment,
@@ -49,11 +50,8 @@ const qrLifetimeMs = 60_000;
 export type WhatsAppDrop = {
   reason:
     | 'unsupported_chat'
-    | 'sender_unmatched'
-    | 'self_chat_mismatch'
+    | 'not_owner'
     | 'from_me'
-    | 'before_link'
-    | 'invalid_time'
     | 'own_echo'
     | 'missing_id'
     | 'lid_lookup_failed'
@@ -61,7 +59,6 @@ export type WhatsAppDrop = {
     | 'unsupported_type'
     | 'resend_ignored'
     | 'queue_full';
-  mode: 'bot' | 'own';
   addressing: 'lid' | 'phone' | 'other';
   suppressed: number;
 };
@@ -72,8 +69,8 @@ type Socket = Pick<
 >;
 
 export function createWhatsAppLinkedTransport(options: {
-  mode: 'bot' | 'self-chat';
   allowedNumber?: string;
+  allowedLid?: string;
   store: ChannelSessionStore;
   createSocket?: (configuration: Parameters<typeof makeWASocket>[0]) => Socket;
   download?: typeof downloadMediaMessage;
@@ -92,7 +89,7 @@ export function createWhatsAppLinkedTransport(options: {
   let expiry: ReturnType<typeof setTimeout> | undefined;
   let attempt = 0;
   let linkedAt = 0;
-  let allowedLid: string | undefined;
+  let learnedLid: string | undefined;
   const revokedLids = new Set<string>();
   let state: ChannelLinkStatus = { state: 'connecting' };
   const lifetime = new AbortController();
@@ -100,6 +97,9 @@ export function createWhatsAppLinkedTransport(options: {
   const sentIds = new Set<string>();
   const incoming: InboundMessage[] = [];
   const reactions: InboundReaction[] = [];
+  const pairings: ChannelPairingRequest[] = [];
+  let inputListener: (() => void) | undefined;
+  const otherPhone = options.allowedNumber ?? options.allowedLid;
   let received = Promise.resolve();
   let queued = 0;
   const drops = new Map<string, { at: number; suppressed: number }>();
@@ -157,16 +157,21 @@ export function createWhatsAppLinkedTransport(options: {
   function ownNumber() {
     return numberOf(auth?.creds.me?.id ?? socket?.user?.id);
   }
+  function ownLid(current?: Socket) {
+    return jidNormalizedUser(auth?.creds.me?.lid ?? (current ?? socket)?.user?.lid ?? '');
+  }
+  function selfChat(jid: string) {
+    return jid === `${ownNumber()}@s.whatsapp.net` || jid === ownLid();
+  }
   function identity() {
     const own = ownNumber();
-    if (!own || (options.mode === 'bot' && own === options.allowedNumber)) return false;
+    if (!own) return false;
     channel.accountId = `linked:${own}`;
-    channel.allowedSenderIds =
-      options.mode === 'self-chat' ? [own] : options.allowedNumber ? [options.allowedNumber] : [];
-    channel.status = channel.allowedSenderIds.length ? 'configured' : 'setup_required';
+    channel.allowedSenderIds = otherPhone && otherPhone !== own ? [own, otherPhone] : [own];
+    channel.status = 'configured';
     state.accountHandle = `+${own}`;
     state.accountName = auth.creds.me?.name?.slice(0, 200);
-    return channel.status === 'configured';
+    return true;
   }
   function drop(reason: WhatsAppDrop['reason'], message?: WAMessage) {
     const jid = message?.key.remoteJid ?? '';
@@ -183,50 +188,40 @@ export function createWhatsAppLinkedTransport(options: {
       return;
     }
     drops.set(key, { at: now, suppressed: 0 });
-    options.onDrop?.({
-      reason,
-      mode: options.mode === 'bot' ? 'bot' : 'own',
-      addressing,
-      suppressed: last?.suppressed ?? 0,
-    });
+    options.onDrop?.({ reason, addressing, suppressed: last?.suppressed ?? 0 });
   }
   async function sender(
     message: WAMessage,
     current: Socket,
-  ): Promise<{ phone: string; jid: string } | WhatsAppDrop['reason']> {
+  ): Promise<
+    { phone: string; jid: string } | { stranger: string; jid: string } | WhatsAppDrop['reason']
+  > {
     const jid = message.key.remoteJid;
     if (!jid || message.key.participant || !/^\d+(?::\d+)?@(s\.whatsapp\.net|lid)$/.test(jid))
       return 'unsupported_chat';
     const normalizedJid = jidNormalizedUser(jid);
-    if (revokedLids.has(normalizedJid)) return 'sender_unmatched';
-    let phone = numberOf(jid);
-    if (!phone && jid.endsWith('@lid')) {
-      phone =
-        options.mode === 'self-chat'
-          ? normalizedJid === jidNormalizedUser(auth.creds.me?.lid ?? current.user?.lid ?? '')
-            ? ownNumber()
-            : undefined
-          : numberOf(message.key.remoteJidAlt);
-      if (!phone && options.mode !== 'self-chat')
-        phone = numberOf(
-          await current.signalRepository.lidMapping.getPNForLID(jid).catch(() => null),
-        );
-      const allowedNumber = options.allowedNumber;
-      if (!phone && options.mode === 'bot' && allowedNumber) {
-        const lid = await current.signalRepository.lidMapping
-          .getLIDForPN(`${allowedNumber}@s.whatsapp.net`)
-          .catch(() => false as const);
-        if (lid === false) return 'lid_lookup_failed';
-        if (lid ? jidNormalizedUser(lid) === normalizedJid : normalizedJid === allowedLid)
-          phone = allowedNumber;
-      }
+    const own = ownNumber();
+    if (message.key.fromMe)
+      return own && (normalizedJid === `${own}@s.whatsapp.net` || normalizedJid === ownLid(current))
+        ? { phone: own, jid: normalizedJid }
+        : 'from_me';
+    if (revokedLids.has(normalizedJid)) return 'not_owner';
+    if (options.allowedLid && normalizedJid === options.allowedLid)
+      return { phone: otherPhone!, jid: normalizedJid };
+    let phone = numberOf(jid) ?? numberOf(message.key.remoteJidAlt);
+    if (!phone && jid.endsWith('@lid'))
+      phone = numberOf(await current.signalRepository.lidMapping.getPNForLID(jid).catch(() => null));
+    const allowedNumber = options.allowedNumber;
+    if (!phone && allowedNumber && jid.endsWith('@lid')) {
+      const lid = await current.signalRepository.lidMapping
+        .getLIDForPN(`${allowedNumber}@s.whatsapp.net`)
+        .catch(() => false as const);
+      if (lid === false) return 'lid_lookup_failed';
+      if (lid ? jidNormalizedUser(lid) === normalizedJid : normalizedJid === learnedLid)
+        phone = allowedNumber;
     }
-    if (!phone || !channel.allowedSenderIds.includes(phone))
-      return options.mode === 'self-chat' ? 'self_chat_mismatch' : 'sender_unmatched';
-    if (options.mode === 'self-chat') {
-      if (phone !== ownNumber() || !message.key.fromMe) return 'self_chat_mismatch';
-    } else if (message.key.fromMe) return 'from_me';
-    return { phone, jid: normalizedJid };
+    if (phone && phone === allowedNumber) return { phone, jid: normalizedJid };
+    return { stranger: phone ?? normalizedJid, jid: normalizedJid };
   }
   function attachment(message: WAMessage): MessagingAttachment[] {
     const content = normalizeMessageContent(message.message);
@@ -338,16 +333,34 @@ export function createWhatsAppLinkedTransport(options: {
   async function intake(message: WAMessage, current: Socket) {
     if (closed || halted || socket !== current || !identity()) return;
     const id = message.key.id;
-    const at = Number(message.messageTimestamp) * 1000;
+    const at = Number(message.messageTimestamp) * 1000 || Date.now();
     if (!id) return drop('missing_id', message);
     if (sentIds.has(id)) return drop('own_echo', message);
-    if (!Number.isFinite(at) || at > Date.now() + 300_000) return drop('invalid_time', message);
-    if (at < linkedAt) return drop('before_link', message);
     const source = await sender(message, current);
     if (closed || halted || socket !== current) return;
     if (typeof source === 'string') return drop(source, message);
-    if (revokedLids.has(source.jid)) return drop('sender_unmatched', message);
+    if (revokedLids.has(source.jid)) return drop('not_owner', message);
     const content = normalizeMessageContent(message.message);
+    if ('stranger' in source) {
+      const code = /^[A-Za-z0-9_-]{32}$/.exec(
+        (content?.conversation ?? content?.extendedTextMessage?.text ?? '').trim(),
+      )?.[0];
+      if (!code || pairings.length >= 10) return drop('not_owner', message);
+      pairings.push({
+        channelId: 'whatsapp',
+        accountId: channel.accountId!,
+        senderId: source.stranger,
+        senderName:
+          message.pushName?.trim().slice(0, 200) ||
+          (source.stranger.endsWith('@lid') ? 'Your other phone' : `+${source.stranger}`),
+        messageId: id,
+        threadId: source.jid,
+        code,
+        sentAt: new Date(at),
+      });
+      inputListener?.();
+      return;
+    }
     if (!content)
       return drop(
         message.messageStubType === proto.WebMessageInfo.StubType.CIPHERTEXT
@@ -365,6 +378,7 @@ export function createWhatsAppLinkedTransport(options: {
           messageId: reaction.key.id,
           reaction: reaction.text || null,
         });
+      inputListener?.();
       return;
     }
     const text =
@@ -399,6 +413,7 @@ export function createWhatsAppLinkedTransport(options: {
       ...(context?.stanzaId ? { replyToMessageId: context.stanzaId } : {}),
       ...(files.length ? { attachments: files } : {}),
     });
+    inputListener?.();
   }
   function connect() {
     if (closed || halted) return;
@@ -425,16 +440,12 @@ export function createWhatsAppLinkedTransport(options: {
       connectTimeoutMs: 30_000,
       defaultQueryTimeoutMs: 30_000,
       qrTimeout: qrLifetimeMs,
-      shouldIgnoreJid: (jid) => {
-        if (jid === 'status@broadcast' || jid.endsWith('@g.us') || jid.endsWith('@newsletter'))
-          return true;
-        const phone = numberOf(jid);
-        return Boolean(phone && !channel.allowedSenderIds.includes(phone) && phone !== ownNumber());
-      },
+      shouldIgnoreJid: (jid) =>
+        jid === 'status@broadcast' || jid.endsWith('@g.us') || jid.endsWith('@newsletter'),
     });
     socket = current;
-    allowedLid = undefined;
-    if (options.mode === 'bot' && options.allowedNumber)
+    learnedLid = undefined;
+    if (options.allowedNumber)
       current.ev.on('lid-mapping.update', ({ lid, pn }) => {
         if (closed || halted || socket !== current || !/^\d+(?::\d+)?@lid$/.test(lid)) return;
         const phone = numberOf(pn);
@@ -442,10 +453,10 @@ export function createWhatsAppLinkedTransport(options: {
         const jid = jidNormalizedUser(lid);
         if (phone === options.allowedNumber) {
           revokedLids.delete(jid);
-          allowedLid = jid;
+          learnedLid = jid;
         } else {
           revokedLids.add(jid);
-          if (allowedLid === jid) allowedLid = undefined;
+          if (learnedLid === jid) learnedLid = undefined;
         }
       });
     current.ev.on('creds.update', (update) => {
@@ -487,9 +498,7 @@ export function createWhatsAppLinkedTransport(options: {
         if (!identity()) {
           stop(
             'failed',
-            ownNumber() === options.allowedNumber
-              ? 'The bot account uses your personal number. Link a different account, or choose Use my own number.'
-              : 'WhatsApp did not provide a usable account number. Select Reconnect.',
+            'WhatsApp did not provide a usable account number. Select Reconnect.',
           );
           return;
         }
@@ -658,9 +667,7 @@ export function createWhatsAppLinkedTransport(options: {
       input.channelId !== 'whatsapp' ||
       input.accountId !== channel.accountId ||
       !/^\d+@(s\.whatsapp\.net|lid)$/.test(input.threadId) ||
-      (options.mode === 'self-chat' &&
-        input.threadId !== `${ownNumber()}@s.whatsapp.net` &&
-        input.threadId !== jidNormalizedUser(auth?.creds.me?.lid ?? socket?.user?.lid ?? ''))
+      (!otherPhone && !selfChat(input.threadId))
     )
       throw new Error('The WhatsApp target is unavailable.');
   };
@@ -675,9 +682,16 @@ export function createWhatsAppLinkedTransport(options: {
       await start();
       return { ...state, pairingId };
     },
-    async poll(accept, _pair, react) {
+    onInput(listener) {
+      inputListener = listener;
+    },
+    async poll(accept, pair, react) {
       await start();
       await received;
+      while (!closed && !halted && pairings.length) {
+        await pair?.(pairings[0]);
+        pairings.shift();
+      }
       while (!closed && !halted && incoming.length) {
         await accept(incoming[0]);
         incoming.shift();
@@ -805,7 +819,7 @@ export function createWhatsAppLinkedTransport(options: {
         react: {
           key: {
             remoteJid: input.threadId,
-            fromMe: options.mode === 'self-chat',
+            fromMe: selfChat(input.threadId),
             id: input.messageId,
           },
           text: input.reaction ?? '',

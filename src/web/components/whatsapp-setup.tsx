@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { ChannelLinkStatus, ChannelSetupSummary } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
-import { Button, Checkbox, Field, Input, Notice } from './ui';
+import { Button, Checkbox, Notice } from './ui';
 
 export function WhatsAppSetup({
   setup,
@@ -14,28 +14,21 @@ export function WhatsAppSetup({
   onCloud,
   onDone,
   onDisconnect,
-  selfChatOnly = false,
+  onPhone,
 }: {
   setup?: ChannelSetupSummary;
   busy: boolean;
   ready: boolean;
   error: string;
-  onSave(input: {
-    mode: 'bot' | 'self-chat';
-    allowedNumber?: string;
-    policyConfirmed: true;
-  }): Promise<boolean>;
+  onSave(input: { mode: 'linked'; policyConfirmed: true }): Promise<boolean>;
   onRefresh(): Promise<unknown>;
   onCloud?(): void;
   onDone(): void;
   onDisconnect?(): void;
-  selfChatOnly?: boolean;
+  onPhone?(): Promise<string | null>;
 }) {
-  const [mode, setMode] = useState<'bot' | 'self-chat'>(
-    selfChatOnly ? 'self-chat' : (setup?.linkMode ?? 'bot'),
-  );
-  const [number, setNumber] = useState('');
   const [policy, setPolicy] = useState(false);
+  const [phoneUrl, setPhoneUrl] = useState<string | null>(null);
   const [link, setLink] = useState<ChannelLinkStatus>();
   const [failure, setFailure] = useState('');
   const [restarting, setRestarting] = useState(false);
@@ -140,6 +133,9 @@ export function WhatsAppSetup({
   const linkedNumber = (link?.accountHandle ?? setup?.accountHandle)?.replace(/^\+/, '');
   const chatUrl =
     linkedNumber && /^\d{7,15}$/.test(linkedNumber) ? `https://wa.me/${linkedNumber}` : undefined;
+  const waitingPhone = Boolean(
+    setup?.pairingExpiresAt && Date.parse(setup.pairingExpiresAt) > Date.now(),
+  );
   return (
     <div className="channel-wizard-step" data-analytics-private>
       {(error || failure) && <Notice>{error || failure}</Notice>}
@@ -147,69 +143,16 @@ export function WhatsAppSetup({
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            if (policy)
-              void onSave({
-                mode: selfChatOnly ? 'self-chat' : mode,
-                ...(!selfChatOnly && mode === 'bot' ? { allowedNumber: number.trim() } : {}),
-                policyConfirmed: true,
-              });
+            if (policy) void onSave({ mode: 'linked', policyConfirmed: true });
           }}
         >
-          {!selfChatOnly && (
-            <fieldset disabled={busy} className="channel-modes">
-              <legend>Choose how you will message Nod</legend>
-              <label>
-                <input
-                  type="radio"
-                  name="whatsapp-mode"
-                  checked={mode === 'bot'}
-                  onChange={() => setMode('bot')}
-                />{' '}
-                Separate bot number
-              </label>
-              <label>
-                <input
-                  type="radio"
-                  name="whatsapp-mode"
-                  checked={mode === 'self-chat'}
-                  onChange={() => setMode('self-chat')}
-                />{' '}
-                Use my own number
-              </label>
-            </fieldset>
-          )}
-          {!selfChatOnly && mode === 'bot' ? (
-            <>
-              <p>
-                Register a second number in WhatsApp or the WhatsApp Business app. You will link
-                that account to Nod.
-              </p>
-              <Field
-                label="Your personal WhatsApp number"
-                hint="Include the country code, without + or spaces. Only this number can start work."
-              >
-                <Input
-                  type="tel"
-                  inputMode="tel"
-                  autoComplete="tel"
-                  pattern="[0-9]{7,15}"
-                  maxLength={15}
-                  required
-                  value={number}
-                  onChange={(event) => setNumber(event.target.value)}
-                  disabled={busy}
-                />
-              </Field>
-            </>
-          ) : (
-            <p>
-              Use <strong>Message yourself</strong> to chat with Nod. Other chats stay outside Nod.
-            </p>
-          )}
+          <p>
+            Scan the code with the phone whose WhatsApp Nod will use. Then write to Nod in{' '}
+            <strong>Message yourself</strong>.
+          </p>
           <p>
             WhatsApp doesn’t officially support this connection, so there’s a small risk of account
-            restrictions. Nod only messages you.
-            {!selfChatOnly && ' A separate bot number keeps your own chats safe.'}
+            restrictions. Nod only messages you. A separate number keeps your own chats safe.
           </p>
           <label className="channel-policy">
             <Checkbox
@@ -235,7 +178,7 @@ export function WhatsAppSetup({
               {busy ? 'Preparing connection…' : 'Show QR code'}
             </Button>
           </div>
-          {!selfChatOnly && onCloud && (
+          {onCloud && (
             <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onCloud}>
               Use Meta Cloud API instead
             </Button>
@@ -267,10 +210,27 @@ export function WhatsAppSetup({
                   ) : (
                     'Open WhatsApp'
                   )}
-                  {setup?.linkMode === 'self-chat'
-                    ? ', select Message yourself, and send Nod a message.'
-                    : ' on your phone and send a message to the linked number.'}
+                  , select <strong>Message yourself</strong>, and send Nod a message.
                 </p>
+                {phoneUrl && waitingPhone ? (
+                  <div className="whatsapp-setup-phone">
+                    <div className="whatsapp-setup-qr">
+                      <QRCodeSVG
+                        value={phoneUrl}
+                        size={152}
+                        marginSize={4}
+                        level="M"
+                        title="Open WhatsApp on your other phone"
+                      />
+                    </div>
+                    <p>
+                      Scan with your other phone and send the message that opens. The code works
+                      for 15 minutes.
+                    </p>
+                  </div>
+                ) : setup?.pairedUser ? (
+                  <p>Also from {setup.pairedUser}.</p>
+                ) : null}
               </>
             ) : state === 'awaiting_scan' ? (
               <>
@@ -322,6 +282,16 @@ export function WhatsAppSetup({
                   onClick={onDisconnect}
                 >
                   Disconnect
+                </Button>
+              )}
+              {state === 'connected' && onPhone && !(phoneUrl && waitingPhone) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={async () => setPhoneUrl(await onPhone())}
+                >
+                  Write from another phone
                 </Button>
               )}
               {state === 'connected' && (

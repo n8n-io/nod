@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import type { Pool, PoolClient } from 'pg';
+import type { Pool } from 'pg';
 import { z } from 'zod';
 import { openVaultValue, sealVaultValue } from './vault-crypto.ts';
 import { transaction } from './transaction.ts';
@@ -18,8 +18,10 @@ import type {
 } from '../shared/contracts.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { ChannelPairingRequest } from '../ports/messaging.ts';
+import { logFailure } from './failure-log.ts';
 
 const providerSchema = z.enum(['telegram', 'whatsapp']);
+const linkedModes = new Set(['linked', 'bot', 'self-chat']);
 export type ChannelConnectionObservation = {
   channel: ChannelProvider;
   state: 'disabled' | 'setup_pending' | 'connected' | 'configured_unverified';
@@ -32,11 +34,7 @@ function managedConfigurationReady(provider: ChannelProvider, values: Record<str
       telegramSecret.test(values.TELEGRAM_WEBHOOK_SECRET_TOKEN ?? '')
     );
   if (values.WHATSAPP_POLICY_CONFIRMED !== 'true') return false;
-  if (values.WHATSAPP_MODE === 'bot' || values.WHATSAPP_MODE === 'self-chat')
-    return (
-      values.WHATSAPP_MODE === 'self-chat' ||
-      /^\d{7,15}$/.test(values.WHATSAPP_ALLOWED_NUMBER ?? '')
-    );
+  if (linkedModes.has(values.WHATSAPP_MODE ?? '')) return true;
   return (
     values.WHATSAPP_MODE === 'cloud' &&
     [
@@ -92,7 +90,6 @@ const summarySchema = z.object({
   accountName: z.string().max(200).optional(),
   accountHandle: z.string().max(200).optional(),
   mode: z.enum(['polling', 'webhook', 'linked']).optional(),
-  linkMode: z.enum(['bot', 'self-chat']).optional(),
   connectionState: z
     .enum([
       'connecting',
@@ -112,20 +109,16 @@ const summarySchema = z.object({
     .regex(/^[A-Za-z0-9_]{1,64}$/)
     .optional(),
   allowedUserId: z.string().regex(telegramUserId).optional(),
-  pairingCandidate: z
-    .object({
-      id: z.string().regex(telegramUserId),
-      name: z.string().min(1).max(200),
-      username: z
-        .string()
-        .regex(/^[A-Za-z0-9_]{1,64}$/)
-        .optional(),
-    })
-    .optional(),
   pairingExpiresAt: z.iso.datetime().optional(),
 });
-const candidateSchema = z.object({
-  senderId: z.string().regex(telegramUserId),
+const pairingSender = {
+  telegram: z.object({ senderId: z.string().regex(telegramUserId) }),
+  whatsapp: z.object({
+    senderId: z.string().regex(/^(?:\d{7,15}|\d{1,32}@lid)$/),
+    threadId: z.string().regex(/^\d{1,32}@(?:s\.whatsapp\.net|lid)$/),
+  }),
+};
+const pairingRequestSchema = z.object({
   senderName: z.string().min(1).max(200),
   senderUsername: z
     .string()
@@ -133,10 +126,8 @@ const candidateSchema = z.object({
     .optional(),
   accountId: z.string().min(1),
   messageId: z.string().min(1),
-  threadId: z.string().min(1),
-  sentAt: z.iso.datetime(),
+  code: z.string().min(1).max(256),
 });
-type TelegramPairingCandidate = z.infer<typeof candidateSchema>;
 const pairingLifetimeMs = 15 * 60 * 1000;
 const fields: Record<ChannelProvider, Set<string>> = {
   telegram: new Set([
@@ -157,7 +148,10 @@ const fields: Record<ChannelProvider, Set<string>> = {
     'WHATSAPP_APP_SECRET',
     'WHATSAPP_PHONE_NUMBER_ID',
     'WHATSAPP_ALLOWED_NUMBER',
+    'WHATSAPP_ALLOWED_LID',
     'WHATSAPP_VERIFY_TOKEN',
+    'WHATSAPP_PAIRING_CODE_HASH',
+    'WHATSAPP_PAIRING_EXPIRES_AT',
   ]),
 };
 export function managedChannelEnvironment(environment: Record<string, string | undefined>) {
@@ -178,7 +172,7 @@ export function managedChannelEnvironment(environment: Record<string, string | u
     const mode = `${provider.toUpperCase()}_MODE`;
     values[mode] ??= provider === 'telegram' ? 'polling' : 'cloud';
     if (
-      !(provider === 'telegram' ? ['polling', 'webhook'] : ['bot', 'self-chat', 'cloud']).includes(
+      !(provider === 'telegram' ? ['polling', 'webhook'] : [...linkedModes, 'cloud']).includes(
         values[mode],
       )
     )
@@ -186,11 +180,10 @@ export function managedChannelEnvironment(environment: Record<string, string | u
     if (provider === 'whatsapp' && values[enabled] === 'true' && values[mode] !== 'cloud') {
       if (values.WHATSAPP_POLICY_CONFIRMED !== 'true')
         throw new Error('Set WHATSAPP_POLICY_CONFIRMED=true before enabling linked WhatsApp.');
-      if (
-        (values[mode] === 'bot' || values.WHATSAPP_ALLOWED_NUMBER) &&
-        !/^\d{7,15}$/.test(values.WHATSAPP_ALLOWED_NUMBER ?? '')
-      )
+      if (values.WHATSAPP_ALLOWED_NUMBER && !/^\d{7,15}$/.test(values.WHATSAPP_ALLOWED_NUMBER))
         throw new Error('WHATSAPP_ALLOWED_NUMBER must contain 7 to 15 digits.');
+      if (values.WHATSAPP_ALLOWED_LID && !/^\d{1,32}@lid$/.test(values.WHATSAPP_ALLOWED_LID))
+        throw new Error('WHATSAPP_ALLOWED_LID must be a WhatsApp private ID.');
     }
     if (provider === 'telegram' && values[mode] === 'polling')
       values.TELEGRAM_WEBHOOK_SECRET_TOKEN ||= randomBytes(32).toString('base64url');
@@ -240,21 +233,13 @@ async function databaseStore(pool: Pool, owner: string) {
         )
       ).rows[0]?.summary;
     },
-    async replace(
-      previous: ChannelSettingsRow,
-      next: ChannelSettingsRow,
-      beforeCommit: (client: PoolClient) => Promise<(() => void) | undefined>,
-    ) {
-      return transaction(async (client) => {
-        const updated = await client.query(
-          `UPDATE channel_settings SET ciphertext=$2,summary=$3::jsonb || CASE WHEN summary ? 'webhookStatus' THEN jsonb_build_object('webhookStatus',summary->'webhookStatus') ELSE '{}'::jsonb END,updated_at=now()
-           WHERE owner_id=$1 AND provider='telegram' AND enabled=true AND ciphertext=$4`,
-          [owner, next.ciphertext, JSON.stringify(next.summary), previous.ciphertext],
-        );
-        if (updated.rowCount !== 1) throw new ChannelSetupFailure('pairing_unavailable');
-        const notify = await beforeCommit(client);
-        return notify;
-      }, pool);
+    async replace(previous: ChannelSettingsRow, next: ChannelSettingsRow) {
+      const updated = await pool.query(
+        `UPDATE channel_settings SET ciphertext=$2,summary=$3::jsonb || CASE WHEN summary ? 'webhookStatus' THEN jsonb_build_object('webhookStatus',summary->'webhookStatus') ELSE '{}'::jsonb END,updated_at=now()
+         WHERE owner_id=$1 AND provider=$5 AND enabled=true AND ciphertext=$4`,
+        [owner, next.ciphertext, JSON.stringify(next.summary), previous.ciphertext, previous.provider],
+      );
+      if (updated.rowCount !== 1) throw new ChannelSetupFailure('pairing_unavailable');
     },
   };
 }
@@ -290,23 +275,22 @@ function seal(
 function pairingHash(code: string) {
   return createHash('sha256').update(code).digest('hex');
 }
-function issuePairing(summary: ChannelSetupSummary) {
-  const handle = summary.accountHandle;
-  if (!handle || !/^@[A-Za-z0-9_]{1,64}$/.test(handle))
-    throw new ChannelSetupFailure('verification_failed');
+function issuePairing(summary: ChannelSetupSummary, address: string | undefined) {
+  const telegram = summary.provider === 'telegram';
+  if (!address || !(telegram ? /^@[A-Za-z0-9_]{1,64}$/ : /^\+\d{7,15}$/).test(address))
+    throw new ChannelSetupFailure(telegram ? 'verification_failed' : 'pairing_unavailable');
   const code = randomBytes(24).toString('base64url');
   const expiresAt = new Date(Date.now() + pairingLifetimeMs);
+  const prefix = summary.provider.toUpperCase();
   return {
     environment: {
-      TELEGRAM_PAIRING_CODE_HASH: pairingHash(code),
-      TELEGRAM_PAIRING_EXPIRES_AT: String(expiresAt.getTime()),
+      [`${prefix}_PAIRING_CODE_HASH`]: pairingHash(code),
+      [`${prefix}_PAIRING_EXPIRES_AT`]: String(expiresAt.getTime()),
     },
-    summary: {
-      ...summary,
-      pairingCandidate: undefined,
-      pairingExpiresAt: expiresAt.toISOString(),
-    },
-    pairingUrl: `https://t.me/${handle.slice(1)}?start=${code}`,
+    summary: { ...summary, pairingExpiresAt: expiresAt.toISOString() },
+    pairingUrl: telegram
+      ? `https://t.me/${address.slice(1)}?start=${code}`
+      : `https://wa.me/${address.slice(1)}?text=${code}`,
   };
 }
 function openChannelSettings(key: Buffer, owner: string, row: ChannelSettingsRow) {
@@ -329,7 +313,7 @@ export async function createChannelSettings(
     linkStatus?(): Promise<ChannelLinkStatus>;
     cancelPairing?(pairingId: string, restart?: boolean): Promise<boolean>;
     unlink?(): Promise<void>;
-    paired?(candidate: TelegramPairingCandidate, client: PoolClient): Promise<() => void>;
+    paired?(request: ChannelPairingRequest): Promise<void>;
     observed?(): (channels: ChannelConnectionObservation[]) => void;
   },
 ) {
@@ -376,13 +360,12 @@ export async function createChannelSettings(
       const values = managed[provider];
       if (!values) continue;
       const mode = values[`${provider.toUpperCase()}_MODE`];
-      const linked = provider === 'whatsapp' && (mode === 'bot' || mode === 'self-chat');
+      const linked = provider === 'whatsapp' && linkedModes.has(mode ?? '');
       const summary = summarySchema.parse({
         provider,
         enabled: values[`${provider.toUpperCase()}_ENABLED`] === 'true',
         managed: true,
         mode: linked ? 'linked' : mode === 'polling' ? 'polling' : 'webhook',
-        ...(linked ? { linkMode: mode } : {}),
         ...(provider === 'telegram' && telegramUserId.test(values.TELEGRAM_ALLOWED_USER_ID ?? '')
           ? { allowedUserId: values.TELEGRAM_ALLOWED_USER_ID }
           : {}),
@@ -468,7 +451,7 @@ export async function createChannelSettings(
           throw new Error('Invalid channel configuration.');
         summary = summarySchema.parse({ ...verified.summary, provider, enabled: true });
         if (provider === 'telegram' && !configured.TELEGRAM_ALLOWED_USER_ID) {
-          const pairing = issuePairing(summary);
+          const pairing = issuePairing(summary, summary.accountHandle);
           Object.assign(configured, pairing.environment);
           summary = pairing.summary;
           pairingUrl = pairing.pairingUrl;
@@ -481,8 +464,8 @@ export async function createChannelSettings(
       Object.assign(nextEnvironment, configured);
       const unlink =
         provider === 'whatsapp' &&
-        (oldEnvironment.WHATSAPP_MODE === 'bot' || oldEnvironment.WHATSAPP_MODE === 'self-chat') &&
-        (input === undefined || configured.WHATSAPP_MODE !== oldEnvironment.WHATSAPP_MODE);
+        linkedModes.has(oldEnvironment.WHATSAPP_MODE ?? '') &&
+        (input === undefined || !linkedModes.has(configured.WHATSAPP_MODE ?? ''));
       if (summary.webhookStatus === 'registration_pending') {
         if (!options.verifier.register || provider !== 'telegram' || summary.mode !== 'webhook')
           throw new Error('Channel registration is unavailable.');
@@ -530,180 +513,133 @@ export async function createChannelSettings(
       };
     });
   }
-  async function telegramRow() {
-    if (managed.telegram) return;
-    const row = (await store.read()).find((item) => item.provider === 'telegram' && item.enabled);
+  async function savedRow(provider: ChannelProvider) {
+    if (managed[provider]) return;
+    const row = (await store.read()).find((item) => item.provider === provider && item.enabled);
     return row?.ciphertext
       ? { row, configured: openChannelSettings(await encryptionKey(), owner, row) }
       : undefined;
   }
   function withoutPairing(configured: Record<string, string>) {
     return Object.fromEntries(
-      Object.entries(configured).filter(([key]) => !key.startsWith('TELEGRAM_PAIRING_')),
+      Object.entries(configured).filter(([key]) => !key.includes('_PAIRING_')),
     );
   }
-  async function replaceTelegram(
+  async function replaceRow(
     row: ChannelSettingsRow,
     next: Record<string, string>,
     summary: ChannelSetupSummary,
-    apply: boolean,
-    candidate?: TelegramPairingCandidate,
   ) {
-    const oldEnvironment = apply ? await environment() : {};
-    try {
-      return await store.replace(
-        row,
-        {
-          ...row,
-          ciphertext: seal(await encryptionKey(), owner, 'telegram', next),
-          summary: summarySchema.parse(summary),
-        },
-        async (client) => {
-          if (apply)
-            await options.apply({
-              ...Object.fromEntries(
-                Object.entries(oldEnvironment).filter(([key]) => !fields.telegram.has(key)),
-              ),
-              ...next,
-            });
-          return candidate && client ? options.paired?.(candidate, client) : undefined;
-        },
-      );
-    } catch (error) {
-      if (apply)
-        try {
-          await options.apply(oldEnvironment);
-        } catch {}
-      throw error;
-    }
-  }
-  async function pair(request: ChannelPairingRequest) {
-    return pairingExclusive(async () => {
-      const current = await telegramRow();
-      const sender = candidateSchema.safeParse({
-        ...request,
-        sentAt: request.sentAt.toISOString(),
-      });
-      if (!current || request.channelId !== 'telegram' || !sender.success) return false;
-      const { row, configured } = current;
-      const expected = Buffer.from(configured.TELEGRAM_PAIRING_CODE_HASH ?? '', 'hex');
-      const actual = Buffer.from(pairingHash(request.code), 'hex');
-      if (
-        configured.TELEGRAM_ALLOWED_USER_ID ||
-        accountId('telegram', configured) !== request.accountId ||
-        !(Number(configured.TELEGRAM_PAIRING_EXPIRES_AT) > Date.now()) ||
-        expected.length !== actual.length ||
-        !timingSafeEqual(expected, actual)
-      )
-        return false;
-      const expiresAt = new Date(Date.now() + pairingLifetimeMs);
-      try {
-        await replaceTelegram(
-          row,
-          {
-            ...withoutPairing(configured),
-            TELEGRAM_PAIRING_EXPIRES_AT: String(expiresAt.getTime()),
-            TELEGRAM_PAIRING_CANDIDATE: JSON.stringify(sender.data),
-          },
-          {
-            ...summarySchema.parse(row.summary),
-            pairingCandidate: {
-              id: sender.data.senderId,
-              name: sender.data.senderName,
-              ...(sender.data.senderUsername ? { username: sender.data.senderUsername } : {}),
-            },
-            pairingExpiresAt: expiresAt.toISOString(),
-          },
-          false,
-        );
-      } catch (error) {
-        if (error instanceof ChannelSetupFailure) return false;
-        throw error;
-      }
-      return true;
+    await store.replace(row, {
+      ...row,
+      ciphertext: seal(await encryptionKey(), owner, row.provider, next),
+      summary: summarySchema.parse(summary),
     });
   }
-  async function bind(allowedUserId?: string) {
-    const bound = await exclusive(async () => {
-      if (managed.telegram) throw new ChannelSetupFailure('server_managed');
-      const current = await telegramRow();
-      if (!current || current.configured.TELEGRAM_ALLOWED_USER_ID)
-        throw new ChannelSetupFailure('pairing_unavailable');
+  function ownerSettings(
+    provider: ChannelProvider,
+    request: ChannelPairingRequest,
+  ): Record<string, string> {
+    if (provider === 'telegram') return { TELEGRAM_ALLOWED_USER_ID: request.senderId };
+    return {
+      ...(request.senderId.endsWith('@lid')
+        ? {}
+        : { WHATSAPP_ALLOWED_NUMBER: request.senderId }),
+      ...(request.threadId.endsWith('@lid') ? { WHATSAPP_ALLOWED_LID: request.threadId } : {}),
+    };
+  }
+  async function pair(request: ChannelPairingRequest) {
+    const provider = providerSchema.safeParse(request.channelId);
+    if (
+      !provider.success ||
+      !pairingRequestSchema.safeParse(request).success ||
+      !pairingSender[provider.data].safeParse(request).success
+    )
+      return false;
+    const paired = await pairingExclusive(async () => {
+      const current = await savedRow(provider.data);
+      if (!current) return false;
       const { row, configured } = current;
-      if (row.summary.webhookStatus === 'registration_pending')
-        throw new ChannelSetupFailure('activation_pending');
-      let candidate: TelegramPairingCandidate | undefined;
-      if (allowedUserId === undefined) {
-        if (!(Number(configured.TELEGRAM_PAIRING_EXPIRES_AT) > Date.now()))
-          throw new ChannelSetupFailure('pairing_unavailable');
-        try {
-          candidate = candidateSchema.parse(
-            JSON.parse(configured.TELEGRAM_PAIRING_CANDIDATE ?? ''),
-          );
-        } catch {
-          throw new ChannelSetupFailure('pairing_unavailable');
-        }
-      }
-      const id = candidate?.senderId ?? allowedUserId!;
+      const prefix = provider.data.toUpperCase();
+      const expected = Buffer.from(configured[`${prefix}_PAIRING_CODE_HASH`] ?? '', 'hex');
+      const actual = Buffer.from(pairingHash(request.code), 'hex');
+      if (
+        !(Number(configured[`${prefix}_PAIRING_EXPIRES_AT`]) > Date.now()) ||
+        expected.length !== actual.length ||
+        !timingSafeEqual(expected, actual) ||
+        (provider.data === 'telegram' &&
+          (Boolean(configured.TELEGRAM_ALLOWED_USER_ID) ||
+            accountId('telegram', configured) !== request.accountId))
+      )
+        return false;
       const {
-        pairingCandidate: _candidate,
         pairingExpiresAt: _expiry,
         pairedUser: _user,
         pairedUsername: _username,
-        ...rest
+        ...summary
       } = summarySchema.parse(row.summary);
-      const summary = summarySchema.parse({
-        ...rest,
-        allowedUserId: id,
-        ...(candidate
-          ? { pairedUser: candidate.senderName, pairedUsername: candidate.senderUsername }
-          : {}),
-      });
-      const notify = await replaceTelegram(
+      const {
+        WHATSAPP_ALLOWED_NUMBER: _number,
+        WHATSAPP_ALLOWED_LID: _lid,
+        ...settings
+      } = withoutPairing(configured);
+      await replaceRow(
         row,
-        { ...withoutPairing(configured), TELEGRAM_ALLOWED_USER_ID: id },
-        summary,
-        true,
-        candidate,
+        { ...settings, ...ownerSettings(provider.data, request) },
+        {
+          ...summary,
+          pairedUser: request.senderName,
+          ...(request.senderUsername ? { pairedUsername: request.senderUsername } : {}),
+          ...(provider.data === 'telegram' ? { allowedUserId: request.senderId } : {}),
+        },
       );
-      return { summary, notify };
+      return true;
     });
-    bound.notify?.();
-    return { ok: true, channel: bound.summary };
+    if (paired) void connectPaired(request);
+    return paired;
   }
-  async function restartPairing() {
+  async function connectPaired(request: ChannelPairingRequest) {
+    try {
+      await exclusive(async () => options.apply(await environment()));
+      await options.paired?.(request);
+    } catch (error) {
+      logFailure('channel_pairing_failed', error);
+    }
+  }
+  async function restartPairing(provider: ChannelProvider) {
     return exclusive(async () => {
-      if (managed.telegram) throw new ChannelSetupFailure('server_managed');
-      const current = await telegramRow();
+      if (managed[provider]) throw new ChannelSetupFailure('server_managed');
+      const current = await savedRow(provider);
       if (!current) throw new ChannelSetupFailure('pairing_unavailable');
       const summary = summarySchema.parse(current.row.summary);
+      let address = summary.accountHandle;
+      if (provider === 'whatsapp') {
+        const link =
+          summary.mode === 'linked' ? await options.linkStatus?.().catch(() => undefined) : undefined;
+        if (link?.state !== 'connected') throw new ChannelSetupFailure('pairing_unavailable');
+        address = link.accountHandle;
+      }
       const recovering = summary.webhookStatus === 'registration_pending';
       if (recovering) {
         try {
-          await activate('telegram', { environment: current.configured, summary });
+          await activate(provider, { environment: current.configured, summary });
         } catch {
           throw new ChannelSetupFailure('activation_pending');
         }
       }
-      const result = await pairingExclusive(async () => {
-        const latest = await telegramRow();
+      return pairingExclusive(async () => {
+        const latest = await savedRow(provider);
         if (!latest) throw new ChannelSetupFailure('pairing_unavailable');
         const channel = summarySchema.parse(latest.row.summary);
-        if (
-          recovering &&
-          (latest.configured.TELEGRAM_ALLOWED_USER_ID ||
-            (channel.pairingCandidate &&
-              Number(latest.configured.TELEGRAM_PAIRING_EXPIRES_AT) > Date.now()))
-        )
-          return { ok: true, channel };
-        if (latest.configured.TELEGRAM_ALLOWED_USER_ID)
+        if (provider === 'telegram' && latest.configured.TELEGRAM_ALLOWED_USER_ID) {
+          if (recovering) return { ok: true, channel };
           throw new ChannelSetupFailure('pairing_unavailable');
-        const pairing = issuePairing(channel);
-        await replaceTelegram(
+        }
+        const pairing = issuePairing(channel, address);
+        await replaceRow(
           latest.row,
           { ...withoutPairing(latest.configured), ...pairing.environment },
           pairing.summary,
-          false,
         );
         return {
           ok: true,
@@ -711,7 +647,6 @@ export async function createChannelSettings(
           pairingUrl: pairing.pairingUrl,
         };
       });
-      return result;
     });
   }
   function registerRoutes(app: FastifyInstance) {
@@ -793,17 +728,11 @@ export async function createChannelSettings(
         { bodyLimit: 16_384 },
         async (request) => change(providerSchema.parse(request.params.provider), request.body),
       );
-      scope.post('/api/channel-settings/telegram/pairing', { bodyLimit: 1024 }, restartPairing);
-      scope.post('/api/channel-settings/telegram/confirm', { bodyLimit: 1024 }, () => bind());
-      scope.post('/api/channel-settings/telegram/user', { bodyLimit: 1024 }, (request) =>
-        bind(
-          z
-            .object({
-              allowedUserId: z.string().trim().regex(telegramUserId),
-            })
-            .strict()
-            .parse(request.body).allowedUserId,
-        ),
+      scope.post('/api/channel-settings/telegram/pairing', { bodyLimit: 1024 }, () =>
+        restartPairing('telegram'),
+      );
+      scope.post('/api/channel-settings/whatsapp/phone', { bodyLimit: 1024 }, () =>
+        restartPairing('whatsapp'),
       );
       scope.delete<{ Params: { provider: string } }>(
         '/api/channel-settings/:provider',

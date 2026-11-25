@@ -676,7 +676,6 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     const identity = { provider: channelId, account_id: accountId, sender_id: senderId };
     if (closed || replacing) return;
     if (!permitted(identity)) return dropped('not_linked');
-    if (sentAt.getTime() > Date.now() + 300000) return dropped('future_timestamp');
     let media: Awaited<ReturnType<ChannelMedia['prepare']>> | undefined;
     try {
       const sourceId = `channel:${channelId}:${accountId}:${messageId}`;
@@ -1009,35 +1008,28 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     }
   }
 
-  async function announcePairing(
-    request: {
-      senderId: string;
-      accountId: string;
-      messageId: string;
-      threadId: string;
-      sentAt: string;
-    },
-    client: PoolClient,
-  ) {
+  async function announcePairing(request: ChannelPairingRequest) {
     const identity = {
-      provider: 'telegram',
+      provider: request.channelId,
       account_id: request.accountId,
       sender_id: request.senderId,
     };
-    await replyWithoutTurn(
-      client,
-      {
-        ...identity,
-        sourceId: `channel:telegram:${request.accountId}:${request.messageId}`,
-        threadId: request.threadId,
-        sentAt: request.sentAt,
-        text: '/start',
-      },
-      () => ({ text: '', presentation: { kind: 'paired', channel: 'telegram' } }),
+    await transaction(
+      (client) =>
+        replyWithoutTurn(
+          client,
+          {
+            ...identity,
+            sourceId: `channel:${request.channelId}:${request.accountId}:${request.messageId}`,
+            threadId: request.threadId,
+            sentAt: request.sentAt,
+            text: '',
+          },
+          () => ({ text: '', presentation: { kind: 'paired', channel: request.channelId } }),
+        ),
+      pool,
     );
-    return () => {
-      void drain();
-    };
+    void drain();
   }
 
   async function inboxStep() {
@@ -1910,6 +1902,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   const unsubscribe = options.subscribe(() => {
     void drain();
   });
+  transport.onInput?.(() => void drain());
   const timer = setInterval(() => {
     void drain();
   }, options.intervalMs ?? 2000);
@@ -1941,6 +1934,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       await Promise.allSettled(pendingMedia.values());
       await transport.close();
       transport = next;
+      next.onInput?.(() => void drain());
       confirmedProgress.clear();
       channels = next.channels.map((channel) => ({
         ...channel,

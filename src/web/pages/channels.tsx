@@ -396,7 +396,7 @@ export function Channels() {
     setPairingUrl,
     load,
     save,
-    telegramAction: telegramRequest,
+    pairingLink,
     remove,
     reconnect,
   } = useChannelSettings({
@@ -407,7 +407,6 @@ export function Channels() {
   const [fields, setFields] = useState<Record<string, string>>({});
   const whatsappCloud = fields.connection === 'cloud';
   const [policy, setPolicy] = useState(false);
-  const [manualId, setManualId] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [removing, setRemoving] = useState<ChannelProvider | null>(null);
   const [removeError, setRemoveError] = useState('');
@@ -442,10 +441,8 @@ export function Channels() {
           telegramSetup?.enabled,
           telegramSetup?.webhookStatus,
           telegramSetup?.allowedUserId,
-          telegramSetup?.pairingCandidate?.id,
           telegramWaiting,
           pairingUrl,
-          manualId,
         ].join(':');
   const connected = channels.filter((channel) => channel.connected);
   const available = channels.filter((channel) => !channel.connected);
@@ -462,7 +459,6 @@ export function Channels() {
     setStep(0);
     setError('');
     setPairingUrl(null);
-    setManualId(false);
   }
   function open(provider: ChannelProvider) {
     setupTrigger.current =
@@ -487,14 +483,9 @@ export function Channels() {
       else if (result.ok || result.channel?.enabled) setFields({});
     } else if (result.ok) close();
   }
-  async function telegramAction(action: 'pairing' | 'confirm' | 'user', body: object = {}) {
+  async function newTelegramLink() {
     if (busy || !settings?.ready) return;
-    if (!(await telegramRequest(action, body))) return;
-    if (action !== 'pairing') {
-      close();
-      return;
-    }
-    setManualId(false);
+    if (!(await pairingLink('telegram'))) return;
     setFields({});
     setEditing('telegram');
   }
@@ -503,7 +494,6 @@ export function Channels() {
     setupTrigger.current =
       document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
     setError('');
-    setManualId(false);
     setEditing('telegram');
     setResuming(true);
     try {
@@ -512,8 +502,7 @@ export function Channels() {
       const state = telegramState(
         latest.channels.find((channel) => channel.provider === 'telegram'),
       );
-      if (state.saved && !state.paired && (!state.candidate || !state.waiting))
-        await telegramAction('pairing');
+      if (state.saved && !state.paired && !state.waiting) await newTelegramLink();
     } finally {
       setResuming(false);
     }
@@ -768,23 +757,13 @@ export function Channels() {
               <TelegramSetup
                 setup={telegramSetup}
                 pairingUrl={pairingUrl}
-                manual={manualId}
                 fields={fields}
                 busy={busy || resuming}
                 error={error || loadError}
                 unavailable={!settings?.ready}
                 onField={(name, value) => setFields((current) => ({ ...current, [name]: value }))}
                 onVerify={(event) => void submit(event)}
-                onConfirm={() => void telegramAction('confirm')}
-                onNewLink={() => void telegramAction('pairing')}
-                onManual={(value) => {
-                  setError('');
-                  setManualId(value);
-                }}
-                onSaveId={(event) => {
-                  event.preventDefault();
-                  void telegramAction('user', { allowedUserId: fields.allowedUserId?.trim() });
-                }}
+                onNewLink={() => void newTelegramLink()}
               />
               <div className="channel-wizard-actions">
                 {telegramSetup?.enabled && (
@@ -836,6 +815,9 @@ export function Channels() {
                   setStep(0);
                 }}
                 onDone={close}
+                onPhone={
+                  selected?.setup?.managed ? undefined : () => pairingLink('whatsapp')
+                }
               />
             </>
           ) : (

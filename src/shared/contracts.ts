@@ -436,14 +436,12 @@ export interface ChannelSetupSummary {
   accountName?: string;
   accountHandle?: string;
   mode?: 'polling' | 'webhook' | 'linked';
-  linkMode?: 'bot' | 'self-chat';
   connectionState?: ChannelLinkStatus['state'];
   webhookStatus?: 'registered' | 'manual_setup' | 'registration_pending';
   webhookUrl?: string;
   pairedUser?: string;
   pairedUsername?: string;
   allowedUserId?: string;
-  pairingCandidate?: { id: string; name: string; username?: string };
   pairingExpiresAt?: string;
 }
 export interface PaymentRequest {

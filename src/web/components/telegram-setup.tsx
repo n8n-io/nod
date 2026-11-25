@@ -35,39 +35,30 @@ function TelegramLink({
 export function TelegramSetup({
   setup,
   pairingUrl,
-  manual,
   fields,
   busy,
   error,
   unavailable = false,
   onField,
   onVerify,
-  onConfirm,
   onNewLink,
-  onManual,
-  onSaveId,
 }: {
   setup?: ChannelSetupSummary;
   pairingUrl: string | null;
-  manual: boolean;
   fields: Record<string, string>;
   busy: boolean;
   error: string;
   unavailable?: boolean;
   onField(name: string, value: string): void;
   onVerify(event: React.FormEvent): void;
-  onConfirm(): void;
   onNewLink(): void;
-  onManual(value: boolean): void;
-  onSaveId(event: React.FormEvent): void;
 }) {
   const [hasToken, setHasToken] = useState(false);
   const [tokenError, setTokenError] = useState('');
   const [copyResult, setCopyResult] = useState<{ url: string; ok: boolean }>();
   const state = telegramState(setup);
   const disabled = busy || unavailable;
-  const candidate = manual ? undefined : state.candidate;
-  const current = candidate ? 4 : state.saved ? 3 : hasToken ? 2 : 1;
+  const current = state.saved ? 3 : hasToken ? 2 : 1;
   const liveUrl = state.waiting ? pairingUrl : null;
   let pairingCommand = '';
   if (liveUrl && setup?.accountHandle) {
@@ -87,7 +78,7 @@ export function TelegramSetup({
         pairingCommand = `/start ${code}`;
     } catch {}
   }
-  const steps = ['Create a bot', 'Add token', 'Link your account', 'Confirm account'];
+  const steps = ['Create a bot', 'Add token', 'Link your account'];
   const setupError =
     error ||
     (unavailable && !state.paired && !setup?.managed
@@ -222,56 +213,6 @@ export function TelegramSetup({
                             {busy ? 'Connecting…' : 'Retry connection'}
                           </Button>
                         </>
-                      ) : manual ? (
-                        <form
-                          className="telegram-setup-content"
-                          onSubmit={(event) => {
-                            event.preventDefault();
-                            if (!disabled) onSaveId(event);
-                          }}
-                        >
-                          <p>
-                            Message{' '}
-                            <a
-                              href="https://t.me/userinfobot"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              @userinfobot
-                            </a>{' '}
-                            in Telegram. Paste the ID it sends you.
-                          </p>
-                          <Field
-                            label="Your Telegram user ID"
-                            hint="Only this ID will be able to message Nod."
-                          >
-                            <Input
-                              inputMode="numeric"
-                              pattern="[1-9][0-9]{0,15}"
-                              required
-                              autoFocus
-                              placeholder="123456789"
-                              disabled={disabled}
-                              data-analytics-private
-                              value={fields.allowedUserId ?? ''}
-                              onChange={(event) => onField('allowedUserId', event.target.value)}
-                            />
-                          </Field>
-                          <div className="telegram-setup-actions">
-                            <Button type="submit" size="sm" disabled={disabled}>
-                              {busy ? 'Saving…' : 'Save ID'}
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              disabled={busy}
-                              onClick={() => onManual(false)}
-                            >
-                              Use QR code
-                            </Button>
-                          </div>
-                        </form>
                       ) : (
                         <>
                           {liveUrl ? (
@@ -334,39 +275,8 @@ export function TelegramSetup({
                               </Button>
                             </>
                           )}
-                          <button
-                            type="button"
-                            className="telegram-setup-manual"
-                            disabled={busy}
-                            onClick={() => onManual(true)}
-                          >
-                            Enter your user ID instead
-                          </button>
                         </>
                       )}
-                    </div>
-                  )}
-                  {active && step === 4 && candidate && (
-                    <div className="telegram-setup-content">
-                      <p>Is this your Telegram account?</p>
-                      <div className="telegram-setup-identity" role="status" data-analytics-private>
-                        <strong>{candidate.name || 'Your Telegram account'}</strong>
-                        {candidate.username && <span>@{candidate.username.replace(/^@/, '')}</span>}
-                      </div>
-                      <p>Only this account will be able to message Nod.</p>
-                      <div className="telegram-setup-actions">
-                        <Button
-                          size="sm"
-                          data-telegram-primary
-                          disabled={disabled}
-                          onClick={onConfirm}
-                        >
-                          {busy ? 'Connecting…' : 'Connect account'}
-                        </Button>
-                        <Button variant="ghost" size="sm" disabled={disabled} onClick={onNewLink}>
-                          Not me
-                        </Button>
-                      </div>
                     </div>
                   )}
                 </div>

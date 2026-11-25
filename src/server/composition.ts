@@ -665,15 +665,14 @@ export function createDefaultAdapters(
         if (
           configured.WHATSAPP_ENABLED !== 'true' ||
           configured.WHATSAPP_POLICY_CONFIRMED !== 'true' ||
-          (mode !== 'bot' && mode !== 'self-chat') ||
-          (mode === 'bot' && !/^\d{7,15}$/.test(configured.WHATSAPP_ALLOWED_NUMBER ?? ''))
+          !['linked', 'bot', 'self-chat'].includes(mode ?? '')
         )
           return createChatSdkTransport(pool, configured);
         return combineMessagingTransports(
           createChatSdkTransport(pool, { ...configured, WHATSAPP_ENABLED: 'false' }),
           createWhatsAppLinkedTransport({
-            mode,
-            allowedNumber: configured.WHATSAPP_ALLOWED_NUMBER,
+            allowedNumber: configured.WHATSAPP_ALLOWED_NUMBER || undefined,
+            allowedLid: configured.WHATSAPP_ALLOWED_LID || undefined,
             store: createChannelSessionStore({ pool, ownerId, keyStore }),
             onDrop: (drop) =>
               logFailure('channel_message_dropped', null, { provider: 'whatsapp', ...drop }),
@@ -3456,9 +3455,9 @@ async function initializeApplication(
           if (!channels) throw new Error('Messaging is not ready.');
           await channels.replaceTransport(setup.create(environment));
         },
-        paired: async (candidate, client) => {
+        paired: async (request) => {
           if (!channels) throw new Error('Messaging is not ready.');
-          return channels.announcePairing(candidate, client);
+          await channels.announcePairing(request);
         },
         observed: () => {
           const consent = analytics.consent(ownerId);

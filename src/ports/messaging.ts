@@ -93,6 +93,7 @@ export interface MessagingWebhookResult {
 export interface MessagingTransport {
   channels: MessagingChannel[];
   canDeliverLiteral?(input: { channelId: string; text: string; literal: string }): boolean;
+  onInput?(listener: () => void): void;
   pairing?(): Promise<ChannelLinkStatus>;
   cancelPairing?(pairingId: string, restart?: boolean): Promise<boolean>;
   unlink?(): Promise<void>;

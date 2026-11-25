@@ -114,40 +114,6 @@ type ChannelStatus = {
 export type ChannelResponse = { channels: ChannelStatus[]; error: string | null };
 export type ChannelSettings = { ready: boolean; channels: ChannelSetupSummary[] };
 
-export function telegramIdentity(id: string, name?: string, username?: string) {
-  return [name, username ? `@${username}` : undefined, `ID ${id}`].filter(Boolean).join(', ');
-}
-
-export function channelLabel(setup: ChannelSetupSummary | undefined, configured: boolean) {
-  if (!setup?.enabled) return configured ? 'Configuration present' : 'Not connected';
-  if (setup.mode === 'linked') {
-    const states = {
-      connecting: 'Connecting to WhatsApp',
-      awaiting_scan: 'Scan the QR code to finish setup',
-      connected:
-        setup.linkMode === 'self-chat'
-          ? 'Chat with Nod in Message yourself'
-          : 'Only your selected number can message Nod',
-      disconnected: 'Reconnecting to WhatsApp',
-      logged_out: 'Link the WhatsApp account again',
-      expired: 'QR setup expired',
-      failed: 'Connection needs attention',
-    };
-    return states[setup.connectionState ?? 'connecting'];
-  }
-  if (setup.webhookStatus === 'registration_pending') return 'Connection needs a retry';
-  if (setup.pairingExpiresAt) {
-    if (Date.parse(setup.pairingExpiresAt) <= Date.now()) return 'Start link expired';
-    return setup.pairingCandidate
-      ? 'Confirm your Telegram account'
-      : 'Waiting for Start in Telegram';
-  }
-  if (setup.allowedUserId)
-    return `Only ${telegramIdentity(setup.allowedUserId, setup.pairedUser, setup.pairedUsername)} can message Nod`;
-  if (setup.mode === 'polling') return null;
-  return setup.webhookStatus === 'registered' ? 'Webhook registered' : 'Finish delivery setup';
-}
-
 export function telegramBotUrl(handle?: string) {
   return handle && /^@[A-Za-z0-9_]+$/.test(handle) ? `https://t.me/${handle.slice(1)}` : null;
 }

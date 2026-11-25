@@ -184,30 +184,18 @@ export function createChatSdkSetupVerifier(
           };
         }
         const linked = z
-          .object({
-            mode: z.enum(['bot', 'self-chat']),
-            allowedNumber: z
-              .string()
-              .trim()
-              .regex(/^\d{7,15}$/)
-              .optional(),
-            policyConfirmed: z.literal(true),
-          })
+          .object({ mode: z.literal('linked'), policyConfirmed: z.literal(true) })
           .strict()
           .safeParse(input);
-        if (linked.success) {
-          if (linked.data.mode === 'bot' && !linked.data.allowedNumber)
-            throw new ChannelSetupFailure('invalid_input');
+        if (linked.success)
           return {
             environment: {
               WHATSAPP_ENABLED: 'true',
-              WHATSAPP_MODE: linked.data.mode,
-              WHATSAPP_ALLOWED_NUMBER: linked.data.allowedNumber ?? '',
+              WHATSAPP_MODE: 'linked',
               WHATSAPP_POLICY_CONFIRMED: 'true',
             },
-            summary: { provider, enabled: true, mode: 'linked', linkMode: linked.data.mode },
+            summary: { provider, enabled: true, mode: 'linked' },
           };
-        }
         const parsed = whatsappInput.safeParse(input);
         if (!parsed.success) throw new ChannelSetupFailure('invalid_input');
         const value = parsed.data;

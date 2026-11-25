@@ -637,7 +637,6 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
           enabled: row.enabled === true,
           managed: summary.managed === true,
           mode: choice(summary.mode, ['polling', 'webhook', 'linked']),
-          linkMode: choice(summary.linkMode, ['bot', 'self-chat']),
           connectionState: choice(summary.connectionState, [
             'connecting',
             'awaiting_scan',
