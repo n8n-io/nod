@@ -111,7 +111,7 @@ An interrupted Mac setup from an older version can lack that record. If retry st
 
 The background service reports each startup step, and the startup log records each step with the time since the service started. Loading its code can take up to ten minutes on a slow or busy computer. Each later step can take two minutes. If a step takes longer, Nod stops waiting, and the log records the elapsed wait, the last health check failure, the last startup step and whether the service reported its port. An unexpected service exit has a separate log entry.
 
-On Windows, Nod replaces only a recorded, unfinished import. The next attempt removes that unfinished registration and imports the computer into a new, empty disk folder. This avoids a location conflict with an older disk or another WSL registration. A failed setup keeps its verified download, so **Try again** does not download it again.
+On Windows, an unfinished import is replaced on the next attempt. Nod removes its registration and imports the computer into a new, empty disk folder. This avoids a location conflict with an older disk or another WSL registration. A failed setup keeps its verified download, so **Try again** does not download it again.
 
 Before another import, Nod removes a partial disk only from a generated folder named in its valid unfinished-import record. Older and unknown folders are kept.
 
@@ -119,7 +119,7 @@ Startup repairs the private computer instead of stopping:
 
 - If WSL no longer lists a completed computer, Nod registers its saved disk again. Your data stays.
 - If that disk is gone or WSL can't open it, Nod sets up a new computer and leaves the old disk where it was.
-- If the saved configuration is missing or unreadable, Nod can't open the old computer's database. It removes that computer, which deletes its data, and sets up a new one.
+- If the saved configuration is missing, unreadable or invalid, Nod can't open the old computer's database. It removes that computer, which deletes its data, and sets up a new one.
 - If WSL lists the computer but still reports it as installing or uninstalling, its disk is unfinished. Nod removes it, which deletes its data, and sets up a new one.
 
 If setup needs more disk space, select a folder on another drive or free space. A different folder on the same drive still needs space for both the setup files and the private computer. Nod keeps a verified download for the next attempt.

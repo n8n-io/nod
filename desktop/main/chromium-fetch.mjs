@@ -40,11 +40,13 @@ export function chromiumFetch(url, init = {}) {
         const headers = new Headers();
         for (const [name, value] of Object.entries(response.headers))
           for (const item of [value].flat()) headers.append(name, item);
+        const empty = [204, 205, 304].includes(response.statusCode);
+        if (empty) response.resume();
         resolve(
-          new Response(
-            [204, 205, 304].includes(response.statusCode) ? null : Readable.toWeb(response),
-            { status: response.statusCode, headers },
-          ),
+          new Response(empty ? null : Readable.toWeb(response), {
+            status: response.statusCode,
+            headers,
+          }),
         );
       } catch (error) {
         request.abort();

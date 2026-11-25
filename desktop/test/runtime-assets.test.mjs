@@ -5289,6 +5289,8 @@ process.exit(code);
     }
     await writeFile(configPath, '{');
     await wsl({ ready: [distribution], registered: [distribution] });
+    await stopWindowsRuntime({ dataRoot: profile });
+    assert.ok((await wsl()).includes(`--terminate ${distribution}`));
     await removeWindowsComputer(profile);
     assert.ok((await wsl()).includes(`--unregister ${distribution}`));
     assert.equal(await readFile(join(computer, 'ext4.vhdx'), 'utf8'), 'synthetic computer disk');

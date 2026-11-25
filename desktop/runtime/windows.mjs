@@ -600,11 +600,7 @@ export async function stopWindowsRuntime(options) {
   const env = windowsEnvironment();
   const wsl = join(env.SYSTEMROOT, 'System32/wsl.exe');
   try {
-    const saved = await readComputerState(
-      join(dataRoot, 'desktop-runtime/state.json'),
-      distribution,
-    );
-    if (!saved) return;
+    await stat(join(dataRoot, 'desktop-runtime/state.json'));
     if ((await distributions(wsl, env)).ready.includes(distribution)) {
       await execute(
         wsl,
