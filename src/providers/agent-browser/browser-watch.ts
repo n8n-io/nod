@@ -21,6 +21,7 @@ export async function watchBrowser(options: {
   cdpUrl: string;
   incoming: string;
   initScript: string;
+  closed: () => void;
   sessions: () => Array<{ root: string; directory: string }>;
 }) {
   await rm(options.incoming, { recursive: true, force: true });
@@ -161,6 +162,7 @@ export async function watchBrowser(options: {
   socket.addEventListener('close', () => {
     for (const reply of replies.values()) reply({ error: 'closed' });
     replies.clear();
+    options.closed();
   });
   try {
     await send('Target.setDiscoverTargets', { discover: true });

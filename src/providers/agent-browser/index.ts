@@ -63,6 +63,7 @@ interface BrowserState {
   sealedDocument?: string;
   uploads: Set<string>;
   root?: string;
+  browser?: string;
   targetId?: string;
   seenTabs: Set<string>;
   started: boolean;
@@ -380,7 +381,9 @@ export function createAgentBrowserComputer(options: {
         throw new Error('The browser session has expired. Open the URL again.');
       }
       try {
-        return await operation();
+        const result = await operation();
+        if (state.started && !state.closed && !state.closing) await saveState(state);
+        return result;
       } finally {
         state.busy -= 1;
       }
@@ -520,12 +523,8 @@ export function createAgentBrowserComputer(options: {
   function ownerBrowser(saved: StoredScreen, signal?: AbortSignal): Promise<string> {
     owner.launching ??= (async () => {
       if (owner.cdpUrl) {
-        const live = await ownerCommand(['get', 'cdp-url'], signal).catch(() => undefined);
-        if (live?.cdpUrl === owner.cdpUrl) {
-          if (!owner.watch?.open()) await watchOwner(owner.cdpUrl).catch(() => {});
-          return owner.cdpUrl;
-        }
-        delete owner.cdpUrl;
+        if (!owner.watch?.open()) await watchOwner(owner.cdpUrl).catch(() => {});
+        return owner.cdpUrl;
       }
       return launchOwner(saved, signal);
     })().finally(() => delete owner.launching);
@@ -639,6 +638,9 @@ export function createAgentBrowserComputer(options: {
     owner.watch?.close();
     owner.watch = await watchBrowser({
       cdpUrl,
+      closed: () => {
+        if (owner.cdpUrl === cdpUrl) delete owner.cdpUrl;
+      },
       incoming: incomingDownloads,
       initScript: withoutPasskeys,
       sessions: () =>
@@ -794,6 +796,7 @@ export function createAgentBrowserComputer(options: {
           state.root = state.targetId = response.data.targetId;
           state.seenTabs = new Set([state.root]);
         }
+        state.browser = cdpUrl;
         state.pageSize = undefined;
         if (viewport)
           await command(
@@ -1031,8 +1034,23 @@ export function createAgentBrowserComputer(options: {
     }
   }
 
+  async function alive(state: BrowserState) {
+    if (!state.socket || state.browser !== owner.cdpUrl) return false;
+    if (state.root && owner.watch?.open() && !owner.watch.tabs(state.root).length) return false;
+    return requestDaemon(state.socket, { action: 'title' }, undefined, 5000).then(
+      () => true,
+      (error: unknown) =>
+        !(
+          error instanceof DaemonTransportError &&
+          (error.kind === 'socket_error' || error.kind === 'socket_closed')
+        ),
+    );
+  }
+
   async function reopen(id: string, signal?: AbortSignal) {
-    if (browsers.get(threadIdentity(id))?.started) return;
+    const state = browsers.get(threadIdentity(id));
+    if (state?.started && !state.closing && (await alive(state))) return;
+    if (state?.started && !state.closing) await closeBrowser(id, true);
     const last = await screens.load(id);
     if (last?.url && /^https?:/.test(last.url) && !last.navigationFailed && !last.fenced)
       await browserAction(
@@ -1057,14 +1075,16 @@ export function createAgentBrowserComputer(options: {
     if (input.waitMs !== undefined && (!Number.isInteger(input.waitMs) || input.waitMs < 0))
       throw new Error('Choose a non-negative wait.');
     const existing = input.action === 'open' ? browsers.get(id) : undefined;
+    const dead = existing?.started && !existing.closing && !(await alive(existing));
     if (
       existing &&
-      (existing.closed ||
+      (dead ||
+        existing.closed ||
         existing.closing ||
         existing.saved.navigationFailed ||
         existing.privateDocument)
     )
-      await closeBrowser(id);
+      await closeBrowser(id, dead);
     if (input.action !== 'open') await reopen(id, signal);
     const state = stateFor(id);
     if (input.action !== 'open' && !state.started) {
@@ -1117,7 +1137,12 @@ export function createAgentBrowserComputer(options: {
               }
             } catch {}
           }
-          if (!signal?.aborted && !state.closing) {
+          if (
+            !signal?.aborted &&
+            !state.closing &&
+            error instanceof BrowserActionError &&
+            error.code === 'browser_navigation_failed'
+          ) {
             state.started = false;
             state.saved.navigationFailed = true;
             const destination = new URL(url);
@@ -2385,13 +2410,13 @@ export function createAgentBrowserComputer(options: {
     });
   }
 
-  async function closeBrowser(id: string): Promise<void> {
+  async function closeBrowser(id: string, stale = false): Promise<void> {
     const state = browsers.get(threadIdentity(id));
     if (!state) return;
     state.closing = true;
     const close = async () => {
       if (browsers.get(id) !== state) return;
-      if (state.started && !state.closed && !state.injecting)
+      if (!stale && state.started && !state.closed && !state.injecting)
         await captureScreen(state).catch(() => {});
       state.closed = true;
       if (state.started || state.saved.navigationFailed) await shutDown(state);

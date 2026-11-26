@@ -1191,10 +1191,12 @@ test('discarding a task closes only its tab and throwaway data, and the owner pr
     assert.equal(fixture.pages.get('old'), undefined);
     assert.deepEqual(await readdir(join(runtime, 'profiles')), ['owner']);
     assert.deepEqual(await readdir(join(runtime, 'downloads')), []);
+    const screens = (await readdir(runtime)).filter((file) => file.startsWith('screen-'));
     assert.deepEqual(
-      (await readdir(runtime)).filter((file) => file.startsWith('screen-')),
-      ['screen-other.png'],
+      screens.filter((file) => file.startsWith('screen-old')),
+      [],
     );
+    assert.ok(screens.includes('screen-other.png'));
     assert.equal(
       (await computer.act('other', { action: 'snapshot' })).url,
       'https://1.1.1.1/login',
@@ -2878,6 +2880,130 @@ describe('native browser controls', { concurrency: 3 }, () => {
         assert.equal((await page('c')).url, `${origin}/c`);
       } finally {
         await computer.dispose().catch(() => {});
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test(
+    'native sessions recover from killed drivers, a closed tab, a crashed service and a crashed browser',
+    { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 240_000 },
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'nod-chaos-native-'));
+      const server = createHttpServer((request, response) => {
+        const signedIn = /(?:^|; )account=owner(?:;|$)/.test(request.headers.cookie ?? '');
+        const state = signedIn ? 'signed in' : 'signed out';
+        const url = new URL(request.url ?? '/', 'http://localhost');
+        const id = ['a', 'b', 'c', 'd'].find((name) => url.pathname.endsWith(`/${name}`)) ?? '';
+        const value = /^value-[a-d]$/.test(url.searchParams.get('value') ?? '')
+          ? url.searchParams.get('value')
+          : '';
+        response.setHeader('content-type', 'text/html');
+        if (url.pathname === '/sign-in') {
+          response.setHeader(
+            'set-cookie',
+            'account=owner; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax',
+          );
+          return response.end('<h1>Welcome</h1>');
+        }
+        if (url.pathname.startsWith('/form/'))
+          return response.end(
+            `<h1>form ${id} ${state}</h1><form action="/done/${id}"><input id="field" name="value"><button id="submit">Send</button></form>`,
+          );
+        if (url.pathname.startsWith('/slow/'))
+          return void setTimeout(() => response.end(`<h1>slow ${id} ${state}</h1>`), 4000);
+        response.end(`<h1>done ${id} ${value} ${state}</h1>`);
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      assert.ok(address && typeof address !== 'string');
+      const origin = `http://127.0.0.1:${address.port}`;
+      const sockets = new Set<string>();
+      const start = () =>
+        createAgentBrowserComputer({
+          dataRoot: directory,
+          browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+          privateNetwork: true,
+          headless: true,
+          daemonCommand: async (path, command, signal, timeoutMs) => {
+            sockets.add(path);
+            return existingDaemonCommand(path, command, signal, timeoutMs);
+          },
+        });
+      const abandoned = start();
+      let computer = abandoned;
+      const ids = ['a', 'b', 'c', 'd'];
+      const heading = async (id: string) =>
+        /heading "([^"]+)"/.exec((await computer.act(id, { action: 'snapshot' })).text)?.[1];
+      const socket = (id: string) =>
+        [...sockets].find((path) => path.endsWith(`${browserSessionId(id)}.sock`))!;
+      const killDriver = async (id: string) => {
+        const pid = Number(await readFile(socket(id).replace(/\.sock$/, '.pid'), 'utf8'));
+        process.kill(pid, 'SIGKILL');
+        for (let attempt = 0; attempt < 50; attempt++) {
+          try {
+            process.kill(pid, 0);
+          } catch {
+            return;
+          }
+          await delay(100);
+        }
+      };
+      try {
+        await computer.act('a', { action: 'open', url: `${origin}/sign-in` });
+        await Promise.all(
+          ids.map(async (id) => {
+            await computer.act(id, { action: 'open', url: `${origin}/form/${id}` });
+            await computer.act(id, { action: 'fill', selector: '#field', text: `value-${id}` });
+            await computer.act(id, { action: 'click', selector: '#submit' });
+            await computer.act(id, { action: 'wait', url: `**/done/${id}*` });
+          }),
+        );
+        for (const id of ids) assert.equal(await heading(id), `done ${id} value-${id} signed in`);
+
+        await killDriver('b');
+        assert.equal(await heading('b'), 'done b signed in');
+        for (const id of ['a', 'c', 'd'])
+          assert.equal(await heading(id), `done ${id} value-${id} signed in`);
+
+        const slow = assert.rejects(computer.act('c', { action: 'open', url: `${origin}/slow/c` }));
+        await delay(1000);
+        await killDriver('c');
+        await slow;
+        await assert.rejects(heading('c'));
+        await computer.act('c', { action: 'open', url: `${origin}/form/c` });
+        assert.equal(await heading('c'), 'form c signed in');
+
+        const tabs = (await existingDaemonCommand(socket('d'), { action: 'tab_list' })) as {
+          tabs: Array<{ active: boolean; targetId: string }>;
+        };
+        await existingDaemonCommand(socket('a'), {
+          action: 'tab_close',
+          tabId: tabs.tabs.find((tab) => tab.active)!.targetId,
+        });
+        assert.equal(await heading('d'), 'done d signed in');
+
+        computer = start();
+        assert.equal(await heading('a'), 'done a signed in');
+        assert.equal(await heading('c'), 'form c signed in');
+
+        const loading = assert.rejects(
+          computer.act('b', { action: 'open', url: `${origin}/slow/b` }),
+        );
+        await delay(1000);
+        const lock = await readlink(
+          join(directory, 'runtime', 'profiles', 'owner', 'SingletonLock'),
+        );
+        process.kill(Number(lock.split('-').at(-1)), 'SIGKILL');
+        await loading;
+        assert.match((await heading('d')) ?? '', /^done d /);
+        await computer.act('b', { action: 'open', url: `${origin}/form/b` });
+        assert.match((await heading('b')) ?? '', /^form b /);
+      } finally {
+        await computer.dispose().catch(() => {});
+        await abandoned.dispose().catch(() => {});
         server.closeAllConnections();
         await new Promise<void>((resolve) => server.close(() => resolve()));
         await rm(directory, { recursive: true, force: true });
