@@ -952,6 +952,119 @@ test('mail that grants account access stays out of app tool results and workspac
   );
 });
 
+test('codemode scripts get the full app result while direct calls get a saved preview', async () => {
+  const prose = Array.from(
+    { length: 700 },
+    (_, index) =>
+      `Event ${index + 1}: Synthetic planning review with guest${index}@example.test in Room ${index % 12}.`,
+  )
+    .join('\n')
+    .slice(0, 45_000);
+  const full = JSON.stringify({ text: prose });
+  const saved: string[] = [];
+  const returned: unknown[] = [];
+  let scriptText = '';
+  await fixture(
+    async (tools) => {
+      const nested = await tools
+        .get('apps')!
+        .execute({ action: 'CALENDAR_LIST_EVENTS', args: {} }, { nested: true });
+      scriptText = nested.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+      await call(tools, 'apps', { action: 'CALENDAR_LIST_EVENTS', args: {} });
+    },
+    {
+      integration: async (_action, _args, signal, _admit, nested) => {
+        const value = await inlineAppResult(
+          { text: prose },
+          async (text) => {
+            saved.push(text);
+            return 'calendar-events.json';
+          },
+          noMailCheck,
+          signal,
+          nested,
+        );
+        returned.push(value);
+        return value;
+      },
+    },
+  );
+  assert.equal(prose.length, 45_000);
+  assert.deepEqual(returned[0], { text: prose });
+  assert.equal(scriptText, full);
+  assert.deepEqual(returned[1], {
+    workspaceFile: 'calendar-events.json',
+    bytes: Buffer.byteLength(full),
+    preview: full.slice(0, 2000),
+    message:
+      'The full app result is saved in this workspace file. Inspect it with read or bash, for example jq, instead of repeating the request.',
+  });
+  assert.deepEqual(saved, [full]);
+});
+
+test('codemode scripts still get sign-in mail withheld from a full app result', async () => {
+  const secrets = ['482913', 'https://example.test/recover?token=fixture-nested-unchecked'];
+  const check: MailCheck = async (emails) =>
+    emails.map((email) => (email.from.includes('broken@example.test') ? undefined : true));
+  const saved: string[] = [];
+  const returned: unknown[] = [];
+  let scriptText = '';
+  await fixture(
+    async (tools) => {
+      const nested = await tools
+        .get('apps')!
+        .execute({ action: 'GMAIL_FETCH_EMAILS', args: {} }, { nested: true });
+      scriptText = nested.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+    },
+    {
+      integration: async (_action, _args, signal, _admit, nested) => {
+        const value = await inlineAppResult(
+          {
+            data: {
+              messages: [
+                {
+                  messageId: 'code',
+                  sender: 'codes@example.test',
+                  subject: 'Your sign-in code',
+                  preview: `Your code is ${secrets[0]}.`,
+                },
+                {
+                  messageId: 'unchecked',
+                  sender: 'broken@example.test',
+                  subject: 'Recover your account',
+                  preview: `Recover it here: ${secrets[1]}`,
+                },
+              ],
+              unrelated: 'ordinary '.repeat(6000),
+            },
+          },
+          async (text) => {
+            saved.push(text);
+            return 'mail.json';
+          },
+          check,
+          signal,
+          nested,
+        );
+        returned.push(value);
+        return value;
+      },
+    },
+  );
+  const value = returned[0] as {
+    contentWithheld?: { emails: number };
+    data: { messages: Array<Record<string, unknown>>; unrelated: string };
+  };
+  assert.equal(value.data.unrelated, 'ordinary '.repeat(6000));
+  assert.equal(value.contentWithheld?.emails, 1);
+  assert.ok(value.data.messages.every((mail) => !('preview' in mail)));
+  for (const secret of secrets) {
+    assert.ok(!JSON.stringify(value).includes(secret));
+    assert.ok(!scriptText.includes(secret));
+  }
+  assert.deepEqual(saved, []);
+});
+
 test('mail privacy checks retain HTML link destinations without changing ordinary email content', async () => {
   const links = [
     {

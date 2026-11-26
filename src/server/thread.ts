@@ -2291,7 +2291,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       operation?.throwIfAborted();
       return name;
     };
-    const inline = async (action: string, result: unknown, operation = signal) => {
+    const inline = async (action: string, result: unknown, operation = signal, nested = false) => {
       operation.throwIfAborted();
       const value = await inlineAppResult(
         result,
@@ -2306,6 +2306,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           ),
         dependencies.mailCheck ?? noMailCheck,
         operation,
+        nested,
       );
       operation.throwIfAborted();
       return value;
@@ -2564,7 +2565,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
             ),
           }
         : {}),
-      integration: fenced(async (action, args, callSignal?: AbortSignal, admit?) => {
+      integration: fenced(async (action, args, callSignal?: AbortSignal, admit?, nested?) => {
         const operation = callSignal ? AbortSignal.any([signal, callSignal]) : signal;
         operation.throwIfAborted();
         const result = await dependencies.integration(ref, action, args, {
@@ -2576,7 +2577,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         const saved = await saveIntegrationFiles(result, async (file) =>
           workspaceReference(await stage(randomUUID(), file.name, file.bytes, operation)),
         );
-        const value = await inline(action, saved.value, operation);
+        const value = await inline(action, saved.value, operation, nested);
         return saved.images.length
           ? { content: [{ type: 'text', text: JSON.stringify(value) }, ...saved.images] }
           : value;

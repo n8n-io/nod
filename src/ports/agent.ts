@@ -268,6 +268,7 @@ export interface RuntimeContext {
     args: Record<string, unknown>,
     signal?: AbortSignal,
     admit?: (asks: boolean, read?: boolean) => Promise<void>,
+    nested?: boolean,
   ): Promise<unknown>;
 
   manage(
