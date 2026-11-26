@@ -43,7 +43,7 @@ The normal Nod stack includes PostgreSQL. A managed database is optional and is 
 
 ## Railway: understand the VM limits
 
-Railway's [Sandboxes](https://docs.railway.com/sandboxes) are Linux VMs, separate from its ordinary deployed services. They [include a Docker daemon and CLI](https://railway.com/changelog/2026-06-12-docker-in-sandboxes), so running sibling containers is possible. Deploying Nod's server image as an ordinary Railway service alone does not create its Docker runtime, browser, or workspace.
+Railway's [Sandboxes](https://docs.railway.com/sandboxes) are Linux VMs, separate from its ordinary deployed services. They [include a Docker daemon and CLI](https://railway.com/changelog/2026-06-12-docker-in-sandboxes), so running sibling containers is possible. Deploying Nod's server image as an ordinary Railway service alone does not create its Docker runtime, browser, or workspace. A [community template](/deploy/railway-template/) runs them as separate services with an exec relay instead.
 
 Free and Trial Sandboxes are limited to two vCPUs and 2 GB RAM. They are destroyed after up to five idle minutes; only paid plans can disable that timeout. Active SSH, port-forwarding, or command sessions defer idle destruction. Background containers alone do not. Checkpoints preserve a disk snapshot, but they are not a replacement for a consistent database backup.
 
@@ -84,6 +84,7 @@ Check [EC2 free-tier eligibility](https://docs.aws.amazon.com/AWSEC2/latest/User
 These guides describe setups tested by contributors. Check each guide's test scope and operating limits before you choose a provider.
 
 - [Deploy on boxd](/deploy/boxd/): run Nod on a persistent VM with managed HTTPS. The guide includes the contributor's installation checks and the remaining operating checks.
+- [Deploy on Railway with a template](/deploy/railway-template/): run Nod's server, workspace, browser, and database as Railway services, without a Docker socket. The guide includes the maintainer's checks, the missing workspace firewall, and the remaining operating checks.
 
 ## Finish the network setup
 
