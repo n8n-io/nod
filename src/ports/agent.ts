@@ -4,7 +4,7 @@ import type { ProviderUsageEvent } from './provider-usage.ts';
 import type { ExecutionEvent, ExecutionScope } from '../shared/execution.ts';
 import type { ConnectedApp } from './integrations.ts';
 import type { DiscoveredTool } from './discovered.ts';
-import type { BrowserAction, BrowserPage, CredentialKind, WorkspaceSession } from './computer.ts';
+import type { BrowserAction, BrowserPage, WorkspaceSession } from './computer.ts';
 import type {
   AgentReactionResult,
   Artifact,
@@ -248,7 +248,7 @@ export interface RuntimeContext {
       label: string;
     } & (
       | {
-          kind: CredentialKind;
+          kind?: 'otp';
           savedLoginId?: string;
           usernameSelector?: string;
           passwordSelector?: string | string[];

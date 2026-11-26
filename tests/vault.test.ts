@@ -2218,6 +2218,35 @@ test(
         assert.equal(injections.length, before);
       });
 
+      await t.test('a page with both sign-in fields gets one private form', async () => {
+        const turn = await startTurn();
+        tasks.set('both-fields', turn);
+        const request = await vault.request(turn, 'local-development', {
+          origin,
+          label: 'Website login',
+          usernameSelector: '#email',
+          passwordSelector: '#password',
+        });
+        await wait(turn);
+        const url = request.url.replace('/vault/', '/api/credential-requests/');
+        const form = (await app.inject({ method: 'GET', url })).json();
+        assert.deepEqual(
+          form.fields.map((field: { kind: string }) => field.kind),
+          ['identifier', 'password'],
+        );
+        const submitted = await app.inject({
+          method: 'POST',
+          url,
+          payload: {
+            username: 'synthetic@example.test',
+            password: 'both-fields-synthetic-password',
+          },
+        });
+        assert.equal(submitted.statusCode, 200);
+        assert.equal(injections.at(-1)?.username, 'synthetic@example.test');
+        assert.equal(injections.at(-1)?.password, 'both-fields-synthetic-password');
+      });
+
       await t.test(
         'held credentials remain bound to owner, origin, running turn and expiry',
         async () => {

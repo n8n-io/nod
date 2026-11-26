@@ -424,7 +424,7 @@ export const toolDefinitions = {
   ),
   sign_in: defineTool(
     'sign_in',
-    "Private sign-in on the current exact origin. Inspect the page and saved account metadata first. Use the owner's method or a unique matching saved login, which selects password sign-in. For ambiguous methods use kind:method with one {label,selector} per visible method control, by current @eN ref or CSS. Ask only for an ambiguous account. For identifier/password/otp, pass current field refs or CSS selectors and submitSelector if required; omit it for automatic submission. passwordSelector can be an ordered array for split codes. savedLoginId selects a Vault login from manage_apps list; one matching Vault login is used automatically. Otherwise the owner enters values privately. Use emailCode:true and the page's emailRecipient only for a code sent by email; Nod retrieves it privately. Omit emailCode for an authenticator code. Never read codes with apps or ask in chat. message describes private entry without repeating the button label; action is that short button label; label names the login. The server checks consent, fills and submits once; the result includes the page when available. Inspect it without submitting again. Read-only scripts need no reload; reload only when entry was refused because a script changed the document.",
+    "Private sign-in on the current exact origin. Inspect the page and saved account metadata first. Use the owner's method or a unique matching saved login, which selects password sign-in. For ambiguous methods use kind:method with one {label,selector} per visible method control, by current @eN ref or CSS. Ask only for an ambiguous account. Otherwise pass the sign-in fields visible on the page as current refs or CSS selectors: usernameSelector, passwordSelector or both, and submitSelector if required; omit it for automatic submission. For a verification code use kind:otp with its field as passwordSelector, which can be an ordered array for split codes. savedLoginId selects a Vault login from manage_apps list; one matching Vault login is used automatically. Otherwise the owner enters values privately. Use emailCode:true and the page's emailRecipient only for a code sent by email; Nod retrieves it privately. Omit emailCode for an authenticator code. Never read codes with apps or ask in chat. message describes private entry without repeating the button label; action is that short button label; label names the login. The server checks consent, fills and submits once; the result includes the page when available. Inspect it without submitting again. Read-only scripts need no reload; reload only when entry was refused because a script changed the document.",
     Type.Union([
       Type.Object(
         {
@@ -433,7 +433,7 @@ export const toolDefinitions = {
           savedLoginId: Type.Optional(uuid),
           message: Type.String({ minLength: 1 }),
           action: Type.String({ minLength: 1 }),
-          kind: literals(['identifier', 'password', 'otp']),
+          kind: Type.Optional(Type.Literal('otp')),
           usernameSelector: Type.Optional(fieldSelector),
           passwordSelector: Type.Optional(
             Type.Union([fieldSelector, Type.Array(fieldSelector, { minItems: 1 })]),

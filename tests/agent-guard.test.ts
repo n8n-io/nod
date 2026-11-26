@@ -2290,14 +2290,12 @@ test('secure credential pause prevents subsequent tools in the same execution se
     {
       origin: 'https://example.com',
       label: 'Example',
-      kind: 'identifier' as const,
       usernameSelector: '@username',
       submitSelector: '@submit',
     },
     {
       origin: 'https://example.com',
       label: 'Example',
-      kind: 'password' as const,
       passwordSelector: '@password',
       submitSelector: '@submit',
     },
@@ -2581,7 +2579,6 @@ test('private entry returns page data once and stops before an observation after
             label: 'Synthetic login',
             message: 'Sign in.',
             action: 'Continue',
-            kind: 'password',
             passwordSelector: '#password',
           });
           const text = result.content

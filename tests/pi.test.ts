@@ -1661,7 +1661,6 @@ test('real Pi sessions persist a credential pause and resume without replaying c
                       arguments: {
                         origin: 'https://example.com',
                         label: 'Example',
-                        kind: 'password',
                         passwordSelector: '#password',
                         submitSelector: '#submit',
                         message: 'Example needs your password.',

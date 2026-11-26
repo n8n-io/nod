@@ -96,15 +96,25 @@ const requestInput = z
   .object({
     origin: z.string().max(2048),
     label: z.string().trim().min(1).max(100),
-    kind: z.enum(['identifier', 'password', 'otp']),
+    kind: z.enum(['identifier', 'password', 'otp']).optional(),
     usernameSelector: z.string().min(1).optional(),
     passwordSelector: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
     submitSelector: z.string().min(1).optional(),
     emailCode: z.boolean().optional(),
     emailRecipient: z.string().trim().min(3).optional(),
   })
-  .strict();
-type CredentialInput = z.infer<typeof requestInput>;
+  .strict()
+  .transform((input) => ({
+    ...input,
+    kind:
+      input.kind === 'otp'
+        ? ('otp' as const)
+        : input.passwordSelector
+          ? ('password' as const)
+          : ('identifier' as const),
+  }));
+type CredentialInput = z.output<typeof requestInput>;
+type SignInInput = z.input<typeof requestInput>;
 const methodInput = z
   .object({
     origin: z.string().max(2048),
@@ -1135,7 +1145,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     return openCredential(await key(), selected).username;
   }
 
-  async function inspectRequest(threadId: string, raw: CredentialInput) {
+  async function inspectRequest(threadId: string, raw: SignInInput) {
     const input = requestInput.parse(raw);
     const origin = credentialOrigin(input.origin);
     const page = await options.page?.(threadId);
@@ -1245,7 +1255,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   async function request(
     turn: TurnRef,
     ownerId: string,
-    raw: CredentialInput | MethodInput,
+    raw: SignInInput | MethodInput,
   ): Promise<{ url: string }> {
     if (!(await currentTurn(pool, turn, ownerId)))
       throw new VaultError('This task can no longer request credentials.', 409);
@@ -1560,7 +1570,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   async function enterLogin(
     turn: TurnRef,
     ownerId: string,
-    raw: CredentialInput,
+    raw: SignInInput,
     source: LoginSource,
     request?: RequestRow,
   ) {
@@ -2066,7 +2076,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     return { ok: true };
   }
 
-  async function fillSaved(turn: TurnRef, ownerId: string, entryId: string, raw: CredentialInput) {
+  async function fillSaved(turn: TurnRef, ownerId: string, entryId: string, raw: SignInInput) {
     return enterLogin(turn, ownerId, raw, { kind: 'saved', entryId });
   }
 
@@ -2112,20 +2122,20 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     turn: TurnRef,
     ownerId: string,
     entryId: string,
-    raw: CredentialInput,
+    raw: SignInInput,
   ) {
     if (raw.kind !== 'otp' || raw.emailCode) return false;
     return enterLogin(turn, ownerId, raw, { kind: 'authenticator', entryId });
   }
 
-  async function fillSelected(turn: TurnRef, ownerId: string, raw: CredentialInput) {
+  async function fillSelected(turn: TurnRef, ownerId: string, raw: SignInInput) {
     await forgetExpiredHolds();
     const root = await rootTurn(pool, turn, ownerId);
     const selected = root
       ? await selection(root, ownerId, credentialOrigin(raw.origin))
       : undefined;
     if (!selected || selected.kind === 'password') return undefined;
-    if (!options.page || !['identifier', 'password'].includes(raw.kind)) return false;
+    if (!options.page || raw.kind === 'otp') return false;
     try {
       return await enterLogin(turn, ownerId, raw, { kind: 'selection', selected });
     } catch (error) {
@@ -2135,7 +2145,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     }
   }
 
-  async function fillEmailCode(turn: TurnRef, ownerId: string, raw: CredentialInput) {
+  async function fillEmailCode(turn: TurnRef, ownerId: string, raw: SignInInput) {
     if (
       ownerId !== owner ||
       !options.page ||
