@@ -119,8 +119,8 @@ jobs:
             command -v "$program" >/dev/null || missing+=("${program,,}")
           done
           if (( ${#missing[@]} )); then
-            sudo apt-get update -qq
-            sudo apt-get install --yes --no-install-recommends "${missing[@]}"
+            sudo apt-get update -qq -o Acquire::Retries=3
+            sudo apt-get install -o Acquire::Retries=3 --yes --no-install-recommends "${missing[@]}"
           fi
           chrome="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium)"
           if [[ "$chrome" != /usr/bin/chromium ]]; then
