@@ -2,6 +2,64 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.9.8 - 2026-11-26
+
+### Features
+
+- **desktop:** Package Nod for Fedora as an RPM and download the Linux runtime on first launch. [#1515](https://github.com/n8n-io/nod/pull/1515) (544217b)
+- **analytics:** Record engine stop and desktop launch context. [#1500](https://github.com/n8n-io/nod/pull/1500) (818fc9a)
+- **traces:** Reset chat, readable messages and full screen in dev mode. [commit](https://github.com/n8n-io/nod/commit/13dc3819257763eadd1b1eb64d2d8d95350c2e57) (13dc381)
+- **traces:** Show every model call, prompt and tool of a turn in dev mode. [commit](https://github.com/n8n-io/nod/commit/0ea0c72547c3751541a8f7c91189d2bd7bcb5a08) (0ea0c72)
+- **analytics:** Record the setup failure code and step. [#1488](https://github.com/n8n-io/nod/pull/1488) (502baeb)
+
+### Fixes
+
+- **schedules:** Let a schedule with a legacy time zone be paused or renamed. [#1514](https://github.com/n8n-io/nod/pull/1514) (052d1ac)
+- **chat:** Use singular review and grouped counts in booking cards. [#1511](https://github.com/n8n-io/nod/pull/1511) (8990546)
+- **mcp:** Pass structuredContent to the model when the text is only a summary. [#1476](https://github.com/n8n-io/nod/pull/1476) (cbda859)
+- **channels:** Preserve reply text when delivering attachments. [#1520](https://github.com/n8n-io/nod/pull/1520) (467b428)
+- **models:** Distinguish invalid requests from server failures. [#1523](https://github.com/n8n-io/nod/pull/1523) (c587455)
+- **web:** Keep vault surfaces open when Escape cancels an IME candidate. [#1472](https://github.com/n8n-io/nod/pull/1472) (3131c6c)
+- **web:** Keep the task title draft when Escape cancels an IME candidate. [#1342](https://github.com/n8n-io/nod/pull/1342) (fc26078)
+- **tasks:** Give the model the task ledger as untrusted data. [#1496](https://github.com/n8n-io/nod/pull/1496) (16692b0)
+- **onboarding:** Read JSON text in an app result as JSON before masking links. [#1504](https://github.com/n8n-io/nod/pull/1504) (86155fb)
+- **schedules:** Project monthly and rare schedules correctly. [#1315](https://github.com/n8n-io/nod/pull/1315) (292320a)
+- **speech:** Keep the service's reason and stop calling a rate limit a credit problem. [#1334](https://github.com/n8n-io/nod/pull/1334) (97ddc18)
+- **trust:** Refuse a single unmatched term object. [#1499](https://github.com/n8n-io/nod/pull/1499) (ecfe5fe)
+- **desktop:** Show the redirect status when the server connection check is redirected. [#1513](https://github.com/n8n-io/nod/pull/1513) (8d1f214)
+- **browser:** Stop mouse side buttons over browser handoff from navigating the Nod page. [#1503](https://github.com/n8n-io/nod/pull/1503) (fe6f6d3)
+- **release:** Unblock 0.9.8 after the failed 0.9.8 and 0.9.9 builds. [#1529](https://github.com/n8n-io/nod/pull/1529) (78e4582)
+- **release:** Retry GitHub server errors without creating a second draft. [#1525](https://github.com/n8n-io/nod/pull/1525) (2d767e4)
+- **channels:** Explain where the Telegram bot replies. [#1522](https://github.com/n8n-io/nod/pull/1522) (5b6d3df)
+- **installer:** Check for Windows x64 before downloading Nod. [#1521](https://github.com/n8n-io/nod/pull/1521) (6aa519e)
+- **traces:** Accept sessions without the turn trace flag and bound the trace resize. [commit](https://github.com/n8n-io/nod/commit/1cbddcb06bb8e9a3fc7d8989c2d06f34ba55f76e) (1cbddcb)
+- **traces:** Address review on dev turn traces. [commit](https://github.com/n8n-io/nod/commit/b77992f81c25a64905ede251fbc6a8c9e3df79fa) (b77992f)
+- **channels:** Prove the owner from their own chat and send Nod's messages where they last wrote. [#1493](https://github.com/n8n-io/nod/pull/1493) (b444e27)
+- **traces:** Keep turn traces off the model path, on their own turn and dev-only. [commit](https://github.com/n8n-io/nod/commit/21fecfaf6faedd514c6edc4fa148bf2d7ca8ea9e) (21fecfa)
+- **apps:** Tidy connect page. [#1491](https://github.com/n8n-io/nod/pull/1491) (b51f38d)
+- **memory:** Save what the owner asks to remember, in any language. [#1490](https://github.com/n8n-io/nod/pull/1490) (1423455)
+
+### Documentation
+
+- Match four sentences to current behaviour. [#1512](https://github.com/n8n-io/nod/pull/1512) (2e2b2a2)
+
+<details>
+<summary>Maintenance (1 changes)</summary>
+
+- **traces:** Check turn traces and forget-reset exist only in dev mode. [commit](https://github.com/n8n-io/nod/commit/a92c09ab676c503425b48b8e8367197f533ce61f) (a92c09a)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.9.7...052d1ac1681ccd85dc28a0c66f4c5416612e16d3)
+
+<details>
+<summary>Build details</summary>
+
+Source: `052d1ac1681ccd85dc28a0c66f4c5416612e16d3`
+Previous release: `nod-v0.9.7`
+
+</details>
+
 ## 0.9.7 - 2026-11-25
 
 ### Features
