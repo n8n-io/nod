@@ -354,7 +354,7 @@ export type AgentEvent =
   | { type: 'fallback'; from: string; to: string }
   | { type: 'final'; text: string }
   | ModelUsageObservation
-  | { type: 'error'; message: string; contextExhausted?: boolean };
+  | { type: 'error'; message: string; contextExhausted?: boolean; failure?: ModelFailure };
 export interface AgentAudio {
   id: string;
   mimeType: string;
@@ -411,7 +411,23 @@ export interface Agent {
   open(options: AgentSessionOptions): Promise<AgentSession>;
   dispose(): void | Promise<void>;
 }
-export class ModelRequestError extends Error {}
+export interface ModelFailure {
+  kind:
+    | 'authentication'
+    | 'permission'
+    | 'rate_limited'
+    | 'timeout'
+    | 'unavailable'
+    | 'invalid_request'
+    | 'unknown'
+    | 'tools_unsupported'
+    | 'quota_exhausted'
+    | 'context_too_large';
+  status?: number;
+}
+export class ModelRequestError extends Error {
+  failure?: ModelFailure;
+}
 export class ContextLimitError extends ModelRequestError {}
 export class OutputLimitError extends Error {}
 export class ToolFailureError extends Error {}

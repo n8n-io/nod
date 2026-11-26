@@ -18,6 +18,7 @@ import type {
   AgentToolOutcome,
   AgentToolResult,
   Documentation,
+  ModelFailure,
   RuntimeContext,
   RuntimeObservation,
   RuntimeResult,
@@ -273,6 +274,7 @@ export function createAgentRuntime(dependencies: {
     let stopped = false;
     let modelError: string | undefined;
     let contextExhausted = false;
+    let modelFailure: ModelFailure | undefined;
     let modelIncomplete: 'output' | 'context' | undefined;
     const progress = toolProgress();
     let completed = false;
@@ -1285,6 +1287,7 @@ export function createAgentRuntime(dependencies: {
           if (event.type === 'error') {
             modelError = event.message;
             contextExhausted = event.contextExhausted === true;
+            modelFailure = event.failure;
           }
           if (event.type === 'final') {
             modelError = undefined;
@@ -1372,8 +1375,11 @@ export function createAgentRuntime(dependencies: {
       const paused = () =>
         `Paused at the ${dollars(context.checkIn!.budgetUsd)} check-in. Reply to keep going.`;
       if (modelError)
-        throw new (contextExhausted ? ContextLimitError : ModelRequestError)(
-          `The model request failed: ${(dependencies.redactError ?? String)(modelError)}`,
+        throw Object.assign(
+          new (contextExhausted ? ContextLimitError : ModelRequestError)(
+            `The model request failed: ${(dependencies.redactError ?? String)(modelError)}`,
+          ),
+          { failure: modelFailure },
         );
       if (modelIncomplete === 'context' && status === 'succeeded')
         throw new ContextLimitError(

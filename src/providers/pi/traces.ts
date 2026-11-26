@@ -9,6 +9,7 @@ import {
   type Tool,
   type ToolResultMessage,
 } from '@earendil-works/pi-ai';
+import type { ModelFailure } from '../../ports/agent.ts';
 import type { ModelCallTrace, ModelTrace, ModelTraces } from '../../ports/traces.ts';
 import { piUsageMetrics } from './usage.ts';
 import { memoryEvidenceSource, untrustedParts } from '../../shared/untrusted.ts';
@@ -99,6 +100,43 @@ function errorType(error: string, phase?: ModelRequestFacts['requestPhase']) {
   )
     return 'connection';
   return 'unknown';
+}
+
+const toolsUnsupported =
+  /\b(?:tools?|tool[_ -]?(?:use|calls?|calling|choice)|function[_ -]?call(?:s|ing)?)\b.{0,80}?\b(?:(?:not|n't) (?:supported|enabled|available)|unsupported|requires --enable-auto-tool-choice)|\b(?:not|n't) support\b.{0,40}?\b(?:tools?|tool[_ -]?(?:use|calls?|calling)|function[_ -]?calling)\b|\bno endpoints found that support tool/i;
+const failureKinds: Record<string, ModelFailure['kind']> = {
+  auth: 'authentication',
+  billing: 'quota_exhausted',
+  quota: 'quota_exhausted',
+  rate_limit: 'rate_limited',
+  provider_unavailable: 'unavailable',
+  model_config: 'invalid_request',
+};
+
+export function modelFailure(error: string, overflow = false): ModelFailure {
+  const status = Number([...error.matchAll(/\(HTTP ([1-5]\d{2})\)/g)].at(-1)?.[1]) || undefined;
+  const phase = /\[request phase: ([a-z_]+)\]\s*$/.exec(error)?.[1];
+  const type = errorType(error, phase as ModelRequestFacts['requestPhase'] | undefined);
+  const kind =
+    overflow || status === 413 || /\brequest too large\b/i.test(error)
+      ? 'context_too_large'
+      : toolsUnsupported.test(error)
+        ? 'tools_unsupported'
+        : type === 'connection'
+          ? /timed? ?out|timeout/i.test(error)
+            ? 'timeout'
+            : 'unavailable'
+          : (failureKinds[type] ??
+            (status === 403
+              ? 'permission'
+              : status === 408 || status === 504
+                ? 'timeout'
+                : status && status >= 500
+                  ? 'unavailable'
+                  : status && status >= 400
+                    ? 'invalid_request'
+                    : 'unknown'));
+  return { kind, ...(status ? { status } : {}) };
 }
 
 function text(content: string | { type: string; text?: string }[]) {

@@ -3283,6 +3283,39 @@ test(
             background: true,
           });
           await completed(taskCheck, 'scheduled', false, 'reply');
+          const privateValue = 'synthetic-private-provider-value';
+          const failures = [
+            [
+              { kind: 'rate_limited', status: 429 },
+              { failure_class: 'rate_limited', provider_status: 429 },
+            ],
+            [{ kind: 'tools_unsupported', status: 99400 }, { failure_class: 'tools_unsupported' }],
+            [undefined, { failure_class: 'unknown' }],
+          ] as const;
+          for (const [index, [failure, expected]] of failures.entries()) {
+            const prompt = `Synthetic analytics model failure ${index}`;
+            modelErrors.set(
+              prompt,
+              Object.assign(new ModelRequestError(`${privateValue} (HTTP 429)`), {
+                code: privateValue,
+                failure,
+              }),
+            );
+            const failed = await thread.submitUserMessage(prompt);
+            await completed(failed.turnId, 'immediate', true, 'failed', 'failed');
+            modelErrors.delete(prompt);
+            const event = analyticsEvents.find(
+              (event) =>
+                event.event === 'turn_completed' &&
+                event.properties.run_id === analyticsRuns.get(failed.turnId),
+            )!;
+            const { failure_reason, failure_class, provider_status } = event.properties;
+            assert.deepEqual(
+              JSON.parse(JSON.stringify({ failure_reason, failure_class, provider_status })),
+              { failure_reason: 'model', ...expected },
+            );
+            assert.equal(JSON.stringify(event).includes(privateValue), false);
+          }
           assert.deepEqual(
             [requested.turnId, schedule, task, answer.turnId, signedIn, taskCheck].map(
               (id) => ran(id)?.automatic,

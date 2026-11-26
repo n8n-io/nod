@@ -4330,7 +4330,7 @@ test('Pi ChatGPT refresh distinguishes rejected credentials from transient servi
 test('each model call yields one chat-format trace without image data', async () => {
   const { createPiModelBackend, createPiModelRuntime } =
     await import('../src/providers/pi/models.ts');
-  const { piModelTrace } = await import('../src/providers/pi/traces.ts');
+  const { modelFailure, piModelTrace } = await import('../src/providers/pi/traces.ts');
   const backend = createPiModelBackend({
     fetch: async (input) => {
       if (String(input) === 'https://openrouter.ai/api/v1/key')
@@ -4488,6 +4488,40 @@ test('each model call yields one chat-format trace without image data', async ()
     assert.equal(failed.metadata.error_type, expected, error);
     assert.equal(failed.error, error);
   }
+  for (const [error, kind, status] of [
+    [
+      'synthetic-model does not support tools (HTTP 400) [request phase: response]',
+      'tools_unsupported',
+      400,
+    ],
+    ['No endpoints found that support tool use. (HTTP 404)', 'tools_unsupported', 404],
+    ['Function calling is not enabled for models/synthetic (HTTP 400)', 'tools_unsupported', 400],
+    ['"auto" tool choice requires --enable-auto-tool-choice (HTTP 400)', 'tools_unsupported', 400],
+    [
+      'Quota exceeded: GenerateRequestsPerDayPerProjectPerModel-FreeTier (HTTP 429)',
+      'quota_exhausted',
+      429,
+    ],
+    ['Insufficient credits. (HTTP 402)', 'quota_exhausted', 402],
+    ['Too many requests. (HTTP 429)', 'rate_limited', 429],
+    [
+      'Request too large: tokens per minute (TPM): Limit 6000, Requested 9000 (HTTP 413)',
+      'context_too_large',
+      413,
+    ],
+    ['API key expired. (HTTP 401)', 'authentication', 401],
+    ['The caller may not use this model. (HTTP 403)', 'permission', 403],
+    ['The model was not found. (HTTP 404)', 'invalid_request', 404],
+    ['The request timed out. [request phase: request]', 'timeout', undefined],
+    [
+      'fetch failed (transport cause: ECONNRESET) [request phase: request]',
+      'unavailable',
+      undefined,
+    ],
+    ['Synthetic provider error.', 'unknown', undefined],
+  ] as const)
+    assert.deepEqual(modelFailure(error), { kind, ...(status ? { status } : {}) }, error);
+  assert.equal(modelFailure('Synthetic provider error.', true).kind, 'context_too_large');
   for (const errorMessage of [
     undefined,
     'Request aborted by the owner.',
