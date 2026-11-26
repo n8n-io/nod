@@ -2761,7 +2761,8 @@ describe('native browser controls', { concurrency: 3 }, () => {
         const name = [...ids, 'b-again'].find((id) => request.url === `/${id}`) ?? 'home';
         response.end(
           `<h1>${name} ${signedIn ? 'signed in' : 'signed out'}</h1>` +
-            '<a id="popup" href="/popup" target="_blank">Open popup</a><input id="field">',
+            '<a id="popup" href="/popup" target="_blank">Open popup</a><input id="field">' +
+            "<button id=\"confirm\" onclick=\"document.title = confirm('Continue?') ? 'confirmed' : 'declined'\">Confirm</button>",
         );
       });
       await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -2831,6 +2832,14 @@ describe('native browser controls', { concurrency: 3 }, () => {
         assert.equal(opened.filter((url) => url.startsWith(origin)).length, ids.length);
         assert.ok(opened.filter((url) => url === 'about:blank').length <= 1);
         assert.match(await passkey('c'), /Passkeys are not available in this browser/);
+        await computer.act('e', { action: 'click', selector: '#confirm' });
+        const answered = Date.now();
+        await computer.act('e', { action: 'accept_dialog' });
+        assert.ok(Date.now() - answered < 10_000);
+        assert.match(
+          (await computer.act('e', { action: 'evaluate', script: 'document.title' })).text,
+          /confirmed/,
+        );
 
         await Promise.all(
           ids.map((id) => computer.act(id, { action: 'fill', selector: '#field', text: id })),

@@ -1037,7 +1037,12 @@ export function createAgentBrowserComputer(options: {
   async function alive(state: BrowserState) {
     if (!state.socket || state.browser !== owner.cdpUrl) return false;
     if (state.root && owner.watch?.open() && !owner.watch.tabs(state.root).length) return false;
-    return requestDaemon(state.socket, { action: 'title' }, undefined, 5000).then(
+    return requestDaemon(
+      state.socket,
+      { action: 'dialog', response: 'status' },
+      undefined,
+      5000,
+    ).then(
       () => true,
       (error: unknown) =>
         !(
