@@ -148,6 +148,16 @@ function modelListRestricted(message = '') {
 }
 
 const levels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+function effortMap(offered: readonly string[]) {
+  return Object.fromEntries(
+    ['off', ...levels].map((level) => {
+      const value = level === 'off' ? 'none' : level;
+      return [level, offered.includes(value) ? value : null];
+    }),
+  );
+}
+
 let endpointConnections: Dispatcher1Wrapper | undefined;
 const keyless = 'nod-no-key';
 const ollamaShowSchema = z.object({
@@ -324,6 +334,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         context_length: size,
         context_window: size,
         max_model_len: size,
+        reasoning: z.object({ supported_efforts: z.array(z.string()).optional() }).optional(),
       }),
     );
     const root = found.url.replace(/\/v1$/, '');
@@ -375,6 +386,11 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
               ? ollamaModel(shown.data)
               : undefined;
           if (known?.usable === false) return [];
+          const offered = entry.reasoning?.supported_efforts;
+          const serverMap = offered?.length ? effortMap(offered) : undefined;
+          const thinkingLevelMap =
+            known?.thinkingLevelMap ??
+            (serverMap && Object.values(serverMap).some(Boolean) ? serverMap : undefined);
           const reportedContext =
             known?.contextWindow ??
             entry.context_length ??
@@ -401,8 +417,8 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
                 supportsDeveloperRole: false,
                 maxTokensField: 'max_tokens',
               },
-              reasoning: known?.reasoning ?? false,
-              thinkingLevelMap: known?.thinkingLevelMap,
+              reasoning: known?.reasoning ?? !!thinkingLevelMap,
+              thinkingLevelMap,
               input: known?.images ? ['text', 'image'] : ['text'],
               contextWindow,
               maxTokens: Math.min(32_768, Math.floor(contextWindow / 2)),
@@ -945,16 +961,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
             m.supported_parameters.includes('reasoning') ||
             m.supported_parameters.includes('reasoning_effort');
           const map = m.reasoning?.supported_efforts
-            ? Object.fromEntries(
-                ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map((level) => [
-                  level,
-                  m.reasoning!.supported_efforts!.includes(level === 'off' ? 'none' : level)
-                    ? level === 'off'
-                      ? 'none'
-                      : level
-                    : null,
-                ]),
-              )
+            ? effortMap(m.reasoning.supported_efforts)
             : known?.thinkingLevelMap;
           return definition({
             ...known,

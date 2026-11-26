@@ -12701,6 +12701,44 @@ test('OpenRouter free routing can prepare a task when reasoning cannot be disabl
   assert.equal(calls, 1);
 });
 
+test('compatible servers offer the effort levels they publish for each model', async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => (globalThis.fetch = original));
+  globalThis.fetch = async (input) => {
+    const path = new URL(new Request(input).url).pathname;
+    if (path === '/v1/models')
+      return Response.json({
+        data: [
+          {
+            id: 'gateway-named-none',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['none', 'low', 'high'] },
+          },
+          {
+            id: 'gateway-named-only',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['low', 'medium', 'high'] },
+          },
+          { id: 'gateway-plain', context_length: 32768 },
+        ],
+      });
+    return new Response(null, { status: 404 });
+  };
+  const definitions = await createPiModelBackend({ fetch: globalThis.fetch }).catalog(
+    'compatible',
+    'api_key',
+    { type: 'endpoint', url: 'http://127.0.0.1:1/v1' },
+  );
+  assert.deepEqual(
+    Object.fromEntries(definitions.map((entry) => [entry.choice.id, entry.choice.efforts])),
+    {
+      'gateway-named-none': ['off', 'low', 'high'],
+      'gateway-named-only': ['low', 'medium', 'high'],
+      'gateway-plain': ['off'],
+    },
+  );
+});
+
 test('new and saved Ollama models keep the effort value the server reads', async (t) => {
   const original = globalThis.fetch;
   t.after(() => (globalThis.fetch = original));
