@@ -100,6 +100,7 @@ async function download(name, item, file) {
       '--location',
       '--retry',
       '3',
+      '--retry-all-errors',
       '--connect-timeout',
       '30',
       '--max-time',
