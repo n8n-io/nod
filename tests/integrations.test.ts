@@ -16134,13 +16134,20 @@ test(
   },
 );
 
-test('MCP sign-in registers a loopback callback when the service refuses the public one', async () => {
+test('MCP sign-in registers and exchanges with a loopback callback when the service refuses the public one', async () => {
   const registered: string[] = [];
+  let exchangedRedirect: string | null = null;
   const oauth = createDiscoveredOAuth(
     async (input, init) => {
       const request = new Request(input, init);
       const url = new URL(request.url);
       if (url.pathname.startsWith('/.well-known/')) return new Response(null, { status: 404 });
+      if (url.pathname === '/token') {
+        const body = new URLSearchParams(await request.text());
+        assert.equal(body.get('code'), 'synthetic-authorization-code');
+        exchangedRedirect = body.get('redirect_uri');
+        return Response.json({ access_token: 'synthetic-loopback-token', token_type: 'Bearer' });
+      }
       assert.equal(url.pathname, '/register');
       const [redirect] = JSON.parse(await request.text()).redirect_uris;
       registered.push(redirect);
@@ -16170,6 +16177,13 @@ test('MCP sign-in registers a loopback callback when the service refuses the pub
     new URL(started.url).searchParams.get('redirect_uri'),
     'http://127.0.0.1/api/apps/callback',
   );
+  const finished = await oauth.finish(
+    'https://mail.synthetic-nod.dev/mcp',
+    started.saved,
+    'synthetic-authorization-code',
+  );
+  assert.equal(exchangedRedirect, 'http://127.0.0.1/api/apps/callback');
+  assert.equal(finished.tokens?.access_token, 'synthetic-loopback-token');
   await assert.rejects(
     createDiscoveredOAuth(async (input) =>
       new URL(String(input)).pathname.startsWith('/.well-known/')
