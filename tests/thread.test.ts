@@ -568,6 +568,10 @@ test(
     const abortedPrompts = new Set<string>();
     const fileContexts = new Map<string, RuntimeContext>();
     const integrationReads: string[] = [];
+    const syntheticEvents = Array.from(
+      { length: 1000 },
+      (_, index) => `Event ${index + 1}: Synthetic planning review in Room ${index % 12}.`,
+    ).join('\n');
     let failRelease = 0;
 
     let limitReached = false;
@@ -612,6 +616,7 @@ test(
               },
             },
           };
+        if (action === 'CALENDAR_LIST_EVENTS') return { text: syntheticEvents };
         integrationReads.push(action);
         return { successful: true, data: { threads: 2 } };
       },
@@ -716,6 +721,19 @@ test(
             mimeType: 'text/plain',
           });
           await context.publishScreenshot!(Buffer.from('synthetic image'), 'research.png');
+          assert.deepEqual(
+            await context.integration('CALENDAR_LIST_EVENTS', {}, undefined, undefined, true),
+            { text: syntheticEvents },
+          );
+          const preview = (await context.integration('CALENDAR_LIST_EVENTS', {})) as {
+            workspaceFile: string;
+            preview: string;
+          };
+          assert.equal(preview.preview.length, 2000);
+          assert.equal(
+            (await readFile(join(context.workspacePath, preview.workspaceFile))).toString(),
+            JSON.stringify({ text: syntheticEvents }),
+          );
           const download = (await context.integration('SLACK_DOWNLOAD_SLACK_FILE', {})) as {
             content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
           };
