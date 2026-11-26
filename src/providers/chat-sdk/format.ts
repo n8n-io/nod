@@ -1,5 +1,4 @@
 import { convertEmojiPlaceholders, parseMarkdown, walkAst, type Root } from 'chat';
-import { splitMessage } from '@chat-adapter/whatsapp';
 
 type Node = Root | Root['children'][number];
 type Parent = Extract<Node, { children: unknown }>;
@@ -219,6 +218,68 @@ export function canDeliverWhatsAppLiteral(markdown: string, literal: string) {
     hasLiteralBlock(markdown, literal) &&
     formatted.split('```').length === 3 &&
     convertEmojiPlaceholders(formatted, 'whatsapp') === formatted &&
-    splitMessage(formatted).length === 1
+    splitText(formatted, whatsappTextLimit).length === 1
   );
+}
+
+export const whatsappTextLimit = 4096;
+
+const fenceLine = /^ {0,3}(`{3,}(?=[^`]*$)|~{3,})/;
+const closingFence = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+const closes = (line: string, marker: string) => {
+  const closing = closingFence.exec(line)?.[1];
+  return closing?.[0] === marker[0] && closing.length >= marker.length;
+};
+
+function openFence(text: string) {
+  let open: { line: string; marker: string } | undefined;
+  for (const line of text.split('\n')) {
+    if (open && closes(line, open.marker)) open = undefined;
+    else if (!open) {
+      const marker = fenceLine.exec(line)?.[1];
+      if (marker) open = { line, marker };
+    }
+  }
+  return open;
+}
+
+export function splitText(text: string, limit: number) {
+  const parts: string[] = [];
+  let rest = text;
+  const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+  const cutAt = (room: number) => {
+    const slice = rest.slice(0, room);
+    let cut = slice.lastIndexOf('\n\n');
+    if (cut < room / 2) cut = slice.lastIndexOf('\n');
+    if (cut < room / 2) cut = room;
+    let boundary = 0;
+    for (const { index, segment } of graphemes.segment(rest)) {
+      if (index + segment.length > cut) break;
+      boundary = index + segment.length;
+    }
+    cut = boundary || cut;
+    const last = rest.charCodeAt(cut - 1);
+    if (last >= 0xd800 && last <= 0xdbff) cut--;
+    return cut;
+  };
+  while (rest.length > limit) {
+    let cut = cutAt(limit);
+    let fence = openFence(rest.slice(0, cut));
+    if (fence && cut + fence.marker.length + 1 > limit) {
+      cut = cutAt(limit - fence.marker.length - 1);
+      fence = openFence(rest.slice(0, cut));
+    }
+    if (fence && cut > fence.line.length + 1) {
+      const tail = rest.slice(cut).replace(/^\n+/, '');
+      const next = tail.split('\n', 1)[0]!;
+      parts.push(`${rest.slice(0, cut).trimEnd()}\n${fence.marker}`);
+      rest = closes(next, fence.marker)
+        ? tail.slice(next.length).trimStart()
+        : `${fence.line}\n${tail}`;
+    } else {
+      parts.push(rest.slice(0, cut).trimEnd());
+      rest = rest.slice(cut).trimStart();
+    }
+  }
+  return rest ? [...parts, rest] : parts;
 }
