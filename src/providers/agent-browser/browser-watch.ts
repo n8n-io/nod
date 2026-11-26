@@ -159,10 +159,11 @@ export async function watchBrowser(options: {
         );
     }
   });
+  let closing = false;
   socket.addEventListener('close', () => {
     for (const reply of replies.values()) reply({ error: 'closed' });
     replies.clear();
-    options.closed();
+    if (!closing) options.closed();
   });
   try {
     await send('Target.setDiscoverTargets', { discover: true });
@@ -178,7 +179,10 @@ export async function watchBrowser(options: {
   }
   return {
     open: () => socket.readyState === WebSocket.OPEN,
-    close: () => socket.close(),
+    close: () => {
+      closing = true;
+      socket.close();
+    },
     tabs: (root: string) => [...pages.keys()].filter((page) => rootOf(page) === root),
     closeTab: (page: string) => send('Target.closeTarget', { targetId: page }),
     newWindow: async () =>

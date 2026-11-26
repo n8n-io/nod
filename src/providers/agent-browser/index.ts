@@ -382,7 +382,8 @@ export function createAgentBrowserComputer(options: {
       }
       try {
         const result = await operation();
-        if (state.started && !state.closed && !state.closing) await saveState(state);
+        if (state.started && !state.closed && !state.closing)
+          await saveState(state).catch(() => {});
         return result;
       } finally {
         state.busy -= 1;
@@ -810,6 +811,8 @@ export function createAgentBrowserComputer(options: {
       return response.data ?? {};
     } finally {
       if (window && window !== state.root) await closeTab(window).catch(() => {});
+      if (action !== 'close' && state.browser !== cdpUrl && !owner.watch?.open())
+        delete owner.cdpUrl;
     }
   }
 
@@ -1044,11 +1047,7 @@ export function createAgentBrowserComputer(options: {
       5000,
     ).then(
       () => true,
-      (error: unknown) =>
-        !(
-          error instanceof DaemonTransportError &&
-          (error.kind === 'socket_error' || error.kind === 'socket_closed')
-        ),
+      (error: unknown) => !(error instanceof DaemonTransportError),
     );
   }
 

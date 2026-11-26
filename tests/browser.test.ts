@@ -2906,9 +2906,10 @@ describe('native browser controls', { concurrency: 3 }, () => {
         const state = signedIn ? 'signed in' : 'signed out';
         const url = new URL(request.url ?? '/', 'http://localhost');
         const id = ['a', 'b', 'c', 'd'].find((name) => url.pathname.endsWith(`/${name}`)) ?? '';
-        const value = /^value-[a-d]$/.test(url.searchParams.get('value') ?? '')
-          ? url.searchParams.get('value')
-          : '';
+        const value =
+          ['value-a', 'value-b', 'value-c', 'value-d'].find(
+            (option) => option === url.searchParams.get('value'),
+          ) ?? '';
         response.setHeader('content-type', 'text/html');
         if (url.pathname === '/sign-in') {
           response.setHeader(
