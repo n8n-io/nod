@@ -208,6 +208,8 @@ function storedWidth() {
   return Number.isFinite(value) && value >= minimumWidth ? value : null;
 }
 
+const byId = (left: ImagePreview, right: ImagePreview) => (left.id < right.id ? -1 : 1);
+
 function RetainedArtifact({
   item,
   mode,
@@ -615,7 +617,7 @@ function ArtifactDrawer({
         </header>
         {copyError && <p role="status">{copyError}</p>}
         <div className="artifact-drawer-body">
-          {viewed.current.map((item) => (
+          {viewed.current.toSorted(byId).map((item) => (
             <div
               key={`${item.id}:${item.url}`}
               hidden={item.id !== current.id}

@@ -37,7 +37,15 @@ const thumbnailKinds = new Set([
   'n8n-workflow',
 ]);
 
-function DataThumbnail({ item, kind }: { item: ImagePreview; kind: DataKind }) {
+export function DataThumbnail({
+  item,
+  kind,
+  wide = false,
+}: {
+  item: ImagePreview;
+  kind: DataKind;
+  wide?: boolean;
+}) {
   const element = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   useEffect(() => {
@@ -59,7 +67,12 @@ function DataThumbnail({ item, kind }: { item: ImagePreview; kind: DataKind }) {
     return () => observer.disconnect();
   }, []);
   return (
-    <div className="attachment-card-preview is-data" ref={element} aria-hidden="true" inert>
+    <div
+      className={`attachment-card-preview is-data${wide ? ' is-wide' : ''}`}
+      ref={element}
+      aria-hidden="true"
+      inert
+    >
       {visible && (
         <div className="attachment-card-preview-content">
           <Suspense fallback={null}>
@@ -185,8 +198,10 @@ function DocumentCard({
   const [pages, setPages] = useState<number | null>(null);
   const [thumbnail, setThumbnail] = useState(kind === 'pdf');
   const dataThumbnail = thumbnailKinds.has(kind ?? '');
+  const wide = Boolean(item.page);
   const meta = [
-    fileType(item.name),
+    item.page ? 'Page' : fileType(item.name),
+    item.page ? `Version ${item.page.version}` : '',
     pages ? `${pages} ${pages === 1 ? 'page' : 'pages'}` : '',
     fileSize(item.size),
   ]
@@ -197,7 +212,7 @@ function DocumentCard({
       draggable
       onDragStart={(event) => fileDrag(event, item)}
       onPointerEnter={() => prepareFile(item)}
-      className={`attachment-card is-${kind ?? 'file'}${thumbnail || dataThumbnail ? ' has-preview' : ''}${selected ? ' is-selected' : ''}`}
+      className={`attachment-card is-${kind ?? 'file'}${wide ? ' is-page' : ''}${thumbnail || dataThumbnail ? ' has-preview' : ''}${selected ? ' is-selected' : ''}`}
     >
       {thumbnail && (
         <PdfThumbnail
@@ -207,14 +222,14 @@ function DocumentCard({
           onThumbnail={setThumbnail}
         />
       )}
-      {dataThumbnail && <DataThumbnail item={item} kind={kind as DataKind} />}
+      {dataThumbnail && <DataThumbnail item={item} kind={kind as DataKind} wide={wide} />}
       <button
         type="button"
         className="attachment-card-open"
         aria-current={selected || undefined}
         onClick={(event) => onOpen({ element: event.currentTarget, keyboard: event.detail === 0 })}
       >
-        <CardDetails name={item.name} mimeType={mimeType} meta={meta} />
+        <CardDetails name={item.page?.title ?? item.name} mimeType={mimeType} meta={meta} />
       </button>
       <FileActions item={item} />
     </div>

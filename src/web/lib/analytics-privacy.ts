@@ -11,6 +11,7 @@ const routes = new Set([
   '/prepared',
   '/usage',
   '/vault',
+  '/pages',
   '/settings',
   '/browser',
   '/credentials',

@@ -48,6 +48,8 @@ The library combines task guides in [`src/runtime/skills`](https://github.com/n8
 
 Eight guides have a reference for one specific case: recurring meetings, data imports, government forms, catalog synchronization, corpus research, purchase claims, existing travel bookings and n8n Telegram workflows.
 
+The artifacts guide has two references. `pages.md` holds the rules of the file preview, a base stylesheet with light and dark themes, and rules for type, colour, layout and content of an HTML page. `page-layouts.md` gives the section order for a specification, a runbook, a reference page, a weekly update and meeting notes. The model reads `pages.md` before it writes an HTML page. The workspace has no browser, so the model checks the source of an HTML page and never sees it rendered.
+
 ## How the model reads a guide
 
 The `skills` tool has these actions:

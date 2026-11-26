@@ -42,6 +42,7 @@ const mimeTypes: Record<string, string> = {
   '.mp4': 'video/mp4',
   '.ogv': 'video/ogg',
   '.html': 'text/html',
+  '.htm': 'text/html',
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',

@@ -11,6 +11,16 @@ export interface Artifact {
   size: number;
   url: string;
   source?: 'browser_screenshot' | 'sticker' | 'sticker-preview' | 'location' | 'contact';
+  page?: { id: string; version: number; title: string };
+}
+export interface PageVersion {
+  version: number;
+  createdAt: string;
+  artifact: Artifact;
+}
+export interface Page extends PageVersion {
+  id: string;
+  title: string;
 }
 export type MessageReaction = string;
 export type AgentReactionResult =

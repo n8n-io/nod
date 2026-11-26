@@ -70,6 +70,7 @@ export function registerLocalAccess(
     '/memory',
     '/usage',
     '/vault',
+    '/pages',
     '/trust',
     '/apps',
     '/onboarding',

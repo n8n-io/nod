@@ -1,7 +1,16 @@
-import { Blocks, CalendarClock, Gauge, MessageCircle, Send, Vault } from '../components/icons';
+import {
+  Blocks,
+  CalendarClock,
+  FileText,
+  Gauge,
+  MessageCircle,
+  Send,
+  Vault,
+} from '../components/icons';
 
 export const sidebarItems = [
   { path: '/', label: 'Chat', key: '1', icon: MessageCircle },
+  { path: '/pages', label: 'Pages', key: '7', icon: FileText },
   { path: '/tasks', label: 'Scheduled', key: '2', icon: CalendarClock },
   { path: '/apps', label: 'Apps', key: '3', icon: Blocks },
   { path: '/channels', label: 'Channels', key: '4', icon: Send },

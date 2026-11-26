@@ -5821,6 +5821,97 @@ test(
         await writeFile(join(workspace, 'alert.n8n.json'), '{"nodes":[],"connections":{}}');
         const workflow = await artifacts.publishArtifact(id, 'alert.n8n.json', 'Rain alert', read);
         assert.equal(workflow.name, 'Rain alert.n8n.json');
+        assert.equal(workflow.page, undefined);
+        assert.deepEqual([published.page?.version, published.page?.title], [1, 'report']);
+        const page = published.page!.id;
+        const share = (path: string, target?: string) =>
+          artifacts.publishArtifact(id, path, undefined, read, undefined, undefined, target);
+        assert.equal((await share('report.html')).id, published.id);
+        await writeFile(join(workspace, 'report.html'), '<title>Fixture  report</title><p>2</p>');
+        const second = await share('report.html');
+        assert.deepEqual(
+          [second.page?.id, second.page?.version, second.page?.title],
+          [page, 2, 'Fixture report'],
+        );
+        await writeFile(join(workspace, 'copy.html'), '<title>Fixture report</title><p>3</p>');
+        const copy = await share('copy.html');
+        assert.notEqual(copy.page?.id, page);
+        await writeFile(join(workspace, 'copy.html'), '<title>Fixture report</title><p>4</p>');
+        assert.deepEqual((await share('copy.html', page)).page, {
+          id: page,
+          version: 3,
+          title: 'Fixture report',
+        });
+        await writeFile(join(workspace, 'deck.pptx'), 'synthetic deck');
+        assert.equal((await share('deck.pptx')).page, undefined);
+        await assert.rejects(share('copy.html', randomUUID()), /page is unavailable/);
+        await assert.rejects(share('alert.n8n.json', page), /Only an HTML file can update a page/);
+        const listed = JSON.parse((await request('GET', '/api/pages')).body).pages;
+        const found = async (q: string) =>
+          JSON.parse((await request('GET', `/api/pages?q=${q}`)).body).pages.map(
+            (item: { id: string }) => item.id,
+          );
+        assert.deepEqual((await found('FIXTURE%20rep')).sort(), [page, copy.page!.id].sort());
+        assert.deepEqual(await found('100%25'), []);
+        const first = await artifacts.listPages(undefined, undefined, 1);
+        const rest = await artifacts.listPages(first.next, undefined, 50);
+        assert.equal(first.pages.length, 1);
+        assert.equal(
+          rest.pages.some((item) => item.id === first.pages[0].id),
+          false,
+        );
+        assert.equal(first.pages.length + rest.pages.length, listed.length);
+        assert.equal((await request('GET', '/api/pages?before=synthetic')).statusCode, 400);
+        assert.equal(listed.find((item: { id: string }) => item.id === page).version, 3);
+        const versions = JSON.parse((await request('GET', `/api/pages/${page}`)).body).versions;
+        assert.deepEqual(
+          versions.map((item: { version: number }) => item.version),
+          [3, 2, 1],
+        );
+        const { createArtifactService } = await import('../src/server/artifacts.ts');
+        const foreign = createArtifactService({
+          database: db.pool,
+          ownerId: 'another-owner',
+          localRoot: dataRoot,
+        });
+        assert.deepEqual((await foreign.listPages()).pages, []);
+        assert.deepEqual(await foreign.readPage(page), []);
+        await assert.rejects(
+          foreign.publishArtifact(id, 'copy.html', undefined, read, undefined, undefined, page),
+          /page is unavailable/,
+        );
+        assert.equal((await request('GET', `/api/pages/${randomUUID()}`)).statusCode, 404);
+        const owner = (await db.pool.query('SELECT owner_id FROM artifacts WHERE id=$1', [copy.id]))
+          .rows[0].owner_id;
+        const note = randomUUID();
+        await db.pool.query(
+          'INSERT INTO messages(id,owner_id,role,text,thread_id,attachments) VALUES($1,$2,$3,$4,$5,$6)',
+          [note, owner, 'assistant', 'Synthetic', id, JSON.stringify([copy, workflow])],
+        );
+        assert.equal(
+          (await foreign.deletePage(copy.page!.id).then(() => request('GET', copy.url))).statusCode,
+          200,
+        );
+        assert.equal((await request('DELETE', `/api/pages/${copy.page!.id}`)).statusCode, 200);
+        assert.equal((await request('GET', copy.url)).statusCode, 404);
+        assert.equal((await request('GET', `/api/pages/${copy.page!.id}`)).statusCode, 404);
+        assert.equal((await request('DELETE', `/api/pages/${copy.page!.id}`)).statusCode, 404);
+        assert.deepEqual(
+          (
+            await db.pool.query('SELECT attachments FROM messages WHERE id=$1', [note])
+          ).rows[0].attachments.map((item: { id: string }) => item.id),
+          [workflow.id],
+        );
+        assert.equal(
+          (await db.pool.query('SELECT 1 FROM artifacts WHERE page_id=$1', [copy.page!.id]))
+            .rowCount,
+          0,
+        );
+        assert.equal((await request('GET', `/api/pages/${page}`)).statusCode, 200);
+        await db.pool.query('DELETE FROM messages WHERE id=$1', [note]);
+        await assert.rejects(share('copy.html', copy.page!.id), /page is unavailable/);
+        const again = await share('copy.html');
+        assert.notEqual(again.page?.id, copy.page!.id);
         const response = await request('GET', published.url);
         assert.equal(response.statusCode, 200);
         await db.pool.query('UPDATE artifacts SET owner_id=$2 WHERE id=$1', [

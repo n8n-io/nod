@@ -714,6 +714,33 @@ export async function createApp(dependencies: AppDependencies = {}) {
       .parse(request.body);
     return artifacts.renewUploads(ids);
   });
+  app.get<{ Querystring: { before?: string; q?: string } }>('/api/pages', async (request) =>
+    artifacts.listPages(
+      z
+        .string()
+        .refine((value) => {
+          const [time, id, ...rest] = value.split('_');
+          return (
+            !rest.length &&
+            z.iso.datetime().safeParse(time).success &&
+            z.uuid().safeParse(id).success
+          );
+        })
+        .optional()
+        .parse(request.query.before),
+      z.string().trim().min(1).max(200).optional().parse(request.query.q),
+    ),
+  );
+  app.get<{ Params: { id: string } }>('/api/pages/:id', async (request, reply) => {
+    const versions = await artifacts.readPage(request.params.id);
+    if (!versions.length) return reply.code(404).send({ error: 'Page not found.' });
+    return { versions };
+  });
+  app.delete<{ Params: { id: string } }>('/api/pages/:id', async (request, reply) => {
+    if (!(await artifacts.deletePage(request.params.id)))
+      return reply.code(404).send({ error: 'Page not found.' });
+    return { ok: true };
+  });
   app.get<{ Params: { id: string } }>('/api/artifacts/:id/metadata', async (request, reply) => {
     const { rows } = await pool.query(
       'SELECT * FROM artifacts WHERE id=$1 AND owner_id=$2 AND deleting_at IS NULL',

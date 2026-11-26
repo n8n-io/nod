@@ -5,7 +5,7 @@ import { basename, dirname, extname, join, posix, resolve } from 'node:path';
 import { pool } from './db.ts';
 import { dataRoot, ownerId } from './config.ts';
 import { transaction } from './transaction.ts';
-import type { Artifact } from '../shared/contracts.ts';
+import type { Artifact, Page, PageVersion } from '../shared/contracts.ts';
 import { fileBytes, fileMimeType, fileName } from '../shared/files.ts';
 import type { MessagingAttachment } from '../ports/messaging.ts';
 import { z } from 'zod';
@@ -55,7 +55,33 @@ export function artifactView(row: Record<string, any>): Artifact {
     mimeType: row.mime_type,
     size: row.size,
     url: `/api/artifacts/${row.id}`,
+    ...(row.page_id
+      ? {
+          page: {
+            id: row.page_id,
+            version: row.page_version,
+            title: row.page_title ?? row.name,
+          },
+        }
+      : {}),
   };
+}
+function pageVersion(row: Record<string, any>): PageVersion {
+  return {
+    version: row.page_version,
+    createdAt: new Date(row.created_at).toISOString(),
+    artifact: artifactView(row),
+  };
+}
+function storedName(name: string) {
+  return fileName(basename(name).replace(/[\r\n\x00-\x1f]/g, '')) || 'file';
+}
+function pageTitle(bytes: Buffer, fallback: string) {
+  const title = /<title[^>]*>([^<]{1,300})<\/title>/i
+    .exec(bytes.subarray(0, 8192).toString('utf8'))?.[1]
+    ?.replace(/\s+/g, ' ')
+    .trim();
+  return (title || storedName(fallback).replace(/\.html?$/i, '')).slice(0, 200);
 }
 async function readLocal(path: string, size: number) {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -160,6 +186,7 @@ export function createArtifactService(options: {
     database?: Pick<PoolClient, 'query'>,
     onCreated?: (cleanup: () => Promise<void>) => void,
     temporary = false,
+    page?: { id: string; version: number; title: string; sourcePath: string },
   ): Promise<Artifact> {
     if (!bytes.length || bytes.length > fileBytes)
       throw Object.assign(
@@ -167,7 +194,7 @@ export function createArtifactService(options: {
         { statusCode: 400 },
       );
     const id = randomUUID();
-    const safeName = fileName(basename(name).replace(/[\r\n\x00-\x1f]/g, '')) || 'file';
+    const safeName = storedName(name);
     const store = async (client: Pick<PoolClient, 'query'>) => {
       if (
         threadId &&
@@ -186,8 +213,8 @@ export function createArtifactService(options: {
       try {
         await writeFile(location(id), bytes, { mode: 0o600, flag: 'wx' });
         const result = await client.query(
-          `INSERT INTO artifacts(id,owner_id,thread_id,name,mime_type,size,storage_path,expires_at)
-           VALUES($1,$2,$3,$4,$5,$6,$7,CASE WHEN $8 THEN clock_timestamp()+interval '24 hours' END) RETURNING *`,
+          `INSERT INTO artifacts(id,owner_id,thread_id,name,mime_type,size,storage_path,expires_at,page_id,page_version,page_title,source_path)
+           VALUES($1,$2,$3,$4,$5,$6,$7,CASE WHEN $8 THEN clock_timestamp()+interval '24 hours' END,$9,$10,$11,$12) RETURNING *`,
           [
             id,
             options.ownerId,
@@ -197,6 +224,10 @@ export function createArtifactService(options: {
             bytes.length,
             location(id),
             temporary,
+            page?.id ?? null,
+            page?.version ?? null,
+            page?.title ?? null,
+            page?.sourcePath ?? null,
           ],
         );
         onCreated?.(async () => {
@@ -272,6 +303,7 @@ export function createArtifactService(options: {
     ) => Promise<Uint8Array>,
     database?: Pick<PoolClient, 'query'>,
     onCreated?: (cleanup: () => Promise<void>) => void,
+    page?: string,
   ) {
     z.uuid().parse(threadId);
     if (!path || path.length > 4096 || path.includes('\0') || path.includes('\\'))
@@ -282,16 +314,132 @@ export function createArtifactService(options: {
       throw new Error('Only files inside this workspace can be published.');
     const file = posix.basename(actual);
     const suffix = /\.(?:n8n\.json|tar\.gz)$/i.exec(file)?.[0] ?? extname(file);
-    return storeArtifact(
-      Buffer.from(await read(threadId, posix.relative(base, actual), fileBytes, 'publication')),
+    const mimeType = fileMimeType(actual);
+    const kept = mimeType === 'text/html';
+    if (page !== undefined && !kept) throw new Error('Only an HTML file can update a page.');
+    const bytes = Buffer.from(
+      await read(threadId, posix.relative(base, actual), fileBytes, 'publication'),
+    );
+    const label =
       name && !name.toLowerCase().endsWith(suffix.toLowerCase())
         ? `${name}${suffix}`
-        : name || file,
-      fileMimeType(actual),
-      threadId,
-      database,
-      onCreated,
-    );
+        : name || file;
+    if (!kept) return storeArtifact(bytes, label, mimeType, threadId, database, onCreated);
+    const publish = async (client: Pick<PoolClient, 'query'>) => {
+      let pageId = page === undefined ? undefined : z.uuid().parse(page).toLowerCase();
+      if (pageId) {
+        const known = await client.query(
+          'SELECT 1 FROM artifacts WHERE owner_id=$1 AND page_id=$2 AND deleting_at IS NULL LIMIT 1',
+          [options.ownerId, pageId],
+        );
+        if (!known.rowCount) throw new Error('The page is unavailable.');
+      } else
+        pageId =
+          (
+            await client.query(
+              `SELECT page_id FROM artifacts WHERE owner_id=$1 AND thread_id=$2 AND source_path=$3
+               AND page_id IS NOT NULL AND deleting_at IS NULL ORDER BY created_at DESC,page_version DESC LIMIT 1`,
+              [options.ownerId, threadId, actual],
+            )
+          ).rows[0]?.page_id ?? randomUUID();
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+        `page:${options.ownerId}:${pageId}`,
+      ]);
+      const latest = (
+        await client.query(
+          'SELECT * FROM artifacts WHERE owner_id=$1 AND page_id=$2 AND deleting_at IS NULL ORDER BY page_version DESC LIMIT 1',
+          [options.ownerId, pageId],
+        )
+      ).rows[0];
+      if (!latest && page !== undefined) throw new Error('The page is unavailable.');
+      if (
+        !latest &&
+        (
+          await client.query('SELECT 1 FROM artifacts WHERE owner_id=$1 AND page_id=$2 LIMIT 1', [
+            options.ownerId,
+            pageId,
+          ])
+        ).rowCount
+      )
+        pageId = randomUUID();
+      if (
+        latest &&
+        latest.thread_id === threadId &&
+        latest.size === bytes.length &&
+        (await readRow(latest)).equals(bytes)
+      )
+        return artifactView(latest);
+      return storeArtifact(bytes, label, mimeType, threadId, client, onCreated, false, {
+        id: pageId!,
+        version: (latest?.page_version ?? 0) + 1,
+        title: pageTitle(bytes, label),
+        sourcePath: actual,
+      });
+    };
+    return database ? publish(database) : transact(publish);
+  }
+  async function listPages(
+    before?: string,
+    query?: string,
+    limit = 50,
+  ): Promise<{ pages: Page[]; next?: string }> {
+    const cursor = before?.split('_');
+    const rows = (
+      await options.database.query(
+        `SELECT * FROM (SELECT DISTINCT ON (page_id) * FROM artifacts
+           WHERE owner_id=$1 AND page_id IS NOT NULL AND deleting_at IS NULL
+           ORDER BY page_id,page_version DESC) latest
+         WHERE ($2::timestamptz IS NULL OR (date_trunc('milliseconds',created_at),page_id)<($2,$5::uuid))
+           AND ($4::text IS NULL OR strpos(lower(COALESCE(page_title,name)),lower($4))>0)
+         ORDER BY date_trunc('milliseconds',created_at) DESC,page_id DESC LIMIT $3`,
+        [options.ownerId, cursor?.[0] ?? null, limit + 1, query ?? null, cursor?.[1] ?? null],
+      )
+    ).rows;
+    const shown = rows.slice(0, limit);
+    return {
+      pages: shown.map((row) => ({
+        id: row.page_id,
+        title: row.page_title ?? row.name,
+        ...pageVersion(row),
+      })),
+      ...(rows.length > limit
+        ? { next: `${pageVersion(shown.at(-1)!).createdAt}_${shown.at(-1)!.page_id}` }
+        : {}),
+    };
+  }
+  async function readPage(id: string): Promise<PageVersion[]> {
+    return (
+      await options.database.query(
+        `SELECT * FROM artifacts WHERE owner_id=$1 AND page_id=$2 AND deleting_at IS NULL
+         ORDER BY page_version DESC`,
+        [options.ownerId, z.uuid().parse(id)],
+      )
+    ).rows.map(pageVersion);
+  }
+  async function deletePage(id: string) {
+    const pageId = z.uuid().parse(id).toLowerCase();
+    const removed = await transact(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+        `page:${options.ownerId}:${pageId}`,
+      ]);
+      const ids: string[] = (
+        await client.query(
+          `UPDATE artifacts SET deleting_at=clock_timestamp(),thread_id=NULL
+           WHERE owner_id=$1 AND page_id=$2 AND deleting_at IS NULL RETURNING id`,
+          [options.ownerId, pageId],
+        )
+      ).rows.map((row) => row.id);
+      if (ids.length)
+        await client.query(
+          `UPDATE messages SET attachments=COALESCE((SELECT jsonb_agg(item) FROM jsonb_array_elements(attachments) item
+             WHERE NOT (item->>'id'=ANY($2::text[]))),'[]'::jsonb)
+           WHERE owner_id=$1 AND attachments @> ANY($3::jsonb[])`,
+          [options.ownerId, ids, ids.map((item) => JSON.stringify([{ id: item }]))],
+        );
+      return ids.length;
+    });
+    if (removed) await sweep();
+    return removed;
   }
   async function readThreadArtifacts(
     threadId: string,
@@ -448,6 +596,9 @@ export function createArtifactService(options: {
     storeArtifact,
     storeUpload,
     publishArtifact,
+    listPages,
+    readPage,
+    deletePage,
     readArtifact,
     readThreadArtifacts,
     renewUploads,

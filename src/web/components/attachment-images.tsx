@@ -20,6 +20,7 @@ export interface ImagePreview {
   mimeType?: string;
   downloadUrl?: string;
   source?: Artifact['source'];
+  page?: Artifact['page'];
   presentation?: Presentation;
 }
 

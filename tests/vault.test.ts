@@ -4514,6 +4514,8 @@ test('analytics routes collapse private paths to known pages', async () => {
     ['/settings-typo', '/not-found'],
     ['/usage?private=synthetic#private', '/usage'],
     ['/vault?item=synthetic-private-id', '/vault'],
+    ['/pages?before=synthetic-private', '/pages'],
+    ['/pages/synthetic-private-id', '/not-found'],
     ['https://private.invalid/apps?connect=synthetic-private', '/apps'],
     ['/vault/synthetic-private-id', '/credentials'],
     ['/credentials/synthetic-private-id?token=synthetic-private', '/credentials'],

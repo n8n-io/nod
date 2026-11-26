@@ -49,6 +49,7 @@ const fields: Record<string, Record<string, readonly unknown[] | number>> = {
       '/tasks',
       '/usage',
       '/vault',
+      '/pages',
       '/settings',
       '/browser',
       '/credentials',

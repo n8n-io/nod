@@ -2320,7 +2320,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       const uploads = ids.length
         ? (
             await pool.query(
-              'SELECT id,name,mime_type FROM artifacts WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND deleting_at IS NULL',
+              'SELECT id,name,mime_type,page_id,page_version FROM artifacts WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND deleting_at IS NULL',
               [ownerId, ids],
             )
           ).rows
@@ -2342,6 +2342,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           mimeType: upload.mime_type,
           workspaceFile: `/workspace/${threadId}/${name}`,
           ...(source ? { source } : {}),
+          ...(upload.page_id ? { page: { id: upload.page_id, version: upload.page_version } } : {}),
         });
       }
       return staged;
@@ -2645,7 +2646,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         const audio = await fenced(() => dependencies.speech.synthesize(text, signal))();
         return attach(audio.bytes, audio.fileName, audio.mimeType);
       },
-      publish: async (path, name) => {
+      publish: async (path, name, page) => {
         const read = dependencies.readArtifact;
         if (!read) throw new Error('Workspace file delivery is unavailable.');
         const artifact = await current((client) =>
@@ -2657,6 +2658,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
             name,
             read,
             client,
+            undefined,
+            page,
           ),
         );
         published.set(

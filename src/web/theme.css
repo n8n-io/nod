@@ -182,6 +182,10 @@
   --border: var(--gray-80);
 }
 
+:root[data-theme='dark'] .menu {
+  --hover: var(--control-hover);
+}
+
 @media (max-width: 640px) {
   :root {
     --page-inline: 16px;

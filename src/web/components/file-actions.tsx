@@ -10,7 +10,8 @@ import { errorMessage } from '../lib/api';
 import { Button } from './ui';
 import { analyticsForCurrentSession } from '../lib/analytics';
 import { attachmentKind } from '../lib/attachment-kind';
-import { actionMenuTabTarget } from './action-menu';
+import { ActionMenu, ActionMenuItem, actionMenuTabTarget } from './action-menu';
+import { printDocument } from '../lib/print';
 
 export function reuseFile(
   item: ImagePreview,
@@ -115,6 +116,7 @@ export function FileActions({
     const timer = setTimeout(() => setNotice(''), 5000);
     return () => clearTimeout(timer);
   }, [notice]);
+  const exportable = location === 'drawer' && kind === 'html';
   if (!ownedArtifactUrl(artifact.url)) return null;
   async function run(action: string, origin?: HTMLElement, capture = analyticsForCurrentSession()) {
     if (action === 'reuse') {
@@ -126,7 +128,12 @@ export function FileActions({
     const id = item.id;
     if (activeId.current === id) setBusy(true);
     try {
-      if (action === 'copy') {
+      if (action === 'print') {
+        const response = await fetch(artifact.url, { credentials: 'same-origin' });
+        if (!response.ok) throw new Error(`The file could not be read (${response.status}).`);
+        printDocument(await response.text());
+        capture('artifact_action', { kind, location, action: 'print' });
+      } else if (action === 'copy') {
         await copyImage(artifact.url);
         capture('artifact_action', { kind, location, action: 'copy' });
         if (activeId.current === id) setNotice('Image copied');
@@ -186,36 +193,78 @@ export function FileActions({
               <Copy size={15} />
             </Button>
           )}
-          {desktopFilesAvailable() ? (
-            <>
-              <Button
-                variant="ghost"
-                size="icon"
-                disabled={busy}
-                aria-label={`Save ${item.name}`}
-                title="Save to Downloads"
-                onClick={(event) =>
-                  void run('save', event.detail === 0 ? event.currentTarget : undefined)
-                }
-              >
-                <Download size={15} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                disabled={busy}
-                aria-label={`File actions for ${item.name}`}
-                title="More file actions"
-                onClick={() => void menu()}
-              >
-                <List size={15} />
-              </Button>
-            </>
+          {exportable ? (
+            <ActionMenu
+              label={`Download ${item.name}`}
+              disabled={busy}
+              trigger={
+                <Button variant="ghost" size="icon" title="Download">
+                  <Download size={15} />
+                </Button>
+              }
+            >
+              {(close) => (
+                <>
+                  <ActionMenuItem
+                    onClick={() => {
+                      close();
+                      if (desktopFilesAvailable()) void run('save');
+                      else {
+                        const link = document.createElement('a');
+                        link.href = artifact.url;
+                        link.download = item.name;
+                        link.click();
+                        analyticsForCurrentSession()('artifact_action', {
+                          kind,
+                          location,
+                          action: 'download_requested',
+                        });
+                      }
+                    }}
+                  >
+                    HTML file
+                  </ActionMenuItem>
+                  <ActionMenuItem
+                    onClick={() => {
+                      close();
+                      void run('print');
+                    }}
+                  >
+                    PDF
+                  </ActionMenuItem>
+                </>
+              )}
+            </ActionMenu>
+          ) : desktopFilesAvailable() ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled={busy}
+              aria-label={`Save ${item.name}`}
+              title="Save to Downloads"
+              onClick={(event) =>
+                void run('save', event.detail === 0 ? event.currentTarget : undefined)
+              }
+            >
+              <Download size={15} />
+            </Button>
           ) : (
             <Button variant="ghost" size="icon" title="Download file" asChild>
               <a href={artifact.url} download={item.name} aria-label={`Download ${item.name}`}>
                 <Download size={15} />
               </a>
+            </Button>
+          )}
+          {desktopFilesAvailable() && (
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled={busy}
+              aria-label={`File actions for ${item.name}`}
+              title="More file actions"
+              onClick={() => void menu()}
+            >
+              <List size={15} />
             </Button>
           )}
         </span>

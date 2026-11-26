@@ -219,6 +219,14 @@ export async function initializeDatabase() {
       ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS deleting_at timestamptz;
       CREATE INDEX IF NOT EXISTS artifacts_cleanup ON artifacts(owner_id,COALESCE(deleting_at,expires_at),id)
         WHERE expires_at IS NOT NULL OR deleting_at IS NOT NULL;
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS page_id uuid;
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS page_version integer;
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS page_title text;
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS source_path text;
+      CREATE UNIQUE INDEX IF NOT EXISTS artifacts_pages ON artifacts(owner_id,page_id,page_version)
+        WHERE page_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS artifacts_page_sources ON artifacts(owner_id,thread_id,source_path)
+        WHERE page_id IS NOT NULL;
     `);
     if (!existing.rowCount)
       await artifacts.query(

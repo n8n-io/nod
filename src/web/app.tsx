@@ -5,6 +5,7 @@ import { Usage } from './pages/usage';
 import { Vault } from './pages/vault';
 import { Apps } from './pages/apps';
 import { Channels } from './pages/channels';
+import { Pages } from './pages/pages';
 import { Credentials, Payment } from './pages/credentials';
 import { Scheduled } from './pages/tasks';
 import { PreparedWork } from './pages/prepared';
@@ -280,6 +281,7 @@ function Workspace({
               <Apps key={session.user!.id} configuration={state?.configuration} onAsk={askInChat} />
             )}
             {path === '/channels' && <Channels />}
+            {path === '/pages' && <Pages />}
             {path === '/tasks' && (
               <Scheduled onAsk={askInChat} activity={connected ? state?.activity : undefined} />
             )}

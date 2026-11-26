@@ -418,7 +418,7 @@ test(
     });
     try {
       await database.query(
-        `CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL); CREATE TABLE artifacts(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid REFERENCES threads(id),name text NOT NULL CHECK(name <> 'reject'),mime_type text NOT NULL,size integer NOT NULL,storage_path text NOT NULL,expires_at timestamptz,deleting_at timestamptz)`,
+        `CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL); CREATE TABLE artifacts(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid REFERENCES threads(id),name text NOT NULL CHECK(name <> 'reject'),mime_type text NOT NULL,size integer NOT NULL,storage_path text NOT NULL,expires_at timestamptz,deleting_at timestamptz,page_id uuid,page_version integer,page_title text,source_path text)`,
       );
       const thread = randomUUID();
       const foreignThread = randomUUID();
@@ -515,7 +515,8 @@ test(
       CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text NOT NULL,attachments jsonb NOT NULL DEFAULT '[]');
       CREATE TABLE artifacts(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid REFERENCES threads(id),
         name text NOT NULL,mime_type text NOT NULL,size integer NOT NULL,storage_path text NOT NULL,
-        created_at timestamptz NOT NULL DEFAULT now(),expires_at timestamptz,deleting_at timestamptz);
+        created_at timestamptz NOT NULL DEFAULT now(),expires_at timestamptz,deleting_at timestamptz,
+        page_id uuid,page_version integer,page_title text,source_path text);
     `);
 
     await t.test(
