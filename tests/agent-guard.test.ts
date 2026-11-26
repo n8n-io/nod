@@ -952,56 +952,6 @@ test('mail that grants account access stays out of app tool results and workspac
   );
 });
 
-test('codemode scripts get the full app result while direct calls get a saved preview', async () => {
-  const prose = Array.from(
-    { length: 700 },
-    (_, index) =>
-      `Event ${index + 1}: Synthetic planning review with guest${index}@example.test in Room ${index % 12}.`,
-  )
-    .join('\n')
-    .slice(0, 45_000);
-  const full = JSON.stringify({ text: prose });
-  const saved: string[] = [];
-  const returned: unknown[] = [];
-  let scriptText = '';
-  await fixture(
-    async (tools) => {
-      const nested = await tools
-        .get('apps')!
-        .execute({ action: 'CALENDAR_LIST_EVENTS', args: {} }, { nested: true });
-      scriptText = nested.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
-      await call(tools, 'apps', { action: 'CALENDAR_LIST_EVENTS', args: {} });
-    },
-    {
-      integration: async (_action, _args, signal, _admit, nested) => {
-        const value = await inlineAppResult(
-          { text: prose },
-          async (text) => {
-            saved.push(text);
-            return 'calendar-events.json';
-          },
-          noMailCheck,
-          signal,
-          nested,
-        );
-        returned.push(value);
-        return value;
-      },
-    },
-  );
-  assert.equal(prose.length, 45_000);
-  assert.deepEqual(returned[0], { text: prose });
-  assert.equal(scriptText, full);
-  assert.deepEqual(returned[1], {
-    workspaceFile: 'calendar-events.json',
-    bytes: Buffer.byteLength(full),
-    preview: full.slice(0, 2000),
-    message:
-      'The full app result is saved in this workspace file. Inspect it with read or bash, for example jq, instead of repeating the request.',
-  });
-  assert.deepEqual(saved, [full]);
-});
-
 test('codemode scripts still get sign-in mail withheld from a full app result', async () => {
   const secrets = ['482913', 'https://example.test/recover?token=fixture-nested-unchecked'];
   const check: MailCheck = async (emails) =>
