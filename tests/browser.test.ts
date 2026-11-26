@@ -2833,10 +2833,14 @@ describe('native browser controls', { concurrency: 3 }, () => {
       const sockets = new Set<string>();
       const start = () =>
         createAgentBrowserComputer({
-          dataRoot: directory,
-          browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+          ...(process.platform === 'linux'
+            ? containerBrowserOptions(directory)
+            : {
+                dataRoot: directory,
+                browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+                headless: true,
+              }),
           privateNetwork: true,
-          headless: true,
           daemonCommand: async (path, command, signal, timeoutMs) => {
             sockets.add(path);
             return existingDaemonCommand(path, command, signal, timeoutMs);
@@ -3005,10 +3009,14 @@ describe('native browser controls', { concurrency: 3 }, () => {
       const sockets = new Set<string>();
       const start = () =>
         createAgentBrowserComputer({
-          dataRoot: directory,
-          browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+          ...(process.platform === 'linux'
+            ? containerBrowserOptions(directory)
+            : {
+                dataRoot: directory,
+                browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+                headless: true,
+              }),
           privateNetwork: true,
-          headless: true,
           daemonCommand: async (path, command, signal, timeoutMs) => {
             sockets.add(path);
             return existingDaemonCommand(path, command, signal, timeoutMs);
