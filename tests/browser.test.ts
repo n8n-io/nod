@@ -2740,20 +2740,25 @@ describe('native browser controls', { concurrency: 3 }, () => {
     'native sessions share one signed-in browser and keep their own tabs through popups, closes and restarts',
     { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 180_000 },
     async () => {
+      const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
       const directory = await mkdtemp(join(tmpdir(), 'nod-one-browser-native-'));
       const server = createHttpServer((request, response) => {
         const signedIn = /(?:^|; )account=owner(?:;|$)/.test(request.headers.cookie ?? '');
         response.setHeader('content-type', 'text/html');
         if (request.url === '/sign-in') {
-          response.setHeader('set-cookie', 'account=owner; Path=/; Max-Age=3600');
+          response.setHeader(
+            'set-cookie',
+            'account=owner; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax',
+          );
           return response.end('<h1>Welcome</h1>');
         }
         if (request.url === '/popup')
           return response.end(
             '<h1>Popup page</h1><button id="done" onclick="window.close()">Done</button>',
           );
+        const name = [...ids, 'b-again'].find((id) => request.url === `/${id}`) ?? 'home';
         response.end(
-          `<h1>${request.url?.slice(1)} ${signedIn ? 'signed in' : 'signed out'}</h1>` +
+          `<h1>${name} ${signedIn ? 'signed in' : 'signed out'}</h1>` +
             '<a id="popup" href="/popup" target="_blank">Open popup</a><input id="field">',
         );
       });
@@ -2793,7 +2798,6 @@ describe('native browser controls', { concurrency: 3 }, () => {
         [...(await computer.act(id, { action: 'tab_list' })).text.matchAll(/ (t\d+): /g)].map(
           (match) => match[1]!,
         );
-      const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
       const frame = async (id: string) => {
         const controller = new AbortController();
         try {

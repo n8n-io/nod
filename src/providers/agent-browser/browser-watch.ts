@@ -122,8 +122,9 @@ export async function watchBrowser(options: {
   socket.addEventListener('message', (event) => {
     const message = JSON.parse(String(event.data));
     if (typeof message.id === 'number') {
-      replies.get(message.id)?.(message);
+      const reply = replies.get(message.id);
       replies.delete(message.id);
+      if (typeof reply === 'function') reply(message);
     } else if (
       message.method === 'Target.targetCreated' ||
       message.method === 'Target.targetInfoChanged'
