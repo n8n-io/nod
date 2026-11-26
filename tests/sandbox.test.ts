@@ -2321,6 +2321,23 @@ test('computer use refuses blocked apps, keeps browsers view-only and acts only 
       text: 'Ada, see you at 10',
     }),
   );
+  assert.equal(calls.at(-1)?.settable, undefined);
+  for (const [actions, states, settable] of [
+    [['Click', 'SetFocus'], undefined, false],
+    [['Click', 'TypeText'], undefined, undefined],
+    [['Click', 'SetFocus'], ['readonly'], undefined],
+  ] as const) {
+    findings[0]!.available_actions = actions;
+    findings[0]!.states = states;
+    await computer.execute(
+      turn,
+      'COMPUTER_TYPE',
+      await computer.prepare(turn, 'COMPUTER_TYPE', { ref: '@sfind001:e1', text: '!' }),
+    );
+    assert.equal(calls.at(-1)?.settable, settable);
+  }
+  delete findings[0]!.available_actions;
+  delete findings[0]!.states;
   const send = await computer.prepare(turn, 'COMPUTER_PRESS', { ref: '@sdraft01:e1' });
   assert.match(
     String(computer.checked('COMPUTER_PRESS', send).windowContext),

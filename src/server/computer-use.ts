@@ -234,6 +234,7 @@ type Node = {
   value?: string | null;
   ref_id?: string;
   states?: string[];
+  available_actions?: string[];
   children?: Node[];
   children_count?: number;
 };
@@ -867,7 +868,12 @@ export function createComputerUse(
       )
         throw new IntegrationError('That control changed since this step was checked.', 409);
       unique(await running(signal), found.app);
-      await live(found, String(prepared.ref), signal);
+      const current = await live(found, String(prepared.ref), signal);
+      const unsettable =
+        action === 'COMPUTER_TYPE' &&
+        current.available_actions?.length &&
+        !current.available_actions.some((name) => ['SetValue', 'TypeText'].includes(name)) &&
+        !current.states?.includes('readonly');
       if (needsCheck(action)) checkedWindow(prepared);
       return async () => {
         const result = (await ask(
@@ -889,6 +895,7 @@ export function createComputerUse(
                 ? { window: found.windowId }
                 : {}),
             ...(prepared.text !== undefined ? { text: prepared.text } : {}),
+            ...(unsettable ? { settable: false } : {}),
             ...(prepared.option !== undefined ? { option: prepared.option } : {}),
           },
           signal,

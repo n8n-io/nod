@@ -762,7 +762,11 @@ export function createComputerHelper({
     else unframe();
   }
 
-  async function act(request, args, { input, found = windowOf(request), front = false } = {}) {
+  async function act(
+    request,
+    args,
+    { input, found = windowOf(request), front = false, ready } = {},
+  ) {
     const target = { app: request.app, window: request.window };
     const window = await found;
     const inFront = window && (front || (await chromium(window.pid)));
@@ -774,14 +778,50 @@ export function createComputerHelper({
       }
     if (inFront) stale.add(target.window);
     return focused(target, window, async () => {
-      if (front || args[0] === 'press') return guarded(request, [...args, '--headed'], input);
+      const headed = async () =>
+        guarded(ready ? await ready() : request, [...args, '--headed'], input);
+      if (front || args[0] === 'press')
+        try {
+          return await guarded(request, [...args, '--headed'], input);
+        } catch (error) {
+          if (!ready || error.delivery !== 'not_delivered' || !/focus/i.test(error.message))
+            throw error;
+          return headed();
+        }
       try {
         return await guarded(request, args, input);
       } catch (error) {
         if (!needsFocus(error)) throw error;
-        return guarded(request, [...args, '--headed'], input);
+        return headed();
       }
     });
+  }
+
+  async function hasFocus(at) {
+    const { tree } = await run(['snapshot', '--root', at, '--max-depth', '0', ...deadline]);
+    return Boolean(tree && isFocused(tree));
+  }
+
+  async function keyboardFocus(request) {
+    const at = check(request.ref, ref, 'ref');
+    const focus = await guarded(request, ['focus', at]).catch((error) => {
+      if (
+        error.delivery !== 'not_delivered' ||
+        !/^ACTION_(FAILED|NOT_SUPPORTED):/.test(error.message)
+      )
+        throw error;
+    });
+    const placed = { ...request, expected: undefined };
+    const input = { ...placed, noSecureFocus: true };
+    if (focus?.disposition?.delivery === 'delivered_verified' || (await hasFocus(at))) return input;
+    await guarded(placed, ['click', at, '--headed']);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (await hasFocus(at)) return input;
+      await delay(150);
+    }
+    throw new Error(
+      'ACTION_NOT_SUPPORTED: That field did not take keyboard focus, so Nod typed nothing.',
+    );
   }
 
   async function type(request) {
@@ -791,21 +831,32 @@ export function createComputerHelper({
       return paste(request, target, window);
     if (pasteRoles.has(request.role))
       throw new Error('ACTION_NOT_SUPPORTED: Nod can type into this area only in its own window.');
+    if (platform === 'darwin' && window && request.settable === false)
+      return paste(request, target, window, () => keyboardFocus(request));
     return act(request, ['type', check(request.ref, ref, 'ref'), '--stdin'], {
       input: String(request.text ?? ''),
       found: Promise.resolve(window),
       front: platform === 'win32',
+      ready: () => keyboardFocus(request),
     });
   }
 
-  async function paste(request, target, window) {
+  async function paste(
+    request,
+    target,
+    window,
+    focus = async () => {
+      await guarded(request, ['focus', check(request.ref, ref, 'ref')]);
+      return request;
+    },
+  ) {
     stale.add(target.window);
     return focused(target, window, async () => {
-      await guarded(request, ['focus', check(request.ref, ref, 'ref')]);
+      const placed = await focus();
       const saved = await presence.clipboard.save();
       try {
         await presence.clipboard.write(String(request.text ?? ''));
-        return await guarded({ ...request, noSecureFocus: true }, [
+        return await guarded({ ...placed, noSecureFocus: true }, [
           'press',
           platform === 'darwin' ? 'cmd+v' : 'ctrl+v',
           ...scope(target),

@@ -5,7 +5,7 @@ sidebar:
   order: 6
 ---
 
-Computer use lets Nod work in apps on your computer, for example to write a list in TextEdit, fill a table in Numbers or write a reply into a Mail draft. Nod reads each app's window through the system's accessibility service, the same information screen readers use, and presses its buttons, chooses its menu items and types into its fields. It works in the desktop app, using the open-source [agent-desktop](https://github.com/vercel-labs/agent-desktop) tool bundled in the app, and never moves your pointer. It works in the background where it can, and brings an app to the front only for steps that need it; see [When Nod brings an app to the front](#when-nod-brings-an-app-to-the-front). A source install and a self-hosted server don't offer it.
+Computer use lets Nod work in apps on your computer, for example to write a list in TextEdit, fill a table in Numbers or write a reply into a Mail draft. Nod reads each app's window through the system's accessibility service, the same information screen readers use, and presses its buttons, chooses its menu items and types into its fields. It works in the desktop app, using the open-source [agent-desktop](https://github.com/vercel-labs/agent-desktop) tool bundled in the app, and moves your pointer only for a click in an app it has brought to the front. It works in the background where it can, and brings an app to the front only for steps that need it; see [When Nod brings an app to the front](#when-nod-brings-an-app-to-the-front). A source install and a self-hosted server don't offer it.
 
 Computer use is experimental on macOS, Windows and Linux: it hasn't been tested on many computers yet. Windows and Linux use the same checks as macOS; see [Windows and Linux](#windows-and-linux) for what differs.
 
@@ -73,7 +73,7 @@ Nod works in the background where it can, so you can keep working. While it read
 
 ## When Nod brings an app to the front
 
-Some steps only work with the app in front: keyboard shortcuts, typing into a message body such as in Mail, buttons an app turns on only while it's in front, such as Send in Mail, and on macOS anything in apps built on Chromium or Electron, such as Slack, Notion or Teams, which don't update while they're behind other windows. On Windows, typing always needs the app in front.
+Some steps only work with the app in front: keyboard shortcuts, typing into a message body such as in Mail, buttons an app turns on only while it's in front, such as Send in Mail, and on macOS anything in apps built on Chromium or Electron, such as Slack, Notion or Teams, which don't update while they're behind other windows. On Windows, typing always needs the app in front. Some apps don't move their focus when the accessibility service asks, for example WhatsApp and other apps made for iPhone and iPad on a Mac. On every system, Nod then clicks the field before typing and types only once the field has focus. It checks the window before that click, so what the click itself opens, such as search filters, doesn't stop the step. On a Mac, when such a field doesn't take text from the accessibility service, such as WhatsApp's search, Nod pastes the text instead.
 
 For those steps, Nod waits until you stop typing or moving the pointer for a moment, then brings only that window to the front. While it works there:
 

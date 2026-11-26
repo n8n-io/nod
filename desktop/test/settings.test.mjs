@@ -10087,7 +10087,11 @@ const mailWindow = {
     },
   ],
 };
-const refused = (code, message) => ({ ok: false, error: { code, message } });
+const refused = (code, message, delivery) => ({
+  ok: false,
+  error: { code, message, ...(delivery ? { disposition: { delivery } } : {}) },
+});
+const fieldRead = (states) => ({ ok: true, data: { tree: { role: 'textfield', states } } });
 
 test('computer use binds current window content and hides password content', async (t) => {
   const window = (value, ref, focused = false) => ({
@@ -10885,6 +10889,163 @@ test('computer use pastes into a message body in front and restores the owner cl
     'press cmd+v --app Mail --window-id w-1 --headed',
   ]);
   assert.equal(desktop.clipboard(), 'owner copied this');
+});
+
+test('computer use clicks a field that ignores accessibility focus and types or pastes only once it has focus', async (t) => {
+  const answers = (focused, extra = {}) => ({
+    'list-windows': mailWindow,
+    'type @s1abcdef:e1 --stdin --headed': { ok: true, data: {} },
+    type: refused('POLICY_DENIED', 'semantic action is unavailable and focus fallback is denied'),
+    'focus @s1abcdef:e1': { ok: true, data: { disposition: { delivery: 'delivered_unverified' } } },
+    'snapshot --root @s1abcdef:e1 --max-depth 0': [
+      fieldRead([]),
+      fieldRead(focused ? ['focused'] : []),
+    ],
+    ...extra,
+  });
+  const request = {
+    op: 'type',
+    ref: '@s1abcdef:e1',
+    app: 'Mail',
+    window: 'w-1',
+    role: 'textfield',
+    text: 'Hi Toni',
+  };
+  const focusRead = 'snapshot --root @s1abcdef:e1 --max-depth 0 --timeout-ms 25000';
+  const typed = await fakeDesktop(t, answers(true));
+  await typed.helper.request(request);
+  assert.deepEqual(await typed.calls(), [
+    'type @s1abcdef:e1 --stdin',
+    'focus-window --app Mail --window-id w-1',
+    'type @s1abcdef:e1 --stdin',
+    'focus @s1abcdef:e1',
+    focusRead,
+    'click @s1abcdef:e1 --headed',
+    focusRead,
+    'find --app Mail --window-id w-1 --state focused --limit 0 --timeout-ms 25000',
+    'type @s1abcdef:e1 --stdin --headed',
+  ]);
+
+  const unfocused = await fakeDesktop(t, answers(false));
+  await assert.rejects(unfocused.helper.request(request), /did not take keyboard focus/);
+  assert.ok(!(await unfocused.calls()).includes('type @s1abcdef:e1 --stdin --headed'));
+
+  const readOnly = { ...request, settable: false };
+  const pasted = await fakeDesktop(t, answers(true));
+  await pasted.helper.request(readOnly);
+  assert.deepEqual(await pasted.calls(), [
+    'focus-window --app Mail --window-id w-1',
+    'focus @s1abcdef:e1',
+    focusRead,
+    'click @s1abcdef:e1 --headed',
+    focusRead,
+    'find --app Mail --window-id w-1 --state focused --limit 0 --timeout-ms 25000',
+    'press cmd+v --app Mail --window-id w-1 --headed',
+  ]);
+  assert.equal(pasted.clipboard(), 'owner copied this');
+
+  const notPasted = await fakeDesktop(t, answers(false));
+  await assert.rejects(notPasted.helper.request(readOnly), /did not take keyboard focus/);
+  assert.ok(!(await notPasted.calls()).some((call) => call.startsWith('press cmd+v')));
+
+  const unfocusable = {
+    'type @s1abcdef:e1 --stdin --headed': [
+      refused(
+        'ACTION_FAILED',
+        'Target element lost focus before physical input delivery',
+        'not_delivered',
+      ),
+      { ok: true, data: {} },
+    ],
+    'focus @s1abcdef:e1': refused(
+      'ACTION_FAILED',
+      'SetFocus is not available on this element',
+      'not_delivered',
+    ),
+  };
+  const windows = await fakeDesktop(t, answers(true, unfocusable), { platform: 'win32' });
+  await windows.helper.request(request);
+  assert.deepEqual(await windows.calls(), [
+    'focus-window --app Mail --window-id w-1',
+    'type @s1abcdef:e1 --stdin --headed',
+    'focus @s1abcdef:e1',
+    focusRead,
+    'click @s1abcdef:e1 --headed',
+    focusRead,
+    'find --app Mail --window-id w-1 --state focused --limit 0 --timeout-ms 25000',
+    'type @s1abcdef:e1 --stdin --headed',
+  ]);
+
+  const gone = await fakeDesktop(t, {
+    ...answers(true),
+    'focus @s1abcdef:e1': refused('STALE_REF', 'Element no longer exists', 'not_delivered'),
+  });
+  await assert.rejects(gone.helper.request(request), /STALE_REF: Element no longer exists/);
+  assert.ok(!(await gone.calls()).some((call) => call.startsWith('click')));
+});
+
+test('computer use checks the window before its first input of a typing step, not after its own click', async (t) => {
+  const field = { role: 'textfield', name: 'Search', ref_id: '@s1abcdef:e1' };
+  const plain = {
+    ok: true,
+    data: { complete: true, tree: { role: 'window', name: 'Mail', children: [field] } },
+  };
+  const opened = {
+    ok: true,
+    data: {
+      complete: true,
+      tree: {
+        role: 'window',
+        name: 'Mail',
+        children: [field, { role: 'button', name: 'Close search' }],
+      },
+    },
+  };
+  const bound = (windowReads) => ({
+    'list-windows': mailWindow,
+    'type @s1abcdef:e1 --stdin --headed': [
+      refused(
+        'ACTION_FAILED',
+        'Target element lost focus before physical input delivery',
+        'not_delivered',
+      ),
+      { ok: true, data: {} },
+    ],
+    'focus @s1abcdef:e1': { ok: true, data: { disposition: { delivery: 'delivered_unverified' } } },
+    'snapshot --root @s1abcdef:e1 --max-depth 0': [fieldRead([]), fieldRead(['focused'])],
+    'snapshot --root @s1abcdef:e1 --max-depth 50': {
+      ok: true,
+      data: { complete: true, tree: field },
+    },
+    'snapshot --app Mail': windowReads,
+  });
+  const control = { role: 'textfield', name: 'Search' };
+  const step = async (desktop) => {
+    const { state } = await desktop.helper.request({
+      op: 'inspect',
+      app: 'Mail',
+      window: 'w-1',
+      control,
+    });
+    return desktop.helper.request({
+      op: 'type',
+      ref: '@s1abcdef:e1',
+      app: 'Mail',
+      window: 'w-1',
+      role: 'textfield',
+      control,
+      expected: state,
+      text: 'Ada',
+    });
+  };
+
+  const typed = await fakeDesktop(t, bound([plain, plain, plain, opened]), { platform: 'win32' });
+  await step(typed);
+  assert.ok((await typed.calls()).includes('type @s1abcdef:e1 --stdin --headed'));
+
+  const changed = await fakeDesktop(t, bound([plain, opened]), { platform: 'win32' });
+  await assert.rejects(step(changed), /STALE_REF: That window changed/);
+  assert.ok(!(await changed.calls()).some((call) => /^(focus|click|type) /.test(call)));
 });
 
 test('computer use shows Nod working in an app during background steps, then hides it', async (t) => {
