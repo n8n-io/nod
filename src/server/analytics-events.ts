@@ -240,7 +240,7 @@ export const analyticsEvent = z.discriminatedUnion('event', [
           failure_reason: z.enum(['spending_limit', 'model', 'offline', 'unknown']).optional(),
           failure_class: z
             .enum([
-              ...serviceFailureReason.options,
+              ...serviceFailureReason.exclude(['cancelled']).options,
               'tools_unsupported',
               'quota_exhausted',
               'context_too_large',

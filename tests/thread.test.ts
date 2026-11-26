@@ -3301,20 +3301,23 @@ test(
                 failure,
               }),
             );
-            const failed = await thread.submitUserMessage(prompt);
-            await completed(failed.turnId, 'immediate', true, 'failed', 'failed');
-            modelErrors.delete(prompt);
-            const event = analyticsEvents.find(
-              (event) =>
-                event.event === 'turn_completed' &&
-                event.properties.run_id === analyticsRuns.get(failed.turnId),
-            )!;
-            const { failure_reason, failure_class, provider_status } = event.properties;
-            assert.deepEqual(
-              JSON.parse(JSON.stringify({ failure_reason, failure_class, provider_status })),
-              { failure_reason: 'model', ...expected },
-            );
-            assert.equal(JSON.stringify(event).includes(privateValue), false);
+            try {
+              const failed = await thread.submitUserMessage(prompt);
+              await completed(failed.turnId, 'immediate', true, 'failed', 'failed');
+              const event = analyticsEvents.find(
+                (event) =>
+                  event.event === 'turn_completed' &&
+                  event.properties.run_id === analyticsRuns.get(failed.turnId),
+              )!;
+              const { failure_reason, failure_class, provider_status } = event.properties;
+              assert.deepEqual(
+                JSON.parse(JSON.stringify({ failure_reason, failure_class, provider_status })),
+                { failure_reason: 'model', ...expected },
+              );
+              assert.equal(JSON.stringify(event).includes(privateValue), false);
+            } finally {
+              modelErrors.delete(prompt);
+            }
           }
           assert.deepEqual(
             [requested.turnId, schedule, task, answer.turnId, signedIn, taskCheck].map(
