@@ -64,8 +64,11 @@ import {
   createDiscoveredTransport,
   ownerAddress,
   ownerFetch,
+  publicEndpoint,
   safeRemoteFetch,
 } from '../src/providers/discovered/remote.ts';
+import { createMcpRegistry } from '../src/providers/mcp-registry.ts';
+import { McpRegistryError } from '../src/ports/mcp-registry.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createDiscoveredOAuth } from '../src/providers/discovered/oauth.ts';
 import { createDiscoveredConnections } from '../src/server/discovered-connections.ts';
@@ -1399,6 +1402,260 @@ function fakeProvider(session: IntegrationSession): IntegrationProvider {
     },
   };
 }
+
+test('MCP Registry search keeps only public HTTPS remote servers and keeps the registry failure', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => assert.fail('Use the synthetic registry.'));
+  const remote = (url: string, type = 'streamable-http') => ({ type, url });
+  const entry = (name: string, server: Record<string, unknown>, status = 'active') => ({
+    server: { name, version: '1.0.0', ...server },
+    _meta: { 'io.modelcontextprotocol.registry/official': { status, isLatest: true } },
+  });
+  const listings = [
+    entry('test.synthetic/hosted', {
+      title: 'Synthetic hosted',
+      description: 'Synthetic listing text.',
+      repository: { url: 'https://code.example.test/synthetic' },
+      remotes: [
+        {
+          ...remote('https://mcp.example.test/mcp'),
+          headers: [{ name: 'Authorization', isRequired: true, isSecret: true }],
+        },
+        remote('http://mcp.example.test/plain'),
+        remote('https://mcp.example.test/stream', 'sse'),
+      ],
+    }),
+    entry('test.synthetic/later', {
+      remotes: [
+        remote('https://internal.example.test/one'),
+        remote('https://internal.example.test/two'),
+        remote('https://internal.example.test/three'),
+        remote('https://mcp.example.test/later'),
+      ],
+    }),
+    entry('test.synthetic/private', { remotes: [remote('https://internal.example.test/mcp')] }),
+    entry('test.synthetic/address', { remotes: [remote('https://10.1.2.3/mcp')] }),
+    entry('test.synthetic/plain', { remotes: [remote('http://mcp.example.test/mcp')] }),
+    entry('test.synthetic/query', { remotes: [remote('https://mcp.example.test/mcp?key=1')] }),
+    entry('test.synthetic/template', {
+      remotes: [remote('https://{tenant}.example.test/mcp')],
+    }),
+    entry('test.synthetic/stdio', { remotes: [remote('https://mcp.example.test/mcp', 'stdio')] }),
+    entry('test.synthetic/package', {
+      packages: [{ registryType: 'npm', identifier: '@synthetic/server', version: '1.0.0' }],
+    }),
+    entry(
+      'test.synthetic/deleted',
+      { remotes: [remote('https://mcp.example.test/mcp')] },
+      'deleted',
+    ),
+    { server: { description: 'No name' } },
+  ];
+  const requests: Request[] = [];
+  let answer: () => Promise<Response> = async () =>
+    Response.json({ servers: listings, metadata: { count: listings.length } });
+  const registry = createMcpRegistry({
+    request: async (input, init) => {
+      requests.push(new Request(input, init));
+      return answer();
+    },
+    validate: (url) =>
+      publicEndpoint(url, async (host) => [
+        { address: host === 'mcp.example.test' ? '93.184.216.34' : '10.0.0.8', family: 4 },
+      ]),
+    timeoutMs: 50,
+  });
+  assert.deepEqual(await registry.search('synthetic'), [
+    {
+      name: 'test.synthetic/hosted',
+      version: '1.0.0',
+      title: 'Synthetic hosted',
+      description: 'Synthetic listing text.',
+      repository: 'https://code.example.test/synthetic',
+      remotes: [
+        {
+          transport: 'streamable-http',
+          url: 'https://mcp.example.test/mcp',
+          requiredHeaders: ['Authorization'],
+        },
+        { transport: 'sse', url: 'https://mcp.example.test/stream' },
+      ],
+    },
+    {
+      name: 'test.synthetic/later',
+      version: '1.0.0',
+      remotes: [{ transport: 'streamable-http', url: 'https://mcp.example.test/later' }],
+    },
+  ]);
+  const sent = new URL(requests[0].url);
+  assert.equal(sent.origin, 'https://registry.modelcontextprotocol.io');
+  assert.equal(sent.pathname, '/v0.1/servers');
+  assert.equal(sent.searchParams.get('search'), 'synthetic');
+  assert.equal(sent.searchParams.get('version'), 'latest');
+  answer = async () =>
+    Response.json(
+      { title: 'Internal Server Error', status: 500, detail: 'synthetic database outage' },
+      { status: 500 },
+    );
+  await assert.rejects(
+    registry.search('synthetic'),
+    (error: unknown) =>
+      error instanceof McpRegistryError &&
+      error.status === 500 &&
+      error.message ===
+        'The MCP Registry answered 500: Internal Server Error: synthetic database outage.',
+  );
+  answer = () => new Promise<Response>(() => {});
+  await assert.rejects(
+    registry.search('synthetic'),
+    (error: unknown) =>
+      error instanceof McpRegistryError &&
+      error.message === 'The MCP Registry did not answer within 0.05 seconds.',
+  );
+});
+
+test(
+  'MCP Registry candidates appear only when the catalog has no match and need private setup before any call',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    t.mock.method(globalThis, 'fetch', async () => assert.fail('Use the synthetic registry.'));
+    const database = await hostedDatabase();
+    t.after(() => database.close());
+    const endpoint = 'https://mcp.registry-fixture.test/mcp';
+    const transported: string[] = [];
+    const transport = createDiscoveredTransport(
+      async (input) => {
+        transported.push(String(input));
+        return assert.fail('A registry candidate must not be contacted before setup.');
+      },
+      async (value) => value,
+    );
+    const discovered = await createDiscoveredConnections(database.pool, {
+      ownerId: 'synthetic-owner',
+      baseUrl: 'http://localhost:4310',
+      transport,
+      grantVault: await createAppGrantVault(database.pool, {
+        ownerId: 'synthetic-owner',
+        keyStore: installationKeyStore,
+      }),
+      oauth: {
+        begin: async () => assert.fail('Setup has not started.'),
+        finish: async () => assert.fail('Setup has not started.'),
+        refresh: async () => assert.fail('Setup has not started.'),
+      },
+    });
+    const searched: string[] = [];
+    const signals: Array<AbortSignal | undefined> = [];
+    let registryFailure: Error | undefined;
+    const provider = fakeProvider({
+      id: 'unused',
+      authorize: async () => assert.fail('No managed sign-in.'),
+      search: async () => ({ tools: {}, suggestions: [] }),
+      execute: async () => assert.fail('No managed action.'),
+    });
+    provider.configured = false;
+    const integrations = await createIntegrations(database.pool, {
+      ownerId: 'synthetic-owner',
+      provider,
+      discovered,
+      baseUrl: 'http://localhost:4310',
+      wake: async () => {},
+      registry: {
+        search: async (query, signal) => {
+          searched.push(query);
+          signals.push(signal);
+          signal?.throwIfAborted();
+          if (registryFailure) throw registryFailure;
+          return [
+            {
+              name: 'test.registry-fixture/tool',
+              version: '2.0.0',
+              description: 'Synthetic registry listing.',
+              remotes: [{ transport: 'streamable-http', url: endpoint }],
+            },
+          ];
+        },
+      },
+    });
+    const discover = async (query: string, signal?: AbortSignal) =>
+      JSON.parse(
+        JSON.stringify(
+          await integrations.manageConnections(
+            'discover',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            query,
+            undefined,
+            signal,
+          ),
+        ),
+      );
+    const linear = await discover('linear');
+    assert.ok(linear.services.some((service: { slug: string }) => service.slug === 'linear'));
+    assert.equal(linear.registry, undefined);
+    assert.deepEqual(searched, []);
+    assert.deepEqual(await discover('registry fixture'), {
+      services: [],
+      total: 0,
+      hasMore: false,
+      registry: {
+        source: 'MCP Registry',
+        verified: false,
+        servers: [
+          {
+            name: 'test.registry-fixture/tool',
+            version: '2.0.0',
+            description: 'Synthetic registry listing.',
+            remotes: [{ transport: 'streamable-http', url: endpoint }],
+          },
+        ],
+      },
+    });
+    assert.deepEqual(searched, ['registry fixture']);
+    registryFailure = new McpRegistryError(
+      'The MCP Registry answered 500: Internal Server Error: synthetic outage.',
+      500,
+    );
+    assert.deepEqual(await discover('registry fixture'), {
+      services: [],
+      total: 0,
+      hasMore: false,
+      registry: {
+        error: 'The MCP Registry answered 500: Internal Server Error: synthetic outage.',
+      },
+    });
+    registryFailure = new McpRegistryError('The MCP Registry did not answer within 5 seconds.');
+    assert.equal(
+      (await discover('registry fixture')).registry.error,
+      'The MCP Registry did not answer within 5 seconds.',
+    );
+    const stop = new AbortController();
+    stop.abort(new Error('Synthetic stop.'));
+    await assert.rejects(discover('registry fixture', stop.signal), { message: 'Synthetic stop.' });
+    assert.equal(signals.at(-1), stop.signal);
+    const turn = { threadId: randomUUID(), turnId: randomUUID() };
+    const proposed = (await integrations.manageConnections('propose', undefined, turn, {
+      service: 'registry-fixture',
+      name: 'Registry fixture',
+      paths: [{ kind: 'mcp', endpoint, auth: 'bearer' }],
+    })) as { url: string };
+    assert.match(proposed.url, /^\/apps\?connect=[0-9a-f-]{36}$/);
+    assert.deepEqual(await discovered.list(), []);
+    assert.deepEqual(await discovered.servers(), []);
+    const proposalId = new URL(proposed.url, 'http://localhost:4310').searchParams.get('connect')!;
+    await assert.rejects(
+      integrations.execute(
+        'synthetic-owner',
+        'CONNECTED_MCP_CALL',
+        { connectionId: proposalId, pathId: randomUUID(), tool: 'synthetic', input: {} },
+        turn,
+      ),
+      { statusCode: 404 },
+    );
+    assert.deepEqual(transported, []);
+  },
+);
 
 test('remote MCP calls ask the server for progress so long calls can keep reporting', async (t) => {
   const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');

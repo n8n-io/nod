@@ -2133,7 +2133,21 @@ test('outside results reach Pi in one untrusted block, scripts get them raw, and
       connections: async (action, _service, _proposal, _newAccount, query) => {
         assert.equal(action, 'discover');
         assert.equal(query, 'calendar');
-        return { apps: [{ name: 'Calendar', description: injected }] };
+        return {
+          services: [{ slug: 'calendar', name: 'Calendar', description: injected }],
+          registry: {
+            source: 'MCP Registry',
+            verified: false,
+            servers: [
+              {
+                name: 'test.synthetic/calendar',
+                version: '1.0.0',
+                description: injected,
+                remotes: [{ transport: 'streamable-http', url: 'https://mcp.example.test/mcp' }],
+              },
+            ],
+          },
+        };
       },
       integration: async (action) =>
         action === 'SLACK_DOWNLOAD_SLACK_FILE'
@@ -2167,6 +2181,7 @@ test('outside results reach Pi in one untrusted block, scripts get them raw, and
   assert.equal(texts[3], injected);
   assert.match(text(catalog!), /^<untrusted_tool_result source="manage_apps">/);
   assert.equal(text(catalog!).match(/untrusted_tool_result/gi)?.length, 2);
+  assert.match(text(catalog!), /test\.synthetic\/calendar[\s\S]*\n<\/untrusted_tool_result>$/);
   assert.match(text(savedSession!), /^<untrusted_tool_result source="browser_session">/);
   assert.equal(text(savedSession!).match(/untrusted_tool_result/gi)?.length, 2);
   assert.match(text(savedSession!), /Invoice due/);

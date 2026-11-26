@@ -49,6 +49,8 @@ A failed tool request keeps the server's status and reason. Nod does not retry i
 
 Ask Nod to connect a service it can't find in the app catalog. Nod proposes a way in, called an access path, and sends you a link to a private setup page. There, you paste a token or sign in. The model never sees the token.
 
+When the app catalog has nothing for the service, Nod also searches the official [MCP Registry](https://registry.modelcontextprotocol.io) and uses a listing as the starting point for an MCP setup. Nod keeps only listings with a public HTTPS server address and a supported Streamable HTTP or SSE transport. It skips listings that only offer a package to install, such as an npm, PyPI or Docker package. Anyone can publish to the registry, so Nod treats a listing as unverified: being listed doesn't make a server official or safe. Nod proposes a listed address only when the service's own documentation gives it. A listed server works like any other proposed MCP server. Nod contacts it only after you finish setup on the private page, and every call goes through the trust check. The registry receives the words Nod searched for, as described in [Privacy](/trust/privacy/#what-nod-sends-to-other-services). If the registry is down or slow, the search result keeps its reason, and Nod researches the service itself.
+
 | Access path | What Nod calls                                                 | How it signs in                                    |
 | ----------- | -------------------------------------------------------------- | -------------------------------------------------- |
 | MCP server  | Tools on a public HTTPS MCP server, or a private one you enter | A token in a header, or OAuth sign-in              |

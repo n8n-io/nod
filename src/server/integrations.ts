@@ -30,6 +30,7 @@ import { bundledApps } from './app-catalog.ts';
 import { afterRollback, transaction } from './transaction.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type { SiteIcon } from '../ports/link-preview.ts';
+import { McpRegistryError, type McpRegistry } from '../ports/mcp-registry.ts';
 import { BrowserConnectionError } from './browser-connections.ts';
 import type { TurnRef } from './thread.ts';
 import { noMailCheck, privateEmailResult, type MailCheck } from './integration-result.ts';
@@ -181,6 +182,7 @@ type IntegrationOptions = {
   mailCheck?: MailCheck;
   emailCodePollMs?: number;
   paused?(): Promise<boolean>;
+  registry?: McpRegistry;
 };
 
 function browserService(origin: string) {
@@ -3046,6 +3048,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       newAccount?: boolean,
       query?: string,
       connectionId?: string,
+      signal?: AbortSignal,
     ) => {
       if (connectionId !== undefined && (action !== 'connect' || newAccount === true))
         throw new IntegrationError(
@@ -3105,6 +3108,22 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             })),
           total: matches.length,
           hasMore: matches.length > 30,
+          ...(!matches.length && search && options.registry
+            ? {
+                registry: await options.registry.search(search, signal).then(
+                  (servers) => ({ source: 'MCP Registry', verified: false, servers }),
+                  (error: unknown) => {
+                    signal?.throwIfAborted();
+                    return {
+                      error:
+                        error instanceof McpRegistryError
+                          ? error.message
+                          : `The MCP Registry could not be searched: ${error instanceof Error ? error.message : String(error)}`,
+                    };
+                  },
+                ),
+              }
+            : {}),
         };
       }
       if (action === 'list') {

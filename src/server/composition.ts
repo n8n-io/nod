@@ -125,6 +125,8 @@ import { createPiMemoryCurator } from '../providers/pi/memory-curator.ts';
 import { createPublicLinkPreviewProvider } from '../providers/public-web/link-preview.ts';
 import { createGoogleFlights } from '../providers/google-flights.ts';
 import type { FlightSearch } from '../ports/flights.ts';
+import { createMcpRegistry } from '../providers/mcp-registry.ts';
+import type { McpRegistry } from '../ports/mcp-registry.ts';
 import { createAgentRuntime } from '../runtime/index.ts';
 import { coreSkills } from '../runtime/prompt.ts';
 import { createApp } from './app.ts';
@@ -279,6 +281,7 @@ export interface ApplicationAdapters {
   messaging?: MessagingTransport;
   linkPreviews?: LinkPreviewProvider;
   flights?: FlightSearch;
+  mcpRegistry?: McpRegistry;
   feedback?: FeedbackDelivery;
   traces?: ModelTraceGate;
   telemetry?: UsageTelemetry;
@@ -698,6 +701,7 @@ export function createDefaultAdapters(
     },
     linkPreviews: createPublicLinkPreviewProvider(),
     flights: createGoogleFlights(),
+    mcpRegistry: createMcpRegistry(),
     onboardingEmail: createN8nOnboardingEmail({
       url:
         env.NOD_ONBOARDING_EMAIL_URL ??
@@ -1409,6 +1413,7 @@ async function initializeApplication(
     browserAccounts: (client) => vault.list(ownerId, client),
     browserConnections: (client) => browserConnections.list(client),
     icon,
+    registry: adapters.mcpRegistry,
   });
   const scheduleIdeas = createScheduleIdeas({
     pool,
