@@ -1019,7 +1019,7 @@ test(
         assert.ok(checks.every((request) => request.model === 'gpt-6.1-sol'));
         assert.deepEqual(
           checks.map((request) => request.reasoning?.effort),
-          ['low'],
+          ['medium'],
         );
         assert.equal(localChoice.models!.view().selection?.modelId, audioModel.id);
         await localChoice.models!.select(models.selection!);
