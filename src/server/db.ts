@@ -199,6 +199,7 @@ export async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS messages_owner_time ON messages(owner_id,created_at);
     CREATE INDEX IF NOT EXISTS messages_thread_time ON messages(thread_id,created_at);
     DROP TABLE IF EXISTS draft_instructions;
+    DROP TABLE IF EXISTS browser_connections;
     CREATE INDEX IF NOT EXISTS messages_turn_time ON messages(turn_id,created_at);
     CREATE INDEX IF NOT EXISTS messages_attachments ON messages USING gin (attachments jsonb_path_ops);
     CREATE INDEX IF NOT EXISTS messages_text_search ON messages USING gin (to_tsvector('english',text));

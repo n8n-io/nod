@@ -144,8 +144,6 @@ export interface CredentialSubmission {
   status: 'submitted';
 }
 export interface Computer {
-  bindProfile(threadId: string, profileId: string): Promise<void>;
-  deleteProfile(profileId: string): Promise<void>;
   act(threadId: string, input: BrowserAction, signal?: AbortSignal): Promise<BrowserObservation>;
   download(
     threadId: string,

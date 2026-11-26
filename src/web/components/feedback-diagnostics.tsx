@@ -221,7 +221,6 @@ export function FeedbackDiagnostics({
   const logs = reportLogs(data);
   const connections: ReportRecord[] = [
     ...rows(data?.connections),
-    ...rows(data?.browserConnections),
     ...rows(data?.directConnections).map((connection) => ({
       ...connection,
       method: 'direct',

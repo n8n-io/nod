@@ -53,9 +53,7 @@ export default scenario({
             world.apps.calls.length === 0 &&
             !run.tools.some(
               (tool) =>
-                (tool.name === 'manage_apps' &&
-                  ['connect', 'propose'].includes(tool.input.action)) ||
-                (tool.name === 'browser_session' && tool.input.action === 'connect'),
+                tool.name === 'manage_apps' && ['connect', 'propose'].includes(tool.input.action),
             ),
           evidence: `${world.requests.length} sign-in requests; ${world.apps.calls.length} app executions; credential setup: ${credentialSetup ? 'yes' : 'no'}.`,
         };

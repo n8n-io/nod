@@ -127,7 +127,7 @@ export function trustBasis(
   const command = args.command;
   const opens =
     opensContent(name) ||
-    ['NOD_sign_in', 'NOD_browser_session', 'NOD_vault_allow'].includes(name) ||
+    ['NOD_sign_in', 'NOD_vault_allow'].includes(name) ||
     (name === 'NOD_browser' &&
       (args.step === 'upload' ||
         (command &&

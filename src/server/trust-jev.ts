@@ -45,7 +45,7 @@ const settings = new Set([
   'NOD_memory_control',
   'NOD_model_select',
 ]);
-const signIns = new Set(['NOD_sign_in', 'NOD_browser_session', 'NOD_vault_allow']);
+const signIns = new Set(['NOD_sign_in', 'NOD_vault_allow']);
 const grants = {
   send: 'owner_send',
   delete: 'owner_delete',

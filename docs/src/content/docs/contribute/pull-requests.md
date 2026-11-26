@@ -15,7 +15,7 @@ Every pull request title follows [Conventional Commits](https://www.conventional
 | ---------------------------------------- | ------------------------------- |
 | `fix(backend): handle a missing session` | A bug fix in the backend        |
 | `feat(web): add keyboard controls`       | A new feature in the web client |
-| `docs: explain saved browser sessions`   | A docs change with no scope     |
+| `docs: explain the browser tabs`         | A docs change with no scope     |
 | `feat(api)!: remove the old route`       | A breaking change               |
 
 Use one of these types:

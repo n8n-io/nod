@@ -3,6 +3,7 @@ import { basename } from 'node:path';
 import { JSDOM } from 'jsdom';
 import { fakeDevtools } from './browser-fixture.ts';
 import type { runProcess } from '../src/providers/process.ts';
+import { browserSessionId } from '../src/providers/agent-browser/index.ts';
 
 class LoginPage {
   stage: 'identifier' | 'password' | 'otp' | 'complete' = 'identifier';
@@ -100,12 +101,37 @@ class LoginPage {
   }
 }
 
+export function ownerBrowserCommand(args: string[]) {
+  const session = args.includes('--session') ? args[args.indexOf('--session') + 1] : undefined;
+  if (session !== undefined && session !== browserSessionId('owner')) return undefined;
+  const command = args.includes('--idle-timeout')
+    ? args.slice(args.indexOf('--idle-timeout') + 2)
+    : args.slice(args.indexOf('--json') + 1);
+  const data =
+    command[0] === 'get' && command[1] === 'cdp-url'
+      ? { cdpUrl: 'ws://127.0.0.1:9/devtools/browser/fixture-owner' }
+      : command[0] === 'open'
+        ? { targetId: 'fixture-owner-target' }
+        : {};
+  return { stdout: JSON.stringify({ success: true, data }), stderr: '', exitCode: 0 };
+}
+
+class SessionPages extends Map<string, LoginPage> {
+  override get(key: string) {
+    return super.get(key) ?? super.get(browserSessionId(key));
+  }
+}
+
 export function stagedLoginBrowser() {
-  const pages = new Map<string, LoginPage>();
+  const pages = new SessionPages();
   const inspectors = new Map<string, Awaited<ReturnType<typeof fakeDevtools>>>();
   let documents = 0;
   const run: typeof runProcess = async (_executable, args, options) => {
-    const id = basename(args[args.indexOf('--profile') + 1]);
+    const owned = ownerBrowserCommand(args);
+    if (owned) return owned;
+    const id = args.includes('--profile')
+      ? basename(args[args.indexOf('--profile') + 1])
+      : args[args.indexOf('--session') + 1];
     let page = pages.get(id);
     if (!page) {
       page = new LoginPage();
@@ -197,7 +223,7 @@ export function stagedLoginBrowser() {
     }
     if (command[0] === 'snapshot') data = page.snapshot();
     if (command[0] === 'screenshot') await writeFile(command[1], page.screen());
-    if (command[0] === 'close') {
+    if (command[0] === 'close' || (command[0] === 'tab' && command[1] === 'close')) {
       page.dom.window.close();
       pages.delete(id);
       await inspectors.get(id)?.close();

@@ -242,7 +242,6 @@ import {
 } from './vault.ts';
 import { createVaultAccess } from './vault-access.ts';
 import { createPayments } from './payments.ts';
-import { BrowserConnectionError, createBrowserConnections } from './browser-connections.ts';
 import { cachedIcons, registerLinkOpened } from './link-previews.ts';
 import { appPages } from '../shared/app-links.ts';
 export interface ApplicationAdapters {
@@ -1354,7 +1353,6 @@ async function initializeApplication(
   let vault!: Awaited<ReturnType<typeof createVault>>;
   let vaultAccess!: Awaited<ReturnType<typeof createVaultAccess>>;
   let payments!: Awaited<ReturnType<typeof createPayments>>;
-  let browserConnections!: Awaited<ReturnType<typeof createBrowserConnections>>;
   const previews = adapters.linkPreviews;
   const icon = previews ? cachedIcons((origin) => previews.icon(origin)) : undefined;
   const computerUse = createComputerUse(pool, ownerId, { desktop: adapters.desktop });
@@ -1406,7 +1404,6 @@ async function initializeApplication(
     callbackReturnTo: desktopMode ? 'window' : undefined,
     discovered,
     browserAccounts: (client) => vault.list(ownerId, client),
-    browserConnections: (client) => browserConnections.list(client),
     icon,
   });
   const scheduleIdeas = createScheduleIdeas({
@@ -1459,13 +1456,6 @@ async function initializeApplication(
         },
         client,
       ),
-  });
-  browserConnections = await createBrowserConnections(pool, {
-    analytics: captureAnalytics,
-    analyticsConsent,
-    ownerId,
-    computer,
-    refresh,
   });
   const chatVerification = await createChatVerification(pool, {
     ownerId,
@@ -2190,7 +2180,6 @@ async function initializeApplication(
                   await Promise.all([
                     integrations.analyticsConnections(),
                     discovered.analyticsConnections(),
-                    browserConnections.analyticsConnections(),
                   ])
                 ).flat(),
           () => (only === 'apps' ? [] : (adapters.models?.analyticsConnections() ?? [])),
@@ -2217,10 +2206,9 @@ async function initializeApplication(
     turn: TurnRef,
     target: {
       origin: string;
-      kind: 'sign_in' | 'session' | 'form';
+      kind: 'sign_in' | 'form';
       account?: string;
       itemId?: string;
-      sessionOrigin?: string;
     },
   ): Promise<{ reason: VaultActivityReason; basis?: TrustBasis } | { question: string }> {
     const access = await vaultAccess.authorize(turn, target);
@@ -2723,34 +2711,6 @@ async function initializeApplication(
         return result && typeof result === 'object' && appConfirmation in result
           ? result
           : { result };
-      },
-      browserConnection: async (request, turn, signal, launch) => {
-        const target = await browserConnections.target(request);
-        if (!target)
-          return browserConnections.request(request, turn, signal, launch).catch(async (error) => {
-            if (
-              error instanceof BrowserConnectionError &&
-              error.statusCode === 404 &&
-              (await vault.list(ownerId)).some((entry) => entry.id === request.connectionId)
-            )
-              throw new Error(
-                'This ID is a saved Vault login, not a browser profile. Open the sign-in page with browser, then use sign_in with savedLoginId set to this ID.',
-              );
-            throw error;
-          });
-        const access = await permitVault(turn, target);
-        if ('question' in access) return { [appConfirmation]: access.question };
-        const result = await browserConnections.request(request, turn, signal, launch);
-        if (result.status === 'session_opened')
-          await vaultAccess.record(turn, {
-            action: 'session',
-            origin: target.origin,
-            reason: access.reason,
-            itemId: result.connectionId,
-            itemKind: 'session',
-            ...(access.basis ? { basis: access.basis } : {}),
-          });
-        return result;
       },
       speech,
       audioReplies: async () => (await speechPreferences.get()).speechReply,
@@ -3458,7 +3418,6 @@ async function initializeApplication(
   vault.registerRoutes(app);
   payments.registerRoutes(app);
   vaultAccess.registerRoutes(app);
-  browserConnections.registerRoutes(app);
   adapters.integrationBrowser?.registerRoutes(app);
   integrations.registerRoutes(app);
   localFiles.registerRoutes(app);

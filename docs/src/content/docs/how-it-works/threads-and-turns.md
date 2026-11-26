@@ -112,7 +112,7 @@ The next turn checks server status for sign-in forms referenced by its recent ch
 | Background observer                    | A saved session ID on the active thread.                        | Saves qualified nudges and starts separate tasks for outside actions or waits.                                                                                                                                                                    |
 | Schedule or event outside the observer | Its first turn. A task record created there keeps that session. | Uses explicit delivery tools; a linked task also delivers its final reply.                                                                                                                                                                        |
 
-Every session saves its Pi history and opens its own browser on first use. Each runs one turn at a time; different sessions run in parallel.
+Every session saves its Pi history and opens its own tab in the owner's browser on first use. Each runs one turn at a time; different sessions run in parallel.
 
 When a background turn starts, it loads its own messages and recent conversation messages available before that turn, with other sessions' work included only after it finished. The saved Pi history remains separate. A new main chat turn receives reports sent by other sessions. All sessions share the workspace, so files one writes are available for the others to read.
 
@@ -126,24 +126,23 @@ See [Task sessions](/how-it-works/task-sessions/) for the ledger, shared context
 
 ## Subagents
 
-`delegate {title, instruction}` runs one part of a turn as a subagent: another in-memory Pi session with Nod's tools, its own browser and the shared workspace. The model calls it several times in one step, Pi runs those calls in parallel, and each subagent's final answer comes back as an untrusted tool result. The parent then uses the answers, such as to compare three shops. Helpers do not create saved tasks or control the task ledger.
+`delegate {title, instruction}` runs one part of a turn as a subagent: another in-memory Pi session with Nod's tools, its own browser tab and the shared workspace. The model calls it several times in one step, Pi runs those calls in parallel, and each subagent's final answer comes back as an untrusted tool result. The parent then uses the answers, such as to compare three shops. Helpers do not create saved tasks or control the task ledger.
 
 - **Inside the turn.** Subagents run in the turn that started them, with its authority, trace and spending. **Stop** stops them with it.
 - **Needs you.** A subagent returns questions and browser blockers to the parent. An app confirmation still pauses the whole turn.
-- **Tools.** A subagent cannot delegate, ask or send chat messages to the owner, connect apps, sign in, pay, or open saved browser sessions. A paused turn cannot start another subagent.
+- **Tools.** A subagent cannot delegate, ask or send chat messages to the owner, connect apps, sign in or pay. A paused turn cannot start another subagent.
 - **Browsers.** A subagent's browser is deleted when it finishes.
 - **Files.** Each subagent starts in `.nod/runs/<run ID>` inside the shared workspace. It returns complete file paths to its parent.
 - **Outcomes.** Model failures and incomplete responses return as errors. They do not count as successful empty answers.
 
-## Every session has its own browser
+## One browser, a tab per session
 
-A session opens its browser on its first browser call, so a session that never browses never starts one. Sessions never share a browser.
+A session opens its tab on its first browser call, so a session that never browses never opens one. Every tab lives in the owner's one browser and profile, so a sign-in or a cart carries over from one session to the next. See [One browser, a tab per session](/how-it-works/sandbox-and-browser/#one-browser-a-tab-per-session).
 
-- A chat or background session can hand its browser to you. The handoff identifies the exact turn and browser. It closes when that session continues. The developer browser page shows the chat browser.
-- A background session's browser is deleted when the session ends without waiting, or when **Stop** or reset cancels it. If you later continue that task, it starts a fresh, signed-out browser. A reset conversation's browser never comes back.
-- The browser container keeps four browsers live at once. At that limit, a new browser replaces the least recently used one that has been idle for five minutes. A browser waiting for you is never replaced during its 30-minute hold. The replaced browser closes and keeps its profile until it's used again.
-- A browser used in the last five minutes is never closed for another. One idle for longer can be, even while its session or subagent is still running, for example during a long model step. Browsers don't close just because they're idle.
-- When no browser can close yet, a new one waits for a free slot until its session stops. **Stop** cancels the wait at once.
+- A chat or background session can hand its tab to you. The handoff identifies the exact turn and tab. It closes when that session continues. The developer browser page shows the chat's tab.
+- A background session's tab closes when the session ends without waiting, or when **Stop** or reset cancels it. The profile stays, so if you later continue that task, its new tab is still signed in. A reset conversation's tab never comes back.
+- Nothing else closes a tab. There's no limit that replaces one session's tab with another's, and an idle tab stays open while its session lives.
+- After the browser service restarts, a session's next step reopens the page it was on.
 
 ## Stop and failures
 
@@ -193,9 +192,9 @@ The thread, workspace, browser, independent tasks, schedules, memory, accounts a
 
 Reset is available through the development API at `POST /api/conversation/reset`. It archives the thread, cancels its turns and closes its open task records. The next turn starts a new Pi session, workspace and browser.
 
-| Archived                                             | Deleted                                                    | Kept                                                          |
-| ---------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------- |
-| The thread with its messages, turns and task history | The old browser's throwaway profile, downloads and screens | Accounts, Vault, schedules, saved browser sessions and memory |
+| Archived                                             | Deleted                             | Kept                                                       |
+| ---------------------------------------------------- | ----------------------------------- | ---------------------------------------------------------- |
+| The thread with its messages, turns and task history | The old tabs, downloads and screens | Accounts, Vault, schedules, the browser profile and memory |
 
 The web client sends its `threadId` with each message, so a late message from before the reset is refused. A chat-app message Nod was still reading is saved in the new thread with its turn already cancelled.
 

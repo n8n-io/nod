@@ -13188,7 +13188,6 @@ test(
       CREATE TABLE model_usage(id text,owner_id text,turn_id uuid,session_id uuid,run_id uuid,parent_run_id uuid,cost_usd double precision,details jsonb,created_at timestamptz DEFAULT now());
       CREATE TABLE tasks(id uuid,owner_id text,turn_id uuid,session_id uuid,state text,step_index integer,steps jsonb,revision integer,applied_revision integer,updated_at timestamptz DEFAULT now());
       CREATE TABLE app_connections(id uuid,owner_id text,slug text,account_id text,account_active boolean,revoked boolean,callback_expires timestamptz,triggers_enabled boolean,watch_failures integer,inbox_failed boolean,inbox_reconnect_required boolean,account_checked_at timestamptz,inbox_checked_at timestamptz,created_at timestamptz DEFAULT now());
-      CREATE TABLE browser_connections(id uuid,owner_id text,state text,checked_at timestamptz,created_at timestamptz DEFAULT now());
       CREATE TABLE discovered_connections(id uuid,owner_id text,reconnect_required boolean,replaced_at timestamptz,paths jsonb,created_at timestamptz DEFAULT now());
       CREATE TABLE model_connections(id uuid,owner_id text,provider text,method text,status text,managed boolean,models jsonb,request_failures jsonb,created_at timestamptz DEFAULT now());
       CREATE TABLE model_settings(owner_id text,selection jsonb,routes jsonb);
@@ -13327,10 +13326,6 @@ test(
       await f.pool.query(
         `INSERT INTO app_connections(id,owner_id,slug,account_id,account_active,revoked,triggers_enabled,watch_failures,inbox_failed,inbox_reconnect_required) VALUES($1,$2,$3,$4,false,false,true,3,true,true)`,
         [randomUUID(), owner, privateText, privateText],
-      );
-      await f.pool.query(
-        `INSERT INTO browser_connections(id,owner_id,state) VALUES($1,$2,'needs_sign_in')`,
-        [randomUUID(), owner],
       );
       await f.pool.query(
         `INSERT INTO discovered_connections(id,owner_id,reconnect_required,paths) VALUES($1,$2,true,$3)`,
@@ -13804,7 +13799,6 @@ test(
     assert.equal(report.connections[0].status, 'reconnect');
     assert.equal(report.connections[0].watchFailures, 3);
     assert.equal(report.connections[0].inboxFailed, true);
-    assert.equal(report.browserConnections.length, 1);
     assert.equal(report.directConnections.length, 1);
     assert.deepEqual(report.directConnections[0].methods, ['mcp', 'other']);
     assert.equal(report.modelConnections[0].provider, 'other');

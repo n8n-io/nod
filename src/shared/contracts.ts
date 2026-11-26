@@ -191,15 +191,6 @@ export interface VaultImportResult {
   authenticatorKeys: number;
 }
 
-export interface VaultSession {
-  kind: 'session';
-  id: string;
-  label: string;
-  origin: string;
-  url: string;
-  state: 'pending' | 'saved' | 'needs_sign_in' | 'disconnecting';
-  checkedAt?: string;
-}
 export interface CredentialRequest {
   id: string;
   turnId: string;
@@ -242,7 +233,6 @@ export interface Connection {
   description?: string;
   supportsTriggers?: boolean;
   accessPaths?: Array<{ id: string; kind: 'http' | 'mcp' | 'browser' | 'cli'; endpoint: string }>;
-  browserState?: 'pending' | 'saved' | 'needs_sign_in' | 'disconnecting';
   checkedAt?: string;
   browserUrl?: string;
 }

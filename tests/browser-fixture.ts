@@ -194,21 +194,23 @@ export function createBrowserFixture(options: Options, preferRealSocket = false)
                                                       ? [String(command.action)]
                                                       : command.action === 'close'
                                                         ? ['close']
-                                                        : [
-                                                              'scrollintoview',
-                                                              'boundingbox',
-                                                            ].includes(String(command.action))
-                                                          ? [
-                                                              String(command.action),
-                                                              String(command.selector),
-                                                            ]
-                                                          : command.action === 'isenabled'
+                                                        : command.action === 'tab_close'
+                                                          ? ['tab', 'close']
+                                                          : [
+                                                                'scrollintoview',
+                                                                'boundingbox',
+                                                              ].includes(String(command.action))
                                                             ? [
-                                                                'is',
-                                                                'enabled',
+                                                                String(command.action),
                                                                 String(command.selector),
                                                               ]
-                                                            : null;
+                                                            : command.action === 'isenabled'
+                                                              ? [
+                                                                  'is',
+                                                                  'enabled',
+                                                                  String(command.selector),
+                                                                ]
+                                                              : null;
       if (!args) throw new Error('Unsupported synthetic browser action.');
       const result = await run(session.executable, [...session.args, ...args], {
         ...session.options,
@@ -447,9 +449,6 @@ function workerComputer() {
     currentPage: async () => {
       calls.push({ method: 'currentPage' });
       return { origin: 'https://example.com', url: 'https://example.com/login' };
-    },
-    bindProfile: async (_id, profileId) => {
-      calls.push({ method: 'bindProfile', input: profileId });
     },
     hold: async () => {},
     close: async () => {

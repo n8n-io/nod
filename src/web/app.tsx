@@ -273,7 +273,7 @@ function Workspace({
             {(path === '/usage' || path === '/vault') && (
               <>
                 <Usage hidden={path !== '/usage'} />
-                <Vault hidden={path !== '/vault'} onAsk={askInChat} />
+                <Vault hidden={path !== '/vault'} />
               </>
             )}
             {path === '/apps' && (

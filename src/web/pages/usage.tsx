@@ -20,12 +20,7 @@ import {
   trustStepPage as stepPage,
 } from '../../shared/trust';
 import { modelSource, type ModelsResponse } from '../../shared/models';
-import type {
-  VaultActivity,
-  VaultActivityEntry,
-  VaultListEntry,
-  VaultSession,
-} from '../../shared/contracts';
+import type { VaultActivity, VaultActivityEntry, VaultListEntry } from '../../shared/contracts';
 import { usePageData } from '../hooks/use-page-data';
 import { api, errorMessage } from '../lib/api';
 import { navigate } from '../lib/navigation';
@@ -43,7 +38,6 @@ import { StatementValue } from '../components/statement-value';
 import { Button, Input, Loading, Notice } from '../components/ui';
 import { VaultUse } from '../components/vault-activity';
 import { money } from '../lib/money';
-import { vaultItems } from './vault';
 import { WorkspaceCommandDialog, WorkspaceCommandLine } from '../components/workspace-command';
 
 const day = 86_400_000;
@@ -878,17 +872,13 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
   const models = usePageData<ModelsResponse>('/api/models');
   const vault = usePageData<VaultActivity>('/api/vault/activity');
   const entries = usePageData<VaultListEntry[]>('/api/vault');
-  const sessions = usePageData<VaultSession[]>('/api/vault/sessions');
-  const items = vaultItems(entries.data ?? [], sessions.data ?? []);
+  const items = entries.data ?? [];
   const selected = models.data?.connections.find(
     (connection) => connection.id === models.data?.selection?.connectionId,
   );
   const plan = selected?.method === 'subscription' ? modelSource(selected) : undefined;
   function opener(entry: VaultActivityEntry) {
-    const item =
-      items.find((value) => value.id === entry.itemId) ??
-      (!entry.itemId &&
-        items.find((value) => value.kind === 'session' && value.origin === entry.origin));
+    const item = items.find((value) => value.id === entry.itemId);
     return item
       ? () => {
           window.history.replaceState({ usage: entry.id }, '');
@@ -906,7 +896,7 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
       ?.focus();
   }, [ready, hidden]);
   const error = trust.error || vault.error || models.error;
-  const itemsError = entries.error || sessions.error;
+  const itemsError = entries.error;
   return (
     <div className="content-page secondary-page" hidden={hidden}>
       <header className="page-heading secondary-heading">

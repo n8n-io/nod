@@ -897,7 +897,6 @@ test('every checker must cite owner words for Nod settings, sign-in, uploads and
     'NOD_notification_preferences_update',
     'NOD_memory_control',
     'NOD_sign_in',
-    'NOD_browser_session',
     'NOD_vault_allow',
     'NOD_browser',
     'COMPUTER_OPEN',

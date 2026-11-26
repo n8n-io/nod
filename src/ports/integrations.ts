@@ -28,7 +28,6 @@ export type ConnectedApp = Pick<
   | 'supportsTriggers'
   | 'triggersEnabled'
   | 'triggerStatus'
-  | 'browserState'
   | 'checkedAt'
 > & { access: Array<'api' | 'http' | 'mcp' | 'browser' | 'cli'> };
 export interface IntegrationFile {

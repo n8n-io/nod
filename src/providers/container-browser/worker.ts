@@ -58,10 +58,6 @@ async function dispatch(
 ) {
   signal.throwIfAborted();
   switch (request.method) {
-    case 'bindProfile':
-      return computer.bindProfile(request.threadId, request.profileId);
-    case 'deleteProfile':
-      return computer.deleteProfile(request.profileId);
     case 'act':
       return computer.act(request.threadId, request.input, signal);
     case 'download': {

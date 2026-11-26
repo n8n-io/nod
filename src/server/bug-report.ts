@@ -84,7 +84,6 @@ const tools = [
   'usage_get',
   'ask_user',
   'browser',
-  'browser_session',
   'computer',
   'create_audio',
   'delegate',
@@ -431,18 +430,6 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
         reconnectRequired: row.inbox_reconnect_required === true,
         checkedAgeMs: age(row.account_checked_at),
         inboxCheckedAgeMs: age(row.inbox_checked_at),
-      }),
-      [options.ownerId],
-    ),
-    collect(
-      'browserConnections',
-      `SELECT id,state,checked_at,created_at FROM browser_connections
-       WHERE owner_id=$1 ORDER BY created_at DESC,id DESC`,
-      (row) => ({
-        id: alias('connection', row.id),
-        method: 'browser',
-        status: choice(row.state, ['pending', 'saved', 'needs_sign_in', 'disconnecting']),
-        checkedAgeMs: age(row.checked_at),
       }),
       [options.ownerId],
     ),

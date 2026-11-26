@@ -30,7 +30,6 @@ import { bundledApps } from './app-catalog.ts';
 import { afterRollback, transaction } from './transaction.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type { SiteIcon } from '../ports/link-preview.ts';
-import { BrowserConnectionError } from './browser-connections.ts';
 import type { TurnRef } from './thread.ts';
 import { noMailCheck, privateEmailResult, type MailCheck } from './integration-result.ts';
 import type { ObservationQuery } from '../ports/proactivity.ts';
@@ -176,7 +175,6 @@ type IntegrationOptions = {
   discovered?: Awaited<ReturnType<typeof createDiscoveredConnections>>;
   localFiles?: LocalFiles;
   browserAccounts?: (client?: PoolClient) => Promise<VaultLoginEntry[]>;
-  browserConnections?: (client?: PoolClient) => Promise<Connection[]>;
   icon?: (origin: string) => Promise<SiteIcon | null>;
   mailCheck?: MailCheck;
   emailCodePollMs?: number;
@@ -712,11 +710,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     listing: { refresh?: boolean; client?: PoolClient } = {},
   ): Promise<Connection[]> {
     assertOwner(ownerId);
-    const [rows, browserAccounts, discovered, browserConnections] = await Promise.all([
+    const [rows, browserAccounts, discovered] = await Promise.all([
       connectionRows(ownerId, listing.client),
       options.browserAccounts?.(listing.client) ?? [],
       options.discovered?.list(listing.client) ?? [],
-      options.browserConnections?.(listing.client) ?? [],
     ]);
     if (listing.refresh !== false && provider.configured && !closed && !refreshing) {
       refreshing = background(() => refreshAccounts(rows))
@@ -833,7 +830,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     return [
       ...result,
       ...discovered,
-      ...browserConnections,
       ...browserAccounts.map((entry): Connection => {
         const service = browserService(entry.origin);
         return {
@@ -867,7 +863,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         supportsTriggers: connection.supportsTriggers,
         triggersEnabled: connection.triggersEnabled,
         triggerStatus: connection.triggerStatus,
-        browserState: connection.browserState,
         checkedAt: connection.checkedAt,
         ...(withAccount && connection.accountId ? { accountId: connection.accountId } : {}),
       }));
@@ -2573,8 +2568,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           error instanceof IntegrationError ||
           error instanceof IntegrationCatalogFailure ||
           error instanceof IntegrationConnectionError ||
-          error instanceof DiscoveredConnectionError ||
-          error instanceof BrowserConnectionError
+          error instanceof DiscoveredConnectionError
             ? error.statusCode
             : error instanceof z.ZodError
               ? 400
@@ -2589,8 +2583,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             error instanceof IntegrationError ||
             error instanceof IntegrationCatalogFailure ||
             error instanceof IntegrationConnectionError ||
-            error instanceof DiscoveredConnectionError ||
-            error instanceof BrowserConnectionError
+            error instanceof DiscoveredConnectionError
               ? error.message
               : status === 400
                 ? 'Check the connection request.'
@@ -3113,24 +3106,14 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           .replace(/^[a-z][a-z\d+.-]*:\/\//, '')
           .replace(/^www\./, '')
           .split('/')[0]!;
-        const connections = (await list())
-          .filter(
-            (connection) =>
-              !connection.accessPaths?.some((path) => path.kind === 'browser') ||
-              !connection.browserState ||
-              ['saved', 'needs_sign_in', 'pending'].includes(connection.browserState),
-          )
-          .map(
-            ({
-              accountId: _accountId,
-              browserUrl: _browserUrl,
-              canRename: _canRename,
-              ...connection
-            }) => ({
-              ...connection,
-              ...(connection.browserState ? { browserAccess: 'browser_session' } : {}),
-            }),
-          );
+        const connections = (await list()).map(
+          ({
+            accountId: _accountId,
+            browserUrl: _browserUrl,
+            canRename: _canRename,
+            ...connection
+          }) => connection,
+        );
         const logins = connections.filter((connection) => connection.savedLogin);
         const matching = site
           ? logins.filter((connection) => {

@@ -61,6 +61,9 @@ export default defineConfig({
   site,
   base: prefix || '/',
   trailingSlash: 'always',
+  redirects: {
+    '/trust/browser-sessions/': withBase('/use/browser/#one-browser-a-tab-for-each-job'),
+  },
   devToolbar: { enabled: false },
   markdown: {
     processor: satteri({

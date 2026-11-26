@@ -48,12 +48,7 @@ import {
 import type { SpeechService } from './speech.ts';
 import type { GeneratedAudio } from '../ports/speech.ts';
 import type { Artifact, MessageReaction, SpeechReplyMode } from '../shared/contracts.ts';
-import type {
-  BrowserConnectionRequest,
-  BrowserStep,
-  RuntimeContext,
-  RuntimeResult,
-} from '../ports/agent.ts';
+import type { BrowserStep, RuntimeContext, RuntimeResult } from '../ports/agent.ts';
 import {
   appConfirmation,
   ContextLimitError,
@@ -271,12 +266,6 @@ export interface ThreadDependencies {
     newAccount?: boolean,
     query?: string,
     connectionId?: string,
-  ) => Promise<unknown>;
-  browserConnection?: (
-    request: BrowserConnectionRequest,
-    turn: TurnRef,
-    signal: AbortSignal,
-    launch: { timeZone?: string; locale?: string },
   ) => Promise<unknown>;
   browserStep: (
     turn: TurnRef,
@@ -2435,7 +2424,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       await current((client) => insertEvent(client, turnId, type, summary, event));
       working();
     };
-    const { reactToMessage, connections, browserConnection } = dependencies;
+    const { reactToMessage, connections } = dependencies;
     const limit = await dependencies.spendingLimit?.();
     if (limit && turn.source !== 'user') {
       limited = true;
@@ -2526,14 +2515,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         connections &&
         fenced((action, service, proposal, newAccount, query, connectionId) =>
           connections(action, service, ref, proposal, newAccount, query, connectionId),
-        ),
-      browserConnection:
-        browserConnection &&
-        fenced((request) =>
-          browserConnection(request, ref, signal, {
-            timeZone: loaded.context.timeZone,
-            locale: loaded.context.locale,
-          }),
         ),
       requestCredential: fenced((input) => dependencies.requestCredential(ref, input)),
       browserStep: fenced((request: BrowserStep) =>

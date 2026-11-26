@@ -55,7 +55,7 @@ import {
   fakeDevtools,
   type DevtoolsModel,
 } from './browser-fixture.ts';
-import { stagedLoginBrowser } from './login-fixture.ts';
+import { ownerBrowserCommand, stagedLoginBrowser } from './login-fixture.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 import { withFailureLog } from '../src/ports/failure-log.ts';
@@ -761,6 +761,8 @@ async function browserFixture() {
   const computer = createBrowserFixture({
     dataRoot: directory,
     run: async (executable, args, options) => {
+      const owned = ownerBrowserCommand(args);
+      if (owned) return owned;
       await before(args.slice(args.indexOf('--idle-timeout') + 2));
       return browser.run(executable, args, options);
     },
@@ -865,6 +867,8 @@ async function transportFixture() {
     onDiagnostic: (event) => diagnostics.push(event),
     daemonCommand: (path, command, signal) => existingDaemonCommand(path, command, signal, 250),
     run: async (executable, args, options) => {
+      const owned = ownerBrowserCommand(args);
+      if (owned) return owned;
       if (args.includes('info'))
         return {
           exitCode: 0,
@@ -1013,6 +1017,8 @@ test('a card goes only into the approved fields on the approved sites and stays 
   const computer = createBrowserFixture({
     dataRoot: directory,
     run: async (_executable, args, options) => {
+      const owned = ownerBrowserCommand(args);
+      if (owned) return owned;
       const command = args.slice(args.indexOf('--idle-timeout') + 2);
       let data: Record<string, unknown> = {};
       if (command[0] === 'open' || command[0] === 'reload') {
@@ -1163,59 +1169,38 @@ test('a card goes only into the approved fields on the approved sites and stays 
   }
 });
 
-test('discarding a thread closes its browser and deletes only its throwaway data; clearing a finished session lets it start fresh', async () => {
+test('discarding a task closes only its tab and throwaway data, and the owner profile stays', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-browser-discard-'));
   const fixture = stagedLoginBrowser();
-  const commands: string[] = [];
-  const computer = createBrowserFixture({
-    dataRoot: directory,
-    run: async (executable, args, options) => {
-      commands.push(args[args.indexOf('--idle-timeout') + 2]);
-      return fixture.run(executable, args, options);
-    },
-  });
+  const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
   const runtime = join(directory, 'runtime');
-  const savedProfile = randomUUID();
-  const dirs = ['profiles/old', 'downloads/old', 'profiles/other', `profiles/${savedProfile}`];
-  const screens = [
-    'screen-old.png',
-    'screen-old.capture.png',
-    'screen-bound.png',
-    'screen-other.png',
-  ];
   try {
-    for (const dir of dirs) {
+    for (const dir of ['profiles/owner', 'downloads/old']) {
       await mkdir(join(runtime, dir), { recursive: true });
       await writeFile(join(runtime, dir, 'data'), 'synthetic');
     }
-    for (const screen of screens) await writeFile(join(runtime, screen), 'synthetic');
+    for (const screen of ['screen-old.png', 'screen-old.capture.png', 'screen-other.png'])
+      await writeFile(join(runtime, screen), 'synthetic');
     await computer.act('old', { action: 'open', url: 'https://1.1.1.1/login' });
     await computer.act('other', { action: 'open', url: 'https://1.1.1.1/login' });
-    await computer.bindProfile!('bound', savedProfile);
     await computer.discard!('old');
-    await computer.discard!('bound');
     await assert.rejects(
       computer.act('old', { action: 'open', url: 'https://1.1.1.1/login' }),
       /was reset/,
     );
-    await assert.rejects(computer.bindProfile!('old', savedProfile), /was reset/);
-    assert.equal(commands.filter((command) => command === 'close').length, 1);
-    assert.deepEqual(
-      (await readdir(join(runtime, 'profiles'))).sort(),
-      [savedProfile, 'other'].sort(),
-    );
+    assert.equal(fixture.pages.get('old'), undefined);
+    assert.deepEqual(await readdir(join(runtime, 'profiles')), ['owner']);
     assert.deepEqual(await readdir(join(runtime, 'downloads')), []);
     assert.deepEqual(
       (await readdir(runtime)).filter((file) => file.startsWith('screen-')),
       ['screen-other.png'],
     );
-    assert.equal(computer.screenStatus!('old').state, 'unavailable');
     assert.equal(
       (await computer.act('other', { action: 'snapshot' })).url,
       'https://1.1.1.1/login',
     );
     await computer.clear!('other');
-    assert.deepEqual(await readdir(join(runtime, 'profiles')), [savedProfile]);
+    assert.deepEqual(await readdir(join(runtime, 'profiles')), ['owner']);
     assert.equal(
       (await computer.act('other', { action: 'open', url: 'https://1.1.1.1/login' })).url,
       'https://1.1.1.1/login',
@@ -1258,6 +1243,8 @@ test('a browser that will not close is killed with its process groups so the nex
   const computer = createBrowserFixture({
     dataRoot: directory,
     run: async (executable, args, input) => {
+      const owned = ownerBrowserCommand(args);
+      if (owned) return owned;
       const action = args[args.indexOf('--idle-timeout') + 2];
       commands.push(action);
       if (action === 'open' && failOpen) {
@@ -1304,13 +1291,14 @@ for (const [host, owner] of [
   test(`a profile locked by a replaced browser container on ${host} opens again`, async () => {
     const directory = await mkdtemp(join(tmpdir(), 'nod-browser-foreign-lock-'));
     const fixture = stagedLoginBrowser();
-    const profile = join(directory, 'runtime', 'profiles', 'fixture');
+    const profile = join(directory, 'runtime', 'profiles', 'owner');
     const computer = createBrowserFixture({
       dataRoot: directory,
       run: async (executable, args, input) => {
         const lock = await readlink(join(profile, 'SingletonLock')).catch(() => '');
-        if (args[args.indexOf('--idle-timeout') + 2] === 'open' && lock === owner)
-          throw new RuntimeTimeLimitError();
+        if (args.includes('--profile') && lock === owner) throw new RuntimeTimeLimitError();
+        const owned = ownerBrowserCommand(args);
+        if (owned) return owned;
         return fixture.run(executable, args, input);
       },
     });
@@ -1385,38 +1373,17 @@ async function runtimeFixture(
   };
 }
 
-test('at the browser cap a new browser waits for one idle past the window and never evicts a held one', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'nod-browser-cap-'));
+test('many task tabs stay open together and each keeps its own page', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-browser-tabs-'));
   const fixture = stagedLoginBrowser();
-  const computer = createBrowserFixture({
-    dataRoot: directory,
-    run: fixture.run,
-    maxLiveSessions: 2,
-    evictIdleMs: 1000,
-  });
-  const open = (id: string, signal?: AbortSignal) =>
-    computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' }, signal);
-  const pages = () => [...fixture.pages.keys()].sort();
+  const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
+  const ids = Array.from({ length: 10 }, (_, index) => `task-${index}`);
   try {
-    await open('chat');
-    await computer.hold('chat', true);
-    await open('subagent');
-    const stop = new AbortController();
-    const stopped = open('event', stop.signal);
-    await delay(200);
-    stop.abort();
-    await assert.rejects(stopped, { name: 'AbortError' });
-    assert.deepEqual(pages(), ['chat', 'subagent']);
-    await open('scheduled');
-    assert.deepEqual(pages(), ['chat', 'scheduled']);
-    await computer.hold('scheduled', true);
-    await delay(1100);
-    const waiting = new AbortController();
-    const blocked = open('later', waiting.signal);
-    await delay(700);
-    waiting.abort();
-    await assert.rejects(blocked, { name: 'AbortError' });
-    assert.deepEqual(pages(), ['chat', 'scheduled']);
+    for (const id of ids) await computer.act(id, { action: 'open', url: 'https://1.1.1.1/login' });
+    for (const id of ids) {
+      fixture.pages.get(id)!.location = new URL(`https://1.1.1.1/${id}`);
+      assert.equal((await computer.act(id, { action: 'snapshot' })).url, `https://1.1.1.1/${id}`);
+    }
   } finally {
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });
@@ -1677,7 +1644,6 @@ test('each application namespace retains its own worker and disposal drains only
       first.act('same-task', { action: 'open', url: 'https://example.com' }),
       /unavailable/,
     );
-    await assert.rejects(first.bindProfile!('same-task', randomUUID()), /unavailable/);
     assert.equal(one.calls.filter((call) => call.method === 'dispose').length, 1);
     await second.act('same-task', { action: 'snapshot' });
   } finally {
@@ -1821,22 +1787,24 @@ test('a browser that fails to start reports why through the workspace browser', 
   const directory = await mkdtemp(join(tmpdir(), 'nod-browser-start-failure-'));
   let failure = (args: string[]) =>
     `Chrome exited early (exit code: 21) for ${args[args.indexOf('--profile') + 1]} and ${/--disk-cache-dir=([^,]+)/.exec(args.join(' '))?.[1]}`;
+  let ownerStarts = false;
   const fixture = await harness({
     computer: createAgentBrowserComputer({
       dataRoot: directory,
       headless: true,
-      run: async (_executable, args) => ({
-        exitCode: args.includes('info') ? 0 : 1,
-        stderr: '',
-        stdout: JSON.stringify(
-          args.includes('info')
-            ? { success: true, data: { active: false } }
-            : {
-                success: false,
-                error: failure(args),
-              },
-        ),
-      }),
+      run: async (_executable, args) =>
+        (ownerStarts ? ownerBrowserCommand(args) : undefined) ?? {
+          exitCode: args.includes('info') ? 0 : 1,
+          stderr: '',
+          stdout: JSON.stringify(
+            args.includes('info')
+              ? { success: true, data: { active: false } }
+              : {
+                  success: false,
+                  error: failure(args),
+                },
+          ),
+        },
     }),
   });
   try {
@@ -1848,6 +1816,7 @@ test('a browser that fails to start reports why through the workspace browser', 
       },
     );
     failure = () => 'Navigation failed: net::ERR_NAME_NOT_RESOLVED';
+    ownerStarts = true;
     await assert.rejects(
       fixture.client(directory).act('fixture', { action: 'open', url: 'https://example.com/' }),
       { message: new BrowserActionError('browser_navigation_failed').message },
@@ -2059,7 +2028,7 @@ test(
   },
 );
 
-for (const method of ['open', 'bindProfile'] as const)
+for (const method of ['open'] as const)
   test(`an explicit ${method} drains an uncertain namespace before opening a new session`, async () => {
     const fixture = await harness();
     const dataRoot = `/synthetic/recover-${method}`;
@@ -2073,7 +2042,6 @@ for (const method of ['open', 'bindProfile'] as const)
       await assert.rejects(computer.act('task', { action: 'open', url: 'x'.repeat(8193) }));
       for (const url of ['not-a-url', 'javascript:alert(1)', 'https://user:pass@example.com'])
         await assert.rejects(computer.act('task', { action: 'open', url }));
-      await assert.rejects(computer.bindProfile!('task', 'invalid-profile'));
       await assert.rejects(computer.act('task', { action: 'snapshot' }), /unavailable/);
       await assert.rejects(
         computer.act('task', { action: 'click', selector: '#submit' }),
@@ -2081,20 +2049,18 @@ for (const method of ['open', 'bindProfile'] as const)
       );
       assert.equal(fixture.launches.length, launches);
       let settled = false;
-      const recovery = (
-        method === 'open'
-          ? computer.act('task', { action: 'open', url: 'https://example.com/reopened' })
-          : computer.bindProfile!('task', randomUUID())
-      ).then(
-        () => {
-          settled = true;
-          return undefined;
-        },
-        (error: unknown) => {
-          settled = true;
-          return error;
-        },
-      );
+      const recovery = computer
+        .act('task', { action: 'open', url: 'https://example.com/reopened' })
+        .then(
+          () => {
+            settled = true;
+            return undefined;
+          },
+          (error: unknown) => {
+            settled = true;
+            return error;
+          },
+        );
       await delay(10);
       assert.equal(settled, false);
       release.resolve();
@@ -3587,33 +3553,41 @@ test('the owner time zone and region reach a new browser launch without injectin
   const directory = await mkdtemp(join(tmpdir(), 'nod-browser-locale-'));
   const fixture = stagedLoginBrowser();
   const launches: Array<{ flags: string; zone?: string }> = [];
-  const computer = createBrowserFixture({
-    dataRoot: directory,
-    run: (executable, args, options) => {
-      if (args.includes('open'))
-        launches.push({ flags: args[args.indexOf('--args') + 1], zone: options?.env?.TZ });
-      return fixture.run(executable, args, options);
-    },
-  });
-  const open = (timeZone: string, locale: string) =>
-    computer.act('fixture', {
-      action: 'open',
-      url: 'https://1.1.1.1/login',
-      timeZone,
-      locale,
+  const browser = () =>
+    createBrowserFixture({
+      dataRoot: directory,
+      run: (executable, args, options) => {
+        if (args.includes('--profile'))
+          launches.push({ flags: args[args.indexOf('--args') + 1]!, zone: options?.env?.TZ });
+        return fixture.run(executable, args, options);
+      },
     });
+  const open = (computer: ReturnType<typeof browser>, timeZone: string, locale: string) =>
+    computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login', timeZone, locale });
+  const first = browser();
   try {
-    await open('Europe/Madrid', 'en-GB');
-    await computer.close('fixture');
-    await open('Europe/Madrid,--remote-debugging-port=9222', 'en-GB,--remote-debugging-port=9222');
-    assert.equal(launches.length, 2);
-    assert.equal(launches[0].zone, 'Europe/Madrid');
-    assert.match(launches[0].flags, /,--accept-lang=en-GB(,|$)/);
-    assert.equal(launches[1].zone, undefined);
-    assert.equal(launches[1].flags.includes('remote-debugging'), false);
-    assert.equal(launches[1].flags.includes('accept-lang'), false);
+    await open(first, 'Europe/Madrid', 'en-GB');
+    await first.close('fixture');
+    await open(first, 'Europe/Madrid', 'en-GB');
+    assert.equal(launches.length, 1);
   } finally {
-    await computer.dispose();
+    await first.dispose();
+  }
+  const restarted = browser();
+  try {
+    await open(
+      restarted,
+      'Europe/Madrid,--remote-debugging-port=9222',
+      'en-GB,--remote-debugging-port=9222',
+    );
+    assert.equal(launches.length, 2);
+    assert.equal(launches[0]!.zone, 'Europe/Madrid');
+    assert.match(launches[0]!.flags, /,--accept-lang=en-GB(,|$)/);
+    assert.equal(launches[1]!.zone, undefined);
+    assert.equal(launches[1]!.flags.includes('remote-debugging'), false);
+    assert.equal(launches[1]!.flags.includes('accept-lang'), false);
+  } finally {
+    await restarted.dispose();
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -4706,7 +4680,11 @@ test('navigation stays available when a saved script fence cannot reach the insp
       const command = args[1].slice(args[1].indexOf('--idle-timeout') + 2);
       if (offline && command[0] === 'get' && command[1] === 'cdp-url')
         return { stdout: '{"success":false}', stderr: '', exitCode: 1 };
-      if (['back', 'forward', 'reload', 'open'].includes(command[0])) navigated.push(command[0]);
+      if (
+        !args[1].includes('--profile') &&
+        ['back', 'forward', 'reload', 'open'].includes(command[0])
+      )
+        navigated.push(command[0]);
       const result = await fixture.run(...args);
       if (command[0] === 'eval') offline = true;
       return result;

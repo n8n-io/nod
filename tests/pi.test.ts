@@ -7149,18 +7149,11 @@ test('a browser tool or a guide loads the tools that go with it', async (t) => {
   const { createSkillLibrary } = await import('../src/providers/pi/skills.ts');
   const { coreSkills } = await import('../src/runtime/prompt.ts');
   const library = createSkillLibrary(join(process.cwd(), 'src/runtime/skills'), coreSkills);
-  const browserTools = ['browser', 'browser_session', 'sign_in', 'pay'] as const;
+  const browserTools = ['browser', 'sign_in', 'pay'] as const;
   const url = 'https://people.example.test/in/synthetic';
   const browsing = { tools: browserTools, loads: ['sign_in', 'pay'] };
   for (const { calls, tools, loads } of [
     { ...browsing, calls: [['nod_browser', { action: 'open', url }]] },
-    {
-      ...browsing,
-      calls: [
-        ['nod_tool_search', { query: 'browser_session', limit: 1 }],
-        ['browser_session', { action: 'connect', url }],
-      ],
-    },
     {
       tools: ['skills', 'flights'],
       loads: ['flights'],

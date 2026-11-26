@@ -2,11 +2,11 @@ import { PageTitle } from '../components/page-title';
 import { useEffect, useRef, useState } from 'react';
 import { ActionMenu, ActionMenuItem } from '../components/action-menu';
 import { ChevronRight, CreditCard, Globe, Import, KeyRound, Plus } from '../components/icons';
-import type { VaultListEntry, VaultSession } from '../../shared/contracts';
+import type { VaultListEntry } from '../../shared/contracts';
 import { usePageData } from '../hooks/use-page-data';
 import { usePhone } from '../hooks/use-phone';
 import { VaultDetails } from '../components/vault-details';
-import { VaultSessionDetails, VaultSiteAccess } from '../components/vault-site';
+import { VaultSiteAccess } from '../components/vault-site';
 import { VaultEntryIcon, VaultSurface } from '../components/vault-surface';
 import { formatCardExpiry, VaultItemForm } from '../components/vault-item-form';
 import { VaultCardPayments } from '../components/vault-card';
@@ -15,26 +15,9 @@ import { originLabel } from '../lib/vault-name';
 import { cn } from '../lib/utils';
 import { Loading, Notice, SearchField } from '../components/ui';
 
-type VaultItem = VaultListEntry | VaultSession;
-
-const sessionLabels: Record<VaultSession['state'], string> = {
-  saved: 'Saved session',
-  needs_sign_in: 'Sign-in needed',
-  pending: 'Sign-in not finished',
-  disconnecting: 'Signing out…',
-};
-
-export function vaultItems(entries: VaultListEntry[], sessions: VaultSession[]): VaultItem[] {
-  const logins = new Set(
-    entries.flatMap((entry) => (entry.kind === 'login' && !entry.unreadable ? [entry.origin] : [])),
-  );
-  return [...entries, ...sessions.filter((session) => !logins.has(session.origin))];
-}
-
-function subtitle(item: VaultItem) {
+function subtitle(item: VaultListEntry) {
   if (item.kind === 'card')
     return `${item.brand} •••• ${item.last4} · ${formatCardExpiry(item.expiryMonth, item.expiryYear)}`;
-  if (item.kind === 'session') return `${originLabel(item.origin)} · ${sessionLabels[item.state]}`;
   if (item.unreadable) return 'Can’t be opened';
   return item.username || originLabel(item.origin);
 }
@@ -48,7 +31,7 @@ function requested() {
   } as const;
 }
 
-export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text: string): void }) {
+export function Vault({ hidden = false }: { hidden?: boolean }) {
   const {
     data: entries,
     error: loadError,
@@ -56,7 +39,6 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
     refresh,
     update,
   } = usePageData<VaultListEntry[]>('/api/vault');
-  const sessions = usePageData<VaultSession[]>('/api/vault/sessions');
   const phone = usePhone();
   const [request] = useState(requested);
   const [query, setQuery] = useState('');
@@ -71,8 +53,8 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
   const newTrigger = useRef<HTMLButtonElement>(null);
   const openingDialog = useRef(false);
   const returnFromImportMenu = useRef(false);
-  const items = vaultItems(entries ?? [], sessions.data ?? []);
-  const empty = Boolean(entries && sessions.data) && !items.length;
+  const items = entries ?? [];
+  const empty = Boolean(entries) && !items.length;
   const split = !phone && !empty;
   const search = query.trim().toLowerCase();
   const visible = items
@@ -129,7 +111,7 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
     void refresh();
   }
 
-  function open(item: VaultItem) {
+  function open(item: VaultListEntry) {
     setAdding(null);
     setChosen(true);
     setSelectedId(item.id);
@@ -171,20 +153,14 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
           )
         : undefined;
     const next =
-      remaining?.find((value) => value.kind === 'login' && !value.unreadable) ??
-      (entry?.kind === 'login'
-        ? sessions.data?.find((value) => value.origin === entry.origin)
-        : undefined) ??
-      remaining?.[0];
+      remaining?.find((value) => value.kind === 'login' && !value.unreadable) ?? remaining?.[0];
     update((current) => current?.filter((value) => value.id !== id) ?? current);
-    sessions.update((current) => current?.filter((value) => value.id !== id) ?? current);
     returnTo.current = next?.id ?? 'new';
     setSelectedId(next?.id ?? null);
     void refresh();
-    void sessions.refresh();
   }
 
-  function row(item: VaultItem) {
+  function row(item: VaultListEntry) {
     const current = split && selected?.id === item.id;
     return (
       <button
@@ -196,11 +172,7 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
         onClick={() => open(item)}
       >
         <span className="vault-item-icon" aria-hidden="true">
-          {item.kind === 'session' ? (
-            <Globe size={24} />
-          ) : (
-            <VaultEntryIcon entry={item} size={24} />
-          )}
+          <VaultEntryIcon entry={item} size={24} />
         </span>
         <span className="vault-item-text">
           <strong>{item.label}</strong>
@@ -210,9 +182,6 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
       </button>
     );
   }
-
-  const sessionsFor = (origin: string) =>
-    sessions.data?.filter((value) => value.origin === origin) ?? [];
 
   const detail = adding ? (
     <VaultSurface
@@ -233,16 +202,6 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
         }}
       />
     </VaultSurface>
-  ) : selected?.kind === 'session' ? (
-    <VaultSessionDetails
-      key={selected.id}
-      session={selected}
-      autoFocus={chosen && selectedId === selected.id}
-      backLabel={backToUsage ? 'Usage' : 'Vault'}
-      onClose={closeDetail}
-      onRemoved={removed}
-      onAsk={onAsk}
-    />
   ) : selected ? (
     <VaultDetails
       key={selected.id}
@@ -259,16 +218,7 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
     >
       {() => (
         <>
-          {selected.kind === 'login' && (
-            <VaultSiteAccess
-              origin={selected.origin}
-              sessions={sessionsFor(selected.origin)}
-              onSessionRemoved={(id) =>
-                sessions.update((current) => current?.filter((value) => value.id !== id) ?? current)
-              }
-              onAsk={onAsk}
-            />
-          )}
+          {selected.kind === 'login' && <VaultSiteAccess origin={selected.origin} />}
           {selected.kind === 'card' && <VaultCardPayments cardId={selected.id} />}
         </>
       )}
@@ -329,14 +279,6 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
         </header>
       )}
       {loadError && <Notice>{loadError}</Notice>}
-      {sessions.error && (
-        <Notice>
-          {sessions.error}{' '}
-          <button type="button" onClick={() => void sessions.refresh()}>
-            Try again
-          </button>
-        </Notice>
-      )}
       <div className="vault-layout">
         {!pageMode && empty && (
           <div className="statement vault-start">
@@ -387,8 +329,8 @@ export function Vault({ hidden = false, onAsk }: { hidden?: boolean; onAsk?(text
               aria-label="Search logins and cards"
               onChange={(event) => setQuery(event.target.value)}
             />
-            {!entries || (!sessions.data && !sessions.error) ? (
-              (loading || sessions.loading) && <Loading label="Opening logins and cards…" />
+            {!entries ? (
+              loading && <Loading label="Opening logins and cards…" />
             ) : visible.length ? (
               <div className="vault-items">{visible.map(row)}</div>
             ) : (

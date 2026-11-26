@@ -5107,10 +5107,7 @@ test(
       }),
     };
     const provider = fakeProvider(session);
-    const discoveredBrowserId = randomUUID();
-    const pendingBrowserId = randomUUID();
     const savedLoginIds = [randomUUID(), randomUUID()];
-    let browserEndpoint = 'https://example.test';
     const iconOrigins: string[] = [];
     const integrations = await createIntegrations(pool, {
       ownerId: 'local-development',
@@ -5141,19 +5138,6 @@ test(
           updatedAt: '2026-01-01T00:00:00Z',
         }));
       },
-      browserConnections: async () =>
-        [
-          { id: discoveredBrowserId, state: undefined },
-          { id: pendingBrowserId, state: 'pending' as const },
-        ].map(({ id, state }) => ({
-          slug: 'browser-example-test',
-          name: 'example.test',
-          status: 'disconnected' as const,
-          connectionId: id,
-          triggersEnabled: false,
-          accessPaths: [{ id, kind: 'browser' as const, endpoint: browserEndpoint }],
-          ...(state ? { browserState: state } : {}),
-        })),
       wake: async (prompt, id) => {
         delivered.push(id);
         assert.equal(prompt.includes('provider-secret'), false);
@@ -5196,7 +5180,7 @@ test(
         browserPaths
           .filter((connection) => connection.accessPaths?.some((path) => path.kind === 'browser'))
           .map((connection) => connection.connectionId),
-        [discoveredBrowserId, pendingBrowserId, ...savedLoginIds],
+        savedLoginIds,
       );
       assert.deepEqual(
         browserPaths
@@ -5206,11 +5190,6 @@ test(
           connectionId: id,
           accessPaths: [{ id, kind: 'browser', endpoint: 'https://login.example.test' }],
         })),
-      );
-      assert.equal(
-        browserPaths.find((connection) => connection.connectionId === pendingBrowserId)
-          ?.browserAccess,
-        'browser_session',
       );
       assert.doesNotMatch(JSON.stringify(browserPaths), /synthetic-private|usernameHint|password/);
       const byName = await integrations.manageConnections(
@@ -5254,31 +5233,12 @@ test(
           for (const id of [foreign, randomUUID(), 'https%3A%2F%2Funowned.example'])
             assert.equal((await app.inject({ url: `/api/apps/${id}/icon` })).statusCode, 404);
           assert.deepEqual(iconOrigins, []);
-          browserEndpoint = 'https://example.test/private/account?token=private-query#private';
-          const result = await app.inject({ url: `/api/apps/${discoveredBrowserId}/icon` });
+          const result = await app.inject({ url: `/api/apps/${savedLoginIds[0]}/icon` });
           assert.equal(result.statusCode, 200);
           assert.equal(result.headers['content-type'], 'image/png');
           assert.equal(result.headers['cross-origin-resource-policy'], 'same-origin');
           assert.equal(result.headers['x-content-type-options'], 'nosniff');
-          assert.deepEqual(iconOrigins, ['https://example.test']);
-          assert.equal(
-            (await app.inject({ url: `/api/apps/${pendingBrowserId}/icon` })).statusCode,
-            200,
-          );
-          assert.deepEqual(iconOrigins, ['https://example.test']);
-          for (const endpoint of [
-            'https://private-user:private-password@example.test/account',
-            'http://127.0.0.1/account',
-            'file:///private/account',
-          ]) {
-            browserEndpoint = endpoint;
-            assert.equal(
-              (await app.inject({ url: `/api/apps/${discoveredBrowserId}/icon` })).statusCode,
-              404,
-            );
-          }
-          assert.deepEqual(iconOrigins, ['https://example.test']);
-          browserEndpoint = 'https://example.test';
+          assert.deepEqual(iconOrigins, ['https://login.example.test']);
         },
       );
       await pool.query(
@@ -5399,7 +5359,6 @@ async function appsFixture(
   listing: Partial<
     Pick<
       Parameters<typeof createIntegrations>[1],
-      | 'browserConnections'
       | 'browserAccounts'
       | 'wake'
       | 'readWorkspaceFile'

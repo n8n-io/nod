@@ -902,7 +902,7 @@ export const approvalCases = inParts(
       if (options.wait !== false) await waitFor(task.turn_id, options.wait ?? 'waiting|succeeded');
       return { turnId: task.turn_id, sessionId, rootTurnId: response.json().turnId as string };
     }
-    const taskTools = new Set(['browser', 'sign_in', 'pay', 'browser_session', 'computer']);
+    const taskTools = new Set(['browser', 'sign_in', 'pay', 'computer']);
     async function propose(
       action: string,
       args: Record<string, unknown>,

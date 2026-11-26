@@ -8,8 +8,6 @@ export function fakeExecution(threadId: string, turnId = randomUUID()): Executio
 
 export function fakeComputer(overrides: Partial<Computer> = {}): Computer {
   return {
-    bindProfile: async () => {},
-    deleteProfile: async () => {},
     act: async () => ({ text: 'Fixture page', url: 'https://example.com' }),
     download: async () => ({
       bytes: Buffer.from('fixture'),

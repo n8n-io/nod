@@ -3875,12 +3875,12 @@ test(
           const group = await begin('Open my work dashboard.');
           const target = {
             origin: 'https://workspace.example.test',
-            kind: 'session' as const,
+            kind: 'sign_in' as const,
             itemId: first,
           };
           const session = await access.authorize(group, target);
           assert.ok('details' in session);
-          assert.deepEqual(reviews.at(-1)?.action.name, 'NOD_browser_session');
+          assert.deepEqual(reviews.at(-1)?.action.name, 'NOD_sign_in');
           const groupResumed = await confirmAccess(group, session.args);
           const afterGroup = reviews.length;
           assert.deepEqual(await access.authorize(groupResumed, target), {
@@ -3903,7 +3903,6 @@ test(
           );
           for (const other of [
             { origin: site, kind: 'sign_in' as const, itemId: second },
-            { origin: site, kind: 'session' as const, itemId: first },
             { origin: 'https://other.example.test', kind: 'sign_in' as const, itemId: first },
           ])
             assert.ok('details' in (await access.authorize(resumed, other)));
@@ -3942,7 +3941,7 @@ test(
           const background = await begin('Synthetic background work', { source: 'event' });
           const verdict = await access.authorize(background, {
             origin: site,
-            kind: 'session',
+            kind: 'sign_in',
             itemId: first,
           });
           assert.ok('details' in verdict);

@@ -12,9 +12,8 @@ const storedScreen = z.object({
   sensitive: z.boolean(),
   active: z.boolean(),
   navigationFailed: z.boolean().optional(),
-  restoreSession: z.boolean().optional(),
+  fenced: z.boolean().optional(),
   scripted: z.boolean().optional(),
-  profileId: z.uuid().optional(),
   resumeUrl: z.string().optional(),
   capturedAt: z.iso.datetime().optional(),
   timeZone: z.string().max(100).optional(),
@@ -29,19 +28,6 @@ export function createScreenStore(root: string) {
     path,
     async clearImage(id: string) {
       await rm(path(id), { force: true });
-    },
-    async profileScreens(profileId: string) {
-      const files = await readdir(root).catch((error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT') return [];
-        throw error;
-      });
-      const ids = files
-        .map((file) => /^screen-([A-Za-z0-9_-]{1,100})\.json$/.exec(file)?.[1])
-        .filter((id): id is string => Boolean(id));
-      const matches = await Promise.all(
-        ids.map(async (id) => ((await this.load(id))?.profileId === profileId ? id : null)),
-      );
-      return matches.filter((id): id is string => Boolean(id));
     },
     async delete(id: string) {
       await Promise.all([rm(path(id), { force: true }), rm(metadata(id), { force: true })]);

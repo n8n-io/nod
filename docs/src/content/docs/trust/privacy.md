@@ -187,7 +187,8 @@ The personal ideas on **Scheduled** read the same messages, at most once a day, 
 ## Delete your data
 
 - **A memory:** open **Settings → Memory**, select the note, and choose **Forget**. You can also ask Nod to forget something.
-- **A Vault item:** open it in **Vault** and delete it. For a saved browser session, select **Sign out**.
+- **A Vault item:** open it in **Vault** and delete it.
+- **A website sign-in:** Nod's browser stays signed in to websites you sign in to. Ask Nod to sign out of the website, or remove all data.
 - **An app:** disconnect it in **Apps**.
 - **Everything in the desktop app:** select **Remove all data** in **Settings → Privacy & data**. Nod deletes your profile, its private computer, and unsent drafts, then opens setup again. The app stays installed, and no server data is deleted.
 - **A source install or server:** stop it, then remove its data folder and Docker volumes. See [Server operations](/deploy/server-operations/).

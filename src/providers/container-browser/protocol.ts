@@ -155,15 +155,6 @@ export const browserRequest = z.discriminatedUnion('method', [
   z
     .object({
       ...identity,
-      method: z.literal('bindProfile'),
-      threadId: thread,
-      profileId: z.uuid(),
-    })
-    .strict(),
-  z.object({ ...identity, method: z.literal('deleteProfile'), profileId: z.uuid() }).strict(),
-  z
-    .object({
-      ...identity,
       method: z.literal('download'),
       threadId: thread,
       input: browserDownloadInput,

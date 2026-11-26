@@ -48,16 +48,6 @@ export type RuntimeObservation = (
     }
 ) & { execution?: ExecutionScope };
 
-export type BrowserConnectionRequest =
-  | {
-      action: 'connect';
-      url: string;
-      connectionId?: string;
-      label?: string;
-    }
-  | { action: 'use'; url: string; connectionId: string }
-  | { action: 'save'; url: string; connectionId: string; signedIn: true };
-
 export interface BrowserStep {
   step: BrowserAction | { action: 'upload'; selector: string; path: string };
   page: BrowserPage;
@@ -221,7 +211,6 @@ export interface RuntimeContext {
     query?: string,
     connectionId?: string,
   ): Promise<unknown>;
-  browserConnection?(request: BrowserConnectionRequest): Promise<unknown>;
   browserStep?(
     request: BrowserStep,
   ): Promise<

@@ -14,7 +14,7 @@ import { turnOrigin } from './approvals.ts';
 import { turnChainSql } from './turn-chain.ts';
 import { credentialOrigin, VaultError } from './vault.ts';
 
-type Kind = 'sign_in' | 'session' | 'form';
+type Kind = 'sign_in' | 'form';
 type Row = {
   id: string;
   at: Date;
@@ -167,40 +167,31 @@ export async function createVaultAccess(
       kind: Kind;
       account?: string;
       itemId?: string;
-      sessionOrigin?: string;
     },
   ): Promise<VaultAccessVerdict> {
     const origin = credentialOrigin(target.origin);
-    const sessionOrigin = target.sessionOrigin ? credentialOrigin(target.sessionOrigin) : undefined;
     const work = await turnOrigin(turn.turnId);
     if (!work) throw new Error('This turn is no longer running.');
     const chain = await root(turn);
-    const itemKind = target.kind === 'session' ? { itemKind: 'session' as const } : {};
     if (target.kind === 'form') return { ok: true, reason: 'entered' };
     const args = {
       origin,
       kind: target.kind,
       ...(target.itemId ? { itemId: target.itemId } : {}),
-      ...(sessionOrigin ? { sessionOrigin } : {}),
     };
     if (await confirmed(chain, args))
       return { ok: true, reason: 'allowed', basis: { kind: 'approved' } };
-    const verdict = await options.check(
-      turn,
-      target.kind === 'session' ? 'NOD_browser_session' : 'NOD_sign_in',
-      {
-        website: origin,
-        ...(target.account ? { account: target.account } : {}),
-        ...(sessionOrigin ? { savedSessionWebsite: sessionOrigin } : {}),
-      },
-    );
+    const verdict = await options.check(turn, 'NOD_sign_in', {
+      website: origin,
+      ...(target.account ? { account: target.account } : {}),
+    });
     if (!verdict.confirm)
       return {
         ok: true,
         reason: work.source === 'schedule' ? 'schedule' : 'asked',
         basis: verdict.basis,
       };
-    await log(chain, { action: 'asked', origin, reason: verdict.reason, ...itemKind });
+    await log(chain, { action: 'asked', origin, reason: verdict.reason });
     return {
       ok: false,
       args,
@@ -208,7 +199,6 @@ export async function createVaultAccess(
         kind: target.kind,
         origin,
         ...(target.account ? { account: target.account } : {}),
-        ...(sessionOrigin ? { savedSessionWebsite: sessionOrigin } : {}),
         reason: verdict.reason,
       },
     };
@@ -218,9 +208,8 @@ export async function createVaultAccess(
     const { origin } = z
       .object({
         origin: z.string().max(2048),
-        kind: z.enum(['sign_in', 'session', 'form']).optional(),
+        kind: z.enum(['sign_in', 'form']).optional(),
         itemId: z.string().max(100).optional(),
-        sessionOrigin: z.string().max(2048).optional(),
       })
       .strict()
       .parse(raw);
@@ -228,7 +217,7 @@ export async function createVaultAccess(
     return {
       allowed: true,
       website: exact,
-      message: `Access to ${host(exact)} is approved. No credential entry or saved-session use has run. Take a fresh snapshot and call the tool again.`,
+      message: `Access to ${host(exact)} is approved. No credential entry has run. Take a fresh snapshot and call the tool again.`,
     };
   }
 

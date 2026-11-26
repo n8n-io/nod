@@ -325,7 +325,7 @@ export const toolDefinitions = {
   ),
   delegate: defineTool(
     'delegate',
-    "Run one part of the request as a subagent with its own browser, Nod's tools and the shared workspace, and get its final answer back. Call it several times in one step to run independent parts in parallel, such as checking three shops, then combine the answers. The instruction must be complete on its own: the subagent does not see this conversation. Each subagent writes new files in its own directory inside the shared workspace. A subagent cannot delegate, ask or send chat messages to the owner, connect apps, sign in, pay or open saved browser sessions. It returns questions and blockers to you; handle those yourself.",
+    "Run one part of the request as a subagent with its own browser tab, Nod's tools and the shared workspace, and get its final answer back. Call it several times in one step to run independent parts in parallel, such as checking three shops, then combine the answers. The instruction must be complete on its own: the subagent does not see this conversation. Each subagent writes new files in its own directory inside the shared workspace. A subagent cannot delegate, ask or send chat messages to the owner, connect apps, sign in, pay or open saved browser sessions. It returns questions and blockers to you; handle those yourself.",
     Type.Object({
       title: Type.String({ minLength: 1 }),
       instruction: Type.String({ minLength: 1 }),
@@ -420,7 +420,7 @@ export const toolDefinitions = {
       name: Type.Optional(Type.String({ minLength: 1 })),
     }),
     true,
-    ['sign_in', 'browser_session', 'pay'],
+    ['sign_in', 'pay'],
   ),
   sign_in: defineTool(
     'sign_in',
@@ -486,39 +486,6 @@ export const toolDefinitions = {
         ]),
       ]),
     }),
-  ),
-  browser_session: defineTool(
-    'browser_session',
-    'Manage private browser profiles. connect {url,label?} opens a new profile. use {url,connectionId} opens a saved one after the sign-in trust check; inspect the page to check access. save {url,connectionId,signedIn:true} records a checked sign-in on that origin. Public pages need only browser open.',
-    Type.Union([
-      Type.Object(
-        {
-          action: Type.Literal('connect'),
-          url: Type.String({ minLength: 1 }),
-          label: Type.Optional(Type.String({ minLength: 1 })),
-        },
-        { additionalProperties: false },
-      ),
-      Type.Object(
-        {
-          action: Type.Literal('use'),
-          url: Type.String({ minLength: 1 }),
-          connectionId: uuid,
-        },
-        { additionalProperties: false },
-      ),
-      Type.Object(
-        {
-          action: Type.Literal('save'),
-          url: Type.String({ minLength: 1 }),
-          connectionId: uuid,
-          signedIn: Type.Literal(true),
-        },
-        { additionalProperties: false },
-      ),
-    ]),
-    false,
-    ['sign_in', 'pay'],
   ),
   apps: defineTool(
     'apps',
@@ -607,7 +574,7 @@ export const toolDefinitions = {
   ),
   manage_apps: defineTool(
     'manage_apps',
-    'list {query?} reads accounts and paths; use a service query for exact-origin saved logins and browser profiles. discover {query?} finds integrations; connect {service} uses a returned slug and pauses for private sign-in. Reconnect only with the saved connectionId and canReconnect:true. For canReconnect:false managed accounts, direct the owner to Apps, that app, Add account for the saved identity; explain it adds a separate connection. Ask if identity is unclear. Do not use this fallback for not_configured, disconnectPending, browser or Vault entries. newAccount:true requires an explicit request for another account. propose {service,proposal} offers an official path through private setup; proposal is {service,name,connectionId?,setupUrl?,setupText?,paths:[{kind:"http",endpoint,auth?:"bearer"|"x-api-key",testPath} | {kind:"mcp",endpoint,auth?:"bearer"|"x-api-key"|"oauth",scope?,clientIdRequired?} | {kind:"cli",command,auth?:"env",env:[names],source:{npm}|{pypi}|{url,sha256?}}]}. A CLI needs its declared npm, pypi or HTTPS release source and actual credential env names; Nod installs and runs its own copy, never from your workspace. Never request keys in chat. Deliver completed work before a required sign-in.',
+    'list {query?} reads accounts and paths; use a service query for exact-origin saved logins. discover {query?} finds integrations; connect {service} uses a returned slug and pauses for private sign-in. Reconnect only with the saved connectionId and canReconnect:true. For canReconnect:false managed accounts, direct the owner to Apps, that app, Add account for the saved identity; explain it adds a separate connection. Ask if identity is unclear. Do not use this fallback for not_configured, disconnectPending, browser or Vault entries. newAccount:true requires an explicit request for another account. propose {service,proposal} offers an official path through private setup; proposal is {service,name,connectionId?,setupUrl?,setupText?,paths:[{kind:"http",endpoint,auth?:"bearer"|"x-api-key",testPath} | {kind:"mcp",endpoint,auth?:"bearer"|"x-api-key"|"oauth",scope?,clientIdRequired?} | {kind:"cli",command,auth?:"env",env:[names],source:{npm}|{pypi}|{url,sha256?}}]}. A CLI needs its declared npm, pypi or HTTPS release source and actual credential env names; Nod installs and runs its own copy, never from your workspace. Never request keys in chat. Deliver completed work before a required sign-in.',
     Type.Object({
       action: literals(['list', 'discover', 'connect', 'propose']),
       service: Type.Optional(Type.String()),
@@ -1313,42 +1280,6 @@ export function nodTools(
           : paymentExplanation(result.question),
       );
       return 'Waiting for private payment approval.';
-    }),
-    bind(toolDefinitions.browser_session, async (p) => {
-      if (!context.browserConnection) throw new Error('Browser connections are unavailable.');
-      const outcome = await context.browserConnection(p);
-      if (outcome && typeof outcome === 'object' && appConfirmation in outcome)
-        return confirm(outcome);
-      const result = outcome as Record<string, unknown>;
-      if (result.status === 'rejected') {
-        switch (result.code) {
-          case 'invalid_browser_connection_arguments':
-            throw new Error(
-              'Invalid browser session input. Valid forms: connect {url, label?}; use {url, connectionId}; save {url, connectionId, signedIn:true}.',
-            );
-          case 'browser_connection_origin_mismatch':
-            throw new Error(
-              'This browser connection belongs to a different website. Use a saved connection for the current origin.',
-            );
-          case 'browser_connection_unavailable':
-            throw new Error(
-              'This browser connection is unavailable for the current task. List saved connections and inspect the current page before choosing one.',
-            );
-          case 'browser_connection_busy':
-            throw new Error(
-              'This browser profile is open in another task, waiting for the user to finish signing in. Open public pages with browser instead, or try again later.',
-            );
-          default:
-            throw new Error(
-              'The browser session request was rejected. Check the current page and saved connection before trying again.',
-            );
-        }
-      }
-      if (p.action === 'connect' || result.status === 'needs_sign_in') {
-        const { url: _url, ...safe } = result;
-        return safe;
-      }
-      return result;
     }),
     ...(context.localFiles
       ? [
