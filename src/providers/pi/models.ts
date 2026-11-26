@@ -149,7 +149,7 @@ function modelListRestricted(message = '') {
 
 const levels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 
-function effortMap(offered: readonly string[]) {
+function effortMap(offered: readonly unknown[]) {
   return Object.fromEntries(
     ['off', ...levels].map((level) => {
       const value = level === 'off' ? 'none' : level;
@@ -176,31 +176,19 @@ function ollamaModel(show: z.infer<typeof ollamaShowSchema>) {
   )?.[1] as number | undefined;
   const configured = Number(/^num_ctx\s+(\d+)$/m.exec(show.parameters)?.[1]) || undefined;
   const contextWindow = Math.min(trained ?? Infinity, configured ?? Infinity);
-  const values = show.thinking?.values;
-  const named = levels.filter((level) => values?.includes(level));
+  const values = show.thinking?.values.map((value) => (value === false ? 'none' : value));
   const thinkingLevelMap =
     show.capabilities?.includes('thinking') === false || !values
       ? undefined
-      : named.length
-        ? {
-            off: values.includes(false) || values.includes('none') ? 'none' : null,
-            ...Object.fromEntries(
-              levels.map((level) => [level, named.includes(level) ? level : null]),
-            ),
-          }
+      : levels.some((level) => values.includes(level))
+        ? effortMap(values)
         : values.includes(true)
-          ? {
-              off: values.includes(false) ? 'none' : null,
-              ...Object.fromEntries(
-                levels.map((level) => [level, level === 'high' ? level : null]),
-              ),
-            }
+          ? effortMap([...values, 'high'])
           : undefined;
   return {
     usable: show.capabilities?.includes('tools'),
     images: show.capabilities?.includes('vision'),
     contextWindow: Number.isFinite(contextWindow) ? contextWindow : undefined,
-    reasoning: !!thinkingLevelMap,
     thinkingLevelMap,
   };
 }
@@ -226,7 +214,6 @@ function lmStudioModel(model: z.infer<typeof lmStudioModelSchema>) {
       ['llm', 'vlm'].includes(model.type) && model.capabilities.trained_for_tool_use !== false,
     images: model.capabilities.vision || model.type === 'vlm',
     contextWindow: model.loaded_instances[0]?.config.context_length ?? model.max_context_length,
-    reasoning: false,
     thinkingLevelMap: undefined,
   };
 }
@@ -335,7 +322,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         context_window: size,
         max_model_len: size,
         reasoning: z
-          .object({ supported_efforts: z.array(z.string()).optional().catch(undefined) })
+          .object({ supported_efforts: z.array(z.string()) })
           .optional()
           .catch(undefined),
       }),
@@ -389,12 +376,11 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
               ? ollamaModel(shown.data)
               : undefined;
           if (known?.usable === false) return [];
-          const offered = entry.reasoning?.supported_efforts;
-          const serverMap = offered?.length ? effortMap(offered) : undefined;
+          const offered = entry.reasoning?.supported_efforts ?? [];
           const thinkingLevelMap = known
             ? known.thinkingLevelMap
-            : serverMap && Object.values(serverMap).some(Boolean)
-              ? serverMap
+            : levels.some((level) => offered.includes(level))
+              ? effortMap(offered)
               : undefined;
           const reportedContext =
             known?.contextWindow ??
@@ -422,7 +408,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
                 supportsDeveloperRole: false,
                 maxTokensField: 'max_tokens',
               },
-              reasoning: known?.reasoning ?? !!thinkingLevelMap,
+              reasoning: !!thinkingLevelMap,
               thinkingLevelMap,
               input: known?.images ? ['text', 'image'] : ['text'],
               contextWindow,

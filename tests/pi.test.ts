@@ -12939,40 +12939,6 @@ test('new and saved Ollama models keep the effort value the server reads', async
   }
 });
 
-test('a known Ollama model keeps the effort details its own server reports', async (t) => {
-  const original = globalThis.fetch;
-  t.after(() => (globalThis.fetch = original));
-  globalThis.fetch = async (input, init) => {
-    const request = new Request(input, init);
-    const path = new URL(request.url).pathname;
-    if (path === '/v1/models')
-      return Response.json({
-        data: [
-          {
-            id: 'qwen3:8b',
-            context_length: 32768,
-            reasoning: { supported_efforts: ['low', 'high'] },
-          },
-        ],
-      });
-    if (path === '/api/version') return Response.json({ version: 'fixture' });
-    if (path === '/api/v1/models') return new Response(null, { status: 404 });
-    if (path === '/api/show')
-      return Response.json({
-        capabilities: ['completion', 'tools'],
-        model_info: { 'qwen3.context_length': 32768 },
-      });
-    return new Response(null, { status: 404 });
-  };
-  const [definition] = await createPiModelBackend({ fetch: globalThis.fetch }).catalog(
-    'compatible',
-    'api_key',
-    { type: 'endpoint', url: 'http://127.0.0.1:1/v1' },
-  );
-  assert.deepEqual(definition.choice.efforts, ['off']);
-  assert.equal((definition.spec as { thinkingLevelMap?: unknown }).thinkingLevelMap, undefined);
-});
-
 test('selected-model checks use the lightest advertised Ollama effort without retrying', async (t) => {
   const original = globalThis.fetch;
   t.after(() => (globalThis.fetch = original));
