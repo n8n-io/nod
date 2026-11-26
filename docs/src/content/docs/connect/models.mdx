@@ -291,6 +291,8 @@ The rest of the turn, including its helpers, continues on the backup, and the ne
 
 A backup that is the model a kind of work already uses is skipped for that work. **Settings > Models** marks a backup that is your chat model; it can still stand in for schedules or work Nod starts on its own when they use another model.
 
+To choose that smaller model yourself, open **Manage** beside the provider and pick a **Light model** for the connection. The list shows the text models on that connection that cost no more than its default light model, so background work and checks stay on a small model. **Default** returns to Nod's choice. If the model you picked leaves the connection's model list, Nod uses the default until it returns. Memory, the light model for schedules and Nod's own work, and Nod's small sorting checks use this choice. When your model can't read images, image reading uses it too if it accepts images; otherwise Nod uses another connected model that does, when you have one. Checks that use a decision service, and checks of what Nod may do with the default `selected` trust setting, keep their own models; with `NOD_TRUST_MODEL=llm`, those checks use this choice. Connections without a default light model, such as your own model server, don't show the choice.
+
 ## Models with a small context window
 
 For a context window below 65,536 tokens, Nod uses short instructions and loads one detailed tool at a time. The `apps` tool for connected apps and the `send_message` tool for delivering results stay available; MCP server tools load when needed. It reads guides, saved memory and older messages when needed. Large tool results stay in workspace files, with a short preview in the conversation.

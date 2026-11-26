@@ -816,6 +816,45 @@ export function ModelSettings({ onDirtyChange }: { onDirtyChange?(dirty: boolean
                           </Button>
                         )}
                       </div>
+                      {connection.light && connection.status === 'connected' && (
+                        <div className="model-connection-light">
+                          <Field
+                            label="Light model"
+                            hint="Used for memory and background checks. Only models that cost no more than the default are listed."
+                          >
+                            <select
+                              className="input"
+                              value={
+                                connection.light.model === connection.light.default
+                                  ? ''
+                                  : connection.light.model
+                              }
+                              disabled={busy}
+                              onChange={(event) =>
+                                void models.change(
+                                  `/api/models/connections/${connection.id}/light`,
+                                  'PUT',
+                                  { model: event.target.value || null },
+                                )
+                              }
+                            >
+                              <option value="">
+                                Default ·{' '}
+                                {connection.models.find(
+                                  (model) => model.id === connection.light!.default,
+                                )?.name ?? connection.light.default}
+                              </option>
+                              {connection.light.choices
+                                .filter((id) => id !== connection.light!.default)
+                                .map((id) => (
+                                  <option key={id} value={id}>
+                                    {connection.models.find((model) => model.id === id)?.name ?? id}
+                                  </option>
+                                ))}
+                            </select>
+                          </Field>
+                        </div>
+                      )}
                     </div>
                   ))}
               </div>

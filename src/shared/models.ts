@@ -244,6 +244,7 @@ export interface ModelConnection {
   managed: boolean;
   keyEnding?: string;
   issue?: ModelIssue;
+  light?: { model: string; default: string; choices: string[] };
 }
 
 export interface ModelIssue {

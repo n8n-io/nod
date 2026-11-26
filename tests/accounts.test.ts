@@ -5025,6 +5025,72 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.doesNotMatch(JSON.stringify(routeEvents), /gpt-|[0-9a-f]{8}-/);
   });
 
+  test('an owner-chosen light model costs no more than the default and drives every light use', async (t) => {
+    const f = await fixture(t);
+    const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+    let listed = ['gpt-6.1-sol', 'gpt-6-luna', 'gpt-4.1-nano', 'gpt-4o-mini', 'gpt-audio-1.5'];
+    const pi = createPiModelBackend({
+      fetch: async () => Response.json({ data: listed.map((id) => ({ id })) }),
+    });
+    const backend = {
+      ...pi,
+      async catalog(...input: Parameters<typeof pi.catalog>) {
+        return (await pi.catalog(...input)).map((definition) => ({
+          ...definition,
+          choice: {
+            ...definition.choice,
+            images: ['gpt-6-luna', 'gpt-4.1-nano'].includes(definition.choice.id),
+          },
+        }));
+      },
+    };
+    const owner = await f.create('fixture-light-owner', backend);
+    const other = await f.create('fixture-light-other', backend);
+    const apps = [owner, other].map((service) => {
+      const app = Fastify();
+      service.register(app);
+      t.after(() => app.close());
+      return app;
+    });
+    const choose = (app: (typeof apps)[number], id: string, model: string | null) =>
+      app.inject({
+        method: 'PUT',
+        url: `/api/models/connections/${id}/light`,
+        payload: { model },
+      });
+    const connectionId = await owner.addKey('openai', 'fixture-light-key');
+    await owner.select({ connectionId, modelId: 'gpt-6.1-sol', effort: 'high' });
+    const shown = () => owner.view().connections.find((row) => row.id === connectionId)!.light!;
+    assert.equal(shown().model, 'gpt-6-luna');
+    assert.ok(shown().choices.includes('gpt-4.1-nano'));
+    for (const refused of ['gpt-4o-mini', 'gpt-6.1-sol', 'gpt-audio-1.5', 'fixture-missing'])
+      assert.equal((await choose(apps[0], connectionId, refused)).statusCode, 400, refused);
+    assert.equal((await choose(apps[1], connectionId, 'gpt-4.1-nano')).statusCode, 400);
+    assert.equal(shown().model, 'gpt-6-luna');
+
+    assert.equal((await choose(apps[0], connectionId, 'gpt-4.1-nano')).statusCode, 200);
+    const uses = async () => [
+      owner.view().light?.modelId,
+      (await owner.resolveClassification())?.definition.choice.id,
+      (await owner.resolveClassification(true))?.definition.choice.id,
+      (await owner.resolve(true)).definition.choice.id,
+      (await owner.resolveImage()).definition.choice.id,
+    ];
+    assert.deepEqual(await uses(), Array(5).fill('gpt-4.1-nano'));
+    await owner.addKey('openai', 'fixture-light-key');
+    assert.equal(shown().model, 'gpt-4.1-nano');
+
+    listed = ['gpt-6.1-sol', 'gpt-6-luna'];
+    await owner.refreshCatalog(connectionId);
+    assert.deepEqual(await uses(), Array(5).fill('gpt-6-luna'));
+    listed = ['gpt-6.1-sol', 'gpt-6-luna', 'gpt-4.1-nano'];
+    await owner.refreshCatalog(connectionId);
+    assert.deepEqual(await uses(), Array(5).fill('gpt-4.1-nano'));
+
+    assert.equal((await choose(apps[0], connectionId, null)).statusCode, 200);
+    assert.deepEqual(await uses(), Array(5).fill('gpt-6-luna'));
+  });
+
   test('classification resolves an approved small model only on the selected owned connection', async (t) => {
     const f = await fixture(t);
     const { createPiModelBackend } = await import('../src/providers/pi/models.ts');

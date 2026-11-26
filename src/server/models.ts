@@ -93,6 +93,31 @@ const modelRates = z.object({
   tiers: z.array(z.object({ ...rates, inputTokensAbove: z.number().nonnegative() })).optional(),
 });
 
+function lightChoices(row: Pick<ModelRecord, 'provider' | 'models'>) {
+  const fallback = row.models.find((model) => model.choice.id === memoryModels[row.provider]);
+  const limit = fallback && modelPricing(fallback);
+  if (!limit || limit === 'variable') return [];
+  return row.models.filter((model) => {
+    const price = modelPricing(model);
+    return (
+      !model.choice.audio &&
+      price &&
+      price !== 'variable' &&
+      price.input + price.output > 0 &&
+      price.input <= limit.input &&
+      price.output <= limit.output
+    );
+  });
+}
+
+function lightModelId(row: Pick<ModelRecord, 'provider' | 'models' | 'lightModel'>) {
+  return (
+    (row.lightModel &&
+      lightChoices(row).find((model) => model.choice.id === row.lightModel)?.choice.id) ||
+    memoryModels[row.provider]
+  );
+}
+
 function modelPricing(model: ModelDefinition): ModelChoice['pricing'] {
   if (model.spec.provider === 'compatible') return undefined;
   if (model.choice.id === 'openrouter/auto') return 'variable';
@@ -621,7 +646,7 @@ export function createModelService(options: {
       const models = row.models.filter((model) => model.choice.images);
       const definition =
         (row === selected && models.find((model) => model.choice.id === selection?.modelId)) ||
-        models.find((model) => model.choice.id === memoryModels[row.provider]) ||
+        models.find((model) => model.choice.id === lightModelId(row)) ||
         models.find((model) => model.choice.id === agentModels[row.provider]) ||
         models[0];
       if (definition) return { row, definition };
@@ -665,7 +690,7 @@ export function createModelService(options: {
     for (const row of candidates) {
       if (!row || row.status !== 'connected') continue;
       const definition = row.models.find(
-        (model) => model.choice.id === memoryModels[row.provider] && !model.choice.audio,
+        (model) => model.choice.id === lightModelId(row) && !model.choice.audio,
       );
       if (!definition) continue;
       if (otherConnections) {
@@ -675,8 +700,7 @@ export function createModelService(options: {
             candidate?.status === 'connected' &&
             candidate.provider === row.provider &&
             candidate.models.some(
-              (model) =>
-                model.choice.id === memoryModels[candidate.provider] && !model.choice.audio,
+              (model) => model.choice.id === lightModelId(candidate) && !model.choice.audio,
             ),
         );
         if (peers.length === 1) return { row, definition };
@@ -717,9 +741,8 @@ export function createModelService(options: {
       );
     if (row.status !== 'connected') throw attention(row);
     const definition =
-      (auxiliary
-        ? row.models.find((model) => model.choice.id === memoryModels[row.provider])
-        : undefined) ?? row.models.find((model) => model.choice.id === selected.modelId);
+      (auxiliary ? row.models.find((model) => model.choice.id === lightModelId(row)) : undefined) ??
+      row.models.find((model) => model.choice.id === selected.modelId);
     if (!definition || (!definition.choice.efforts.includes(selected.effort) && !auxiliary))
       throw new ConnectionError(
         `The selected model is unavailable on this connection (${row.provider} / ${selected.modelId}). Reload its models or choose another model in ${appPages['/settings/models']}.`,
@@ -950,6 +973,7 @@ export function createModelService(options: {
         managed,
         status: working ? 'connected' : status,
         requestFailures: previous?.requestFailures,
+        lightModel: previous?.lightModel ?? null,
         ...(!managed ? { credential: value } : {}),
       };
       state.connections = state.connections.flatMap((item) =>
@@ -1422,6 +1446,23 @@ export function createModelService(options: {
         routes = changed.routes;
       });
     },
+    async setLight(id: string, modelId: string | null) {
+      await store.change((state) => {
+        const row = state.connections.find((item) => item.id === id);
+        if (!row) throw new ConnectionError('This model connection was removed.');
+        const choices = lightChoices(row);
+        if (!choices.length)
+          throw new ConnectionError(
+            `${modelProviderNames[row.provider]} has no light model that can be changed.`,
+          );
+        if (modelId !== null && !choices.some((model) => model.choice.id === modelId))
+          throw new ConnectionError(
+            `${modelId} can't be the light model. Choose a text model on this connection that costs no more than ${memoryModels[row.provider]}.`,
+          );
+        row.lightModel = modelId === memoryModels[row.provider] ? null : modelId;
+      });
+      await reload();
+    },
     onSecrets(observer: (values: string[]) => void) {
       observers.add(observer);
       observer([...secrets]);
@@ -1432,7 +1473,18 @@ export function createModelService(options: {
       const selectionIssue = service.current.issue;
       return {
         connections: rows.map(
-          ({ id, provider, method, label, status, managed, models, keyEnding, issue }) => ({
+          ({
+            id,
+            provider,
+            method,
+            label,
+            status,
+            managed,
+            models,
+            keyEnding,
+            issue,
+            lightModel,
+          }) => ({
             id,
             provider,
             method,
@@ -1440,6 +1492,15 @@ export function createModelService(options: {
             status,
             managed,
             ...(issue ? { issue } : {}),
+            ...(lightChoices({ provider, models }).length
+              ? {
+                  light: {
+                    model: lightModelId({ provider, models, lightModel })!,
+                    default: memoryModels[provider]!,
+                    choices: lightChoices({ provider, models }).map((model) => model.choice.id),
+                  },
+                }
+              : {}),
             models: models.map((model) => ({
               ...model.choice,
               pricing: modelPricing(model),
@@ -1783,6 +1844,17 @@ export function createModelService(options: {
           await service.setRoute(input.lane, input.route);
           return service.view();
         });
+        routes.put<{ Params: { id: string } }>(
+          '/api/models/connections/:id/light',
+          async (request) => {
+            const { model } = z
+              .object({ model: z.string().trim().min(1).max(200).nullable() })
+              .strict()
+              .parse(request.body);
+            await service.setLight(z.uuid().parse(request.params.id), model);
+            return service.view();
+          },
+        );
         routes.delete<{ Params: { id: string } }>(
           '/api/models/connections/:id',
           async (request) => {

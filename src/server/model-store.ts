@@ -14,6 +14,7 @@ export interface ModelRecord {
   status: 'connected' | 'reconnect' | 'loading';
   models: ModelDefinition[];
   managed: boolean;
+  lightModel?: string | null;
   credential?: ModelCredential;
   requestFailures?: Record<
     string,
@@ -50,7 +51,7 @@ export function createDatabaseModelStore(options: {
   async function read(client: Pool | PoolClient = database): Promise<ModelState> {
     const connections = (
       await client.query<ModelRecord>(
-        'SELECT id,provider,method,label,status,models,managed,request_failures AS "requestFailures" FROM model_connections WHERE owner_id=$1 ORDER BY created_at,id',
+        'SELECT id,provider,method,label,status,models,managed,light_model AS "lightModel",request_failures AS "requestFailures" FROM model_connections WHERE owner_id=$1 ORDER BY created_at,id',
         [ownerId],
       )
     ).rows;
@@ -96,6 +97,7 @@ export function createDatabaseModelStore(options: {
         ); CREATE INDEX IF NOT EXISTS model_connections_owner ON model_connections(owner_id);
         ALTER TABLE model_connections DROP COLUMN IF EXISTS request_pauses;
         ALTER TABLE model_connections ADD COLUMN IF NOT EXISTS request_failures jsonb NOT NULL DEFAULT '{}';
+        ALTER TABLE model_connections ADD COLUMN IF NOT EXISTS light_model text;
         CREATE TABLE IF NOT EXISTS model_settings(owner_id text PRIMARY KEY,selection jsonb,selection_set boolean NOT NULL DEFAULT false);
         ALTER TABLE model_settings ADD COLUMN IF NOT EXISTS host_id uuid NOT NULL DEFAULT gen_random_uuid();
         ALTER TABLE model_settings ADD COLUMN IF NOT EXISTS routes jsonb NOT NULL DEFAULT '{}';
@@ -136,8 +138,8 @@ export function createDatabaseModelStore(options: {
           )
             await vault.put(row.id, JSON.stringify(row.credential), client);
           const saved = await client.query(
-            `INSERT INTO model_connections(id,owner_id,provider,method,label,models,managed,status,request_failures) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
-             ON CONFLICT(id) DO UPDATE SET models=excluded.models,label=excluded.label,status=excluded.status,request_failures=excluded.request_failures
+            `INSERT INTO model_connections(id,owner_id,provider,method,label,models,managed,status,request_failures,light_model) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+             ON CONFLICT(id) DO UPDATE SET models=excluded.models,label=excluded.label,status=excluded.status,request_failures=excluded.request_failures,light_model=excluded.light_model
              WHERE model_connections.owner_id=excluded.owner_id RETURNING id`,
             [
               row.id,
@@ -149,6 +151,7 @@ export function createDatabaseModelStore(options: {
               row.managed,
               row.status,
               JSON.stringify(row.requestFailures ?? {}),
+              row.lightModel ?? null,
             ],
           );
           if (!saved.rowCount) throw new Error('This model connection is unavailable.');

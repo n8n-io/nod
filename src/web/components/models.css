@@ -221,6 +221,10 @@
   color: var(--accent);
   font-size: 11px;
 }
+.model-connection-light {
+  flex-basis: 100%;
+  padding-left: 36px;
+}
 .model-service-actions,
 .model-dialog-actions {
   display: flex;
