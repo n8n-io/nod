@@ -30,6 +30,7 @@ import {
   modelProviders,
   modelSource,
   openAIRegions,
+  openRouterVariants,
   canReuseWorkCost,
   repriceUsd,
 } from '../../shared/models';
@@ -260,6 +261,26 @@ export function CloudKeyFields({
   useEffect(() => {
     if (showWorkspace) setWorkspaceFallback(true);
   }, [showWorkspace, provider]);
+  if (provider === 'openrouter')
+    return (
+      <Field
+        label="Routing variant"
+        hint="Nitro picks the fastest provider, Cost the cheapest. Standard balances speed and price."
+      >
+        <select
+          className="input"
+          value={value.variant || 'standard'}
+          disabled={disabled}
+          onChange={(event) => onChange({ ...value, variant: event.target.value })}
+        >
+          {Object.entries(openRouterVariants).map(([variant, name]) => (
+            <option key={variant} value={variant}>
+              {name}
+            </option>
+          ))}
+        </select>
+      </Field>
+    );
   if (provider === 'openai')
     return (
       <Field label="API region" hint="Match the region of your OpenAI API project.">

@@ -47,6 +47,13 @@ export type ModelProvider = (typeof apiKeyConnectionProviders)[number] | 'compat
 export type ModelMethod = 'api_key' | 'subscription' | 'oauth';
 export type ModelEffort = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
+export const openRouterVariants = {
+  standard: 'Standard routing',
+  nitro: 'Nitro (fastest)',
+  cost: 'Cost (cheapest)',
+} as const;
+export type OpenRouterVariant = keyof typeof openRouterVariants;
+
 export const openAIRegions = {
   global: 'Global',
   eu: 'Europe (EEA + Switzerland)',

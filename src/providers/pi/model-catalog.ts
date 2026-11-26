@@ -1,6 +1,6 @@
 import type { Api, Model } from '@earendil-works/pi-ai';
 import { z } from 'zod';
-import { ModelAuthError, type ModelCredential } from '../../ports/models.ts';
+import { ModelAuthError, type ModelCredential, type ModelDefinition } from '../../ports/models.ts';
 import { ModelServiceError, modelErrorText, modelServiceError } from '../model-error.ts';
 import {
   cloudflareAccountPattern,
@@ -9,6 +9,7 @@ import {
   modelProviderNames,
   type OpenAIRegion,
   type ModelProvider,
+  type OpenRouterVariant,
 } from '../../shared/models.ts';
 import { openAIBaseUrl } from '../openai/api.ts';
 
@@ -30,6 +31,19 @@ const catalogEndpoints = {
   together: 'https://api.together.xyz/v1/models',
   nvidia: 'https://integrate.api.nvidia.com/v1/models',
 } as const;
+
+const openRouterSorts = { nitro: 'throughput', cost: 'price' } as const;
+
+export function openRouterRoute(
+  definition: ModelDefinition,
+  variant: OpenRouterVariant | undefined,
+): ModelDefinition {
+  const sort = variant && variant !== 'standard' ? openRouterSorts[variant] : undefined;
+  if (!sort) return definition;
+  const { spec } = definition;
+  const compat = spec.compat as Record<string, unknown> | undefined;
+  return { ...definition, spec: { ...spec, compat: { ...compat, openRouterRouting: { sort } } } };
+}
 
 export function openAIModels(region: OpenAIRegion = 'global'): Model<'openai-responses'>[] {
   const rate = region === 'global' ? 1 : 1.1;

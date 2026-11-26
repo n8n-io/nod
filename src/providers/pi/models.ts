@@ -62,6 +62,7 @@ import {
   cloudflareCredential,
   discoveryCause,
   nativeCatalog,
+  openRouterRoute,
 } from './model-catalog.ts';
 
 const reconnectChatGpt = `Reconnect your ChatGPT account in ${appPages['/settings/models']}.`;
@@ -928,6 +929,10 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
           }),
         }),
       );
+      const variant =
+        provider === 'openrouter' && credential?.type === 'api_key'
+          ? credential.variant
+          : undefined;
       return list
         .filter(
           (m) =>
@@ -986,7 +991,8 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
             },
             thinkingLevelMap: map,
           } as Model<Api>);
-        });
+        })
+        .map((item) => openRouterRoute(item, variant));
     },
     authorize({ redirectUri }) {
       const state = random();
@@ -1350,7 +1356,11 @@ export async function createPiModelRuntime(
         const changed = await options?.onPayload?.(payload, target);
         const body = (changed ?? payload) as Record<string, unknown>;
         if (access.provider === 'openrouter')
-          body.provider = { require_parameters: true, allow_fallbacks: false };
+          body.provider = {
+            ...(body.provider as Record<string, unknown> | undefined),
+            require_parameters: true,
+            allow_fallbacks: false,
+          };
         if (
           access.provider === 'openai' &&
           !subscription &&
