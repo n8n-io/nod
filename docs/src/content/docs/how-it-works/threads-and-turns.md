@@ -131,18 +131,18 @@ See [Task sessions](/how-it-works/task-sessions/) for the ledger, shared context
 - **Inside the turn.** Subagents run in the turn that started them, with its authority, trace and spending. **Stop** stops them with it.
 - **Needs you.** A subagent returns questions and browser blockers to the parent. An app confirmation still pauses the whole turn.
 - **Tools.** A subagent cannot delegate, ask or send chat messages to the owner, connect apps, sign in or pay. A paused turn cannot start another subagent.
-- **Browsers.** A subagent's browser is deleted when it finishes.
+- **Tabs.** A subagent's tabs close when it finishes.
 - **Files.** Each subagent starts in `.nod/runs/<run ID>` inside the shared workspace. It returns complete file paths to its parent.
 - **Outcomes.** Model failures and incomplete responses return as errors. They do not count as successful empty answers.
 
 ## One browser, a tab per session
 
-A session opens its tab on its first browser call, so a session that never browses never opens one. Every tab lives in the owner's one browser and profile, so a sign-in or a cart carries over from one session to the next. See [One browser, a tab per session](/how-it-works/sandbox-and-browser/#one-browser-a-tab-per-session).
+A session opens its tab on its first browser call, so a session that never browses never opens one. Every tab lives in the owner's one browser and profile, so sessions share sign-ins and carts, including sessions that run at the same time. See [One browser, a tab per session](/how-it-works/sandbox-and-browser/#one-browser-a-tab-per-session).
 
 - A chat or background session can hand its tab to you. The handoff identifies the exact turn and tab. It closes when that session continues. The developer browser page shows the chat's tab.
 - A background session's tab closes when the session ends without waiting, or when **Stop** or reset cancels it. The profile stays, so if you later continue that task, its new tab is still signed in. A reset conversation's tab never comes back.
 - Nothing else closes a tab. There's no limit that replaces one session's tab with another's, and an idle tab stays open while its session lives.
-- After the browser service restarts, a session's next step reopens the page it was on.
+- After the browser service restarts, a session's next step reopens the page it was on, unless the session stopped on an uncertain action.
 
 ## Stop and failures
 
@@ -190,7 +190,7 @@ The thread, workspace, browser, independent tasks, schedules, memory, accounts a
 
 ### Start a new conversation
 
-Reset is available through the development API at `POST /api/conversation/reset`. It archives the thread, cancels its turns and closes its open task records. The next turn starts a new Pi session, workspace and browser.
+Reset is available through the development API at `POST /api/conversation/reset`. It archives the thread, cancels its turns and closes its open task records. The next turn starts a new Pi session, workspace and browser tab.
 
 | Archived                                             | Deleted                             | Kept                                                       |
 | ---------------------------------------------------- | ----------------------------------- | ---------------------------------------------------------- |

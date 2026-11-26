@@ -39,7 +39,7 @@ A task that is waiting for you in its browser shows **Open browser** on its card
 
 Nod doesn't watch or act while you have the browser. If you started on Telegram or WhatsApp, open Nod to take over, because chat apps can't show the page.
 
-If the view disconnects, Nod keeps the task waiting. Select **Reconnect view** to try again. The browser stays held for up to 30 minutes. After that, Nod can close it to make room for other work, and the page can be lost. Reconnecting does not repeat your last input.
+If the view disconnects, Nod keeps the task waiting. Select **Reconnect view** to try again. The tab stays open while the task waits. Reconnecting does not repeat your last input.
 
 Pointer input follows the page’s zoom level in both the chat and enlarged views and keeps working while the next frame loads.
 
@@ -60,7 +60,7 @@ Solving a challenge is up to the model. Some challenges block automated browsers
 
 ## One browser, a tab for each job
 
-Nod has one browser that remembers your sign-ins, like your own. The chat, every task, every scheduled or background run and every subagent work in their own tab. Each opens one only when it needs it.
+Nod has one browser that remembers your sign-ins, like your own. The chat, each task, each scheduled or background run and each subagent get their own tab. Each opens one only when it needs it.
 
 ```mermaid
 flowchart LR
@@ -77,7 +77,7 @@ When you ask for several independent things, such as prices from three shops, No
 
 The chat or a background task can hand its tab to you. Each view belongs to that specific question. **Return to Nod** continues that task in its original channel. Subagents return blockers to the parent.
 
-A tab stays open while its job runs, even while it waits for you. Popups and new tabs that a website opens belong to the same job, and Nod follows them. They all close when the job ends. The browser keeps your sign-ins and carts, so a later task on the same website doesn't sign in again. If Nod restarts, each job's tab opens again where it was.
+A tab stays open while its job runs, even while it waits for you. Popups and new tabs that a website opens belong to the same job, and Nod follows them. They all close when the job ends. The browser keeps your sign-ins and carts, so a later task on the same website doesn't sign in again. Jobs that run at the same time on one website share its cart. If Nod restarts, each job's tab opens again where it was, unless its last action had an unclear result.
 
 ## Downloads
 

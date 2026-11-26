@@ -140,7 +140,9 @@ export async function watchBrowser(options: {
       const targetId = message.params?.targetId;
       if (typeof targetId === 'string') attached.delete(targetId);
     } else if (message.method === 'Target.targetDestroyed') {
-      pages.delete(String(message.params?.targetId));
+      const gone = String(message.params?.targetId);
+      for (const [page, opener] of pages) if (opener === gone) pages.set(page, pages.get(gone));
+      pages.delete(gone);
     } else if (message.method === 'Browser.downloadWillBegin') {
       const download = started.safeParse(message.params).data;
       if (download)

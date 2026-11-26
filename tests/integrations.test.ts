@@ -5108,6 +5108,7 @@ test(
     };
     const provider = fakeProvider(session);
     const savedLoginIds = [randomUUID(), randomUUID()];
+    let loginOrigin = 'https://login.example.test';
     const iconOrigins: string[] = [];
     const integrations = await createIntegrations(pool, {
       ownerId: 'local-development',
@@ -5122,7 +5123,7 @@ test(
           ...savedLoginIds.map((id, index) => ({
             id,
             label: index ? 'Personal' : 'Work',
-            origin: 'https://login.example.test',
+            origin: index ? 'https://login.example.test' : loginOrigin,
           })),
           ...Array.from({ length: 25 }, (_, index) => ({
             id: randomUUID(),
@@ -5238,6 +5239,19 @@ test(
           assert.equal(result.headers['content-type'], 'image/png');
           assert.equal(result.headers['cross-origin-resource-policy'], 'same-origin');
           assert.equal(result.headers['x-content-type-options'], 'nosniff');
+          assert.deepEqual(iconOrigins, ['https://login.example.test']);
+          for (const origin of [
+            'https://private-user:private-password@login.example.test',
+            'http://127.0.0.1',
+            'file:///private/account',
+          ]) {
+            loginOrigin = origin;
+            assert.equal(
+              (await app.inject({ url: `/api/apps/${savedLoginIds[0]}/icon` })).statusCode,
+              404,
+            );
+          }
+          loginOrigin = 'https://login.example.test';
           assert.deepEqual(iconOrigins, ['https://login.example.test']);
         },
       );

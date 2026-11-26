@@ -555,6 +555,9 @@ export function createAgentBrowserComputer(options: {
         .object({ data: z.object({ socketDir: z.string() }) })
         .safeParse(JSON.parse(info?.stdout.trim() || '{}')).data?.data.socketDir;
       owner.socketDir = socketDir;
+      for (const profile of await readdir(resolve(runtimeRoot, 'profiles')).catch(() => []))
+        if (profile !== ownerSession)
+          await rm(resolve(runtimeRoot, 'profiles', profile), { recursive: true, force: true });
       if (socketDir)
         for (const file of await readdir(socketDir).catch(() => []))
           if (file.endsWith('.target')) await rm(resolve(socketDir, file), { force: true });
@@ -657,12 +660,16 @@ export function createAgentBrowserComputer(options: {
     if (!owner.socketDir) return;
     const window = await owner.watch?.newWindow().catch(() => undefined);
     if (!window) return;
-    await writeFile(
-      resolve(owner.socketDir, `${browserSessionId(state.id)}.target`),
-      JSON.stringify({ targetId: window, url: 'about:blank', pinned: true }),
-      { mode: 0o600 },
-    );
-    return window;
+    try {
+      await writeFile(
+        resolve(owner.socketDir, `${browserSessionId(state.id)}.target`),
+        JSON.stringify({ targetId: window, url: 'about:blank', pinned: true }),
+        { mode: 0o600 },
+      );
+      return window;
+    } catch {
+      await closeTab(window).catch(() => {});
+    }
   }
 
   async function closeInterruptedBrowser(state: BrowserState) {
@@ -743,61 +750,64 @@ export function createAgentBrowserComputer(options: {
       signal: options.signal,
     };
     const window = action === 'close' ? undefined : await openWindow(state);
-    const result = await drainInterruptedCommand(state, action, () =>
-      run(
-        executable,
-        [...attach, ...(action === 'close' ? ['close'] : ['open', String(request.url)])],
-        { ...environment, timeoutMs: options.timeoutMs ?? daemonDeadline(request) + 30_000 },
-      ),
-    );
-    let response: { success?: boolean; data?: Record<string, unknown>; error?: unknown };
     try {
-      response = JSON.parse(result.stdout.trim());
-    } catch {
-      throw new Error(
-        'The workspace browser could not respond. Restart its container and try again.',
+      const result = await drainInterruptedCommand(state, action, () =>
+        run(
+          executable,
+          [...attach, ...(action === 'close' ? ['close'] : ['open', String(request.url)])],
+          { ...environment, timeoutMs: options.timeoutMs ?? daemonDeadline(request) + 30_000 },
+        ),
       );
-    }
-    const reason = typeof response.error === 'string' ? response.error : undefined;
-    const failed = Boolean(result.exitCode) || response.success === false;
-    const known =
-      action !== 'navigate' || response.success !== false || reason === undefined
-        ? undefined
-        : /^Navigation failed: net::ERR_[A-Z_]+/.test(reason)
-          ? new BrowserActionError('browser_navigation_failed')
-          : reason.startsWith('Operation timed out.')
-            ? new DaemonCommandError()
-            : undefined;
-    if (action === 'navigate') {
-      await drainInterruptedCommand(state, 'connect', () =>
-        daemonSocket(state, options.signal),
-      ).catch((error: unknown) => {
-        if (!failed) throw error;
-        throw (
-          known ??
-          new BrowserActionError(
-            'browser_start_failed',
-            reason &&
-              redactBrowserText(reason, state.secrets).replace(internalPaths, '[browser data]'),
-          )
+      let response: { success?: boolean; data?: Record<string, unknown>; error?: unknown };
+      try {
+        response = JSON.parse(result.stdout.trim());
+      } catch {
+        throw new Error(
+          'The workspace browser could not respond. Restart its container and try again.',
         );
-      });
-      if (typeof response.data?.targetId === 'string') {
-        state.root = state.targetId = response.data.targetId;
-        state.seenTabs = new Set([state.root]);
       }
+      const reason = typeof response.error === 'string' ? response.error : undefined;
+      const failed = Boolean(result.exitCode) || response.success === false;
+      const known =
+        action !== 'navigate' || response.success !== false || reason === undefined
+          ? undefined
+          : /^Navigation failed: net::ERR_[A-Z_]+/.test(reason)
+            ? new BrowserActionError('browser_navigation_failed')
+            : reason.startsWith('Operation timed out.')
+              ? new DaemonCommandError()
+              : undefined;
+      if (action === 'navigate') {
+        await drainInterruptedCommand(state, 'connect', () =>
+          daemonSocket(state, options.signal),
+        ).catch((error: unknown) => {
+          if (!failed) throw error;
+          throw (
+            known ??
+            new BrowserActionError(
+              'browser_start_failed',
+              reason &&
+                redactBrowserText(reason, state.secrets).replace(internalPaths, '[browser data]'),
+            )
+          );
+        });
+        if (typeof response.data?.targetId === 'string') {
+          state.root = state.targetId = response.data.targetId;
+          state.seenTabs = new Set([state.root]);
+        }
+        state.pageSize = undefined;
+        if (viewport)
+          await command(
+            state,
+            { action: 'viewport', width: viewport.width, height: viewport.height },
+            { signal: options.signal },
+          );
+      }
+      if (known) throw known;
+      if (failed) throw new DaemonCommandError(reason);
+      return response.data ?? {};
+    } finally {
       if (window && window !== state.root) await closeTab(window).catch(() => {});
-      state.pageSize = undefined;
-      if (viewport)
-        await command(
-          state,
-          { action: 'viewport', width: viewport.width, height: viewport.height },
-          { signal: options.signal },
-        );
     }
-    if (known) throw known;
-    if (failed) throw new DaemonCommandError(reason);
-    return response.data ?? {};
   }
 
   async function evaluate(
@@ -871,10 +881,6 @@ export function createAgentBrowserComputer(options: {
     state.saved.sensitive ||= state.secrets.size > 0;
     state.saved.active = state.started && !state.closed;
     await screens.save(state.id, state.saved);
-  }
-
-  function recoverBrowser(id: string): BrowserState | undefined {
-    return browsers.get(threadIdentity(id));
   }
 
   async function daemonSocket(state: BrowserState, signal?: AbortSignal): Promise<string> {
@@ -1025,15 +1031,20 @@ export function createAgentBrowserComputer(options: {
     }
   }
 
-  async function reopen(
-    id: string,
-    hints: Pick<BrowserAction, 'timeZone' | 'locale'>,
-    signal?: AbortSignal,
-  ) {
+  async function reopen(id: string, signal?: AbortSignal) {
     if (browsers.get(threadIdentity(id))?.started) return;
     const last = await screens.load(id);
     if (last?.url && /^https?:/.test(last.url) && !last.navigationFailed && !last.fenced)
-      await browserAction(id, { action: 'open', url: last.url, ...hints }, signal);
+      await browserAction(
+        id,
+        { action: 'open', url: last.url, timeZone: last.timeZone, locale: last.locale },
+        signal,
+      );
+  }
+
+  async function liveBrowser(id: string, signal?: AbortSignal) {
+    await reopen(id, signal);
+    return browsers.get(threadIdentity(id));
   }
 
   async function browserAction(
@@ -1054,8 +1065,7 @@ export function createAgentBrowserComputer(options: {
         existing.privateDocument)
     )
       await closeBrowser(id);
-    if (input.action !== 'open')
-      await reopen(id, { timeZone: input.timeZone, locale: input.locale }, signal);
+    if (input.action !== 'open') await reopen(id, signal);
     const state = stateFor(id);
     if (input.action !== 'open' && !state.started) {
       const saved = await screens.load(id);
@@ -1350,7 +1360,7 @@ export function createAgentBrowserComputer(options: {
       !/^[^/\\\u0000-\u001f\u007f]{1,200}$/.test(input.name)
     )
       throw new Error(`Choose a file of at most ${fileBytes / 1024 / 1024} MB.`);
-    const state = recoverBrowser(id);
+    const state = await liveBrowser(id, signal);
     if (!state?.started) throw new Error('Open the upload website first.');
     if (state.injecting) throw new BrowserLockedError();
     return serialize(state, async () => {
@@ -1381,7 +1391,7 @@ export function createAgentBrowserComputer(options: {
   async function download(id: string, input: BrowserDownloadInput, signal?: AbortSignal) {
     if (input.selector && input.url) throw new Error('Choose a download link or URL.');
     if (input.name !== undefined) downloadName(input.name);
-    const state = recoverBrowser(id);
+    const state = await liveBrowser(id, signal);
     if (!state?.started) throw new Error('Open the file website first.');
     if (state.injecting) throw new BrowserLockedError();
     return serialize(state, async () => {
@@ -1484,7 +1494,7 @@ export function createAgentBrowserComputer(options: {
           if (anchor && !state.closed && !state.closing)
             await evaluate(state, `document.getElementById(${JSON.stringify(anchor)})?.remove()`);
         } finally {
-          await capture.cleanup(state.closed);
+          await capture.cleanup();
         }
       }
     });
@@ -2013,8 +2023,7 @@ export function createAgentBrowserComputer(options: {
   }
 
   async function currentPage(id: string, step?: BrowserAction): Promise<BrowserPage> {
-    await reopen(id, {});
-    const state = recoverBrowser(id);
+    const state = await liveBrowser(id);
     if (state?.saved.navigationFailed || (!state && (await screens.load(id))?.navigationFailed))
       throw new BrowserActionError('browser_navigation_failed');
     if (!state?.started) throw new Error('Open the login page in this task browser first.');
@@ -2059,7 +2068,7 @@ export function createAgentBrowserComputer(options: {
     signal?.throwIfAborted();
     if (browserUrl(origin).origin !== origin || !methods.length || methods.length > 10)
       throw new BrowserActionError('browser_target_changed', undefined, 'invalid_request');
-    const state = recoverBrowser(id);
+    const state = await liveBrowser(id, signal);
     if (!state?.started)
       throw new BrowserActionError('browser_target_changed', undefined, 'browser_unavailable');
     if (state.saved.navigationFailed)
@@ -2244,7 +2253,7 @@ export function createAgentBrowserComputer(options: {
     input: BrowserHandoffInput,
     signal?: AbortSignal,
   ): Promise<string | void> {
-    const state = recoverBrowser(id);
+    const state = await liveBrowser(id, signal);
     if (!state?.started) throw new Error('Open a page in this task browser first.');
     if (state.injecting) throw new BrowserLockedError();
     return serialize(state, async () => {
@@ -2314,7 +2323,7 @@ export function createAgentBrowserComputer(options: {
   }
 
   async function* view(id: string, signal: AbortSignal): AsyncGenerator<Buffer> {
-    const state = recoverBrowser(id);
+    const state = await liveBrowser(id, signal);
     if (!state?.started) throw new Error('Open a page in this task browser first.');
     const { port } = z
       .object({ port: z.number().int().min(1).max(65_535) })
@@ -2366,7 +2375,7 @@ export function createAgentBrowserComputer(options: {
   }
 
   async function getScreenshot(id: string, signal?: AbortSignal): Promise<Buffer | null> {
-    const state = recoverBrowser(id);
+    const state = browsers.get(threadIdentity(id));
     if (!state?.started) return lastKnownScreen(id);
     if (state.injecting) throw new BrowserLockedError();
     return serialize(state, async () => {
@@ -2377,7 +2386,7 @@ export function createAgentBrowserComputer(options: {
   }
 
   async function closeBrowser(id: string): Promise<void> {
-    const state = recoverBrowser(id);
+    const state = browsers.get(threadIdentity(id));
     if (!state) return;
     state.closing = true;
     const close = async () => {

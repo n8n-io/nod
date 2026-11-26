@@ -111,7 +111,7 @@ The browser is a separate trusted container. It doesn't share mounts or a networ
 
 ### One browser, a tab per session
 
-Nod runs one Chromium for the owner, with one profile that keeps cookies, logins and carts. The chat, each task, each scheduled or background run and each subagent get their own window in that browser, so every session's page stays painted for screenshots and the live view. Each session has its own agent-browser session, attached to the browser over the DevTools protocol and pinned to its tab, so sessions act in parallel without touching each other's pages. All windows share the browser's network guard. Nod keeps one DevTools connection to the browser to place each session's window, track which tabs each session opened and route downloads.
+Nod runs one Chromium for the owner, with one profile that keeps cookies, logins and carts. Sessions share it, so two sessions on one website share its sign-in and cart. The chat, each task, each scheduled or background run and each subagent get their own window in that browser, so every session's page stays painted for screenshots and the live view. Each session has its own agent-browser session, attached to the browser over the DevTools protocol and pinned to its tab, so sessions act in parallel without touching each other's pages. All windows share the browser's network guard. Nod keeps one DevTools connection to the browser to place each session's window, track which tabs each session opened and route downloads.
 
 - **The browser stays up.** It starts on first use and runs while Nod runs.
 - **A session keeps its tab** for as long as it lives. Nothing else closes it: no other session, eviction or profile switch.
@@ -119,7 +119,7 @@ Nod runs one Chromium for the owner, with one profile that keeps cookies, logins
 - **The tabs close when their session ends**, such as when a task finishes or you stop it. The profile stays, so a later task on the same website is still signed in.
 - **Only you erase the profile**, with **Remove all data**.
 - **Downloads stay with their session.** The browser saves every download to one private folder. Nod moves each finished file to the session whose tab started it and deletes a file that no session's tab started.
-- **Restarts don't lose work.** When the browser service restarts, Nod starts the browser again with the same profile. Each session's next step reopens the page it was on, without the query string, before it runs. A session that stopped on an uncertain action doesn't reopen on its own: Pi opens a page again and looks before it continues.
+- **Restarts don't lose work.** When the browser service restarts, Nod starts the browser again with the same profile. Each session's next step reopens the page it was on, without the query string, before it runs. A session that stopped on an uncertain action doesn't reopen on its own. Pi opens the website again, checks the result there and never repeats the action.
 
 Pi reads the page from agent-browser's accessibility snapshot, with `@eN` references, as plain text after the page URL. A snapshot returns up to 40,000 characters, and Pi reads the rest with an offset. Pi interprets the page and chooses controls. The server also reads the selected control's form method and destination for the trust check, and the page's visible text when it prepares a confirmation question.
 

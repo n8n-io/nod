@@ -105,7 +105,10 @@ export async function nextDownload(
   for (;;) {
     const file = (await completedDownloads(directory)).find((name) => !previous.has(name));
     if (file) return file;
-    if (Date.now() > deadline) throw new Error('Choose the specific download link or URL.');
+    if (Date.now() > deadline)
+      throw new Error(
+        `No download finished within ${timeoutMs / 1000} seconds. Choose the specific download link or URL.`,
+      );
     await delay(100, undefined, { signal });
   }
 }
@@ -115,13 +118,9 @@ export async function createDownloadCapture(directory: string) {
   if (!root.isDirectory() || root.isSymbolicLink())
     throw new Error('The browser download directory is unavailable.');
   const previous = new Set(await readdir(directory));
-  let file: string | undefined;
   return {
-    async next(signal?: AbortSignal) {
-      file = await nextDownload(directory, previous, signal);
-      return file;
-    },
-    async cleanup(closed = false) {
+    next: (signal?: AbortSignal) => nextDownload(directory, previous, signal),
+    async cleanup() {
       const current = await lstat(directory);
       if (
         !current.isDirectory() ||
@@ -130,7 +129,7 @@ export async function createDownloadCapture(directory: string) {
         current.ino !== root.ino
       )
         throw new Error('The browser download directory changed.');
-      for (const name of closed ? await readdir(directory) : file ? [file] : []) {
+      for (const name of await readdir(directory)) {
         if (previous.has(name)) continue;
         await unlink(join(directory, name)).catch((error: NodeJS.ErrnoException) => {
           if (error.code !== 'ENOENT') throw error;
