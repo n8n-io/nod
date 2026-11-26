@@ -334,7 +334,10 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         context_length: size,
         context_window: size,
         max_model_len: size,
-        reasoning: z.object({ supported_efforts: z.array(z.string()).optional() }).optional(),
+        reasoning: z
+          .object({ supported_efforts: z.array(z.string()).optional().catch(undefined) })
+          .optional()
+          .catch(undefined),
       }),
     );
     const root = found.url.replace(/\/v1$/, '');
@@ -388,9 +391,11 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
           if (known?.usable === false) return [];
           const offered = entry.reasoning?.supported_efforts;
           const serverMap = offered?.length ? effortMap(offered) : undefined;
-          const thinkingLevelMap =
-            known?.thinkingLevelMap ??
-            (serverMap && Object.values(serverMap).some(Boolean) ? serverMap : undefined);
+          const thinkingLevelMap = known
+            ? known.thinkingLevelMap
+            : serverMap && Object.values(serverMap).some(Boolean)
+              ? serverMap
+              : undefined;
           const reportedContext =
             known?.contextWindow ??
             entry.context_length ??
