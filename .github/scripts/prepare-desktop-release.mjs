@@ -386,17 +386,28 @@ export async function prepareRelease(root, input, highlights) {
     readJson(root, releaseFiles[0]),
     readFile(resolve(root, releaseFiles[2]), 'utf8'),
   ]);
-  const current = releaseVersion(pkg.version);
+  const published = previousTag?.slice(5);
   if (
-    compareVersions(version, current) < 0 ||
-    (previousTag &&
-      (compareVersions(version, current) === 0 ||
-        compareVersions(version, previousTag.slice(5)) <= 0))
+    published
+      ? compareVersions(version, published) <= 0
+      : compareVersions(version, releaseVersion(pkg.version)) < 0
   )
-    throw new Error(
-      'The release version must increase beyond the current package and previous desktop release.',
-    );
-  if (new RegExp(`^## ${version.replaceAll('.', '\\.')} - `, 'm').test(changelog))
+    throw new Error('The release version must increase beyond the previous desktop release.');
+  const firstSection = changelog.search(/^## /m);
+  const prefix = (firstSection < 0 ? changelog : changelog.slice(0, firstSection)).trimEnd();
+  const history = (firstSection < 0 ? '' : changelog.slice(firstSection))
+    .split(/^(?=## )/m)
+    .filter((section) => {
+      const shown = /^## (\S+) - /.exec(section)?.[1];
+      return !(
+        published &&
+        versionPattern.test(shown ?? '') &&
+        compareVersions(shown, published) > 0
+      );
+    })
+    .join('')
+    .trim();
+  if (new RegExp(`^## ${version.replaceAll('.', '\\.')} - `, 'm').test(history))
     throw new Error(`The changelog already contains desktop version ${version}.`);
   const manifest = {
     version,
@@ -412,9 +423,6 @@ export async function prepareRelease(root, input, highlights) {
     source,
     new Date().toISOString().slice(0, 10),
   );
-  const firstSection = changelog.search(/^## /m);
-  const prefix = (firstSection < 0 ? changelog : changelog.slice(0, firstSection)).trimEnd();
-  const history = firstSection < 0 ? '' : changelog.slice(firstSection).trim();
   pkg.version = version;
   const output = [
     JSON.stringify(pkg, null, 2) + '\n',

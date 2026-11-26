@@ -483,6 +483,29 @@ test('release gate rejects malformed metadata, uncommitted notes and source drif
   await assert.rejects(checkRelease(f.root, '0.1.0'));
 });
 
+test('a version prepared but never published can be prepared again', async (t) => {
+  const f = await releaseRepository(t);
+  const highlights = '## Synthetic update\n\nUpdates now finish correctly.';
+  await prepareRelease(f.root, '0.1.0', highlights);
+  f.commit();
+  f.git('tag', 'nod-v0.1.0');
+  for (const failed of ['0.1.1', '0.1.2']) {
+    await writeFile(join(f.root, 'desktop/main.mjs'), `export const attempt = '${failed}';\n`);
+    f.commit();
+    await prepareRelease(f.root, failed, highlights);
+    f.commit();
+  }
+  await writeFile(join(f.root, 'desktop/main.mjs'), 'export const fixed = true;\n');
+  f.commit();
+  const manifest = await prepareRelease(f.root, '', highlights);
+  assert.equal(manifest.version, '0.1.1');
+  f.commit();
+  await checkRelease(f.root, '0.1.1');
+  const changelog = await readFile(join(f.root, 'desktop/CHANGELOG.md'), 'utf8');
+  assert.deepEqual(changelog.match(/^## \S+ - /gm), ['## 0.1.1 - ', '## 0.1.0 - ']);
+  await assert.rejects(prepareRelease(f.root, '0.1.0', highlights), /already exists/);
+});
+
 test('release videos are optional and attached videos stay bound to the reviewed release', async (t) => {
   const f = await releaseRepository(t);
   const highlights = '## Fewer interruptions\n\nUpdates now finish correctly.';
