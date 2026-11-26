@@ -408,7 +408,8 @@ export async function createApprovals(
       if (options.sourceMessageId && options.sourceMessageId !== current.message_id) {
         steering = (
           await client.query<{ id: string; text: string }>(
-            "SELECT id,text FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND turn_id=$4 AND role='user'",
+            `SELECT m.id,m.text FROM messages m WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3 AND m.turn_id=$4
+             AND m.role='user' AND m.hidden_at IS NULL AND NOT ${withdrawnSql('m')}`,
             [options.sourceMessageId, ownerId, turn.threadId, turn.turnId],
           )
         ).rows[0];

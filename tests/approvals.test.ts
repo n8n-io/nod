@@ -4427,6 +4427,9 @@ test(
           );
           assert.ok(result && typeof result === 'object' && appConfirmation in result);
           assert.equal((await proposal(task.turnId)).source_message_id, followUp.messageId);
+          await db.pool.query("UPDATE approvals SET status='expired' WHERE turn_id=$1", [
+            task.turnId,
+          ]);
           await finish(task.turnId, 'succeeded');
         },
       );
