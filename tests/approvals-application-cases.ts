@@ -5613,7 +5613,6 @@ export const approvalCases = inParts(
         const input = {
           origin,
           label: 'Synthetic cancellation login',
-          kind: 'password',
           passwordSelector: '@password',
           submitSelector: '@submit',
           message: 'Enter the synthetic password.',
@@ -5788,8 +5787,9 @@ export const approvalCases = inParts(
               'Enter saved login',
               kind === 'password'
                 ? {
-                    ...input,
-                    kind,
+                    origin: input.origin,
+                    submitSelector: input.submitSelector,
+                    message: input.message,
                     label: 'Model-supplied account name',
                     savedLoginId: login,
                     usernameSelector: '@username',
@@ -5882,7 +5882,6 @@ export const approvalCases = inParts(
           origin,
           label: 'Synthetic www account',
           message: 'Sign in to the synthetic website.',
-          kind: 'password',
           usernameSelector: '@username',
           passwordSelector: '@password',
           submitSelector: '@submit',
@@ -8315,7 +8314,6 @@ export const approvalCases = inParts(
               args: {
                 origin: 'https://bank.example.test',
                 label: 'Synthetic shutdown login',
-                kind: 'password',
                 savedLoginId: saved.json().id,
                 passwordSelector: '@password',
                 submitSelector: '@submit',
