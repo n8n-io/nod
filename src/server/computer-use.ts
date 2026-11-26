@@ -871,7 +871,8 @@ export function createComputerUse(
       const current = await live(found, String(prepared.ref), signal);
       const unsettable =
         action === 'COMPUTER_TYPE' &&
-        current.available_actions?.length &&
+        current.role === 'textfield' &&
+        current.available_actions &&
         !current.available_actions.some((name) => ['SetValue', 'TypeText'].includes(name)) &&
         !current.states?.includes('readonly');
       if (needsCheck(action)) checkedWindow(prepared);

@@ -10017,7 +10017,7 @@ const args = process.argv.slice(2);
 const input = fs.readFileSync(0, 'utf8');
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, input }) + '\\n');
 const answers = ${JSON.stringify(answers)};
-const key = Object.keys(answers).find((prefix) => args.join(' ').startsWith(prefix));
+const key = Object.keys(answers).filter((prefix) => args.join(' ').startsWith(prefix)).sort((a, b) => b.length - a.length)[0];
 let answer = key ? answers[key] : { ok: true, data: args[0] === 'snapshot' ? { complete: true, tree: { role: 'window', name: 'Mail' } } : args[0] === 'find' ? { matches: [] } : {} };
 if (Array.isArray(answer)) {
   const counter = ${JSON.stringify(log)} + '.' + key.replaceAll(' ', '_');
@@ -10957,9 +10957,14 @@ test('computer use clicks a field that ignores accessibility focus and types or 
       ),
       { ok: true, data: {} },
     ],
-    'focus @s1abcdef:e1': refused(
+    'focus @s1abcdef:e1 --headed': refused(
       'ACTION_FAILED',
       'SetFocus is not available on this element',
+      'not_delivered',
+    ),
+    'focus @s1abcdef:e1': refused(
+      'POLICY_DENIED',
+      'SetFocus moves the desktop foreground window on Windows',
       'not_delivered',
     ),
   };
@@ -10968,7 +10973,7 @@ test('computer use clicks a field that ignores accessibility focus and types or 
   assert.deepEqual(await windows.calls(), [
     'focus-window --app Mail --window-id w-1',
     'type @s1abcdef:e1 --stdin --headed',
-    'focus @s1abcdef:e1',
+    'focus @s1abcdef:e1 --headed',
     focusRead,
     'click @s1abcdef:e1 --headed',
     focusRead,
@@ -10982,6 +10987,14 @@ test('computer use clicks a field that ignores accessibility focus and types or 
   });
   await assert.rejects(gone.helper.request(request), /STALE_REF: Element no longer exists/);
   assert.ok(!(await gone.calls()).some((call) => call.startsWith('click')));
+
+  const button = { ...request, role: 'button', settable: false };
+  const pressed = await fakeDesktop(t, answers(true));
+  await pressed.helper.request(button);
+  const onWindows = await fakeDesktop(t, answers(true, unfocusable), { platform: 'win32' });
+  await assert.rejects(onWindows.helper.request(button), /lost focus/);
+  for (const desktop of [pressed, onWindows])
+    assert.ok(!(await desktop.calls()).some((call) => /^(focus|click|press) /.test(call)));
 });
 
 test('computer use checks the window before its first input of a typing step, not after its own click', async (t) => {
@@ -11063,7 +11076,19 @@ test('computer use shows Nod working in an app during background steps, then hid
 });
 
 test('computer use pastes with ctrl+v on Linux and Windows, and types from the front on Windows', async (t) => {
-  const linux = await fakeDesktop(t, { 'list-windows': mailWindow }, { platform: 'linux' });
+  const linux = await fakeDesktop(
+    t,
+    {
+      'list-windows': mailWindow,
+      'focus @s1abcdef:e1 --headed': { ok: true, data: {} },
+      'focus @s1abcdef:e1': refused(
+        'POLICY_DENIED',
+        'Focusing an element moves the keyboard focus of the application',
+        'not_delivered',
+      ),
+    },
+    { platform: 'linux' },
+  );
   await linux.helper.request({
     op: 'type',
     ref: '@s1abcdef:e1',

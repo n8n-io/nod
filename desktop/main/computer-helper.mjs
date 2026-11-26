@@ -797,6 +797,8 @@ export function createComputerHelper({
     });
   }
 
+  const focusArgs = (at) => ['focus', at, ...(platform === 'darwin' ? [] : ['--headed'])];
+
   async function hasFocus(at) {
     const { tree } = await run(['snapshot', '--root', at, '--max-depth', '0', ...deadline]);
     return Boolean(tree && isFocused(tree));
@@ -804,7 +806,7 @@ export function createComputerHelper({
 
   async function keyboardFocus(request) {
     const at = check(request.ref, ref, 'ref');
-    const focus = await guarded(request, ['focus', at]).catch((error) => {
+    const focus = await guarded(request, focusArgs(at)).catch((error) => {
       if (
         error.delivery !== 'not_delivered' ||
         !/^ACTION_(FAILED|NOT_SUPPORTED):/.test(error.message)
@@ -831,13 +833,14 @@ export function createComputerHelper({
       return paste(request, target, window);
     if (pasteRoles.has(request.role))
       throw new Error('ACTION_NOT_SUPPORTED: Nod can type into this area only in its own window.');
-    if (platform === 'darwin' && window && request.settable === false)
+    const field = request.role === 'textfield';
+    if (platform === 'darwin' && window && field && request.settable === false)
       return paste(request, target, window, () => keyboardFocus(request));
     return act(request, ['type', check(request.ref, ref, 'ref'), '--stdin'], {
       input: String(request.text ?? ''),
       found: Promise.resolve(window),
       front: platform === 'win32',
-      ready: () => keyboardFocus(request),
+      ready: field ? () => keyboardFocus(request) : undefined,
     });
   }
 
@@ -846,7 +849,7 @@ export function createComputerHelper({
     target,
     window,
     focus = async () => {
-      await guarded(request, ['focus', check(request.ref, ref, 'ref')]);
+      await guarded(request, focusArgs(check(request.ref, ref, 'ref')));
       return request;
     },
   ) {
