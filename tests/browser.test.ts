@@ -36,7 +36,7 @@ import {
   DaemonCommandError,
   existingDaemonCommand,
 } from '../src/providers/agent-browser/screens.ts';
-import { RuntimeTimeLimitError, runProcess } from '../src/providers/process.ts';
+import { RuntimeTimeLimitError, runProcess, serviceEnvironment } from '../src/providers/process.ts';
 import { containerBrowserOptions } from '../src/providers/container-browser/config.ts';
 import { openDevtools } from '../src/providers/agent-browser/devtools.ts';
 import { createBridgeComputer } from '../src/providers/container-browser/client.ts';
@@ -2767,6 +2767,193 @@ describe('native browser controls', { concurrency: 3 }, () => {
         await new Promise<void>((resolve) => server.close(() => resolve()));
         await rm(directory, { recursive: true, force: true });
       }
+    },
+  );
+
+  test(
+    'native browser types into the compose iframe without changing Subject (LAB-1666)',
+    { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
+    async (t) => {
+      const database = process.env.TEST_DATABASE_URL;
+      assert.ok(database, 'Set TEST_DATABASE_URL to a disposable PostgreSQL instance.');
+      const directory = await mkdtemp(join(tmpdir(), 'nod-compose-iframe-'));
+      t.after(() => rm(directory, { recursive: true, force: true }));
+      const server = createHttpServer((request, response) => {
+        response.setHeader('content-type', 'text/html');
+        response.end(
+          request.url === '/message-body'
+            ? '<!doctype html><body contenteditable="true" style="margin:0;min-height:100vh"></body>'
+            : `<!doctype html><label for="subject">Subject</label><input id="subject" value="Synthetic subject" autofocus>
+              <iframe src="/message-body" style="position:fixed;left:5vw;top:20vh;width:90vw;height:60vh"></iframe>
+              <button type="button" style="position:fixed;right:0;bottom:0;width:10vw;height:10vh"
+                onclick="document.querySelector('#subject').value='Unexpected change'"></button>`,
+        );
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      t.after(async () => {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      });
+      const address = server.address();
+      assert.ok(address && typeof address !== 'string');
+      const schema = `test_compose_${randomUUID().replaceAll('-', '')}`;
+      const bossSchema = `${schema}_boss`;
+      const url = new URL(database);
+      const admin = new pg.Pool({ connectionString: url.href });
+      t.after(async () => {
+        try {
+          await admin.query(
+            `DROP SCHEMA IF EXISTS ${bossSchema} CASCADE; DROP SCHEMA IF EXISTS ${schema} CASCADE`,
+          );
+        } finally {
+          await admin.end();
+        }
+      });
+      await admin.query(`CREATE SCHEMA ${schema}`);
+      url.searchParams.set('options', `-c search_path=${schema}`);
+      const run = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+        env: {
+          ...serviceEnvironment(),
+          DATABASE_URL: url.href,
+          PGBOSS_SCHEMA: bossSchema,
+          DOTENV_CONFIG_PATH: join(directory, 'fixture.env'),
+          NOD_DATA_ROOT: directory,
+          NOD_TEST_BROWSER_EXECUTABLE: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+          NOD_TEST_COMPOSE_URL: `http://127.0.0.1:${address.port}/`,
+        },
+        timeoutMs: 55_000,
+        input: String.raw`
+          import assert from 'node:assert/strict';
+          import { createIntegrationFixture } from './scripts/e2e-fixtures.ts';
+          import { createAgentBrowserComputer } from './src/providers/agent-browser/index.ts';
+          import { createApplication } from './src/server/composition.ts';
+          import { pool } from './src/server/db.ts';
+          import { submitUserMessage } from './src/server/thread.ts';
+          import { fakeWorkspace } from './tests/runtime-fixtures.ts';
+
+          const url = process.env.NOD_TEST_COMPOSE_URL;
+          const computer = createAgentBrowserComputer({
+            dataRoot: process.env.NOD_DATA_ROOT,
+            browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+            privateNetwork: true,
+            sandbox: false,
+            headless: true,
+          });
+          const completed = Promise.withResolvers();
+          const agent = {
+            open: async ({ tools, browserId }) => ({
+              resumed: false,
+              abort() {},
+              dispose() {},
+              async prompt() {
+                try {
+                  const browser = tools.find(({ name }) => name === 'browser');
+                  assert.ok(browser);
+                  const draft = async () => {
+                    const page = await computer.act(browserId, {
+                      action: 'evaluate',
+                      readOnly: true,
+                      script: '({subject: document.querySelector("#subject").value, ' +
+                        'body: document.querySelector("iframe").contentDocument.body.innerText})',
+                    });
+                    return JSON.parse(page.text.slice(page.text.indexOf('\n') + 1));
+                  };
+                  await browser.execute({ action: 'open', url });
+                  await browser.execute({ action: 'wait', load: 'load' });
+                  const observation = await browser.execute({ action: 'snapshot' });
+                  const snapshot = observation.content.map((part) => part.text ?? '').join('\n');
+                  assert.match(snapshot, /textbox "Subject" \[ref=e\d+\]/);
+                  const screenshot = await browser.execute({ action: 'screenshot' });
+                  assert.ok(screenshot.content.some((part) => part.type === 'image' && part.data));
+                  const subject = 'Synthetic subject';
+                  await assert.rejects(
+                    browser.execute({ action: 'click', x: 0.95, y: 0.95 }),
+                    /click target is not identified/i,
+                  );
+                  assert.deepEqual(await draft(), { subject, body: '' });
+
+                  const editor = /- textbox(?! "Subject")[^\n]*\[ref=(e\d+)\]/.exec(snapshot)?.[1];
+                  let clickRefusal;
+                  if (!editor) {
+                    try {
+                      await browser.execute({ action: 'click', x: 0.5, y: 0.5 });
+                    } catch (error) {
+                      assert.match(error.message, /click target is not identified/i);
+                      clickRefusal = error.message;
+                    }
+                  }
+                  const target = editor ?? /\bIframe \[ref=(e\d+)\]/i.exec(snapshot)?.[1];
+                  assert.ok(target, 'The compose snapshot must provide a body or iframe reference.');
+                  const body = 'The synthetic draft body.';
+                  let typeRefusal;
+                  try {
+                    await browser.execute({ action: 'type', selector: '@' + target, text: body });
+                  } catch (error) {
+                    if (editor) throw error;
+                    typeRefusal = error.message;
+                  }
+                  completed.resolve({
+                    draft: await draft(),
+                    expected: { subject, body },
+                    clickRefusal,
+                    typeRefusal,
+                  });
+                } catch (error) {
+                  completed.reject(error);
+                }
+              },
+            }),
+            dispose() {},
+          };
+          const { app } = await createApplication(
+            {
+              agent,
+              computer,
+              workspace: fakeWorkspace(),
+              integrations: createIntegrationFixture('http://localhost:4310').provider,
+              model: { provider: 'fixture', name: 'fixture', configured: true },
+              speech: {
+                id: 'fixture',
+                configured: false,
+                synthesize: async () => { throw new Error('Unused speech provider.'); },
+              },
+              keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 7) },
+              trustModel: 'llm',
+              trustCurator: {
+                id: 'fixture',
+                configured: true,
+                curate: async ({ input }) => {
+                  const action = input.action;
+                  return action?.name === 'NOD_browser' &&
+                    action.arguments?.control?.[0]?.role === 'textbox'
+                    ? { run: true, because: 'read' }
+                    : { run: false };
+                },
+              },
+            },
+            { channels: false, heartbeat: false },
+          );
+          try {
+            const { turnId } = await submitUserMessage('Draft a test email in the compose window.');
+            const { draft, expected, clickRefusal, typeRefusal } = await completed.promise;
+            const approvals = await pool.query('SELECT id FROM approvals WHERE turn_id=$1', [turnId]);
+            assert.equal(approvals.rowCount, 0, 'An unidentified click must not ask for approval.');
+            const outcome = [
+              'Body-targeted typing must write the message body and leave Subject unchanged.',
+              clickRefusal && 'The snapshot had no editable body. The body click was refused: ' + clickRefusal,
+              typeRefusal,
+            ].filter(Boolean).join('\n');
+            assert.deepEqual(draft, expected, outcome);
+          } finally {
+            try {
+              await app.close();
+            } finally {
+              await pool.end();
+            }
+          }
+        `,
+      });
+      assert.equal(run.exitCode, 0, run.stdout + run.stderr);
     },
   );
 
