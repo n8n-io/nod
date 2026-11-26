@@ -3,7 +3,9 @@ export function appOpenPath(value, pages) {
   const path = value.slice('nod://open'.length);
   return value === `nod://open${path}` &&
     (Object.hasOwn(pages, path) ||
-      /^\/prepared\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(path))
+      /^\/(?:prepared|tasks)\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(
+        path,
+      ))
     ? path
     : null;
 }

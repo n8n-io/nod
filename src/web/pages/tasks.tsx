@@ -10,6 +10,7 @@ import {
   Clock,
   Globe2,
   Hourglass,
+  Link2,
   LoaderCircle,
   LockKeyhole,
   MessageCircle,
@@ -22,7 +23,9 @@ import type {
   TaskDetail,
   WorkspaceCommand,
 } from '../../shared/contracts';
-import { taskHeadline, taskLabels } from '../../shared/task-status';
+import { taskHeadline, taskLabels, taskNext, taskNextLabels } from '../../shared/task-status';
+import { taskPath } from '../../shared/app-links';
+import { navigate } from '../lib/navigation';
 import { InlineName } from '../components/inline-name';
 import { WorkspaceCommandDialog, WorkspaceCommandLine } from '../components/workspace-command';
 import { pageDataCache } from '../lib/page-data-cache';
@@ -51,8 +54,10 @@ const icons = {
   cancelled: CircleSlash,
 };
 const closed = (task: Task) => task.status === 'done' || task.status === 'cancelled';
-const showMessage = (messageId: string) =>
-  window.dispatchEvent(new window.CustomEvent('nod:focus-message', { detail: { messageId } }));
+const showMessage = (messageId: string, taskId?: string) =>
+  window.dispatchEvent(
+    new window.CustomEvent('nod:focus-message', { detail: { messageId, taskId } }),
+  );
 
 function TaskActivity({ id }: { id: string }) {
   const data = usePageData<TaskDetail>(`/api/tasks/${id}`);
@@ -139,9 +144,9 @@ function TaskCommands({ id }: { id: string }) {
   );
 }
 
-export function TaskCard({ task, live }: { task: Task; live?: Activity }) {
+export function TaskCard({ task, live, page }: { task: Task; live?: Activity; page?: boolean }) {
   const headingId = useId();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(Boolean(page));
   const [showActivity, setShowActivity] = useState(false);
   const [showCommands, setShowCommands] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -166,6 +171,33 @@ export function TaskCard({ task, live }: { task: Task; live?: Activity }) {
       ? task.now || 'Waiting for your answer'
       : taskHeadline(task);
   const showLive = live && (task.status === 'working' || task.status === 'queued') ? live : null;
+  const next = taskNext(task);
+  const facts = [
+    ...(next ? [['Next for you', taskNextLabels[next]]] : []),
+    ...(task.uncertainAction
+      ? [
+          [
+            'May have run',
+            `${task.uncertainAction.label} · ${formatDateTime(task.uncertainAction.at, format)}. Check it before asking again.`,
+          ],
+        ]
+      : []),
+    ...(task.lastAction
+      ? [
+          [
+            'Last action',
+            `${task.lastAction.label} · ${formatDateTime(task.lastAction.at, format)}`,
+          ],
+        ]
+      : []),
+    ...(closed(task)
+      ? []
+      : [
+          ...task.waitingFor.map((wait) => ['Waiting on', `${wait.who} · ${wait.via}`]),
+          ...(task.nextCheck ? [['Next check', when(task.nextCheck)]] : []),
+          ...(task.doneWhen ? [['Done when', task.doneWhen]] : []),
+        ]),
+  ];
   return (
     <article className="task-preview" data-status={task.status} aria-labelledby={headingId}>
       <h2 className="task-preview-heading">
@@ -270,26 +302,14 @@ export function TaskCard({ task, live }: { task: Task; live?: Activity }) {
                   : `Started ${formatDateTime(task.createdAt, format)}`}
               </span>
             </p>
-            {!closed(task) && (task.waitingFor.length > 0 || task.nextCheck || task.doneWhen) && (
+            {facts.length > 0 && (
               <ul className="task-facts">
-                {task.waitingFor.map((wait) => (
-                  <li key={`${wait.who}:${wait.via}`}>
-                    <span>Waiting on</span>
-                    {wait.who} · {wait.via}
+                {facts.map(([label, value], index) => (
+                  <li key={`${label}:${index}`}>
+                    <span>{label}</span>
+                    {value}
                   </li>
                 ))}
-                {task.nextCheck && (
-                  <li>
-                    <span>Next check</span>
-                    {when(task.nextCheck)}
-                  </li>
-                )}
-                {task.doneWhen && (
-                  <li>
-                    <span>Done when</span>
-                    {task.doneWhen}
-                  </li>
-                )}
               </ul>
             )}
             {!closed(task) && task.work && <WorkModel task={task} />}
@@ -316,13 +336,26 @@ export function TaskCard({ task, live }: { task: Task; live?: Activity }) {
                     size="sm"
                     onClick={() => {
                       captureAnalytics('task_action', { action: 'show_in_chat' });
-                      showMessage(startMessage);
+                      showMessage(startMessage, task.id);
                     }}
                   >
                     <MessageSquare size={16} aria-hidden="true" />
                     Show in chat
                   </Button>
                 )
+              )}
+              {!page && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    captureAnalytics('task_action', { action: 'open_page' });
+                    navigate(taskPath(task.id));
+                  }}
+                >
+                  <Link2 size={16} aria-hidden="true" />
+                  Task page
+                </Button>
               )}
               <Button
                 variant="ghost"
@@ -376,6 +409,30 @@ export function TaskCard({ task, live }: { task: Task; live?: Activity }) {
         </div>
       </div>
     </article>
+  );
+}
+
+export function TaskPage({ id, activity = [] }: { id: string; activity?: Activity[] }) {
+  const { data, error, refreshing, refresh } = usePageData<TaskDetail>(`/api/tasks/${id}`);
+  const tasks = usePageData<Task[]>('/api/tasks');
+  const task = tasks.data?.find((item) => item.id === id) ?? data?.task;
+  return (
+    <div className="content-page secondary-page tasks-page" data-analytics-private>
+      <h1 className="sr-only">Task</h1>
+      <Button variant="ghost" onClick={() => navigate('/tasks')}>
+        Back to Scheduled
+      </Button>
+      {error && !task ? (
+        <LoadError what="this task" refreshing={refreshing} retry={refresh} />
+      ) : !task ? (
+        <Pending label="Loading task…" />
+      ) : (
+        <div className="saved-plan-list open-task-list">
+          <TaskCard task={task} page live={activity.find((item) => item.taskId === id)} />
+        </div>
+      )}
+      <PlanToast />
+    </div>
   );
 }
 

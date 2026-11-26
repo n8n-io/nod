@@ -17,13 +17,13 @@
       <p id="fallback">If the link does not open Nod, use the same location in the app.</p>
     </main>
     <script>
-      import { appPagePath, appPages } from '../../../src/shared/app-links';
+      import { appPageLabel, appPagePath } from '../../../src/shared/app-links';
       const path = appPagePath(window.location.hash.slice(1));
       if (path) {
         const link = document.getElementById('open') as HTMLAnchorElement;
         link.href = `nod://open${path}`;
         link.hidden = false;
-        document.getElementById('location')!.textContent = `Nod > ${appPages[path as keyof typeof appPages] ?? 'Prepared work'}`;
+        document.getElementById('location')!.textContent = `Nod > ${appPageLabel(path)}`;
       } else {
         document.getElementById('location')!.textContent = 'This app link is not valid. Open Nod on your computer.';
         document.getElementById('fallback')!.hidden = true;

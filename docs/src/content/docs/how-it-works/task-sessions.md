@@ -104,6 +104,22 @@ Telegram shows the task as messages Nod writes. If its first message arrives as 
 
 These are views of one task record and session. A pending approval remains bound to its exact question and action. An old status message cannot approve a later action. Private sign-in and payment steps remain in Nod's private forms.
 
+## One link and summary per task
+
+Each task has one page in Nod at `/tasks/<task ID>`. The card in chat, the card on **Scheduled** and the task page all read the same record from the owner-scoped `/api/tasks` routes, so a task ID from another owner returns nothing. A chat app gets the same address as an app link (`https://nod.n8n.io/docs/open/#/tasks/<task ID>`) when a task message needs Nod: a browser handoff, a private form or a file the channel can't show. The model writes that message; if it leaves out the link, the server adds it on its own line.
+
+The server derives the card's summary from records it already keeps:
+
+| Field        | Source                                                                                                                                                                 |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Next for you | The task's status: a browser handoff, a question, or a failed or stopped turn the owner can continue.                                                                  |
+| Last action  | The newest `app_actions` row of the task's turns that isn't a read.                                                                                                    |
+| May have run | The newest approval of the task's turns that is uncertain, or still executing with no live turn, unless a later approval with the same action and arguments completed. |
+
+Both actions show only Nod's label for the action, such as _Gmail: Send email_. These fields leave out the action's arguments and results, page text and credentials.
+
+Every way back into a task continues its saved session. A reply resolves to the task through its messages. **Return to Nod** resumes the turn that handed over the browser, and a second **Return to Nod** for the same handoff does nothing. **Show in chat** from **Scheduled** or the task page opens the task's own message, so the reply that follows is a reply to the task. None of these starts the task again. An action that ran or may have run is never repeated by a resume. If Stop or a failure ends a resume first, later turns are told whether the approved action ran, may have run or did not run; see [Waiting and resuming](/how-it-works/threads-and-turns/#waiting-and-resuming) and [Approvals](/trust/approvals/).
+
 See [Track tasks](/use/tasks/) for controls and screenshots.
 
 ## Stop, restart and reset

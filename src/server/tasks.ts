@@ -5,7 +5,9 @@ import { z } from 'zod';
 import type { Task, TaskDetail, TaskStatus } from '../shared/contracts.ts';
 import type { ModelSelection, WorkKind } from '../shared/models.ts';
 import { modelSelectionInput } from './models.ts';
-import { recordedAction, toolTitle } from './action-presentation.ts';
+import { approvalTitle, recordedAction, toolTitle } from './action-presentation.ts';
+import { taskPath } from '../shared/app-links.ts';
+import { taskNext } from '../shared/task-status.ts';
 import { workspaceCommandsSql, workspaceCommand } from './workspace-commands.ts';
 import type { ChannelPresentation } from './channels.ts';
 import { classifyVerificationReply } from '../shared/verification-code.ts';
@@ -113,6 +115,10 @@ type Row = {
   question: string | null;
   question_message_id: string | null;
   handoff: boolean;
+  last_action: string | null;
+  last_action_at: Date | null;
+  uncertain_action: string | null;
+  uncertain_action_at: Date | null;
   model: ModelSelection | null;
   work: WorkKind | null;
   schedule_model: ModelSelection | null;
@@ -133,12 +139,26 @@ function status(row: Row): TaskStatus {
   return 'needs_you';
 }
 
+function actionLabel(action: string) {
+  const { title, app } = approvalTitle(action);
+  return app ? `${app}: ${title}` : title;
+}
+
+function taskAction(action: string | null, at: Date | null) {
+  return action && at ? { label: actionLabel(action), at: at.toISOString() } : null;
+}
+
 function taskFacts(task: Task, detail: boolean) {
   const index = task.stepIndex ?? 0;
+  const next = taskNext(task);
   return {
     title: task.title,
     status: task.status,
     now: task.now,
+    link: taskPath(task.id),
+    ...(next ? { next } : {}),
+    ...(task.lastAction ? { lastAction: task.lastAction.label } : {}),
+    ...(task.uncertainAction ? { uncertainAction: task.uncertainAction.label } : {}),
     ...(task.question ? { question: task.question } : {}),
     ...(task.browserHandoff ? { browserHandoff: true } : {}),
     ...(task.result ? { result: task.result } : {}),
@@ -170,11 +190,15 @@ export function createTasks(options: {
     return options.validateModel(choice);
   };
   const preferences = createPreferencesStore(pool, ownerId);
+  let actions = false;
 
   async function read(
     client: Pick<PoolClient, 'query'>,
     filter: { id?: string; closed?: boolean; thread?: string } = {},
   ): Promise<Task[]> {
+    actions ||= Boolean(
+      (await client.query("SELECT to_regclass('app_actions') AS name")).rows[0]?.name,
+    );
     const rows = (
       await client.query<Row>(
         `WITH ranked AS (
@@ -191,6 +215,8 @@ export function createTasks(options: {
            COALESCE(${activeHandoffSql},false) AS handoff,
            COALESCE(q.text,CASE WHEN u.status='cancelled' THEN continuation.text END) AS question,
            COALESCE(q.id,CASE WHEN u.status='cancelled' THEN continuation.id END) AS question_message_id,
+           done.action AS last_action,done.created_at AS last_action_at,
+           unsure.action AS uncertain_action,unsure.created_at AS uncertain_action_at,
            t.model,CASE WHEN t.session_id=t.id THEN ${workKindSql('t', 'NULL')} END AS work,
            work_schedule.model AS schedule_model
          FROM ranked t LEFT JOIN turns u ON u.id=t.turn_id AND u.owner_id=t.owner_id
@@ -201,6 +227,24 @@ export function createTasks(options: {
          LEFT JOIN messages continuation ON continuation.id=t.continuation_message_id
            AND continuation.owner_id=t.owner_id AND continuation.thread_id=u.thread_id
            AND continuation.turn_id=u.id AND continuation.role='assistant' AND continuation.hidden_at IS NULL
+         LEFT JOIN LATERAL ${
+           actions
+             ? `(SELECT a.action,a.created_at FROM turns r JOIN app_actions a ON a.turn_id=r.id AND a.owner_id=r.owner_id
+               WHERE r.owner_id=t.owner_id AND r.task_id=t.id
+                 AND (left(a.action,4)<>'NOD_' OR a.action='NOD_browser')
+                 AND COALESCE(a.basis->>'kind','')<>'read'
+               ORDER BY a.created_at DESC,a.id DESC LIMIT 1)`
+             : '(SELECT NULL::text AS action,NULL::timestamptz AS created_at)'
+         } done ON true
+         LEFT JOIN LATERAL (SELECT a.action,a.created_at FROM turns r JOIN approvals a ON a.turn_id=r.id AND a.owner_id=r.owner_id
+           LEFT JOIN turns e ON e.id=a.execution_turn_id AND e.owner_id=a.owner_id
+           WHERE r.owner_id=t.owner_id AND r.task_id=t.id
+             AND (a.status='uncertain' OR (a.status='executing' AND e.status IS DISTINCT FROM 'queued'
+               AND e.status IS DISTINCT FROM 'running' AND e.status IS DISTINCT FROM 'waiting'))
+             AND NOT EXISTS(SELECT 1 FROM turns dr JOIN approvals d ON d.turn_id=dr.id AND d.owner_id=dr.owner_id
+               WHERE dr.owner_id=t.owner_id AND dr.task_id=t.id AND d.status='completed'
+                 AND d.action=a.action AND d.args=a.args AND d.created_at>a.created_at)
+           ORDER BY a.created_at DESC,a.id DESC LIMIT 1) unsure ON true
          WHERE t.position<=100 OR t.source_message_id IN (
            SELECT requested.id FROM messages offer
            CROSS JOIN LATERAL jsonb_array_elements(offer.suggestions->'tasks') idea
@@ -241,6 +285,8 @@ export function createTasks(options: {
         createdAt: row.created_at.toISOString(),
         updatedAt: row.updated_at.toISOString(),
         closedAt: row.closed_at?.toISOString() ?? null,
+        lastAction: taskAction(row.last_action, row.last_action_at),
+        uncertainAction: taskAction(row.uncertain_action, row.uncertain_action_at),
         ...(row.work
           ? {
               model: row.model,

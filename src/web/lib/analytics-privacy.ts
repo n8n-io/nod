@@ -1,4 +1,4 @@
-import { preparedWorkId } from '../../shared/app-links.ts';
+import { preparedWorkId, taskPageId } from '../../shared/app-links.ts';
 
 export const analyticsHost = 'app.example';
 
@@ -23,6 +23,7 @@ export function analyticsRoute(value: string) {
     if (/^\/(?:vault|credentials)\/[^/]+$/.test(path)) return '/credentials';
     if (/^\/payments\/[^/]+$/.test(path)) return '/payments';
     if (preparedWorkId(path)) return '/prepared';
+    if (taskPageId(path)) return '/tasks';
     if (
       [
         '/settings/models',

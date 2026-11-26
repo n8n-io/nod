@@ -6,7 +6,7 @@ import { Vault } from './pages/vault';
 import { Apps } from './pages/apps';
 import { Channels } from './pages/channels';
 import { Credentials, Payment } from './pages/credentials';
-import { Scheduled } from './pages/tasks';
+import { Scheduled, TaskPage } from './pages/tasks';
 import { PreparedWork } from './pages/prepared';
 import { useAppState } from './hooks/use-app-state';
 import { useChatUnread } from './hooks/use-chat-unread';
@@ -23,7 +23,7 @@ import { SidebarToggle } from './components/sidebar-toggle';
 import { FeedbackDialog } from './components/feedback';
 import { createFeedbackCapture } from './lib/feedback-capture';
 import { navigate, replaceNavigation, sidebarItems, subscribeNavigation } from './lib/navigation';
-import { appPagePath, preparedWorkId } from '../shared/app-links';
+import { appPagePath, preparedWorkId, taskPageId } from '../shared/app-links';
 import { BrowserWindow } from './pages/browser';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
 import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shared/account';
@@ -202,7 +202,7 @@ function Workspace({
       {desktopSettingsAvailable() && <DesktopToolbar actionsRef={setToolbarActions} />}
       {!settingsPage(path) && (
         <Sidebar
-          path={path}
+          path={taskPageId(path) ? '/tasks' : path}
           unreadCount={unread.count}
           unreadPending={unread.pending}
           presence={
@@ -284,9 +284,17 @@ function Workspace({
               <Scheduled onAsk={askInChat} activity={connected ? state?.activity : undefined} />
             )}
             {preparedWorkId(path) && <PreparedWork key={path} id={preparedWorkId(path)!} />}
+            {taskPageId(path) && (
+              <TaskPage
+                key={path}
+                id={taskPageId(path)!}
+                activity={connected ? state?.activity : undefined}
+              />
+            )}
             {settings}
             {!settingsPage(path) &&
               !preparedWorkId(path) &&
+              !taskPageId(path) &&
               !sidebarItems.some((item) => item.path === path) && (
                 <div className="empty-state">
                   <h1>This page isn’t here.</h1>
@@ -697,7 +705,8 @@ function AccountApp({
           : (secure && (path !== '/browser' || session.capabilities.developer)) ||
               settingsPage(path) ||
               sidebarItems.some((item) => item.path === path) ||
-              preparedWorkId(path)
+              preparedWorkId(path) ||
+              taskPageId(path)
             ? path
             : '/not-found',
     );
