@@ -17,6 +17,7 @@ import { Download, ExternalLink, FileText, Folder } from './icons';
 import { safeMessageLink } from '../lib/message-links';
 import { formatNumber } from '../lib/date-format';
 import { fileSize, textPreviewBytes } from '../lib/attachment-kind';
+import { csvDelimiter } from '../lib/convert';
 import { ownedArtifactUrl } from '../lib/attachment-url';
 import type { ImagePreview } from './attachment-images';
 import { FileGlyph } from './attachment-glyph';
@@ -168,14 +169,6 @@ function parseCsv(text: string, delimiter: string) {
     if (rows.length < previewRows) rows.push([...row, cell].slice(0, previewColumns));
   }
   return { rows, total };
-}
-
-function csvDelimiter(text: string, name: string, mimeType: string) {
-  if (/\.tsv$/i.test(name) || mimeType.includes('tab-separated')) return '\t';
-  const line = text.slice(0, text.search(/\r?\n|$/));
-  return [',', ';', '\t']
-    .map((value) => ({ value, count: line.split(value).length }))
-    .sort((a, b) => b.count - a.count)[0].value;
 }
 
 function columnName(index: number) {

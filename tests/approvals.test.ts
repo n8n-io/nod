@@ -5760,7 +5760,7 @@ test(
         await writeFile(join(workspace, 'alert.n8n.json'), '{"nodes":[],"connections":{}}');
         const workflow = await artifacts.publishArtifact(id, 'alert.n8n.json', 'Rain alert', read);
         assert.equal(workflow.name, 'Rain alert.n8n.json');
-        assert.equal(workflow.page, undefined);
+        assert.deepEqual([workflow.page?.type, workflow.page?.title], ['files', 'Rain alert']);
         assert.deepEqual([published.page?.version, published.page?.title], [1, 'report']);
         const page = published.page!.id;
         const share = (path: string, target?: string) =>
@@ -5780,11 +5780,33 @@ test(
           id: page,
           version: 3,
           title: 'Fixture report',
+          type: 'docs',
         });
-        await writeFile(join(workspace, 'deck.pptx'), 'synthetic deck');
-        assert.equal((await share('deck.pptx')).page, undefined);
+        await writeFile(join(workspace, 'deck.pptx'), 'synthetic deck 1');
+        const deck = await share('deck.pptx');
+        assert.deepEqual(
+          [deck.page?.type, deck.page?.title, deck.page?.version],
+          ['slides', 'deck', 1],
+        );
+        await writeFile(join(workspace, 'deck.pptx'), 'synthetic deck 2');
+        assert.equal((await share('deck.pptx')).page?.version, 2);
+        await assert.rejects(share('deck.pptx', page), /kept under docs/);
+        await writeFile(join(workspace, 'figures.csv'), 'name,count\nsynthetic,2\n');
+        await writeFile(join(workspace, 'chart.png'), 'synthetic image');
+        await writeFile(join(workspace, 'card.vcf'), 'BEGIN:VCARD\nFN:Synthetic\nEND:VCARD\n');
+        assert.equal((await share('figures.csv')).page?.type, 'data');
+        assert.equal((await share('chart.png')).page?.type, 'images');
+        assert.equal((await share('card.vcf')).page, undefined);
+        const typed = async (type: string) =>
+          JSON.parse((await request('GET', `/api/pages?type=${type}`)).body).pages.map(
+            (item: { id: string }) => item.id,
+          );
+        assert.deepEqual(await typed('slides'), [deck.page!.id]);
+        assert.equal((await typed('docs')).includes(deck.page!.id), false);
+        assert.equal((await request('GET', '/api/pages?type=other')).statusCode, 400);
         await assert.rejects(share('copy.html', randomUUID()), /page is unavailable/);
-        await assert.rejects(share('alert.n8n.json', page), /Only an HTML file can update a page/);
+        await assert.rejects(share('alert.n8n.json', page), /kept under docs/);
+        await assert.rejects(share('card.vcf', page), /cannot update a page/);
         const listed = JSON.parse((await request('GET', '/api/pages')).body).pages;
         const found = async (q: string) =>
           JSON.parse((await request('GET', `/api/pages?q=${q}`)).body).pages.map(
@@ -5792,6 +5814,27 @@ test(
           );
         assert.deepEqual((await found('FIXTURE%20rep')).sort(), [page, copy.page!.id].sort());
         assert.deepEqual(await found('100%25'), []);
+        for (const sort of ['newest', 'oldest', 'title'] as const) {
+          const all = (await artifacts.listPages(undefined, undefined, 50, undefined, sort)).pages;
+          const walked: string[] = [];
+          let cursor: string | undefined;
+          do {
+            const part = await artifacts.listPages(cursor, undefined, 2, undefined, sort);
+            walked.push(...part.pages.map((item) => item.id));
+            cursor = part.next;
+          } while (cursor);
+          assert.deepEqual(
+            walked,
+            all.map((item) => item.id),
+          );
+          const times = all.map((item) => item.createdAt);
+          if (sort !== 'title')
+            assert.deepEqual(
+              times,
+              sort === 'newest' ? times.toSorted().reverse() : times.toSorted(),
+            );
+        }
+        assert.equal((await request('GET', '/api/pages?sort=size')).statusCode, 400);
         const first = await artifacts.listPages(undefined, undefined, 1);
         const rest = await artifacts.listPages(first.next, undefined, 50);
         assert.equal(first.pages.length, 1);

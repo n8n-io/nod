@@ -709,7 +709,7 @@ export const toolDefinitions = {
   ),
   share_file: defineTool(
     'share_file',
-    'Attach a workspace file to your next reply, or deliver it on its own when no reply follows. Check the file first and share each result once. Sharing an HTML file again from the same path after its content changed saves a new version of that page; the result gives page {id,version}. To update a page from a file at another path, such as a copy in workspaceAttachments, pass its page id.',
+    'Attach a workspace file to your next reply, or deliver it on its own when no reply follows. Check the file first and share each result once. Every shared file is kept in Pages. Sharing a file again from the same path after its content changed saves a new version of the same entry; the result gives page {id,version,type}. To update an entry from a file at another path, such as a copy in workspaceAttachments, pass its page id.',
     Type.Object({
       path: Type.String(),
       name: Type.Optional(Type.String()),

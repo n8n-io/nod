@@ -216,6 +216,7 @@ export async function initializeDatabase() {
       ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS page_version integer;
       ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS page_title text;
       ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS source_path text;
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS page_type text;
       CREATE UNIQUE INDEX IF NOT EXISTS artifacts_pages ON artifacts(owner_id,page_id,page_version)
         WHERE page_id IS NOT NULL;
       CREATE INDEX IF NOT EXISTS artifacts_page_sources ON artifacts(owner_id,thread_id,source_path)

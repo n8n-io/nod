@@ -3932,7 +3932,7 @@ test(
     const owner = 'fixture-owner';
     const threadId = await createFixtureTables(pool, owner);
     await pool.query(
-      'CREATE TABLE artifacts(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid,name text,mime_type text,size int,storage_path text,expires_at timestamptz,deleting_at timestamptz,page_id uuid,page_version integer,page_title text,source_path text)',
+      'CREATE TABLE artifacts(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid,name text,mime_type text,size int,storage_path text,expires_at timestamptz,deleting_at timestamptz,page_id uuid,page_version integer,page_title text,source_path text,page_type text)',
     );
     const artifacts = createArtifactService({ database: pool, ownerId: owner, localRoot: root });
     let reads = 0;

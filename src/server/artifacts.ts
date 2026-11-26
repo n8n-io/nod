@@ -7,6 +7,7 @@ import { dataRoot, ownerId } from './config.ts';
 import { transaction } from './transaction.ts';
 import type { Artifact, Page, PageVersion } from '../shared/contracts.ts';
 import { fileBytes, fileMimeType, fileName } from '../shared/files.ts';
+import { pageType, pageTypes, type PageSort, type PageType } from '../shared/attachment-kind.ts';
 import type { MessagingAttachment } from '../ports/messaging.ts';
 import { z } from 'zod';
 import type { Pool, PoolClient } from 'pg';
@@ -61,6 +62,7 @@ export function artifactView(row: Record<string, any>): Artifact {
             id: row.page_id,
             version: row.page_version,
             title: row.page_title ?? row.name,
+            type: storedType(row.page_type),
           },
         }
       : {}),
@@ -76,12 +78,21 @@ function pageVersion(row: Record<string, any>): PageVersion {
 function storedName(name: string) {
   return fileName(basename(name).replace(/[\r\n\x00-\x1f]/g, '')) || 'file';
 }
-function pageTitle(bytes: Buffer, fallback: string) {
-  const title = /<title[^>]*>([^<]{1,300})<\/title>/i
-    .exec(bytes.subarray(0, 8192).toString('utf8'))?.[1]
-    ?.replace(/\s+/g, ' ')
-    .trim();
-  return (title || storedName(fallback).replace(/\.html?$/i, '')).slice(0, 200);
+function storedType(value: unknown): PageType {
+  return pageTypes.find((type) => type === value) ?? 'docs';
+}
+function pageTitle(bytes: Buffer, fallback: string, html: boolean) {
+  const title = html
+    ? /<title[^>]*>([^<]{1,300})<\/title>/i
+        .exec(bytes.subarray(0, 8192).toString('utf8'))?.[1]
+        ?.replace(/\s+/g, ' ')
+        .trim()
+    : '';
+  return (
+    title ||
+    storedName(fallback).replace(/(?:\.n8n\.json|\.tar\.gz|\.[a-z0-9]{1,10})$/i, '') ||
+    storedName(fallback)
+  ).slice(0, 200);
 }
 async function readLocal(path: string, size: number) {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -186,7 +197,7 @@ export function createArtifactService(options: {
     database?: Pick<PoolClient, 'query'>,
     onCreated?: (cleanup: () => Promise<void>) => void,
     temporary = false,
-    page?: { id: string; version: number; title: string; sourcePath: string },
+    page?: { id: string; version: number; title: string; sourcePath: string; type: PageType },
   ): Promise<Artifact> {
     if (!bytes.length || bytes.length > fileBytes)
       throw Object.assign(
@@ -213,8 +224,8 @@ export function createArtifactService(options: {
       try {
         await writeFile(location(id), bytes, { mode: 0o600, flag: 'wx' });
         const result = await client.query(
-          `INSERT INTO artifacts(id,owner_id,thread_id,name,mime_type,size,storage_path,expires_at,page_id,page_version,page_title,source_path)
-           VALUES($1,$2,$3,$4,$5,$6,$7,CASE WHEN $8 THEN clock_timestamp()+interval '24 hours' END,$9,$10,$11,$12) RETURNING *`,
+          `INSERT INTO artifacts(id,owner_id,thread_id,name,mime_type,size,storage_path,expires_at,page_id,page_version,page_title,source_path,page_type)
+           VALUES($1,$2,$3,$4,$5,$6,$7,CASE WHEN $8 THEN clock_timestamp()+interval '24 hours' END,$9,$10,$11,$12,$13) RETURNING *`,
           [
             id,
             options.ownerId,
@@ -228,6 +239,7 @@ export function createArtifactService(options: {
             page?.version ?? null,
             page?.title ?? null,
             page?.sourcePath ?? null,
+            page?.type ?? null,
           ],
         );
         onCreated?.(async () => {
@@ -315,8 +327,8 @@ export function createArtifactService(options: {
     const file = posix.basename(actual);
     const suffix = /\.(?:n8n\.json|tar\.gz)$/i.exec(file)?.[0] ?? extname(file);
     const mimeType = fileMimeType(actual);
-    const kept = mimeType === 'text/html';
-    if (page !== undefined && !kept) throw new Error('Only an HTML file can update a page.');
+    const type = pageType(mimeType, file);
+    if (page !== undefined && !type) throw new Error('This file cannot update a page.');
     const bytes = Buffer.from(
       await read(threadId, posix.relative(base, actual), fileBytes, 'publication'),
     );
@@ -324,7 +336,7 @@ export function createArtifactService(options: {
       name && !name.toLowerCase().endsWith(suffix.toLowerCase())
         ? `${name}${suffix}`
         : name || file;
-    if (!kept) return storeArtifact(bytes, label, mimeType, threadId, database, onCreated);
+    if (!type) return storeArtifact(bytes, label, mimeType, threadId, database, onCreated);
     const publish = async (client: Pick<PoolClient, 'query'>) => {
       let pageId = page === undefined ? undefined : z.uuid().parse(page).toLowerCase();
       if (pageId) {
@@ -352,6 +364,10 @@ export function createArtifactService(options: {
         )
       ).rows[0];
       if (!latest && page !== undefined) throw new Error('The page is unavailable.');
+      if (latest && storedType(latest.page_type) !== type)
+        throw new Error(
+          `This page is kept under ${storedType(latest.page_type)}, so a ${type} file cannot replace it.`,
+        );
       if (
         !latest &&
         (
@@ -372,8 +388,9 @@ export function createArtifactService(options: {
       return storeArtifact(bytes, label, mimeType, threadId, client, onCreated, false, {
         id: pageId!,
         version: (latest?.page_version ?? 0) + 1,
-        title: pageTitle(bytes, label),
+        title: pageTitle(bytes, label, mimeType === 'text/html'),
         sourcePath: actual,
+        type,
       });
     };
     return database ? publish(database) : transact(publish);
@@ -382,28 +399,47 @@ export function createArtifactService(options: {
     before?: string,
     query?: string,
     limit = 50,
+    type?: PageType,
+    sort: PageSort = 'newest',
   ): Promise<{ pages: Page[]; next?: string }> {
-    const cursor = before?.split('_');
+    const split = before?.lastIndexOf('_') ?? -1;
+    const key =
+      sort === 'title'
+        ? 'lower(COALESCE(page_title,name))'
+        : "date_trunc('milliseconds',created_at)";
+    const direction = sort === 'newest' ? 'DESC' : 'ASC';
     const rows = (
       await options.database.query(
-        `SELECT * FROM (SELECT DISTINCT ON (page_id) * FROM artifacts
+        `SELECT *,${key} AS sort_key FROM (SELECT DISTINCT ON (page_id) * FROM artifacts
            WHERE owner_id=$1 AND page_id IS NOT NULL AND deleting_at IS NULL
            ORDER BY page_id,page_version DESC) latest
-         WHERE ($2::timestamptz IS NULL OR (date_trunc('milliseconds',created_at),page_id)<($2,$5::uuid))
+         WHERE ($2::text IS NULL OR (${key},page_id)${sort === 'newest' ? '<' : '>'}($2::${sort === 'title' ? 'text' : 'timestamptz'},$5::uuid))
            AND ($4::text IS NULL OR strpos(lower(COALESCE(page_title,name)),lower($4))>0)
-         ORDER BY date_trunc('milliseconds',created_at) DESC,page_id DESC LIMIT $3`,
-        [options.ownerId, cursor?.[0] ?? null, limit + 1, query ?? null, cursor?.[1] ?? null],
+           AND ($6::text IS NULL OR COALESCE(page_type,'docs')=$6)
+         ORDER BY ${key} ${direction},page_id ${direction} LIMIT $3`,
+        [
+          options.ownerId,
+          before ? before.slice(0, split) : null,
+          limit + 1,
+          query ?? null,
+          before ? before.slice(split + 1) : null,
+          type ?? null,
+        ],
       )
     ).rows;
     const shown = rows.slice(0, limit);
+    const last = shown.at(-1);
     return {
       pages: shown.map((row) => ({
         id: row.page_id,
         title: row.page_title ?? row.name,
+        type: storedType(row.page_type),
         ...pageVersion(row),
       })),
-      ...(rows.length > limit
-        ? { next: `${pageVersion(shown.at(-1)!).createdAt}_${shown.at(-1)!.page_id}` }
+      ...(rows.length > limit && last
+        ? {
+            next: `${sort === 'title' ? last.sort_key : pageVersion(last).createdAt}_${last.page_id}`,
+          }
         : {}),
     };
   }

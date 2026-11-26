@@ -11,7 +11,7 @@ import { Button } from './ui';
 import { analyticsForCurrentSession } from '../lib/analytics';
 import { attachmentKind } from '../lib/attachment-kind';
 import { ActionMenu, ActionMenuItem, actionMenuTabTarget } from './action-menu';
-import { printDocument } from '../lib/print';
+import { exportFile, exportFormats } from '../lib/convert';
 
 export function reuseFile(
   item: ImagePreview,
@@ -116,7 +116,15 @@ export function FileActions({
     const timer = setTimeout(() => setNotice(''), 5000);
     return () => clearTimeout(timer);
   }, [notice]);
-  const exportable = location === 'drawer' && kind === 'html';
+  const converted = location === 'drawer' && kind !== 'file' ? exportFormats[kind] : undefined;
+  const original =
+    kind === 'html'
+      ? 'HTML file'
+      : kind === 'markdown'
+        ? 'Markdown file'
+        : kind === 'spreadsheet'
+          ? 'Excel file'
+          : `${/\.tsv$/i.test(item.name) ? 'TSV' : 'CSV'} file`;
   if (!ownedArtifactUrl(artifact.url)) return null;
   async function run(action: string, origin?: HTMLElement, capture = analyticsForCurrentSession()) {
     if (action === 'reuse') {
@@ -128,11 +136,13 @@ export function FileActions({
     const id = item.id;
     if (activeId.current === id) setBusy(true);
     try {
-      if (action === 'print') {
-        const response = await fetch(artifact.url, { credentials: 'same-origin' });
-        if (!response.ok) throw new Error(`The file could not be read (${response.status}).`);
-        printDocument(await response.text());
-        capture('artifact_action', { kind, location, action: 'print' });
+      if (action === 'export' && converted && kind !== 'file') {
+        await exportFile(artifact.url, item.name, artifact.mimeType, kind, converted.format);
+        capture('artifact_action', {
+          kind,
+          location,
+          action: converted.format === 'pdf' ? 'print' : 'download_requested',
+        });
       } else if (action === 'copy') {
         await copyImage(artifact.url);
         capture('artifact_action', { kind, location, action: 'copy' });
@@ -193,7 +203,7 @@ export function FileActions({
               <Copy size={15} />
             </Button>
           )}
-          {exportable ? (
+          {converted ? (
             <ActionMenu
               label={`Download ${item.name}`}
               disabled={busy}
@@ -222,15 +232,15 @@ export function FileActions({
                       }
                     }}
                   >
-                    HTML file
+                    {original}
                   </ActionMenuItem>
                   <ActionMenuItem
                     onClick={() => {
                       close();
-                      void run('print');
+                      void run('export');
                     }}
                   >
-                    PDF
+                    {converted.label}
                   </ActionMenuItem>
                 </>
               )}

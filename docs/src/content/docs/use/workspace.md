@@ -115,28 +115,60 @@ When Nod puts a full workspace file path in a link or inline code in a reply, th
 
 Files Nod saves along the way stay private in the workspace until it shares them. Ask for one by name if you want it. Telegram and the WhatsApp QR connection receive shared files up to 50 MB each. With the WhatsApp Cloud API, open Nod to get files. See [Telegram and WhatsApp](/use/channels/).
 
-## Find a page again
+## Find a file again
 
-Every HTML page Nod makes is kept on **Pages**, outside the conversation it came from. Each one shows a small preview, its title, its version and when it was last saved. Select one to open it in the panel. Pages are listed with the most recently changed first. Type in **Search** to show only the pages whose title contains those words.
+Every file Nod shares is kept on **Pages**, outside the conversation it came from: pages, documents, presentations, spreadsheets, images and other files. Each one shows a small preview, its title, its type, its version and when it was last saved. Select one to open it in the panel. Type in **Search** to show only the ones whose title contains those words.
 
-When you ask Nod to change a page, it saves a new version of the same page instead of a new file. Use the picker in the panel's title to open an earlier version. To ask for a change from **Pages**, select **Use in message** in the panel: Nod opens the chat with that page attached.
+The buttons next to the search box change how the files are shown. Nod remembers both choices in this browser.
+
+| Button           | What it does                                                                     |
+| ---------------- | -------------------------------------------------------------------------------- |
+| **Sort**         | Orders files by newest first, oldest first or title. Newest first is the default |
+| **Show as list** | Switches between a grid of previews and a compact list                           |
+
+Select a type under the search box to show only that type, and select it again to show everything.
+
+| Type       | What it holds                                                     |
+| ---------- | ----------------------------------------------------------------- |
+| **Docs**   | HTML pages, PDF, Word, Markdown, text and code files              |
+| **Slides** | PowerPoint presentations                                          |
+| **Data**   | Excel and CSV files                                               |
+| **Images** | Pictures and charts                                               |
+| **Files**  | Everything else, such as archives, audio, video and n8n workflows |
+
+Contact cards and locations Nod sends to a chat app are not kept.
+
+When you ask Nod to change a file it made, it saves a new version of the same entry instead of a new one. Nod matches a file to its earlier version by its name within the conversation, so two different results need different names. Use the picker in the panel's title to open an earlier version. To ask for a change from **Pages**, select **Use in message** in the panel: Nod opens the chat with that page attached.
 
 | What you see  | What it means                                     |
 | ------------- | ------------------------------------------------- |
 | **Version 3** | The page has been changed twice since Nod made it |
 | The date      | When the latest version was saved                 |
 
-### Export a page
+### Download in another format
 
-Select **Download** in the panel's toolbar and choose **HTML file** or **PDF**.
+Select **Download** in the panel's toolbar. Some files offer a second format next to the original:
 
-**PDF** opens your system's print window. Choose **Save as PDF** there. The page prints in the light theme. Nod prints a page in a separate locked frame where the page's own scripts do not run, so a printed page shows what is on it before any script changes it.
+| File                              | Formats                        |
+| --------------------------------- | ------------------------------ |
+| HTML page                         | **HTML file** or **PDF**       |
+| Markdown                          | **Markdown file** or **PDF**   |
+| CSV or TSV                        | The original or **Excel file** |
+| Excel or OpenDocument spreadsheet | **Excel file** or **CSV file** |
+
+Other files download as they are. Files over 4 MB download only in their original format.
+
+**PDF** opens your system's print window. Choose **Save as PDF** there. The file prints in the light theme. Nod prints a page in a separate locked frame where the page's own scripts do not run, so a printed page shows what is on it before any script changes it. A Markdown file prints without its images.
+
+**Excel file** keeps every cell as written. Plain numbers become numbers; dates, percentages and codes with leading zeros stay as text. **CSV file** holds the first sheet only.
+
+The second format is made in your browser and isn't saved in Nod.
 
 Pages are private to you. Nod has no link that another person can open. To give someone a page, download it and send the file. A page is one file that needs no internet connection, so it opens the same way on their computer.
 
-### Delete a page
+### Delete a file
 
-A page keeps every version until you delete it. Select the bin on a page in **Pages**, then **Delete**. This removes every version and also takes the page out of the chat it was made in. It cannot be undone. The file Nod wrote in its workspace stays there, so Nod can share it again if you ask. [Remove all data](/trust/privacy/#delete-your-data) deletes every page.
+A file keeps every version until you delete it. Select the bin on its card in **Pages**, then **Delete**. This removes every version and also takes the file out of the chat it was made in. It cannot be undone. The file Nod wrote in its workspace stays there, so Nod can share it again if you ask. [Remove all data](/trust/privacy/#delete-your-data) deletes every page.
 
 ## One workspace for all tasks
 

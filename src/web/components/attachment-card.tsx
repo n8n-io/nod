@@ -25,7 +25,7 @@ type LoadPdf = typeof loadPreviewPdf;
 const AttachmentData = lazy(() => import('./attachment-data'));
 type DataKind = ComponentProps<typeof AttachmentData>['kind'];
 const ignoreDetail = () => {};
-const thumbnailKinds = new Set([
+export const thumbnailKinds = new Set([
   'markdown',
   'text',
   'csv',
@@ -198,10 +198,10 @@ function DocumentCard({
   const [pages, setPages] = useState<number | null>(null);
   const [thumbnail, setThumbnail] = useState(kind === 'pdf');
   const dataThumbnail = thumbnailKinds.has(kind ?? '');
-  const wide = Boolean(item.page);
+  const wide = Boolean(item.page) && kind === 'html';
   const meta = [
-    item.page ? 'Page' : fileType(item.name),
-    item.page ? `Version ${item.page.version}` : '',
+    wide ? 'Page' : fileType(item.name),
+    item.page && (wide || item.page.version > 1) ? `Version ${item.page.version}` : '',
     pages ? `${pages} ${pages === 1 ? 'page' : 'pages'}` : '',
     fileSize(item.size),
   ]
@@ -229,7 +229,11 @@ function DocumentCard({
         aria-current={selected || undefined}
         onClick={(event) => onOpen({ element: event.currentTarget, keyboard: event.detail === 0 })}
       >
-        <CardDetails name={item.page?.title ?? item.name} mimeType={mimeType} meta={meta} />
+        <CardDetails
+          name={wide ? (item.page?.title ?? item.name) : item.name}
+          mimeType={mimeType}
+          meta={meta}
+        />
       </button>
       <FileActions item={item} />
     </div>

@@ -3,6 +3,7 @@ import type { TaskSuggestions } from './onboarding';
 import type { TrustBecause } from './trust';
 import type { AnswerChoices } from './answer-choices';
 import type { ModelIssue, ModelSelection, WorkKind } from './models';
+import type { PageType } from './attachment-kind';
 export type TurnStatus = 'queued' | 'running' | 'succeeded' | 'waiting' | 'failed' | 'cancelled';
 export interface Artifact {
   id: string;
@@ -11,7 +12,7 @@ export interface Artifact {
   size: number;
   url: string;
   source?: 'browser_screenshot' | 'sticker' | 'sticker-preview' | 'location' | 'contact';
-  page?: { id: string; version: number; title: string };
+  page?: { id: string; version: number; title: string; type: PageType };
 }
 export interface PageVersion {
   version: number;
@@ -21,6 +22,7 @@ export interface PageVersion {
 export interface Page extends PageVersion {
   id: string;
   title: string;
+  type: PageType;
 }
 export type MessageReaction = string;
 export type AgentReactionResult =

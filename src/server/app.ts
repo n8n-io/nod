@@ -27,6 +27,7 @@ import {
   port,
 } from './config.ts';
 import { events, type ServerEvent } from './events.ts';
+import { pageSorts, pageTypes } from '../shared/attachment-kind.ts';
 import { artifactView, localArtifacts, type ArtifactService } from './artifacts.ts';
 import {
   activeHandoffSql,
@@ -706,22 +707,30 @@ export async function createApp(dependencies: AppDependencies = {}) {
       .parse(request.body);
     return artifacts.renewUploads(ids);
   });
-  app.get<{ Querystring: { before?: string; q?: string } }>('/api/pages', async (request) =>
-    artifacts.listPages(
-      z
-        .string()
-        .refine((value) => {
-          const [time, id, ...rest] = value.split('_');
-          return (
-            !rest.length &&
-            z.iso.datetime().safeParse(time).success &&
-            z.uuid().safeParse(id).success
-          );
-        })
-        .optional()
-        .parse(request.query.before),
-      z.string().trim().min(1).max(200).optional().parse(request.query.q),
-    ),
+  app.get<{ Querystring: { before?: string; q?: string; type?: string; sort?: string } }>(
+    '/api/pages',
+    (request) => {
+      const sort = z.enum(pageSorts).optional().parse(request.query.sort) ?? 'newest';
+      return artifacts.listPages(
+        z
+          .string()
+          .max(300)
+          .refine((value) => {
+            const split = value.lastIndexOf('_');
+            return (
+              split >= 0 &&
+              z.uuid().safeParse(value.slice(split + 1)).success &&
+              (sort === 'title' || z.iso.datetime().safeParse(value.slice(0, split)).success)
+            );
+          })
+          .optional()
+          .parse(request.query.before),
+        z.string().trim().min(1).max(200).optional().parse(request.query.q),
+        50,
+        z.enum(pageTypes).optional().parse(request.query.type),
+        sort,
+      );
+    },
   );
   app.get<{ Params: { id: string } }>('/api/pages/:id', async (request, reply) => {
     const versions = await artifacts.readPage(request.params.id);

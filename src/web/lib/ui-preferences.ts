@@ -2,6 +2,8 @@ type UiPreference =
   | 'nod.sidebar'
   | 'nod.chat-layout'
   | 'nod.artifact-width'
+  | 'nod.pages-view'
+  | 'nod.pages-sort'
   | `nod.feedback.discovery.${string}`
   | `nod.feedback.report.${string}`;
 

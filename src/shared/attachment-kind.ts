@@ -97,3 +97,19 @@ export function attachmentKind(mimeType: string, name = ''): AttachmentKind | nu
     ? declaredKind
     : (extensionKind ?? declaredKind);
 }
+
+export const pageTypes = ['docs', 'slides', 'data', 'images', 'files'] as const;
+export type PageType = (typeof pageTypes)[number];
+export const pageSorts = ['newest', 'oldest', 'title'] as const;
+export type PageSort = (typeof pageSorts)[number];
+
+export function pageType(mimeType: string, name = ''): PageType | null {
+  const type = mimeType.split(';', 1)[0].trim().toLowerCase();
+  if (type === 'text/vcard' || /\.vcf$/i.test(name) || /^location\.json$/i.test(name)) return null;
+  const kind = attachmentKind(mimeType, name);
+  if (kind === 'image' || kind === 'sticker') return 'images';
+  if (kind === 'presentation') return 'slides';
+  if (kind === 'csv' || kind === 'spreadsheet') return 'data';
+  if (kind && ['html', 'pdf', 'markdown', 'document', 'text'].includes(kind)) return 'docs';
+  return 'files';
+}
