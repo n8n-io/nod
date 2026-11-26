@@ -27,6 +27,7 @@ import { runProcess, serviceEnvironment } from '../process.ts';
 import { createBrowserProxy, browserUrl } from './network.ts';
 import { credentialFields } from './credentials.ts';
 import { openDevtools, type BoundSignInControl } from './devtools.ts';
+import { watchBrowser } from './browser-watch.ts';
 import {
   createScreenStore,
   daemonDeadline,
@@ -38,6 +39,7 @@ import {
 import {
   completedDownloads,
   createDownloadCapture,
+  nextDownload,
   decodeDownloadChunk,
   downloadFile,
   downloadName,
@@ -60,7 +62,9 @@ interface BrowserState {
   privateDocument?: string;
   sealedDocument?: string;
   uploads: Set<string>;
+  root?: string;
   targetId?: string;
+  seenTabs: Set<string>;
   started: boolean;
   busy: number;
   closed: boolean;
@@ -150,7 +154,7 @@ export function redactBrowserText(text: string, secrets: Iterable<string>): stri
 }
 
 const browserTabList = z.array(
-  z.object({ tabId: z.string(), active: z.boolean(), url: z.string() }),
+  z.object({ tabId: z.string(), targetId: z.string(), active: z.boolean(), url: z.string() }),
 );
 const browserPoint = z
   .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
@@ -249,11 +253,14 @@ export function createAgentBrowserComputer(options: {
   const runtimeRoot = resolve(options.dataRoot, 'runtime');
   const ownerSession = 'owner';
   const ownerProfile = resolve(runtimeRoot, 'profiles', ownerSession);
+  const incomingDownloads = resolve(runtimeRoot, 'incoming-downloads');
   const owner: {
     proxy?: ReturnType<typeof createBrowserProxy>;
     cdpUrl?: string;
     launching?: Promise<string>;
     replaced?: boolean;
+    watch?: Awaited<ReturnType<typeof watchBrowser>>;
+    socketDir?: string;
   } = {};
   const screens = createScreenStore(runtimeRoot);
   const screenStatuses = new Map<string, ReturnType<NonNullable<Computer['screenStatus']>>>();
@@ -353,6 +360,7 @@ export function createAgentBrowserComputer(options: {
         refs: new Map(),
         refVersions: new Map(),
         uploads: new Set(),
+        seenTabs: new Set(),
         started: false,
         busy: 0,
         closed: false,
@@ -405,6 +413,8 @@ export function createAgentBrowserComputer(options: {
 
   async function shutDown(state: BrowserState) {
     const socket = state.socket ?? (await daemonSocket(state).catch(() => undefined));
+    for (const tab of sessionTabs(state))
+      if (tab !== state.targetId) await closeTab(tab).catch(() => {});
     try {
       await command(state, { action: 'tab_close' }, { timeoutMs: 5000 });
       await command(state, { action: 'close' }, { timeoutMs: 5000 });
@@ -412,7 +422,37 @@ export function createAgentBrowserComputer(options: {
       await kill(state);
     }
     if (socket) await rm(socket.replace(/\.sock$/, '.target'), { force: true });
+    forgetTabs(state);
+  }
+
+  function sessionTabs(state: BrowserState) {
+    if (state.root && owner.watch?.open()) return owner.watch.tabs(state.root);
+    return state.targetId ? [state.targetId] : [];
+  }
+
+  function closeTab(tab: string) {
+    return owner.watch?.open()
+      ? owner.watch.closeTab(tab)
+      : ownerCommand(['tab', 'close', tab]).then(() => ({}));
+  }
+
+  function forgetTabs(state: BrowserState) {
+    delete state.root;
     delete state.targetId;
+    state.seenTabs.clear();
+  }
+
+  async function followTabs(state: BrowserState, signal?: AbortSignal) {
+    if (!state.socket || !state.root || !owner.watch?.open()) return;
+    const tabs = owner.watch.tabs(state.root);
+    const opened = tabs.filter((tab) => !state.seenTabs.has(tab));
+    for (const tab of tabs) state.seenTabs.add(tab);
+    const next =
+      opened.at(-1) ??
+      (state.targetId && tabs.includes(state.targetId) ? state.targetId : tabs.at(-1));
+    if (!next || next === state.targetId) return;
+    await requestDaemon(state.socket, { action: 'tab_switch', tabId: next }, signal);
+    state.targetId = next;
   }
 
   async function kill(state: BrowserState) {
@@ -448,7 +488,8 @@ export function createAgentBrowserComputer(options: {
       await delay(50);
     await Promise.all([socket, pidFile].map((path) => path && rm(path, { force: true })));
     delete state.socket;
-    if (state.targetId) await ownerCommand(['tab', 'close', state.targetId]).catch(() => {});
+    for (const tab of sessionTabs(state)) await closeTab(tab).catch(() => {});
+    forgetTabs(state);
   }
 
   async function ownerCommand(args: string[], signal?: AbortSignal) {
@@ -480,7 +521,10 @@ export function createAgentBrowserComputer(options: {
     owner.launching ??= (async () => {
       if (owner.cdpUrl) {
         const live = await ownerCommand(['get', 'cdp-url'], signal).catch(() => undefined);
-        if (live?.cdpUrl === owner.cdpUrl) return owner.cdpUrl;
+        if (live?.cdpUrl === owner.cdpUrl) {
+          if (!owner.watch?.open()) await watchOwner(owner.cdpUrl).catch(() => {});
+          return owner.cdpUrl;
+        }
         delete owner.cdpUrl;
       }
       return launchOwner(saved, signal);
@@ -510,6 +554,7 @@ export function createAgentBrowserComputer(options: {
       const socketDir = z
         .object({ data: z.object({ socketDir: z.string() }) })
         .safeParse(JSON.parse(info?.stdout.trim() || '{}')).data?.data.socketDir;
+      owner.socketDir = socketDir;
       if (socketDir)
         for (const file of await readdir(socketDir).catch(() => []))
           if (file.endsWith('.target')) await rm(resolve(socketDir, file), { force: true });
@@ -544,6 +589,8 @@ export function createAgentBrowserComputer(options: {
         proxyUrl,
         '--proxy-bypass',
         '<-loopback>',
+        '--download-path',
+        incomingDownloads,
         '--args',
         '--disable-quic,--force-webrtc-ip-handling-policy=disable_non_proxied_udp,--disable-background-networking,--disable-crash-reporter,--disable-breakpad,--disable-gpu-rasterization,--enable-unsafe-swiftshader,--disable-blink-features=AutomationControlled,--disable-features=BackForwardCache,--disable-background-timer-throttling,--disable-renderer-backgrounding,--disable-backgrounding-occluded-windows' +
           `,--disk-cache-dir=${cacheRoot},--disk-cache-size=67108864` +
@@ -580,8 +627,42 @@ export function createAgentBrowserComputer(options: {
     const { cdpUrl } = await ownerCommand(['get', 'cdp-url'], signal);
     if (typeof cdpUrl !== 'string' || !cdpUrl.startsWith('ws://127.0.0.1:'))
       throw new BrowserActionError('browser_start_failed');
+    await watchOwner(cdpUrl).catch(() => {});
     owner.cdpUrl = cdpUrl;
     return cdpUrl;
+  }
+
+  async function watchOwner(cdpUrl: string) {
+    owner.watch?.close();
+    owner.watch = await watchBrowser({
+      cdpUrl,
+      incoming: incomingDownloads,
+      initScript: withoutPasskeys,
+      sessions: () =>
+        [...browsers.values()].flatMap((state) =>
+          state.root
+            ? [{ root: state.root, directory: resolve(runtimeRoot, 'downloads', state.id) }]
+            : [],
+        ),
+    });
+  }
+
+  async function downloadChannel() {
+    if (owner.watch?.open()) return;
+    if (!owner.cdpUrl) throw new Error('Open the file website first.');
+    await watchOwner(owner.cdpUrl);
+  }
+
+  async function openWindow(state: BrowserState) {
+    if (!owner.socketDir) return;
+    const window = await owner.watch?.newWindow().catch(() => undefined);
+    if (!window) return;
+    await writeFile(
+      resolve(owner.socketDir, `${browserSessionId(state.id)}.target`),
+      JSON.stringify({ targetId: window, url: 'about:blank', pinned: true }),
+      { mode: 0o600 },
+    );
+    return window;
   }
 
   async function closeInterruptedBrowser(state: BrowserState) {
@@ -620,6 +701,8 @@ export function createAgentBrowserComputer(options: {
   ): Promise<Record<string, unknown>> {
     options.signal?.throwIfAborted();
     const action = String(request.action);
+    if (state.socket && !['tab_switch', 'tab_close', 'close'].includes(action))
+      await followTabs(state, options.signal);
     if (state.socket) {
       const result = await drainInterruptedCommand(state, action, () =>
         requestDaemon(state.socket!, request, options.signal, options.timeoutMs, options.maxBytes),
@@ -638,37 +721,33 @@ export function createAgentBrowserComputer(options: {
     const { config, initScript } = await browserFiles();
     const cdpUrl = await ownerBrowser(state.saved, options.signal);
     const timeZone = browserTimeZone(state.saved.timeZone);
+    const attach = [
+      '--config',
+      config,
+      '--namespace',
+      namespace,
+      '--session',
+      browserSessionId(state.id),
+      '--cdp',
+      cdpUrl,
+      '--pin-tab',
+      '--init-script',
+      initScript,
+      '--json',
+      '--idle-timeout',
+      '86400s',
+    ];
+    const environment = {
+      cwd: runtimeRoot,
+      env: { ...serviceEnvironment(), ...(timeZone && { TZ: timeZone }) },
+      signal: options.signal,
+    };
+    const window = action === 'close' ? undefined : await openWindow(state);
     const result = await drainInterruptedCommand(state, action, () =>
       run(
         executable,
-        [
-          '--config',
-          config,
-          '--namespace',
-          namespace,
-          '--session',
-          browserSessionId(state.id),
-          '--cdp',
-          cdpUrl,
-          '--pin-tab',
-          '--init-script',
-          initScript,
-          '--json',
-          '--download-path',
-          resolve(runtimeRoot, 'downloads', state.id),
-          '--idle-timeout',
-          '86400s',
-          ...(action === 'close' ? ['close'] : ['open', String(request.url)]),
-        ],
-        {
-          cwd: runtimeRoot,
-          env: {
-            ...serviceEnvironment(),
-            ...(timeZone && { TZ: timeZone }),
-          },
-          signal: options.signal,
-          timeoutMs: options.timeoutMs ?? daemonDeadline(request) + 30_000,
-        },
+        [...attach, ...(action === 'close' ? ['close'] : ['open', String(request.url)])],
+        { ...environment, timeoutMs: options.timeoutMs ?? daemonDeadline(request) + 30_000 },
       ),
     );
     let response: { success?: boolean; data?: Record<string, unknown>; error?: unknown };
@@ -703,7 +782,11 @@ export function createAgentBrowserComputer(options: {
           )
         );
       });
-      if (typeof response.data?.targetId === 'string') state.targetId = response.data.targetId;
+      if (typeof response.data?.targetId === 'string') {
+        state.root = state.targetId = response.data.targetId;
+        state.seenTabs = new Set([state.root]);
+      }
+      if (window && window !== state.root) await closeTab(window).catch(() => {});
       state.pageSize = undefined;
       if (viewport)
         await command(
@@ -1051,7 +1134,10 @@ export function createAgentBrowserComputer(options: {
           throw new BrowserActionError('browser_card_paused');
         await onTarget(state, input, signal);
         if (input.action === 'tab_list') {
-          const tabs = await browserTabs(state, signal);
+          const own = sessionTabs(state);
+          const tabs = (await browserTabs(state, signal)).filter((tab) =>
+            own.includes(tab.targetId),
+          );
           return {
             text: tabs
               .map(
@@ -1063,7 +1149,15 @@ export function createAgentBrowserComputer(options: {
           };
         }
         if (input.action === 'tab_switch') {
-          await command(state, { action: 'tab_switch', tabId: input.tabId }, { signal });
+          const own = sessionTabs(state);
+          const tab = (await browserTabs(state, signal)).find(
+            (entry) =>
+              own.includes(entry.targetId) &&
+              (entry.tabId === input.tabId || entry.targetId === input.tabId),
+          );
+          if (!tab) throw new Error('Choose a tab from tab_list.');
+          await command(state, { action: 'tab_switch', tabId: tab.targetId }, { signal });
+          state.targetId = tab.targetId;
         }
         if (input.action === 'click') {
           if (gesture) await movePointer(state, gesture, signal);
@@ -1327,14 +1421,12 @@ export function createAgentBrowserComputer(options: {
         const type = await evaluate(state, 'document.contentType', signal);
         if (type === 'application/pdf') url = current;
         else {
-          let files = await completedDownloads(directory);
-          if (!files.length) {
-            await command(state, { action: 'waitfordownload' }, { signal });
-            files = await completedDownloads(directory);
-          }
-          if (!files.length) throw new Error('Choose the specific download link or URL.');
-          const result = await readDownload(directory, files[0]!, input.name);
-          await rm(resolve(directory, files[0]!), { force: true });
+          await downloadChannel();
+          const file =
+            (await completedDownloads(directory))[0] ??
+            (await nextDownload(directory, new Set(), signal));
+          const result = await readDownload(directory, file, input.name);
+          await rm(resolve(directory, file), { force: true });
           signal?.throwIfAborted();
           return result;
         }
@@ -1365,6 +1457,7 @@ export function createAgentBrowserComputer(options: {
             await evaluate(state, `delete window[${JSON.stringify(key)}]`).catch(() => {});
         }
       }
+      await downloadChannel();
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const capture = await createDownloadCapture(directory);
       const anchor = target ? undefined : `nod-download-${randomUUID()}`;
@@ -1382,17 +1475,8 @@ export function createAgentBrowserComputer(options: {
           })()`,
             signal,
           );
-        await command(
-          state,
-          {
-            action: 'download',
-            selector: target ?? `#${anchor}`,
-            path: resolve(directory, capture.file),
-          },
-          { signal },
-        );
-        signal?.throwIfAborted();
-        const result = await readDownload(directory, capture.file, input.name);
+        await command(state, { action: 'click', selector: target ?? `#${anchor}` }, { signal });
+        const result = await readDownload(directory, await capture.next(signal), input.name);
         signal?.throwIfAborted();
         return result;
       } finally {
@@ -2372,6 +2456,7 @@ export function createAgentBrowserComputer(options: {
     dispose: async () => {
       disposed = true;
       const results = await Promise.allSettled([...browsers.keys()].map((id) => closeBrowser(id)));
+      owner.watch?.close();
       if (owner.cdpUrl) await ownerCommand(['close']).catch(() => {});
       await owner.proxy?.dispose();
       if (results.some((result) => result.status === 'rejected'))

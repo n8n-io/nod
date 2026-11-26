@@ -2737,6 +2737,151 @@ describe('native browser controls', { concurrency: 3 }, () => {
   );
 
   test(
+    'native sessions share one signed-in browser and keep their own tabs through popups, closes and restarts',
+    { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 180_000 },
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'nod-one-browser-native-'));
+      const server = createHttpServer((request, response) => {
+        const signedIn = /(?:^|; )account=owner(?:;|$)/.test(request.headers.cookie ?? '');
+        response.setHeader('content-type', 'text/html');
+        if (request.url === '/sign-in') {
+          response.setHeader('set-cookie', 'account=owner; Path=/; Max-Age=3600');
+          return response.end('<h1>Welcome</h1>');
+        }
+        if (request.url === '/popup')
+          return response.end(
+            '<h1>Popup page</h1><button id="done" onclick="window.close()">Done</button>',
+          );
+        response.end(
+          `<h1>${request.url?.slice(1)} ${signedIn ? 'signed in' : 'signed out'}</h1>` +
+            '<a id="popup" href="/popup" target="_blank">Open popup</a><input id="field">',
+        );
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      assert.ok(address && typeof address !== 'string');
+      const origin = `http://127.0.0.1:${address.port}`;
+      const sockets = new Set<string>();
+      const start = () =>
+        createAgentBrowserComputer({
+          dataRoot: directory,
+          browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+          privateNetwork: true,
+          headless: true,
+          daemonCommand: async (path, command, signal, timeoutMs) => {
+            sockets.add(path);
+            return existingDaemonCommand(path, command, signal, timeoutMs);
+          },
+        });
+      let computer = start();
+      const page = async (id: string) => {
+        const { text, url } = await computer.act(id, { action: 'snapshot' });
+        return { url, text };
+      };
+      const browserPages = async () =>
+        (
+          (
+            await existingDaemonCommand(
+              [...sockets].find((path) => path.endsWith(`${browserSessionId('a')}.sock`))!,
+              { action: 'tab_list' },
+            )
+          ).tabs as Array<{
+            url: string;
+          }>
+        ).map((tab) => tab.url);
+      const ownTabs = async (id: string) =>
+        [...(await computer.act(id, { action: 'tab_list' })).text.matchAll(/ (t\d+): /g)].map(
+          (match) => match[1]!,
+        );
+      const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
+      const frame = async (id: string) => {
+        const controller = new AbortController();
+        try {
+          for await (const value of computer.view!(id, controller.signal)) return value;
+        } finally {
+          controller.abort();
+        }
+      };
+      const passkey = async (id: string) =>
+        (
+          await computer.act(id, {
+            action: 'evaluate',
+            script:
+              "navigator.credentials.get({ publicKey: { challenge: new Uint8Array(16) } }).then(() => 'allowed', (error) => error.message)",
+          })
+        ).text;
+      const waitFor = async (check: () => Promise<boolean>) => {
+        for (let attempt = 0; attempt < 50; attempt++) {
+          if (await check().catch(() => false)) return;
+          await delay(200);
+        }
+        assert.fail('The browser did not reach the expected state.');
+      };
+      try {
+        await computer.act('a', { action: 'open', url: `${origin}/sign-in` });
+        for (const id of ids) await computer.act(id, { action: 'open', url: `${origin}/${id}` });
+        for (const id of ids) assert.match((await page(id)).text, new RegExp(`${id} signed in`));
+        const opened = await browserPages();
+        assert.equal(opened.filter((url) => url.startsWith(origin)).length, ids.length);
+        assert.ok(opened.filter((url) => url === 'about:blank').length <= 1);
+        assert.match(await passkey('c'), /Passkeys are not available in this browser/);
+
+        await Promise.all(
+          ids.map((id) => computer.act(id, { action: 'fill', selector: '#field', text: id })),
+        );
+        for (const id of ids)
+          assert.equal(
+            (
+              await computer.act(id, {
+                action: 'evaluate',
+                script: 'document.querySelector("#field").value',
+              })
+            ).text
+              .split('\n')
+              .at(-1),
+            JSON.stringify(id),
+          );
+
+        const opener = await frame('a');
+        await computer.act('a', { action: 'click', selector: '#popup' });
+        await waitFor(async () => (await page('a')).url === `${origin}/popup`);
+        assert.notDeepEqual(await frame('a'), opener);
+        assert.match(await passkey('a'), /Passkeys are not available in this browser/);
+        assert.equal((await page('b')).url, `${origin}/b`);
+        const tabs = await ownTabs('a');
+        assert.equal(tabs.length, 2);
+        assert.doesNotMatch((await computer.act('a', { action: 'tab_list' })).text, /\/b\b/);
+        for (const tabId of ['t1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9'])
+          if (!tabs.includes(tabId))
+            await assert.rejects(computer.act('a', { action: 'tab_switch', tabId }), /tab_list/);
+        await computer.act('a', { action: 'click', selector: '#done' }).catch(() => {});
+        await waitFor(async () => (await page('a')).url === `${origin}/a`);
+        assert.deepEqual(await ownTabs('a'), [tabs[0]]);
+
+        await computer.act('b', { action: 'click', selector: '#popup' });
+        await waitFor(async () => (await page('b')).url === `${origin}/popup`);
+        await computer.close('b');
+        await waitFor(async () => !(await browserPages()).some((url) => /\/(b|popup)$/.test(url)));
+        for (const id of ['a', 'c', 'd', 'e', 'f'])
+          assert.match((await page(id)).text, new RegExp(`${id} signed in`));
+        await computer.act('b', { action: 'open', url: `${origin}/b-again` });
+        assert.match((await page('b')).text, /b-again signed in/);
+
+        await computer.dispose();
+        computer = start();
+        for (const id of ['a', 'c'])
+          assert.match((await page(id)).text, new RegExp(`${id} signed in`));
+        assert.equal((await page('c')).url, `${origin}/c`);
+      } finally {
+        await computer.dispose().catch(() => {});
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test(
     'native visual browser actions solve a canvas interaction inside nested cross-origin frames',
     { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
     async () => {
@@ -4913,7 +5058,7 @@ test('a checked browser step is described from its snapshot and runs only on tha
       (error) => error instanceof BrowserActionError && error.code === 'browser_target_changed',
     );
     assert.equal(
-      commands.some((command) => command.action === 'download'),
+      commands.some((command) => command.action === 'click'),
       false,
     );
     const nextTarget = await computer.currentPage('checked', next);
