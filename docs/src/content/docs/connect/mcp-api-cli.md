@@ -19,6 +19,8 @@ If you ask Nod in chat, it sends a link to a private setup page in Nod, and you 
 
 If sign-in is cancelled or fails, select **Try again** in the connection dialog. Select **Start again** if you closed the sign-in window. Finish in the newest window, then dismiss the confirmed connection with **Done**.
 
+Some services, such as Fastmail, only accept a sign-in that returns to the computer it started on. Nod running inside the desktop app already does. When a service refuses the address of Nod on a server, Nod returns to `http://127.0.0.1/api/apps/callback` instead, which the browser can't reach after you sign in. Nod then waits for you to select **Open sign-in window**, and the dialog says what to do: after you sign in, replace `http://127.0.0.1` in the address bar with your Nod address, such as `https://nod.example.com`, keep the rest of the address and open it. Do it right away, because the sign-in expires.
+
 Nod can use every tool these servers offer, so it can read and change pages, issues, projects and files. Each change goes through the same [trust check](/trust/approvals/) as any app action. If Nod can't refresh a sign-in because it expired or was revoked, **Apps** shows **Sign-in required** with **Reconnect** from then on.
 
 ## n8n

@@ -16133,3 +16133,49 @@ test(
     assert.equal((await f.service.activitySources()).length, 0);
   },
 );
+
+test('MCP sign-in registers a loopback callback when the service refuses the public one', async () => {
+  const registered: string[] = [];
+  const oauth = createDiscoveredOAuth(
+    async (input, init) => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      if (url.pathname.startsWith('/.well-known/')) return new Response(null, { status: 404 });
+      assert.equal(url.pathname, '/register');
+      const [redirect] = JSON.parse(await request.text()).redirect_uris;
+      registered.push(redirect);
+      if (new URL(redirect).hostname !== '127.0.0.1')
+        return Response.json(
+          { error: 'invalid_redirect_uri', error_description: 'redirect_uri not a valid host' },
+          { status: 400 },
+        );
+      return Response.json(
+        { client_id: 'synthetic-loopback-client', redirect_uris: [redirect] },
+        { status: 201 },
+      );
+    },
+    async (url) => url,
+  );
+  const started = await oauth.begin(
+    'https://mail.synthetic-nod.dev/mcp',
+    'https://nod.synthetic-nod.dev/api/apps/callback',
+    'synthetic-state',
+  );
+  assert.deepEqual(registered, [
+    'https://nod.synthetic-nod.dev/api/apps/callback',
+    'http://127.0.0.1/api/apps/callback',
+  ]);
+  assert.equal(started.saved.redirectUri, 'http://127.0.0.1/api/apps/callback');
+  assert.equal(
+    new URL(started.url).searchParams.get('redirect_uri'),
+    'http://127.0.0.1/api/apps/callback',
+  );
+  await assert.rejects(
+    createDiscoveredOAuth(async (input) =>
+      new URL(String(input)).pathname.startsWith('/.well-known/')
+        ? new Response(null, { status: 404 })
+        : Response.json({ error: 'invalid_redirect_uri' }, { status: 400 }),
+    ).begin('https://mail.synthetic-nod.dev/mcp', 'http://127.0.0.1:4310/api/apps/callback', 's'),
+    /invalid_redirect_uri/,
+  );
+});

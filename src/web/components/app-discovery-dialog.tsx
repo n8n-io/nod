@@ -4,7 +4,7 @@ import { ExternalLink } from './icons';
 import { ServiceLogo } from './service-logo';
 import { AppConnectionDialog, type AppSignIn } from './app-connection-dialog';
 import { api, ApiError, errorMessage } from '../lib/api';
-import { connectionUrl } from '../lib/connection-url';
+import { connectionUrl, returnsToLoopback } from '../lib/connection-url';
 import { appConnectionAnalytics, takeAppConnectionAnalytics } from '../lib/analytics';
 import { desktopLinksAvailable, desktopRuntimeAvailable, openConnection } from '../lib/desktop';
 import {
@@ -293,7 +293,8 @@ export function AppDiscoveryDialog({
       };
       show(next);
       let opened = false;
-      if (external) {
+      if (returnsToLoopback(url)) popup?.close();
+      else if (external) {
         await openConnection(url);
         opened = true;
       } else if (popup && !popup.closed) {
@@ -373,7 +374,8 @@ export function AppDiscoveryDialog({
       const next = { ...identity(discovery), url, attempt: result.attempt, opened: false };
       show(next);
       let opened = false;
-      if (external) {
+      if (returnsToLoopback(url)) popup?.close();
+      else if (external) {
         await openConnection(url);
         opened = true;
       } else if (popup && !popup.closed) {

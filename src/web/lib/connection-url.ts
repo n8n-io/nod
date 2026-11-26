@@ -26,6 +26,15 @@ export function isConnectionBridge(url: URL) {
   );
 }
 
+export function returnsToLoopback(url: string) {
+  if (['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname)) return false;
+  try {
+    return new URL(new URL(url).searchParams.get('redirect_uri') ?? '').hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
+
 export function connectionUrl(value: string, origin: string, instance?: string) {
   const url = new URL(value, origin);
   if (

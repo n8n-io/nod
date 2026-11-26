@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ComponentProps } from 'react';
+import { returnsToLoopback } from '../lib/connection-url';
 import { ExternalLink } from './icons';
 import { NodGlyph } from './motion';
 import { ServiceLogo } from './service-logo';
@@ -70,7 +71,9 @@ export function AppConnectionDialog({
               ? 'Finish connecting in the sign-in window.'
               : opening || !signIn?.url
                 ? 'Your browser will open when sign-in is ready.'
-                : 'Review what Nod can access in your browser.');
+                : returnsToLoopback(signIn.url)
+                  ? `After you sign in, the browser opens a 127.0.0.1 page that won’t load. Replace http://127.0.0.1 in its address with ${location.origin} and open it.`
+                  : 'Review what Nod can access in your browser.');
   return (
     <Dialog
       open={Boolean(
