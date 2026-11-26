@@ -472,7 +472,7 @@ async function uploadDraft({ repository, tag, title, notes, marker, files }) {
     return found;
   };
   let release = draftFor(releaseByTag(repository, tag));
-  const id = release?.id;
+  let id = release?.id;
   const target =
     release || repository === sourceRepository ? releaseTarget(repository, release) : undefined;
   const notesPath = join(process.env.RUNNER_TEMP || root, `nod-${tag}-notes.md`);
@@ -504,6 +504,7 @@ async function uploadDraft({ repository, tag, title, notes, marker, files }) {
           throw error;
         run('sleep', [String(githubRetrySeconds[attempt])]);
         release = draftFor(releaseByTag(repository, tag));
+        id = release?.id;
       }
     }
   } else
