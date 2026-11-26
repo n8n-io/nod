@@ -1784,13 +1784,7 @@ test('all four checked bundles publish together as one regular Nod release', asy
       (
         await promisify(execFile)(process.execPath, ['desktop/scripts/runtime-inputs.mjs'], {
           cwd: f.root,
-          env: {
-            ...process.env,
-            NOD_DESKTOP_TARGET: 'linux-x64',
-            NOD_SIGNING_MODE: '',
-            NOD_SIGNING_IDENTITY: '',
-            NOD_SIGNING_CERTIFICATE_SHA256: '',
-          },
+          env: { NOD_DESKTOP_TARGET: 'linux-x64' },
         })
       ).stdout,
     ).fingerprint;
