@@ -471,16 +471,22 @@ export function Channels() {
     setPairingUrl(null);
   }
   useEffect(() => {
-    const url = new URL(window.location.href);
-    const requested = providers.find(({ id }) => id === url.searchParams.get('connect'))?.id;
-    if (!settings?.ready || !url.searchParams.has('connect')) return;
-    url.searchParams.delete('connect');
-    window.history.replaceState(
-      window.history.state,
-      '',
-      `${url.pathname}${url.search}${url.hash}`,
-    );
-    if (requested) open(requested);
+    if (!settings?.ready) return;
+    const openRequested = () => {
+      const url = new URL(window.location.href);
+      if (!url.searchParams.has('connect')) return;
+      const requested = providers.find(({ id }) => id === url.searchParams.get('connect'))?.id;
+      url.searchParams.delete('connect');
+      window.history.replaceState(
+        window.history.state,
+        '',
+        `${url.pathname}${url.search}${url.hash}`,
+      );
+      if (requested) open(requested);
+    };
+    openRequested();
+    window.addEventListener('popstate', openRequested);
+    return () => window.removeEventListener('popstate', openRequested);
   }, [settings?.ready]);
   function open(provider: ChannelProvider) {
     setupTrigger.current =
