@@ -568,6 +568,10 @@ test(
     const abortedPrompts = new Set<string>();
     const fileContexts = new Map<string, RuntimeContext>();
     const integrationReads: string[] = [];
+    const syntheticEvents = Array.from(
+      { length: 1000 },
+      (_, index) => `Event ${index + 1}: Synthetic planning review in Room ${index % 12}.`,
+    ).join('\n');
     let failRelease = 0;
 
     let limitReached = false;
@@ -612,6 +616,7 @@ test(
               },
             },
           };
+        if (action === 'CALENDAR_LIST_EVENTS') return { text: syntheticEvents };
         integrationReads.push(action);
         return { successful: true, data: { threads: 2 } };
       },
@@ -716,6 +721,19 @@ test(
             mimeType: 'text/plain',
           });
           await context.publishScreenshot!(Buffer.from('synthetic image'), 'research.png');
+          assert.deepEqual(
+            await context.integration('CALENDAR_LIST_EVENTS', {}, undefined, undefined, true),
+            { text: syntheticEvents },
+          );
+          const preview = (await context.integration('CALENDAR_LIST_EVENTS', {})) as {
+            workspaceFile: string;
+            preview: string;
+          };
+          assert.equal(preview.preview.length, 2000);
+          assert.equal(
+            (await readFile(join(context.workspacePath, preview.workspaceFile))).toString(),
+            JSON.stringify({ text: syntheticEvents }),
+          );
           const download = (await context.integration('SLACK_DOWNLOAD_SLACK_FILE', {})) as {
             content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
           };
@@ -3283,6 +3301,42 @@ test(
             background: true,
           });
           await completed(taskCheck, 'scheduled', false, 'reply');
+          const privateValue = 'synthetic-private-provider-value';
+          const failures = [
+            [
+              { kind: 'rate_limited', status: 429 },
+              { failure_class: 'rate_limited', provider_status: 429 },
+            ],
+            [{ kind: 'tools_unsupported', status: 99400 }, { failure_class: 'tools_unsupported' }],
+            [undefined, { failure_class: 'unknown' }],
+          ] as const;
+          for (const [index, [failure, expected]] of failures.entries()) {
+            const prompt = `Synthetic analytics model failure ${index}`;
+            modelErrors.set(
+              prompt,
+              Object.assign(new ModelRequestError(`${privateValue} (HTTP 429)`), {
+                code: privateValue,
+                failure,
+              }),
+            );
+            try {
+              const failed = await thread.submitUserMessage(prompt);
+              await completed(failed.turnId, 'immediate', true, 'failed', 'failed');
+              const event = analyticsEvents.find(
+                (event) =>
+                  event.event === 'turn_completed' &&
+                  event.properties.run_id === analyticsRuns.get(failed.turnId),
+              )!;
+              const { failure_reason, failure_class, provider_status } = event.properties;
+              assert.deepEqual(
+                JSON.parse(JSON.stringify({ failure_reason, failure_class, provider_status })),
+                { failure_reason: 'model', ...expected },
+              );
+              assert.equal(JSON.stringify(event).includes(privateValue), false);
+            } finally {
+              modelErrors.delete(prompt);
+            }
+          }
           assert.deepEqual(
             [requested.turnId, schedule, task, answer.turnId, signedIn, taskCheck].map(
               (id) => ran(id)?.automatic,

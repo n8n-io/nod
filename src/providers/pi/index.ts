@@ -39,7 +39,7 @@ import { createTurnFallback, modelKey } from './fallback.ts';
 import { modelContext } from './context.ts';
 import { createContextOutput, toolOutputReference } from './context-output.ts';
 import { audioContext, audioEntries, audioMessage, readsNativeAudio } from './audio.ts';
-import { piModelTrace, recordPiModelCall } from './traces.ts';
+import { modelFailure, piModelTrace, recordPiModelCall } from './traces.ts';
 import type { ModelTraces } from '../../ports/traces.ts';
 import type { ModelAccess } from '../../ports/models.ts';
 import type { Agent, AgentEvent } from '../../ports/agent.ts';
@@ -1265,6 +1265,7 @@ export function createPiAgent(options: {
             input.onEvent({
               type: 'error',
               message: `${target.provider} / ${target.id}: ${error}`,
+              failure: modelFailure(error),
             });
           if (compaction)
             for (const [index, message] of (compaction.requests.length
@@ -1376,6 +1377,7 @@ export function createPiAgent(options: {
                 fallback?.describe(event.message) ??
                 `${event.message.provider} / ${event.message.model}: ${event.message.errorMessage?.trim() || 'The provider gave no reason.'}`,
               ...(overflow ? { contextExhausted: true } : {}),
+              failure: modelFailure(event.message.errorMessage ?? '', overflow),
             });
           if (event.message.stopReason === 'stop') {
             const blocks = event.message.content.filter((item) => item.type === 'text');

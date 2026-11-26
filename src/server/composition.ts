@@ -725,7 +725,7 @@ function alternativeModel(models: ApplicationAdapters['models']) {
     ? {
         connectionId: other.id,
         modelId: choice.id,
-        effort: defaultEffort(other.provider, choice),
+        effort: defaultEffort(choice),
         label: `${modelProviderNames[other.provider]} · ${choice.name}`,
       }
     : undefined;

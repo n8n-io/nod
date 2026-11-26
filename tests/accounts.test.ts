@@ -4850,7 +4850,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       const openai = await f.create(ownerId, openaiBackend);
       await connect(openai);
       assert.equal(openai.view().selection?.modelId, 'gpt-6.2-sol');
-      assert.equal(openai.view().selection?.effort, 'high');
+      assert.equal(openai.view().selection?.effort, 'medium');
       const selected = { ...openai.view().selection!, modelId: 'gpt-6.1-sol' };
       await openai.select(selected);
       await openai.refreshCatalog(selected.connectionId);
@@ -5009,7 +5009,10 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       JSON.stringify({ background: 'light', schedule: { ...main, effort: 'off' } }),
     ]);
     const restarted = await f.create('fixture-work-model-owner', backend);
-    assert.deepEqual(restarted.workModel({ kind: 'schedule' }).selection, main);
+    assert.deepEqual(restarted.workModel({ kind: 'schedule' }).selection, {
+      ...main,
+      effort: 'medium',
+    });
 
     const second = await owner.addKey('openai', 'fixture-work-model-second');
     assert.equal((await route('schedule', { ...main, connectionId: second })).statusCode, 200);

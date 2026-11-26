@@ -749,7 +749,7 @@ export function createModelService(options: {
     return {
       connectionId: row.id,
       modelId: definition.choice.id,
-      effort: defaultEffort(row.provider, definition.choice),
+      effort: defaultEffort(definition.choice),
     };
   }
   function textChoice(
@@ -995,7 +995,7 @@ export function createModelService(options: {
       state.selection = {
         connectionId: id,
         modelId: preferred.id,
-        effort: defaultEffort(provider, preferred),
+        effort: defaultEffort(preferred),
       };
       state.selectionSet = true;
     }
@@ -1346,7 +1346,7 @@ export function createModelService(options: {
       if (definition.choice.efforts.includes(work.selection.effort)) return work;
       return {
         ...work,
-        selection: { ...work.selection, effort: defaultEffort(row.provider, definition.choice) },
+        selection: { ...work.selection, effort: defaultEffort(definition.choice) },
       };
     },
     async candidates(
@@ -1366,7 +1366,7 @@ export function createModelService(options: {
               ? auxiliaryEffort(definition.choice.efforts)
               : definition.choice.efforts.includes(item.effort)
                 ? item.effort
-                : defaultEffort(row.provider, definition.choice),
+                : defaultEffort(definition.choice),
             ...requestAccess(row),
             needsReconnect: (credential) =>
               needsReconnect(row.id, { models: row.models, credential }),
@@ -1717,7 +1717,7 @@ export function createModelService(options: {
                 definition: companion,
                 effort: auxiliary
                   ? lightestEffort(companion.choice.efforts)
-                  : defaultEffort(row.provider, companion.choice),
+                  : defaultEffort(companion.choice),
               },
             }
           : {}),

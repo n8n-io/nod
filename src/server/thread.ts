@@ -55,6 +55,7 @@ import {
   ModelRequestError,
   OutputLimitError,
   ToolFailureError,
+  type ModelFailure,
 } from '../ports/agent.ts';
 import { isMessageReaction, reactionEmoji } from '../shared/emoji.ts';
 import { defaultPreferences, isQuietTime } from './preferences.ts';
@@ -2098,6 +2099,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   let waitingReason: 'question' | 'approval' | 'credentials' | undefined;
   let limited = false;
   let failure: 'model' | 'offline' | 'unknown' = 'unknown';
+  let modelFailure: ModelFailure = { kind: 'unknown' };
   if (work)
     dependencies.analytics?.({
       event: 'turn_started',
@@ -2280,7 +2282,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       operation?.throwIfAborted();
       return name;
     };
-    const inline = async (action: string, result: unknown, operation = signal) => {
+    const inline = async (action: string, result: unknown, operation = signal, nested = false) => {
       operation.throwIfAborted();
       const value = await inlineAppResult(
         result,
@@ -2295,6 +2297,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           ),
         dependencies.mailCheck ?? noMailCheck,
         operation,
+        nested,
       );
       operation.throwIfAborted();
       return value;
@@ -2545,7 +2548,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
             ),
           }
         : {}),
-      integration: fenced(async (action, args, callSignal?: AbortSignal, admit?) => {
+      integration: fenced(async (action, args, callSignal?: AbortSignal, admit?, nested?) => {
         const operation = callSignal ? AbortSignal.any([signal, callSignal]) : signal;
         operation.throwIfAborted();
         const result = await dependencies.integration(ref, action, args, {
@@ -2557,7 +2560,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         const saved = await saveIntegrationFiles(result, async (file) =>
           workspaceReference(await stage(randomUUID(), file.name, file.bytes, operation)),
         );
-        const value = await inline(action, saved.value, operation);
+        const value = await inline(action, saved.value, operation, nested);
         return saved.images.length
           ? { content: [{ type: 'text', text: JSON.stringify(value) }, ...saved.images] }
           : value;
@@ -2824,6 +2827,16 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     } else {
       const offline = offlineFailure(error, selectedModel?.provider);
       failure = offline ? 'offline' : error instanceof ModelRequestError ? 'model' : 'unknown';
+      if (error instanceof ModelRequestError) {
+        const status = Number(error.failure?.status);
+        modelFailure = {
+          kind:
+            error instanceof ContextLimitError
+              ? 'context_too_large'
+              : (error.failure?.kind ?? 'unknown'),
+          ...(Number.isInteger(status) && status >= 100 && status <= 599 ? { status } : {}),
+        };
+      }
       const host = failure === 'unknown' ? hostFailure(error) : undefined;
       const text = offline
         ? `${offline.reason} (${offline.code}).`
@@ -2887,11 +2900,13 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           ...(waitingReason ? { waiting_reason: waitingReason } : {}),
           ...(outcome === 'failed'
             ? {
-                failure_reason: limited
-                  ? ('spending_limit' as const)
-                  : failure === 'offline'
-                    ? 'model'
-                    : failure,
+                failure_reason: limited ? ('spending_limit' as const) : failure,
+                ...(failure === 'model'
+                  ? {
+                      failure_class: modelFailure.kind,
+                      ...(modelFailure.status ? { provider_status: modelFailure.status } : {}),
+                    }
+                  : {}),
               }
             : {}),
         },

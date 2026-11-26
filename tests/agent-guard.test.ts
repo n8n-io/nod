@@ -952,6 +952,69 @@ test('mail that grants account access stays out of app tool results and workspac
   );
 });
 
+test('codemode scripts still get sign-in mail withheld from a full app result', async () => {
+  const secrets = ['482913', 'https://example.test/recover?token=fixture-nested-unchecked'];
+  const check: MailCheck = async (emails) =>
+    emails.map((email) => (email.from.includes('broken@example.test') ? undefined : true));
+  const saved: string[] = [];
+  const returned: unknown[] = [];
+  let scriptText = '';
+  await fixture(
+    async (tools) => {
+      const nested = await tools
+        .get('apps')!
+        .execute({ action: 'GMAIL_FETCH_EMAILS', args: {} }, { nested: true });
+      scriptText = nested.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+    },
+    {
+      integration: async (_action, _args, signal, _admit, nested) => {
+        const value = await inlineAppResult(
+          {
+            data: {
+              messages: [
+                {
+                  messageId: 'code',
+                  sender: 'codes@example.test',
+                  subject: 'Your sign-in code',
+                  preview: `Your code is ${secrets[0]}.`,
+                },
+                {
+                  messageId: 'unchecked',
+                  sender: 'broken@example.test',
+                  subject: 'Recover your account',
+                  preview: `Recover it here: ${secrets[1]}`,
+                },
+              ],
+              unrelated: 'ordinary '.repeat(6000),
+            },
+          },
+          async (text) => {
+            saved.push(text);
+            return 'mail.json';
+          },
+          check,
+          signal,
+          nested,
+        );
+        returned.push(value);
+        return value;
+      },
+    },
+  );
+  const value = returned[0] as {
+    contentWithheld?: { emails: number };
+    data: { messages: Array<Record<string, unknown>>; unrelated: string };
+  };
+  assert.equal(value.data.unrelated, 'ordinary '.repeat(6000));
+  assert.equal(value.contentWithheld?.emails, 1);
+  assert.ok(value.data.messages.every((mail) => !('preview' in mail)));
+  for (const secret of secrets) {
+    assert.ok(!JSON.stringify(value).includes(secret));
+    assert.ok(!scriptText.includes(secret));
+  }
+  assert.deepEqual(saved, []);
+});
+
 test('mail privacy checks retain HTML link destinations without changing ordinary email content', async () => {
   const links = [
     {

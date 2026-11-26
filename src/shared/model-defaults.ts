@@ -65,10 +65,9 @@ export function defaultModel(provider: ModelProvider, models: ModelChoice[], met
   return models[0];
 }
 
-export function defaultEffort(provider: ModelProvider, model: ModelChoice): ModelEffort {
-  const preferred =
-    provider === 'google' || provider === 'google-vertex' || provider === 'ant-ling'
-      ? 'medium'
-      : 'high';
-  return model.efforts.includes(preferred) ? preferred : model.efforts[0];
+export function defaultEffort(model: ModelChoice): ModelEffort {
+  return (
+    (['medium', 'high'] as const).find((effort) => model.efforts.includes(effort)) ??
+    model.efforts[0]
+  );
 }

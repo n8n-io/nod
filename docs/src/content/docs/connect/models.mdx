@@ -22,10 +22,10 @@ Select **Add connection** (or **Add** when you already have a connection), then 
 | Connection                         | Setup                                                     | Initial choice                           |
 | ---------------------------------- | --------------------------------------------------------- | ---------------------------------------- |
 | Google Gemini                      | [AI Studio API key](https://aistudio.google.com/api-keys) | Gemini 4 Argon, medium effort            |
-| OpenAI / ChatGPT                   | API key or existing ChatGPT sign-in                       | GPT-6.2 Sol, high effort                 |
-| Anthropic                          | API key                                                   | Claude Opus 5.5, high effort             |
-| OpenRouter                         | API key or browser sign-in                                | GPT-6.1 Sol, high effort                 |
-| Hostinger AI Router                | [hPanel API key](https://hpanel.hostinger.com/ai-router/) | Default Hostinger Model, high effort     |
+| OpenAI / ChatGPT                   | API key or existing ChatGPT sign-in                       | GPT-6.2 Sol, medium effort               |
+| Anthropic                          | API key                                                   | Claude Opus 5.5, medium effort           |
+| OpenRouter                         | API key or browser sign-in                                | GPT-6.1 Sol, medium effort               |
+| Hostinger AI Router                | [hPanel API key](https://hpanel.hostinger.com/ai-router/) | Default Hostinger Model, medium effort   |
 | Google Vertex AI                   | Vertex API key                                            | Gemini 4 Argon, medium effort            |
 | Amazon Bedrock                     | API key and Region                                        | You choose the model and routing profile |
 | Azure OpenAI                       | Endpoint, deployment, model, and API key                  | The deployment's model                   |
@@ -37,7 +37,7 @@ Other providers include Ant Ling, Baseten, Cerebras, DeepSeek, Fireworks AI, Gro
 
 When an account model list is available, Nod loads it. For services with only a bundled catalog, Nod saves the key and checks access on first use. Neither a catalog nor a saved key proves that your account has credit or permission to run every listed model.
 
-You can change the initial choice. Nod preserves a working choice when you add another connection. It uses the recommended model when available, otherwise the first supported model in that connection's catalog. For Google Gemini, you must choose a model if Gemini 4 Argon is unavailable. When Bedrock offers several models or profiles, you must also choose because profiles can change where requests are processed.
+You can change the initial choice. A new choice starts at medium effort. A model without medium starts at high, or at its first listed effort when it has neither. Nod preserves a working choice when you add another connection. It uses the recommended model when available, otherwise the first supported model in that connection's catalog. For Google Gemini, you must choose a model if Gemini 4 Argon is unavailable. When Bedrock offers several models or profiles, you must also choose because profiles can change where requests are processed.
 
 New OpenAI and ChatGPT connections prefer GPT-6.2 Sol when OpenAI lists it for your account. Otherwise, OpenAI API connections prefer GPT-6.1 Sol, and ChatGPT connections prefer GPT-6 Sol. Other supported models remain available in the picker.
 

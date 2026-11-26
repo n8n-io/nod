@@ -139,7 +139,7 @@ export function modelSelection(source: ModelConnection, modelId: string): ModelS
   return {
     connectionId: source.id,
     modelId,
-    effort: model ? defaultEffort(source.provider, model) : 'off',
+    effort: model ? defaultEffort(model) : 'off',
   };
 }
 

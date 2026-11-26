@@ -91,8 +91,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       .view()
       .connections.find((row) => row.id === input.connectionId && row.status === 'connected');
     const choice = connection?.models.find((model) => model.id === input.modelId);
-    const effort =
-      input.effort ?? (connection && choice && defaultEffort(connection.provider, choice));
+    const effort = input.effort ?? (connection && choice && defaultEffort(choice));
     if (!connection || !choice || !effort || !choice.efforts.includes(effort))
       throw new Error('Choose an available model and effort from models_get.');
     const selection = { connectionId: connection.id, modelId: choice.id, effort };
