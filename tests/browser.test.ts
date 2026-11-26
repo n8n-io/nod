@@ -2223,6 +2223,59 @@ test('a password typed through the handoff in several pauses hides only the fini
 
 describe('native browser controls', { concurrency: 3 }, () => {
   test(
+    'a private sign-in works in a session whose window is behind another session window',
+    {
+      skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true' || process.platform !== 'linux',
+      timeout: 60_000,
+    },
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'nod-focus-'));
+      const server = createHttpServer((request, response) => {
+        response.setHeader('content-type', 'text/html');
+        response.end(
+          request.url?.startsWith('/signed')
+            ? `<h1>${request.url.includes('password=') ? 'signed with password' : 'signed empty'}</h1>`
+            : '<h1>Login</h1><form action="/signed"><input id="password" type="password" name="password"><button id="submit">Sign in</button></form>',
+        );
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      assert.ok(address && typeof address !== 'string');
+      const origin = `http://127.0.0.1:${address.port}`;
+      const computer = createAgentBrowserComputer({
+        ...containerBrowserOptions(directory),
+        privateNetwork: true,
+      });
+      try {
+        await computer.act('behind', { action: 'open', url: `${origin}/login` });
+        await computer.act('front', { action: 'open', url: `${origin}/login` });
+        await computer.injectCredentials!({
+          threadId: 'behind',
+          origin,
+          kind: 'password',
+          password: 'Synthetic private value',
+          passwordSelector: '#password',
+          submitSelector: '#submit',
+        });
+        for (let attempt = 0; attempt < 50; attempt++) {
+          if (
+            (await computer.act('behind', { action: 'snapshot' })).text.includes(
+              'signed with password',
+            )
+          )
+            return;
+          await delay(100);
+        }
+        assert.fail('The private sign-in did not reach the page.');
+      } finally {
+        await computer.dispose();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test(
     'the browser bridge reports invalid wait conditions and keeps the page usable',
     {
       skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true' || process.platform !== 'linux',
@@ -2754,6 +2807,14 @@ describe('native browser controls', { concurrency: 3 }, () => {
           );
           return response.end('<h1>Welcome</h1>');
         }
+        if (request.url === '/login')
+          return response.end(
+            '<h1>Login</h1><form action="/signed"><input id="password" type="password" name="password"><button id="submit">Sign in</button></form>',
+          );
+        if (request.url?.startsWith('/signed'))
+          return response.end(
+            `<h1>signed ${request.url.includes('password=') ? 'with password' : 'empty'}</h1>`,
+          );
         if (request.url === '/popup')
           return response.end(
             '<h1>Popup page</h1><button id="done" onclick="window.close()">Done</button>',
@@ -2832,6 +2893,17 @@ describe('native browser controls', { concurrency: 3 }, () => {
         assert.equal(opened.filter((url) => url.startsWith(origin)).length, ids.length);
         assert.ok(opened.filter((url) => url === 'about:blank').length <= 1);
         assert.match(await passkey('c'), /Passkeys are not available in this browser/);
+        await computer.act('a', { action: 'open', url: `${origin}/login` });
+        await computer.injectCredentials({
+          threadId: 'a',
+          origin,
+          kind: 'password',
+          password: 'Synthetic private value',
+          passwordSelector: '#password',
+          submitSelector: '#submit',
+        });
+        await waitFor(async () => (await page('a')).text.includes('signed with password'));
+        await computer.act('a', { action: 'open', url: `${origin}/a` });
         await computer.act('e', { action: 'click', selector: '#confirm' });
         const answered = Date.now();
         await computer.act('e', { action: 'accept_dialog' });

@@ -109,6 +109,9 @@ export async function watchBrowser(options: {
       ...(frame
         ? [
             send('Page.enable', {}, sessionId),
+            ...(type === 'page'
+              ? [send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId)]
+              : []),
             send(
               'Page.addScriptToEvaluateOnNewDocument',
               { source: options.initScript, runImmediately: true },
