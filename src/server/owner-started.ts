@@ -2,7 +2,7 @@ import type { Pool } from 'pg';
 import { IntegrationError } from './integration-connection.ts';
 import {
   hasOwnerInstructions,
-  validateOwnerInstructions,
+  validateSavedInstructions,
   type OwnerInstructions,
 } from './owner-instructions.ts';
 
@@ -44,8 +44,7 @@ export async function assertStartedByOwner(
     !root.parent_turn_id &&
     !root.proactive &&
     ((root.source === 'user' && root.message_id) || hasOwnerInstructions(schedule?.authority));
-  if (owned && schedule?.authority)
-    await validateOwnerInstructions(database, ownerId, schedule.authority);
+  if (owned && schedule?.authority) validateSavedInstructions(schedule.authority);
   if (!owned) throw new IntegrationError(refusal, 403);
   return root.id;
 }

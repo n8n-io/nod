@@ -152,7 +152,6 @@ import type { TrustBasis } from './trust-basis.ts';
 import {
   validateInstructionRevision,
   validateScheduledInstructions,
-  instructionSourceMessageIds,
   type InstructionRevision,
 } from './owner-instructions.ts';
 import { localArtifacts } from './artifacts.ts';
@@ -1815,7 +1814,6 @@ async function initializeApplication(
                             .object({
                               rules: z.string(),
                               standingInstruction: z.string().optional(),
-                              sourceMessageIds: z.array(z.uuid()).optional(),
                               chat: z
                                 .object({ threadId: z.uuid(), id: z.uuid() })
                                 .strict()
@@ -1835,12 +1833,7 @@ async function initializeApplication(
                             !instruction.success ||
                             (origin.source === 'event' &&
                               instruction.data.standingInstruction === undefined) ||
-                            (origin.source === 'schedule' &&
-                              (!origin.scheduleInstruction ||
-                                !isDeepStrictEqual(
-                                  instruction.data.sourceMessageIds,
-                                  instructionSourceMessageIds(origin.scheduleInstruction),
-                                ))) ||
+                            (origin.source === 'schedule' && !origin.scheduleInstruction) ||
                             !saved ||
                             typeof saved !== 'object' ||
                             Array.isArray(saved) ||
@@ -1865,11 +1858,7 @@ async function initializeApplication(
                                     turnLock,
                                     async () => {
                                       if (origin.source === 'schedule')
-                                        await validateScheduledInstructions(
-                                          client,
-                                          ownerId,
-                                          origin.scheduleInstruction,
-                                        );
+                                        validateScheduledInstructions(origin.scheduleInstruction);
                                       await validateInstructionRevision(
                                         client,
                                         ownerId,
@@ -2616,7 +2605,7 @@ async function initializeApplication(
       startTurn: async (turn) => {
         const origin = await turnOrigin(turn.turnId);
         if (origin?.source === 'schedule')
-          await validateScheduledInstructions(pool, ownerId, origin.scheduleInstruction);
+          validateScheduledInstructions(origin.scheduleInstruction);
         await tasks.inherit(turn);
       },
       connections: async (...args) => {

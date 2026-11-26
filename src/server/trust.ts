@@ -8,10 +8,9 @@ import {
   ownerInstructionPolicy,
   ownerChatRevision,
   recentOwnerWords,
-  validateOwnerInstructions,
+  validateSavedInstructions,
   validateScheduledInstructions,
   instructionMessages,
-  instructionSourceMessageIds,
   type InstructionChange,
   type InstructionRevision,
   type OwnerInstructions,
@@ -78,8 +77,7 @@ export function createTrust(options: {
     if (!origin) throw new Error('This turn is no longer running.');
     const instruction = origin.scheduleInstruction;
     const context = async () => {
-      if (origin.source === 'schedule')
-        await validateScheduledInstructions(pool, ownerId, instruction);
+      if (origin.source === 'schedule') validateScheduledInstructions(instruction);
       const preferences = (
         await pool.query<{ notification_rule: string; rules: string; time_zone: string | null }>(
           'SELECT notification_rule,rules,time_zone FROM preferences WHERE owner_id=$1',
@@ -136,9 +134,6 @@ export function createTrust(options: {
         ...(origin.source === 'event'
           ? { standingInstruction: captured.words.standingInstruction ?? '' }
           : {}),
-        ...(origin.source === 'schedule' && instruction
-          ? { sourceMessageIds: instructionSourceMessageIds(instruction) }
-          : {}),
         ...(captured.task ? { task: captured.task } : {}),
         ...(captured.chatRevision
           ? { chat: { threadId: turn.threadId, id: captured.chatRevision } }
@@ -150,7 +145,7 @@ export function createTrust(options: {
     let replacementNeedsApproval = false;
     if (previousEvidence) {
       try {
-        await validateOwnerInstructions(pool, ownerId, previousEvidence);
+        validateSavedInstructions(previousEvidence);
       } catch (error) {
         if (
           (error as { code?: string })?.code !== 'owner_instruction_unavailable' ||

@@ -87,7 +87,7 @@ A task that needs an action, question, or approval uses its own session. It keep
 
 The composer never blocks. After each Pi step, a running chat turn takes the oldest queued messages from its own channel and session and steers them into Pi, all at once, before the next model request. Their attachments are copied into the workspace. Images reach the model with the message when the model reads images and they fit the [image limits](/how-it-works/agent-runtime/); others stay workspace files marked as not shown. A reply carries the message it answers. Those messages move to the running turn, and their own turns close. The next line Nod writes after taking them is posted as a message, so an answer to them never shows only as live status.
 
-A message from another channel stops the take. It and every message after it stay queued and run as their own turns. Task turns also take addressed updates from their own channel and session. Event and schedule turns do not take queued messages. Each task update has a revision. The server records the revision when it delivers the input at a model boundary. A queued revision does not mean the model has applied it. Task completion refuses an unread update.
+A message from another channel stops the take. It and every message after it stay queued and run as their own turns. Task turns also take addressed updates from their own channel and session. A message a turn takes counts as your request for what that turn does next, in chat and in tasks. Event and schedule turns do not take queued messages. Each task update has a revision. The server records the revision when it delivers the input at a model boundary. A queued revision does not mean the model has applied it. Task completion refuses an unread update.
 
 ## Waiting and resuming
 
@@ -161,6 +161,7 @@ Your messages from a withdrawn turn stay in the chat, and Nod can still find the
 - The trust check doesn't count them as your words, and a later short reply never accepts something Nod proposed in that turn.
 - Approval questions do not use them, and memory learning skips them unless Nod names one when you ask it to remember something.
 - A planned task check or another resume does not copy a withdrawn turn's request into its prompt.
+- Anything already saved from that request, such as a schedule, stays saved. Each run uses its saved instruction. To change it, edit, pause or delete the schedule.
 
 The session's next turn is told how its previous request ended, so Nod doesn't pick it up again on its own. What that turn already did stays in the session's context. To continue, ask again. Nod finds the request with `history_search`, and the trust check asks before any action your new words don't cover.
 
