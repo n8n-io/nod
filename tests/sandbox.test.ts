@@ -50,7 +50,7 @@ import { createSandbox } from '../src/providers/pi/sandbox.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createLocalFiles, localFileRules } from '../src/server/local-files.ts';
 import { computerAppRule, createComputerUse, systemShortcut } from '../src/server/computer-use.ts';
-import { fileBytes } from '../src/shared/files.ts';
+import { fileBytes, stagedWorkspaceFile, uploadFileName } from '../src/shared/files.ts';
 import type { Pool } from 'pg';
 
 if (process.env.NOD_TEST_WORKSPACE_IMAGE)
@@ -807,6 +807,63 @@ test('workspace uploads transfer binary chunks atomically and reject symlink dir
       workspace.readArtifact('fixture', 'nested/file.bin', bytes.length - 1),
       /workspace file operation failed/,
     );
+    const firstStaged = stagedWorkspaceFile(randomUUID(), '2026_11_12_Synthetic Site Photos_Test');
+    const secondStaged = stagedWorkspaceFile(randomUUID(), '2026_11_12_Synthetic Site Photos_Test');
+    assert.notEqual(firstStaged, secondStaged);
+    assert.equal(basename(firstStaged), '2026_11_12_Synthetic Site Photos_Test');
+    await workspace.writeArtifact('fixture', firstStaged, Buffer.from('first staged copy'));
+    await workspace.writeArtifact('fixture', secondStaged, Buffer.from('second staged copy'));
+    assert.equal(
+      Buffer.from(await workspace.readArtifact('fixture', firstStaged, 1024)).toString('utf8'),
+      'first staged copy',
+    );
+    assert.equal(
+      Buffer.from(await workspace.readArtifact('fixture', secondStaged, 1024)).toString('utf8'),
+      'second staged copy',
+    );
+    assert.equal(
+      stagedWorkspaceFile('id-1', 'C:\\Users\\synthetic\\report.pdf'),
+      'id-1/report.pdf',
+    );
+    const longAttachment = `${'a'.repeat(230)}.pdf`;
+    const maxAttachment = `${'b'.repeat(251)}.pdf`;
+    const longStaged = stagedWorkspaceFile(randomUUID(), longAttachment);
+    assert.equal(basename(longStaged), longAttachment);
+    await workspace.writeArtifact('fixture', longStaged, Buffer.from('long staged copy'));
+    assert.equal(
+      Buffer.from(await workspace.readArtifact('fixture', longStaged, 1024)).toString('utf8'),
+      'long staged copy',
+    );
+    assert.equal(stagedWorkspaceFile('id-1', maxAttachment), `id-1/${maxAttachment}`);
+    assert.equal(
+      stagedWorkspaceFile('id-1', `${'a'.repeat(260)}.pdf`),
+      `id-1/${'a'.repeat(251)}.pdf`,
+    );
+    assert.equal(
+      stagedWorkspaceFile('id-1', `${'ä'.repeat(130)}.txt`),
+      `id-1/${'ä'.repeat(125)}.txt`,
+    );
+    for (const unsafe of ['', '   ', '.', '..', '/', 'folder/..', '.\x00.', `${' '.repeat(255)}a`])
+      assert.equal(stagedWorkspaceFile('id-1', unsafe), 'id-1/file');
+    assert.throws(() => stagedWorkspaceFile('../escape', 'report.pdf'), /identifier/);
+    assert.equal(uploadFileName('Custom Report.pdf'), 'Custom Report.pdf');
+    assert.equal(uploadFileName(maxAttachment), maxAttachment);
+    assert.equal(uploadFileName('ä'.repeat(127)), 'ä'.repeat(127));
+    assert.equal(uploadFileName('日'.repeat(85)), '日'.repeat(85));
+    for (const invalid of [
+      '',
+      '   ',
+      '.',
+      '..',
+      'a/b.txt',
+      'a\\b.txt',
+      'a\nb.txt',
+      'x'.repeat(256),
+      'ä'.repeat(128),
+      '日'.repeat(86),
+      '😀'.repeat(64),
+    ])
+      assert.throws(() => uploadFileName(invalid), /plain upload filename/);
   } finally {
     await workspace.dispose();
     await f.close();

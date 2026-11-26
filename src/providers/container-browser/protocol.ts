@@ -1,7 +1,7 @@
 import { browserErrorCodes, browserSignInGuards } from '../../shared/browser-errors.ts';
 import { z } from 'zod';
 import { browserHandoffInput } from '../../shared/browser-handoff.ts';
-import { fileBytes } from '../../shared/files.ts';
+import { fileBytes, isUploadFileName } from '../../shared/files.ts';
 
 export const browserSocketPath = '/data/control.sock';
 export const responseBytes = 17 * 1024 * 1024;
@@ -177,10 +177,7 @@ export const browserRequest = z.discriminatedUnion('method', [
       input: z
         .object({
           selector,
-          name: z
-            .string()
-            .min(1)
-            .regex(/^[^/\\\u0000-\u001f\u007f]+$/),
+          name: z.string().refine(isUploadFileName),
           size: z.number().int().min(1).max(fileBytes),
           expectOrigin: z.string().min(1).max(2048).optional(),
           expectUrl: z.string().min(1).max(8192).optional(),

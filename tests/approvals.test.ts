@@ -731,6 +731,50 @@ test('browser upload wording omits the private workspace path', async () => {
   assert.doesNotMatch(result.question, /\/workspace\/private/);
   assert.equal(proposal.args.target, 'synthetic-opaque-page-id');
   assert.deepEqual(proposal.args.command, command);
+
+  const renamedCommand = {
+    action: 'upload',
+    selector: '@e3',
+    path: `${randomUUID()}/report.pdf`,
+    name: 'Renamed Report.pdf',
+  };
+  const renamedProposal: ApprovalDescription = {
+    ...proposal,
+    args: {
+      ...proposal.args,
+      file: 'Renamed Report.pdf',
+      sourceFile: 'report.pdf',
+      command: renamedCommand,
+    },
+  };
+  let renamedCalls = 0;
+  let reviewedInput: Record<string, any> | undefined;
+  const renamedCommunication = createCommunication({
+    pool: { query: async () => ({ rows: [] }) } as unknown as pg.Pool,
+    ownerId: 'synthetic-owner',
+    review: async (_instructions, input) => {
+      renamedCalls++;
+      reviewedInput = input as Record<string, any>;
+      if (reviewedInput.purpose === 'confirmation_review') return { valid: true };
+      return {
+        text: 'Can I upload the renamed file to files.example.test?',
+        action: 'Upload report',
+      };
+    },
+  });
+  const renamedResult = await renamedCommunication.describe(renamedProposal);
+  assert.equal(renamedCalls, 1);
+  assert.equal(reviewedInput?.data.args.file, 'Renamed Report.pdf');
+  assert.equal(reviewedInput?.data.args.sourceFile, 'report.pdf');
+  assert.equal(reviewedInput?.data.args.command.path, undefined);
+  assert.equal(reviewedInput?.data.args.command.name, undefined);
+  assert.equal(reviewedInput?.data.args.command.action, 'upload');
+  assert.doesNotMatch(
+    JSON.stringify(reviewedInput),
+    new RegExp(renamedCommand.path.split('/')[0]!),
+  );
+  assert.doesNotMatch(renamedResult.question, new RegExp(renamedCommand.path.split('/')[0]!));
+  assert.deepEqual(renamedProposal.args.command, renamedCommand);
 });
 
 test('confirmation reviews the text after private links and direction controls are removed', async () => {

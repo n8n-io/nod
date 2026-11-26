@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import pg from 'pg';
@@ -380,7 +380,9 @@ test(
         writeArtifact: async (threadId, path, bytes, signal) => {
           await stagingCompletion;
           signal?.throwIfAborted();
-          await writeFile(join(dataRoot, 'workspaces', threadId, path), bytes);
+          const target = join(dataRoot, 'workspaces', threadId, path);
+          await mkdir(dirname(target), { recursive: true });
+          await writeFile(target, bytes);
         },
         artifacts: {
           ...localArtifacts,

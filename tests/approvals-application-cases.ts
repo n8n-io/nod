@@ -27,6 +27,7 @@ import {
   BrowserActionError,
   type BrowserAction,
   type BrowserPage,
+  type BrowserUploadInput,
   type Computer,
   type CredentialInput,
 } from '../src/ports/computer.ts';
@@ -199,7 +200,12 @@ export const approvalCases = inParts(
     let uploadFailure: Error | undefined;
     let uploadAttempts = 0;
     const workspaceFiles = new Map<string, Uint8Array>();
+    const workspaceKey = (threadId: string, path: string) =>
+      path.startsWith(`/workspace/${threadId}/`)
+        ? path.slice(`/workspace/${threadId}/`.length)
+        : path;
     const browserActs: Array<Record<string, unknown>> = [];
+    const browserUploads: BrowserUploadInput[] = [];
     const injected: CredentialInput[] = [];
     const filledCards: object[] = [];
     let privateEntryWait:
@@ -717,6 +723,10 @@ export const approvalCases = inParts(
               mimeType: 'application/pdf',
             };
           },
+          upload: async (_id, input) => {
+            browserUploads.push({ ...input, bytes: Uint8Array.from(input.bytes) });
+            return { text: `Uploaded ${input.name}`, url: browserUrl };
+          },
           currentPage: async (_id, step) => {
             if (calendarBrowser) return calendarBrowser.currentPage(_id, step);
             if (dialogOpen && step?.action !== 'accept_dialog')
@@ -738,11 +748,11 @@ export const approvalCases = inParts(
           },
         }),
         workspace: fakeWorkspace({
-          writeArtifact: async (_threadId, path, bytes) => {
-            workspaceFiles.set(path, bytes);
+          writeArtifact: async (threadId, path, bytes) => {
+            workspaceFiles.set(workspaceKey(threadId, path), bytes);
           },
-          readArtifact: async (_threadId, path) => {
-            const bytes = workspaceFiles.get(path);
+          readArtifact: async (threadId, path) => {
+            const bytes = workspaceFiles.get(workspaceKey(threadId, path));
             if (!bytes) throw new Error('The workspace file is unavailable.');
             return bytes;
           },
@@ -6759,6 +6769,236 @@ export const approvalCases = inParts(
           assert.equal((await approvalsFor(held))[0].status, 'expired');
           assert.equal(existsSync(heldPath), false);
           assert.equal(await readFile(source, 'utf8'), 'Synthetic local report');
+        },
+      );
+      await inPart(
+        'browser upload keeps the original filename of an imported local file',
+        async (t) => {
+          await request('PATCH', '/api/preferences', { localFilesEnabled: true });
+          const folder = await mkdtemp(join(localHome, 'browser-upload-'));
+          const fileName = '2026_11_12_Synthetic Site Photos_Test.txt';
+          const contents = 'Synthetic project upload bytes';
+          const source = join(folder, fileName);
+          await writeFile(source, contents);
+          const previousOrigin = browserOrigin;
+          const previousUrl = browserUrl;
+          const previousControls = browserControls;
+          const previousFormTarget = formTarget;
+          browserOrigin = 'https://projects.example.test';
+          browserUrl = 'https://projects.example.test/files';
+          browserControls = [{ role: 'button', name: 'Upload Files' }];
+          formTarget = 'https://projects.example.test/files/upload';
+          try {
+            await t.test('direct import and browser upload', async () => {
+              const importText = `Import ${fileName} for upload ${randomUUID()}`;
+              const uploadText = `Upload ${fileName} to the synthetic project ${randomUUID()}`;
+              asked.add(importText);
+              asked.add(uploadText);
+              try {
+                const importTurn = await propose('import', { path: source }, 'files', importText);
+                assert.deepEqual(await approvalsFor(importTurn), []);
+                const importOutput = results
+                  .get(importTurn)
+                  ?.content.flatMap((part) => (part.type === 'text' ? [part.text] : []))
+                  .join('\n');
+                const workspaceFile = /"workspaceFile":"([^"]+)"/.exec(importOutput ?? '')?.[1];
+                assert.ok(workspaceFile);
+
+                const beforeUploads = browserUploads.length;
+                plans.set(uploadText, {
+                  tool: 'browser',
+                  action: 'upload',
+                  args: { selector: '@e4', path: workspaceFile },
+                });
+                const uploadResponse = await request('POST', '/api/messages', {
+                  text: uploadText,
+                });
+                assert.equal(uploadResponse.statusCode, 200, uploadResponse.body);
+                const uploadTurn = uploadResponse.json().turnId as string;
+                ids.push(uploadResponse.json().threadId as string);
+                await waitFor(uploadTurn, 'succeeded');
+                assert.deepEqual(await approvalsFor(uploadTurn), []);
+                assert.equal(browserUploads.length, beforeUploads + 1);
+                const uploaded = browserUploads.at(-1)!;
+                assert.equal(uploaded.selector, '@e4');
+                assert.equal(Buffer.from(uploaded.bytes).toString('utf8'), contents);
+                assert.equal(uploaded.name, fileName);
+                assert.equal(await readFile(source, 'utf8'), contents);
+
+                const secondFolder = await mkdtemp(join(localHome, 'browser-upload-second-'));
+                const secondContents = 'Second synthetic project upload bytes';
+                const secondSource = join(secondFolder, fileName);
+                await writeFile(secondSource, secondContents);
+                const secondImportText = `Import second ${fileName} for upload ${randomUUID()}`;
+                const renamedUploadText = `Upload renamed ${fileName} to the synthetic project ${randomUUID()}`;
+                asked.add(secondImportText);
+                asked.add(renamedUploadText);
+                try {
+                  const secondImportTurn = await propose(
+                    'import',
+                    { path: secondSource },
+                    'files',
+                    secondImportText,
+                  );
+                  assert.deepEqual(await approvalsFor(secondImportTurn), []);
+                  const secondImportOutput = results
+                    .get(secondImportTurn)
+                    ?.content.flatMap((part) => (part.type === 'text' ? [part.text] : []))
+                    .join('\n');
+                  const secondWorkspaceFile = /"workspaceFile":"([^"]+)"/.exec(
+                    secondImportOutput ?? '',
+                  )?.[1];
+                  assert.ok(secondWorkspaceFile);
+                  assert.notEqual(secondWorkspaceFile, workspaceFile);
+                  assert.equal(
+                    Buffer.from(
+                      workspaceFiles.get(workspaceKey(ids.at(-1)!, workspaceFile))!,
+                    ).toString('utf8'),
+                    contents,
+                  );
+
+                  const beforeRenamed = browserUploads.length;
+                  plans.set(renamedUploadText, {
+                    tool: 'browser',
+                    action: 'upload',
+                    args: {
+                      selector: '@e4',
+                      path: secondWorkspaceFile,
+                      name: 'Renamed Site Photos.txt',
+                    },
+                  });
+                  const renamedResponse = await request('POST', '/api/messages', {
+                    text: renamedUploadText,
+                  });
+                  assert.equal(renamedResponse.statusCode, 200, renamedResponse.body);
+                  const renamedTurn = renamedResponse.json().turnId as string;
+                  ids.push(renamedResponse.json().threadId as string);
+                  await waitFor(renamedTurn, 'succeeded');
+                  assert.deepEqual(await approvalsFor(renamedTurn), []);
+                  assert.equal(browserUploads.length, beforeRenamed + 1);
+                  const renamedUploaded = browserUploads.at(-1)!;
+                  assert.equal(renamedUploaded.name, 'Renamed Site Photos.txt');
+                  assert.equal(Buffer.from(renamedUploaded.bytes).toString('utf8'), secondContents);
+                } finally {
+                  asked.delete(secondImportText);
+                  asked.delete(renamedUploadText);
+                  plans.delete(secondImportText);
+                  plans.delete(renamedUploadText);
+                }
+              } finally {
+                asked.delete(importText);
+                asked.delete(uploadText);
+                plans.delete(importText);
+                plans.delete(uploadText);
+              }
+            });
+
+            await t.test('approved import and browser upload', async () => {
+              const uploadText = `Upload the approved synthetic file ${randomUUID()}`;
+              try {
+                const importOpening = await propose('import', { path: source }, 'files');
+                const [importApproval] = await approvalsFor(importOpening);
+                assert.equal(importApproval.action, 'LOCAL_FILES_IMPORT');
+                assert.equal(importApproval.status, 'pending');
+                const acceptedImport = await request('POST', '/api/messages', {
+                  text: 'Yes',
+                  replyToMessageId: importApproval.confirmation_message_id,
+                  approvalAnswer: { approvalId: importApproval.id, approved: true },
+                });
+                assert.equal(acceptedImport.statusCode, 200, acceptedImport.body);
+                await waitFor(acceptedImport.json().turnId, 'succeeded');
+                const [savedImport] = await approvalsFor(importOpening);
+                assert.equal(savedImport.status, 'completed');
+                const workspaceFile = savedImport.result?.file?.workspaceFile;
+                assert.equal(typeof workspaceFile, 'string');
+                assert.ok(workspaceFile);
+
+                const beforeUploads = browserUploads.length;
+                plans.set(uploadText, {
+                  tool: 'browser',
+                  action: 'upload',
+                  args: { selector: '@e4', path: workspaceFile },
+                });
+                const uploadOpening = await request('POST', '/api/messages', { text: uploadText });
+                assert.equal(uploadOpening.statusCode, 200, uploadOpening.body);
+                const uploadTurn = uploadOpening.json().turnId as string;
+                ids.push(uploadOpening.json().threadId as string);
+                await waitFor(uploadTurn, 'waiting');
+                const [uploadApproval] = await approvalsFor(uploadTurn);
+                assert.equal(uploadApproval.action, 'NOD_browser');
+                assert.equal(uploadApproval.status, 'pending');
+                assert.equal(uploadApproval.args.file, fileName);
+                assert.equal(uploadApproval.args.sourceFile, undefined);
+                assert.equal(browserUploads.length, beforeUploads);
+
+                const acceptedUpload = await request('POST', '/api/messages', {
+                  text: 'Yes',
+                  replyToMessageId: uploadApproval.confirmation_message_id,
+                  approvalAnswer: { approvalId: uploadApproval.id, approved: true },
+                });
+                assert.equal(acceptedUpload.statusCode, 200, acceptedUpload.body);
+                await waitFor(acceptedUpload.json().turnId, 'succeeded');
+                const [savedUpload] = await approvalsFor(uploadTurn);
+                assert.equal(savedUpload.status, 'completed');
+                assert.equal(browserUploads.length, beforeUploads + 1);
+                const uploaded = browserUploads.at(-1)!;
+                assert.equal(uploaded.selector, '@e4');
+                assert.equal(Buffer.from(uploaded.bytes).toString('utf8'), contents);
+                assert.equal(uploaded.name, fileName);
+                assert.equal(await readFile(source, 'utf8'), contents);
+
+                const renamedUploadText = `Upload approved renamed synthetic file ${randomUUID()}`;
+                try {
+                  const beforeRenamed = browserUploads.length;
+                  plans.set(renamedUploadText, {
+                    tool: 'browser',
+                    action: 'upload',
+                    args: {
+                      selector: '@e4',
+                      path: workspaceFile,
+                      name: 'Approved Rename.txt',
+                    },
+                  });
+                  const renamedOpening = await request('POST', '/api/messages', {
+                    text: renamedUploadText,
+                  });
+                  assert.equal(renamedOpening.statusCode, 200, renamedOpening.body);
+                  const renamedTurn = renamedOpening.json().turnId as string;
+                  ids.push(renamedOpening.json().threadId as string);
+                  await waitFor(renamedTurn, 'waiting');
+                  const [renamedApproval] = await approvalsFor(renamedTurn);
+                  assert.equal(renamedApproval.action, 'NOD_browser');
+                  assert.equal(renamedApproval.status, 'pending');
+                  assert.equal(renamedApproval.args.file, 'Approved Rename.txt');
+                  assert.equal(renamedApproval.args.sourceFile, fileName);
+                  assert.equal(browserUploads.length, beforeRenamed);
+
+                  const acceptedRenamed = await request('POST', '/api/messages', {
+                    text: 'Yes',
+                    replyToMessageId: renamedApproval.confirmation_message_id,
+                    approvalAnswer: { approvalId: renamedApproval.id, approved: true },
+                  });
+                  assert.equal(acceptedRenamed.statusCode, 200, acceptedRenamed.body);
+                  await waitFor(acceptedRenamed.json().turnId, 'succeeded');
+                  const [savedRenamed] = await approvalsFor(renamedTurn);
+                  assert.equal(savedRenamed.status, 'completed');
+                  assert.equal(browserUploads.length, beforeRenamed + 1);
+                  const renamedUploaded = browserUploads.at(-1)!;
+                  assert.equal(renamedUploaded.name, 'Approved Rename.txt');
+                  assert.equal(Buffer.from(renamedUploaded.bytes).toString('utf8'), contents);
+                } finally {
+                  plans.delete(renamedUploadText);
+                }
+              } finally {
+                plans.delete(uploadText);
+              }
+            });
+          } finally {
+            browserOrigin = previousOrigin;
+            browserUrl = previousUrl;
+            browserControls = previousControls;
+            formTarget = previousFormTarget;
+          }
         },
       );
       await inPart(

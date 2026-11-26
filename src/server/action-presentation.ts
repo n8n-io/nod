@@ -521,9 +521,13 @@ export function actionTarget(
             (item) => typeof item.name === 'string' && item.name.trim(),
           )?.name
         : undefined;
+      const uploadFile = String(args.file ?? '');
+      const uploadSource = typeof args.sourceFile === 'string' ? args.sourceFile : '';
       const what =
         step === 'upload'
-          ? String(args.file ?? '')
+          ? uploadSource && uploadFile && uploadSource !== uploadFile
+            ? `${uploadSource} as ${uploadFile}`
+            : uploadFile || uploadSource
           : step === 'accept_dialog' && typeof args.dialog === 'string' && args.dialog.trim()
             ? quoted(args.dialog.trim())
             : typeof control === 'string'

@@ -17,7 +17,7 @@ import {
 import { connect, createServer, type Socket } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
 import { availableParallelism, hostname, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import test, { describe } from 'node:test';
@@ -909,6 +909,61 @@ async function transportFixture() {
     },
   };
 }
+
+test('browser uploads enforce 255 UTF-8 byte filenames through agent-browser and the browser bridge', async () => {
+  const browser = await transportFixture();
+  const bridge = await harness({ computer: browser.computer });
+  const computer = bridge.client('/synthetic/upload-names');
+  const uploadedFiles: Array<{ name: string; bytes: string }> = [];
+  browser.before(async (action, command) => {
+    if (action === 'upload' && typeof command.file === 'string')
+      uploadedFiles.push({
+        name: basename(command.file),
+        bytes: await readFile(command.file, 'utf8'),
+      });
+  });
+  try {
+    await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+    const longAscii = `${'a'.repeat(230)}.txt`;
+    const maxUtf8 = '日'.repeat(85);
+    await computer.upload('fixture', {
+      selector: '#file',
+      name: longAscii,
+      bytes: Buffer.from('long ascii upload'),
+    });
+    await computer.upload('fixture', {
+      selector: '#file',
+      name: maxUtf8,
+      bytes: Buffer.from('max utf8 upload'),
+    });
+    assert.deepEqual(uploadedFiles, [
+      { name: longAscii, bytes: 'long ascii upload' },
+      { name: maxUtf8, bytes: 'max utf8 upload' },
+    ]);
+    for (const invalid of ['..', '   ', 'x'.repeat(256), 'ä'.repeat(128), '日'.repeat(86)]) {
+      await assert.rejects(
+        computer.upload('fixture', {
+          selector: '#file',
+          name: invalid,
+          bytes: Buffer.from('rejected'),
+        }),
+        /plain upload filename/,
+      );
+      await assert.rejects(
+        browser.computer.upload('fixture', {
+          selector: '#file',
+          name: invalid,
+          bytes: Buffer.from('rejected'),
+        }),
+        /plain upload filename/,
+      );
+    }
+    assert.equal(uploadedFiles.length, 2);
+  } finally {
+    await bridge.close();
+    await browser.cleanup();
+  }
+});
 
 test('browser files larger than one protocol message stream through the bridge both ways', async () => {
   const file = Buffer.alloc(13 * 1024 * 1024 + 7);

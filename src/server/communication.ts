@@ -466,7 +466,10 @@ export function createCommunication(options: {
         delete command.selector;
         delete command.targetSelector;
         delete command.tabId;
-        if (args.step === 'upload') delete command.path;
+        if (args.step === 'upload') {
+          delete command.path;
+          delete command.name;
+        }
         args.command = command;
       }
     }

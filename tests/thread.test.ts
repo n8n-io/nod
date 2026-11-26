@@ -3865,10 +3865,14 @@ test(
           const reused = await thread.submitUserMessage('read reused attachment', [artifact]);
           await waitFor(settled(reused.turnId));
           assert.equal(stagedReads.get('read reused attachment'), 'synthetic attachment bytes');
-          const staged = `${artifact.id}-notes.txt`;
+          const staged = `${artifact.id}/notes.txt`;
           const workspace = join(root, 'workspaces', first.threadId);
           assert.equal(ran(first.turnId)?.workspacePath, workspace);
           assert.equal(ran(first.turnId)?.attachments[0]?.path, join(workspace, staged));
+          assert.equal(
+            ran(first.turnId)?.attachments[0]?.workspaceFile,
+            `/workspace/${first.threadId}/${staged}`,
+          );
           assert.equal(stagedReads.get('read attachment'), 'synthetic attachment bytes');
           const sticker = await storeArtifact(
             Buffer.from(
@@ -3903,7 +3907,7 @@ test(
           await waitFor(settled(second.turnId));
           assert.equal(ran(second.turnId)?.workspacePath, workspace);
           assert.equal(ran(second.turnId)?.attachments.length, 0);
-          assert.ok(workspaceListings.get('use attachment again')?.includes(staged));
+          assert.ok(workspaceListings.get('use attachment again')?.includes(artifact.id));
           assert.equal(
             await readFile(join(workspace, staged), 'utf8'),
             'synthetic attachment bytes',

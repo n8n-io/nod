@@ -23,8 +23,8 @@ import { loopbackHost } from '../shared/loopback.ts';
 import { pendingAnswerChoicesSql } from './answer-choices.ts';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { basename, join, posix } from 'node:path';
+import { lstat, mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join, posix } from 'node:path';
 import { PgBoss } from 'pg-boss';
 import type { Pool, PoolClient } from 'pg';
 import { cancellationTransaction, pool } from './db.ts';
@@ -75,6 +75,7 @@ import {
 } from './analytics.ts';
 import { attachmentKind } from '../shared/attachment-kind.ts';
 import { inlineAppResult, noMailCheck, type MailCheck } from './integration-result.ts';
+import { stagedWorkspaceFile } from '../shared/files.ts';
 import { saveIntegrationFiles } from './integration-files.ts';
 import { spendingLimitReached, spendingLimitText } from './ledger.ts';
 import type { ExecutionEvent } from '../shared/execution.ts';
@@ -2279,15 +2280,22 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       operation?: AbortSignal,
     ) => {
       operation?.throwIfAborted();
-      const name = `${id}-${basename(fileName)}`;
+      const name = stagedWorkspaceFile(id, fileName);
       if (dependencies.writeArtifact)
         await dependencies.writeArtifact(threadId, name, bytes, operation);
-      else
-        await writeFile(join(workspacePath, name), bytes, {
+      else {
+        const target = join(workspacePath, name);
+        const directory = dirname(target);
+        await mkdir(directory, { recursive: true, mode: 0o700 });
+        const info = await lstat(directory);
+        if (!info.isDirectory() || info.isSymbolicLink())
+          throw new Error('The workspace file directory is unavailable.');
+        await writeFile(target, bytes, {
           mode: 0o600,
           flag: constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
           signal: operation,
         });
+      }
       operation?.throwIfAborted();
       return name;
     };

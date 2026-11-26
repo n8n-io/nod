@@ -26,8 +26,8 @@ import {
   type BrowserAction,
   type BrowserObservation,
 } from '../ports/computer.ts';
-import { fileBytes } from '../shared/files.ts';
-import { basename } from 'node:path';
+import { fileBytes, uploadFileName } from '../shared/files.ts';
+import { posix } from 'node:path';
 import { isMessageReaction } from '../shared/emoji.ts';
 import {
   actionLink,
@@ -362,7 +362,7 @@ export const toolDefinitions = {
   ),
   browser: defineTool(
     'browser',
-    'Control the private browser. open {url}; snapshot {selector?,offset?} returns page text and @eN refs; selector takes a current @eN ref, or CSS only for an element without one; click/fill/type/select/check/uncheck/hover {selector,text?}; press {key}; drag {selector,targetSelector} or {points,durationMs?}; upload {selector,path}; back/forward/reload; tab_list/tab_switch {tabId}; scroll {direction,selector?,amount?}; wait {text|url|load,waitMs?}; accept_dialog {text?}/dismiss_dialog; evaluate {script} runs one JavaScript expression. screenshot returns an image; share_screenshot {name?} stages an image for delivery. Coordinates x,y are fractions of a fresh screenshot. Never type secrets. download {url?|selector?,name?} saves a file; with neither it uses the open PDF or last download. Click document controls and inspect before downloading. Background files stay private until share_file. handoff {text} gives the owner control and pauses; state the needed action, then inspect after handback. Never send a /browser link. waitMs allows slow pages.',
+    'Control the private browser. open {url}; snapshot {selector?,offset?} returns page text and @eN refs; selector takes a current @eN ref, or CSS only for an element without one; click/fill/type/select/check/uncheck/hover {selector,text?}; press {key}; drag {selector,targetSelector} or {points,durationMs?}; upload {selector,path,name?}; back/forward/reload; tab_list/tab_switch {tabId}; scroll {direction,selector?,amount?}; wait {text|url|load,waitMs?}; accept_dialog {text?}/dismiss_dialog; evaluate {script} runs one JavaScript expression. screenshot returns an image; share_screenshot {name?} stages an image for delivery. Coordinates x,y are fractions of a fresh screenshot. Never type secrets. download {url?|selector?,name?} saves a file; with neither it uses the open PDF or last download. Click document controls and inspect before downloading. Background files stay private until share_file. handoff {text} gives the owner control and pauses; state the needed action, then inspect after handback. Never send a /browser link. waitMs allows slow pages.',
     Type.Object({
       action: literals([
         'handoff',
@@ -1257,12 +1257,19 @@ export function nodTools(
       if (action === 'upload') {
         if (!context.readWorkspaceFile) throw new Error('Browser file upload is unavailable.');
         if (!rest.selector || !rest.path) throw new Error('Choose a file and upload field.');
+        if (name !== undefined) uploadFileName(name);
         const bytes = await context.readWorkspaceFile(rest.path, fileBytes);
-        const checked = await check({ action, selector: rest.selector, path: rest.path });
+        const uploadName = uploadFileName(name ?? posix.basename(rest.path));
+        const checked = await check({
+          action,
+          selector: rest.selector,
+          path: rest.path,
+          ...(name !== undefined ? { name: uploadName } : {}),
+        });
         if ('output' in checked) return checked.output;
         const page = await computer.upload(
           browserId,
-          { selector: rest.selector, name: basename(rest.path), bytes, ...checked.binding },
+          { selector: rest.selector, name: uploadName, bytes, ...checked.binding },
           signal,
         );
         await checked.record?.();

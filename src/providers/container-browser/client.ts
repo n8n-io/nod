@@ -8,7 +8,7 @@ import { once } from 'node:events';
 import { z } from 'zod';
 import { BrowserActionError, type Computer } from '../../ports/computer.ts';
 import { logFailure, logRepeatedFailure } from '../../ports/failure-log.ts';
-import { fileBytes } from '../../shared/files.ts';
+import { fileBytes, uploadFileName } from '../../shared/files.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import type { CommandProcess } from '../command-process.ts';
 import { browserUrl } from '../agent-browser/network.ts';
@@ -501,6 +501,7 @@ export function createBridgeComputer(options: {
     upload: async (id, input, signal) => {
       if (!input.bytes.length || input.bytes.length > fileBytes)
         throw new Error('The browser file is too large.');
+      const name = uploadFileName(input.name);
       return observationSchema.parse(
         await call(
           {
@@ -508,7 +509,7 @@ export function createBridgeComputer(options: {
             threadId: threadIdentity(id),
             input: {
               selector: input.selector,
-              name: input.name,
+              name,
               size: input.bytes.length,
               ...(input.expectOrigin ? { expectOrigin: input.expectOrigin } : {}),
               ...(input.expectUrl ? { expectUrl: input.expectUrl } : {}),
@@ -528,7 +529,7 @@ export function createBridgeComputer(options: {
           name: z
             .string()
             .min(1)
-            .max(200)
+            .max(255)
             .regex(/^[^/\\\u0000-\u001f\u007f]+$/),
           mimeType: z
             .string()

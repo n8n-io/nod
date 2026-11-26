@@ -143,6 +143,21 @@ const delimitedTools = new Set([
   'codemode',
   'flights',
 ]);
+export function workspaceRelativePath(
+  root: string,
+  file: string,
+  pathApi: {
+    resolve: (...paths: string[]) => string;
+    relative: (from: string, to: string) => string;
+    sep: string;
+  } = { resolve, relative, sep },
+) {
+  const base = pathApi.resolve(root);
+  const target = pathApi.resolve(file);
+  if (!target.startsWith(base + pathApi.sep)) return undefined;
+  return pathApi.relative(base, target).split(pathApi.sep).join('/');
+}
+
 export function webTarget(name: string, params: unknown, redact: (text: string) => string) {
   const input = (params ?? {}) as Record<string, unknown>;
   const first = (one: unknown, many: unknown) =>
@@ -1069,11 +1084,12 @@ export function createAgentRuntime(dependencies: {
       ) => {
         const images: AgentImage[] = [];
         const paths: string[] = [];
+        const files: string[] = [];
         const omitted = new Set<string>();
         for (const attachment of attachments) {
           if (!imageTypes.has(attachment.mimeType)) continue;
-          const path = resolve(attachment.path);
-          if (!path.startsWith(root + sep)) continue;
+          const workspaceFile = workspaceRelativePath(root, attachment.path);
+          if (!workspaceFile) continue;
           const limit = Math.min(imageBytes, budget.left);
           try {
             const bytes =
@@ -1081,7 +1097,7 @@ export function createAgentRuntime(dependencies: {
                 ? Buffer.from(
                     await dependencies.workspace.readArtifact(
                       threadId,
-                      relative(root, path),
+                      workspaceFile,
                       limit,
                       'attachment',
                     ),
@@ -1092,6 +1108,7 @@ export function createAgentRuntime(dependencies: {
             else {
               budget.left -= bytes.length;
               paths.push(attachment.path);
+              files.push(workspaceFile);
               images.push({
                 type: 'image',
                 data: bytes.toString('base64'),
@@ -1128,10 +1145,7 @@ export function createAgentRuntime(dependencies: {
             images: [],
             omitted,
             analysis: description
-              ? untrustedBlock(
-                  'image analysis',
-                  JSON.stringify({ files: paths.map((path) => relative(root, path)), description }),
-                )
+              ? untrustedBlock('image analysis', JSON.stringify({ files, description }))
               : undefined,
           };
         }

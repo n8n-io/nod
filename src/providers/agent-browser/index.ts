@@ -19,7 +19,7 @@ import type {
   BrowserPage,
 } from '../../ports/computer.ts';
 import { BrowserActionError } from '../../ports/computer.ts';
-import { fileBytes } from '../../shared/files.ts';
+import { fileBytes, uploadFileName } from '../../shared/files.ts';
 import { isEnterKey } from '../../shared/browser-keys.ts';
 import type { BrowserHandoffInput } from '../../shared/browser-handoff.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
@@ -1226,12 +1226,9 @@ export function createAgentBrowserComputer(options: {
   }
 
   async function upload(id: string, input: BrowserUploadInput, signal?: AbortSignal) {
-    if (
-      !input.bytes.length ||
-      input.bytes.length > fileBytes ||
-      !/^[^/\\\u0000-\u001f\u007f]{1,200}$/.test(input.name)
-    )
+    if (!input.bytes.length || input.bytes.length > fileBytes)
       throw new Error(`Choose a file of at most ${fileBytes / 1024 / 1024} MB.`);
+    const name = uploadFileName(input.name);
     const state = await recoverBrowser(id);
     if (!state?.started) throw new Error('Open the upload website first.');
     if (state.injecting) throw new BrowserLockedError();
@@ -1243,7 +1240,7 @@ export function createAgentBrowserComputer(options: {
       await onTarget(state, input, signal);
       const directory = resolve(uploadRoot, randomUUID());
       await mkdir(directory, { recursive: true, mode: 0o700 });
-      const file = resolve(directory, input.name);
+      const file = resolve(directory, name);
       try {
         await writeFile(file, input.bytes, { mode: 0o600 });
         await command(

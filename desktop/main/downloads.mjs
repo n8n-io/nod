@@ -1,5 +1,6 @@
 import { linkSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { basename, extname, join } from 'node:path';
+import { basename, join } from 'node:path';
+import { downloadFileName } from './artifact-files.mjs';
 
 export function saveArtifactDownload(event, item, { origin, directory, onError }) {
   let url;
@@ -23,9 +24,8 @@ export function saveArtifactDownload(event, item, { origin, directory, onError }
   )
     return false;
   const name = basename(item.getFilename().replaceAll('\\', '/')).replace(/[\x00-\x1f\x7f]/g, '');
-  const filename = name && name !== '.' && name !== '..' ? name : 'download';
-  const extension = extname(filename);
-  const stem = filename.slice(0, filename.length - extension.length);
+  const bounded = downloadFileName(name);
+  const filename = bounded && bounded !== '.' && bounded !== '..' ? bounded : 'download';
   let staging;
   let path;
   const cleanup = () => {
@@ -57,7 +57,7 @@ export function saveArtifactDownload(event, item, { origin, directory, onError }
       return;
     }
     for (let suffix = 0; ; suffix++) {
-      const target = join(directory, suffix ? `${stem} (${suffix})${extension}` : filename);
+      const target = join(directory, downloadFileName(filename, suffix));
       try {
         linkSync(path, target);
         break;

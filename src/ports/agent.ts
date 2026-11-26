@@ -59,7 +59,7 @@ export type BrowserConnectionRequest =
   | { action: 'save'; url: string; connectionId: string; signedIn: true };
 
 export interface BrowserStep {
-  step: BrowserAction | { action: 'upload'; selector: string; path: string };
+  step: BrowserAction | { action: 'upload'; selector: string; path: string; name?: string };
   page: BrowserPage;
   typed: string[];
   subagent: boolean;

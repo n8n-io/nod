@@ -1,7 +1,7 @@
 import { transaction } from './transaction.ts';
 import { mkdir } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
-import { basename, join } from 'node:path';
+import { join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { isEnterKey } from '../shared/browser-keys.ts';
@@ -45,7 +45,7 @@ import {
   type Computer,
   type Workspace,
 } from '../ports/computer.ts';
-import { fileBytes } from '../shared/files.ts';
+import { fileBytes, stagedWorkspaceFile, uploadFileName } from '../shared/files.ts';
 import { localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
 import type { ObservationProvider, ObservationSource } from '../ports/proactivity.ts';
 import type { IntegrationProvider } from '../ports/integrations.ts';
@@ -1486,6 +1486,17 @@ async function initializeApplication(
       expectTarget: _expectTarget,
       ...command
     } = step as BrowserAction;
+    const upload =
+      step.action === 'upload'
+        ? (() => {
+            const source = posix.basename(step.path);
+            const file = step.name ?? source;
+            return {
+              file,
+              ...(source && file !== source ? { sourceFile: source } : {}),
+            };
+          })()
+        : undefined;
     return {
       website: page.origin,
       page: page.url,
@@ -1495,7 +1506,7 @@ async function initializeApplication(
       ...(page.submits ? { submits: page.submits } : {}),
       ...(page.dropTarget?.length ? { dropTarget: page.dropTarget } : {}),
       ...(page.dialog !== undefined ? { dialog: page.dialog } : {}),
-      ...(step.action === 'upload' ? { file: basename(step.path) } : {}),
+      ...(upload ?? {}),
       ...(typed.length ? { typedOnPage: typed } : {}),
       command,
     };
@@ -1511,6 +1522,7 @@ async function initializeApplication(
     const command = args.command as Omit<BrowserAction, 'action'> & {
       action: BrowserAction['action'] | 'upload';
       path?: string;
+      name?: string;
     };
     const expectOrigin = String(args.website);
     const browserId = (
@@ -1551,7 +1563,11 @@ async function initializeApplication(
               browserId,
               {
                 selector: String(command.selector),
-                name: basename(String(command.path)),
+                name: uploadFileName(
+                  typeof command.name === 'string'
+                    ? command.name
+                    : posix.basename(String(command.path)),
+                ),
                 bytes: await workspace.readArtifact(
                   provenance.threadId,
                   String(command.path),
@@ -1959,7 +1975,7 @@ async function initializeApplication(
                         return privateEmailResult(
                           (
                             await saveIntegrationFiles(result, async (file) => {
-                              const name = `${randomUUID()}-${basename(file.name)}`;
+                              const name = stagedWorkspaceFile(randomUUID(), file.name);
                               await workspace.writeArtifact(provenance.threadId, name, file.bytes);
                               return name;
                             })
