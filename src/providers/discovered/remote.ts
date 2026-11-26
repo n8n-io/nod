@@ -42,6 +42,15 @@ function compact(result: object) {
     structuredContent?: unknown;
   };
   if (structuredContent === undefined || !Array.isArray(rest.content)) return result;
+  const values =
+    structuredContent && typeof structuredContent === 'object' && !Array.isArray(structuredContent)
+      ? Object.values(structuredContent)
+      : [];
+  const wrapped =
+    values.length === 1 &&
+    typeof values[0] === 'string' &&
+    rest.content.some((block) => block?.type === 'text' && block.text === values[0]);
+  if (wrapped) return rest;
   const repeats = (block: { type?: unknown; text?: unknown } | null) => {
     if (block?.type !== 'text' || typeof block.text !== 'string') return false;
     try {

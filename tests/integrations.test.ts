@@ -1440,6 +1440,15 @@ test('remote MCP results keep structuredContent the text only summarizes', async
     await import('@modelcontextprotocol/sdk/server/streamableHttp.js');
   const job = { status: 'succeeded', files: [{ id: 'asset-1', url: 'https://example.test/a' }] };
   const image = Buffer.from('synthetic-png').toString('base64');
+  const prose = [
+    'Successfully retrieved 2 events from calendar "synthetic@example.test":',
+    '- "Synthetic standup" (Starts: 2026-01-05T09:00:00Z, Ends: 2026-01-05T09:15:00Z)',
+    '  Description: "Daily sync for the fixture team."',
+    '  ID: evt-1 | Link: https://example.test/event/evt-1',
+    '- "Fixture review" (Starts: 2026-01-05T14:00:00Z, Ends: 2026-01-05T15:00:00Z)',
+    '  Description: "Review the synthetic plan."',
+    '  ID: evt-2 | Link: https://example.test/event/evt-2',
+  ].join('\n');
   const server = createServer(async (request, response) => {
     const mcp = new McpServer({ name: 'synthetic-files', version: '1' });
     mcp.registerTool('summary', { description: 'Summary' }, async () => ({
@@ -1462,6 +1471,10 @@ test('remote MCP results keep structuredContent the text only summarizes', async
         { type: 'text', text: 'first' },
         { type: 'text', text: 'second' },
       ],
+    }));
+    mcp.registerTool('wrapped', { description: 'Wrapped' }, async () => ({
+      content: [{ type: 'text', text: prose }],
+      structuredContent: { result: prose },
     }));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     response.on('close', () => void transport.close());
@@ -1497,6 +1510,9 @@ test('remote MCP results keep structuredContent the text only summarizes', async
       { type: 'text', text: 'second' },
     ],
   });
+  const wrapped = await transport.callTool(`${origin}/mcp`, {}, 'wrapped', {});
+  assert.deepEqual(wrapped, { content: [{ type: 'text', text: prose }] });
+  assert.ok(JSON.stringify(wrapped).length <= JSON.stringify(prose).length + 64);
 });
 
 test('remote MCP falls back to HTTP+SSE only when the server refuses Streamable HTTP', async (t) => {
