@@ -30,7 +30,16 @@ import {
   appConnectionAnalytics,
   captureAnalytics,
 } from '../lib/analytics';
-import { Button, Loading, Notice, SearchField } from '../components/ui';
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+  Loading,
+  Notice,
+  SearchField,
+} from '../components/ui';
 
 function accountLabel(account: Connection) {
   const identity = connectionIdentity(account);
@@ -104,6 +113,7 @@ export function Apps({
   const [announcement, setAnnouncement] = useState('');
   const [connectedApp, setConnectedApp] = useState('');
   const [busy, setBusy] = useState('');
+  const [channelChoice, setChannelChoice] = useState<Connection | null>(null);
   const [signIn, setSignIn] = useState<
     AppSignIn & {
       attempt?: string;
@@ -583,7 +593,11 @@ export function Apps({
                     aria-label={`Connect ${service.name}`}
                     aria-busy={busy === `connect:${service.slug}`}
                     disabled={service.status === 'not_configured' || locked}
-                    onClick={() => void connect(service, 'apps')}
+                    onClick={() =>
+                      service.slug === 'whatsapp'
+                        ? setChannelChoice(service)
+                        : void connect(service, 'apps')
+                    }
                   >
                     {busy === `connect:${service.slug}` ? 'Opening…' : 'Connect'}
                   </Button>
@@ -832,6 +846,48 @@ export function Apps({
           </div>
         </>
       )}
+      <Dialog
+        open={Boolean(channelChoice)}
+        onOpenChange={(open) => !open && setChannelChoice(null)}
+      >
+        <DialogContent className="app-connect-dialog">
+          <div className="app-connect-heading">
+            <span className="app-connect-logo" aria-hidden="true">
+              <img src="/logos/whatsapp.svg" alt="" width={36} height={36} />
+            </span>
+            <DialogTitle>Chat with Nod on WhatsApp?</DialogTitle>
+            <DialogDescription>
+              To message Nod from your own WhatsApp, link it in Channels. Here you can instead
+              connect a WhatsApp Business account, so Nod can send messages from that business. It
+              needs a Meta Business account.
+            </DialogDescription>
+          </div>
+          <div className="app-connect-actions">
+            <Button
+              variant="outline"
+              onClick={() => {
+                const connection = channelChoice;
+                setChannelChoice(null);
+                if (connection) void connect(connection, 'apps');
+              }}
+            >
+              Connect a Business account
+            </Button>
+            <Button
+              onClick={() => {
+                analyticsForCurrentSession()('app_connect_clicked', {
+                  entry: 'apps',
+                  result: 'channels',
+                });
+                setChannelChoice(null);
+                navigate('/channels?connect=whatsapp');
+              }}
+            >
+              Open Channels
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <AppConnectionDialog
         signIn={signIn}
         opening={Boolean(busy)}

@@ -470,6 +470,18 @@ export function Channels() {
     setError('');
     setPairingUrl(null);
   }
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const requested = providers.find(({ id }) => id === url.searchParams.get('connect'))?.id;
+    if (!settings?.ready || !url.searchParams.has('connect')) return;
+    url.searchParams.delete('connect');
+    window.history.replaceState(
+      window.history.state,
+      '',
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+    if (requested) open(requested);
+  }, [settings?.ready]);
   function open(provider: ChannelProvider) {
     setupTrigger.current =
       document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
