@@ -45,6 +45,7 @@ For a direct source install, stop and start the Nod process. The desktop app doe
 | `PORT`                    | The local port for the app and API.                                                                                                                                  | `4310`                                              |
 | `NOD_HOST`                | The address the server listens on. Use `0.0.0.0` inside the self-hosting container. A non-loopback address requires `NOD_AUTH_TOKEN`.                                | `127.0.0.1`                                         |
 | `NOD_AUTH_TOKEN`          | The access token for the web and desktop clients: at least 43 letters, digits, `_`, or `-`. Required for a remote bind or public URL. Never printed in startup logs. | Unset; local installs generate a private access key |
+| `NOD_SELF_HOST_OWNER_ID`  | The UUID of the owner whose data the server uses. Set it when moving data from a desktop installation.                                                               | `local-development`                                 |
 | `NOD_DATA_ROOT`           | The folder for local data: sessions, workspace files and the access key.                                                                                             | `.local`                                            |
 | `NOD_POSTGRES_PASSWORD`   | The password of the local PostgreSQL container. `pnpm start` generates one and saves it. A value you set needs at least 43 letters, digits, `_` or `-`.              | Generated                                           |
 | `DATABASE_URL`            | The PostgreSQL connection. `pnpm start` fills it in for the local container on `127.0.0.1:54329`. Set another URL to use your own database.                          | Local container                                     |
@@ -68,6 +69,12 @@ NOD_AUTH_TOKEN=<your-generated-token>
 ```
 
 Use the [self-hosting guide](/deploy/self-host/) to configure HTTPS and private backing services. Setting a public URL alone does not create a proxy or a certificate.
+
+### Use a desktop owner ID
+
+Set `NOD_SELF_HOST_OWNER_ID` in the server's `.env` to the `ownerId` from `profile.json` in your desktop profile folder when you move its data. Nod converts the UUID to lowercase. Omit the variable to use `local-development`. An empty or invalid value prevents the server from starting.
+
+Each server uses one owner ID. Changing it changes which owner's data Nod can see. Moving the desktop data is a separate step. The desktop app keeps its Vault key in the operating system's protected storage, and Nod has no supported way to export it. Without that original key, the server can't read saved credentials and cards; reconnect apps and add them again.
 
 ## Models
 
