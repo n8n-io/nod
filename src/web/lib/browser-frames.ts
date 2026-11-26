@@ -19,7 +19,12 @@ export async function browserFrames(
         if (offset < bytes.length) continue;
         if (header) {
           const size = new DataView(bytes.buffer).getUint32(0);
-          if (!size || size > 4 * 1024 * 1024) throw new Error('Invalid browser frame.');
+          if (size > 4 * 1024 * 1024) throw new Error('Invalid browser frame.');
+          if (!size) {
+            offset = 0;
+            await onFrame(new Uint8Array(0));
+            continue;
+          }
           bytes = new Uint8Array(size);
         } else {
           await onFrame(bytes);

@@ -193,7 +193,14 @@ export const browserRequest = z.discriminatedUnion('method', [
     })
     .strict(),
   z.object({ ...identity, method: z.literal('screenshot'), threadId: thread }).strict(),
-  z.object({ ...identity, method: z.literal('view'), threadId: thread }).strict(),
+  z
+    .object({
+      ...identity,
+      method: z.literal('view'),
+      threadId: thread,
+      watch: z.literal(true).optional(),
+    })
+    .strict(),
   z
     .object({
       ...identity,

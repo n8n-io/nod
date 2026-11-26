@@ -86,6 +86,7 @@ async function request<T>(
           models: 'models',
           browser: 'browser',
           'browser-handoff': 'browser',
+          'browser-watch': 'browser',
           channels: 'channels',
           'channel-settings': 'channels',
           tasks: 'tasks',

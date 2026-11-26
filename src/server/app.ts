@@ -832,23 +832,40 @@ export async function createApp(dependencies: AppDependencies = {}) {
     return reply.type('image/png').send(screen);
   }
   app.get('/api/browser/screen', (_request, reply) => readBrowserScreen(reply));
-  app.get('/api/browser-handoff/stream', async (request, reply) => {
-    const view = dependencies.computer?.view;
-    if (!view) return reply.code(404).send({ error: 'The browser is unavailable.' });
-    const { turnId, view: viewId } = z
-      .object({ turnId: z.uuid(), view: z.string().min(1).max(120).optional() })
-      .parse(request.query);
-    const browserId = await handoffBrowser(turnId);
-    if (!browserId) return reply.code(423).send({ error: handoffClosed });
+  async function taskBrowser(taskId: string) {
+    const latest = await pool.query(
+      `SELECT u.session_id::text AS browser_id FROM tasks t
+       JOIN turns u ON u.owner_id=t.owner_id AND u.session_id=t.session_id AND u.status='running'
+       JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
+       WHERE t.owner_id=$1 AND t.id=$2 AND t.state='open' AND th.archived_at IS NULL
+       LIMIT 1`,
+      [ownerId, taskId],
+    );
+    return latest.rows[0]?.browser_id as string | undefined;
+  }
+  async function streamBrowser(
+    reply: FastifyReply,
+    bound: () => Promise<string | undefined>,
+    closedError: string,
+    noPage: string,
+    { watch = false, ack }: { watch?: boolean; ack?: { view: string; turnId: string } } = {},
+  ) {
+    const computer = dependencies.computer;
+    if (!computer?.view) return reply.code(404).send({ error: 'The browser is unavailable.' });
+    const browserId = await bound();
+    if (!browserId) return reply.code(423).send({ error: closedError });
     const controller = new AbortController();
     reply.raw.on('close', () => controller.abort());
-    const open = () => view(browserId, controller.signal)[Symbol.asyncIterator]();
+    const open = () =>
+      computer
+        .view(browserId, controller.signal, watch ? { watch } : undefined)
+        [Symbol.asyncIterator]();
     let frames = open();
     let closed = false;
     let timedOut = false;
     const check = setInterval(
       () =>
-        void handoffBrowser(turnId).then(
+        void bound().then(
           (open) => {
             if (open === browserId) return;
             closed = true;
@@ -880,15 +897,12 @@ export async function createApp(dependencies: AppDependencies = {}) {
     }
     try {
       let next = await firstFrame();
-      if (closed) return reply.code(423).send({ error: handoffClosed });
+      if (closed) return reply.code(423).send({ error: closedError });
       if (next.done)
         return reply.code(409).send({
-          error: timedOut
-            ? 'The browser view did not start. Try opening it again.'
-            : "Nod's browser is not showing a page.",
+          error: timedOut ? 'The browser view did not start. Try opening it again.' : noPage,
         });
-      if ((await handoffBrowser(turnId)) !== browserId)
-        return reply.code(423).send({ error: handoffClosed });
+      if ((await bound()) !== browserId) return reply.code(423).send({ error: closedError });
       if (controller.signal.aborted) return;
       reply.hijack();
       streams.add(reply.raw);
@@ -903,15 +917,15 @@ export async function createApp(dependencies: AppDependencies = {}) {
         const length = Buffer.alloc(4);
         length.writeUInt32BE(next.value.length);
         let acknowledge: Promise<void> | undefined;
-        if (viewId) {
+        if (ack) {
+          const { view, turnId } = ack;
           acknowledge = new Promise<void>((resolve) => {
             const finish = () => {
-              if (browserFrameAcks.get(viewId)?.acknowledge === finish)
-                browserFrameAcks.delete(viewId);
+              if (browserFrameAcks.get(view)?.acknowledge === finish) browserFrameAcks.delete(view);
               controller.signal.removeEventListener('abort', finish);
               resolve();
             };
-            browserFrameAcks.set(viewId, { turnId, browserId, acknowledge: finish });
+            browserFrameAcks.set(view, { turnId, browserId, acknowledge: finish });
             controller.signal.addEventListener('abort', finish, { once: true });
             if (controller.signal.aborted) finish();
           });
@@ -938,6 +952,28 @@ export async function createApp(dependencies: AppDependencies = {}) {
       void frames.return?.().catch(() => {});
       if (reply.raw.headersSent) reply.raw.end();
     }
+  }
+  app.get('/api/browser-handoff/stream', async (request, reply) => {
+    const { turnId, view } = z
+      .object({ turnId: z.uuid(), view: z.string().min(1).max(120).optional() })
+      .parse(request.query);
+    return streamBrowser(
+      reply,
+      () => handoffBrowser(turnId),
+      handoffClosed,
+      "Nod's browser is not showing a page.",
+      { ack: view ? { view, turnId } : undefined },
+    );
+  });
+  app.get('/api/browser-watch/stream', async (request, reply) => {
+    const { taskId } = z.object({ taskId: z.uuid() }).parse(request.query);
+    return streamBrowser(
+      reply,
+      () => taskBrowser(taskId),
+      "Nod isn't browsing for this task right now.",
+      "This task's browser is closed or has no page open. Nod opens it again when the task browses.",
+      { watch: true },
+    );
   });
   app.post('/api/browser-handoff/frame-ack', async (request, reply) => {
     const { turnId, view } = z

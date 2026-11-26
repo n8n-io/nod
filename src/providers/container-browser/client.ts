@@ -335,8 +335,13 @@ export function createBridgeComputer(options: {
     return result;
   }
 
-  async function* view(id: string, signal: AbortSignal): AsyncGenerator<Buffer> {
+  async function* view(
+    id: string,
+    signal: AbortSignal,
+    viewOptions?: { watch?: boolean },
+  ): AsyncGenerator<Buffer> {
     const threadId = threadIdentity(id);
+    const watch = viewOptions?.watch === true;
     signal.throwIfAborted();
     if (
       disposed ||
@@ -350,6 +355,7 @@ export function createBridgeComputer(options: {
       threadId,
       id: randomUUID(),
       namespace: options.namespace,
+      ...(watch ? { watch } : {}),
     });
     const child = options.launch({ method: 'view', threadId });
     let closed = false;
@@ -439,7 +445,7 @@ export function createBridgeComputer(options: {
         cancel();
       }
     });
-    views.set(threadId, open.add(send));
+    if (!watch) views.set(threadId, open.add(send));
     signal.addEventListener('abort', cancel, { once: true });
     cancellations.set(cancel, threadId);
     write({ type: 'request', request });

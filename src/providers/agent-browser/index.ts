@@ -58,7 +58,8 @@ interface BrowserState {
   pageSize?: [number, number];
   signInMethods?: { document: string; origin: string; controls: Map<string, BoundSignInControl> };
   privateDocument?: string;
-  sealedDocument?: string;
+  sealedDocuments: Set<string>;
+  sealedSeenAt?: number;
   uploads: Set<string>;
   proxy?: ReturnType<typeof createBrowserProxy>;
   started: boolean;
@@ -92,6 +93,7 @@ const streamFrame = z.object({
 });
 
 const holdMs = 30 * 60_000;
+const sealedCheckMs = 1_000;
 const snapshotChars = 40_000;
 
 const withoutPasskeys = `(() => {
@@ -352,6 +354,7 @@ export function createAgentBrowserComputer(options: {
         queue: Promise.resolve(),
         injecting: false,
         secrets: new Set(),
+        sealedDocuments: new Set(),
         refs: new Map(),
         refVersions: new Map(),
         uploads: new Set(),
@@ -1168,9 +1171,9 @@ export function createAgentBrowserComputer(options: {
             const after = await devtools?.document().catch(() => undefined);
             const moved = Boolean(before && after && before !== after);
             if (failure && !(failure instanceof DaemonCommandError && moved)) throw failure;
-            if (moved && (state.saved.scripted || state.sealedDocument)) {
+            if (moved) state.sealedDocuments.delete(before!);
+            if (moved && state.saved.scripted) {
               delete state.saved.scripted;
-              delete state.sealedDocument;
               await saveState(state);
             }
           } finally {
@@ -1184,11 +1187,10 @@ export function createAgentBrowserComputer(options: {
           const devtools = await inspector(state);
           let read;
           try {
-            if (state.sealedDocument) {
+            if (state.sealedDocuments.size) {
               const current = await devtools.document().catch(() => undefined);
-              if (!current || current === state.sealedDocument)
+              if (!current || state.sealedDocuments.has(current))
                 throw new BrowserActionError('browser_script_paused');
-              delete state.sealedDocument;
             }
             if (state.secrets.size && (await devtools.holding()))
               throw new BrowserActionError('browser_script_paused');
@@ -1463,7 +1465,7 @@ export function createAgentBrowserComputer(options: {
             }
           }
           state.privateDocument = undefined;
-          if (state.secrets.size) state.sealedDocument = document;
+          if (state.secrets.size) state.sealedDocuments.add(document);
           return result;
         } finally {
           devtools.close();
@@ -2204,7 +2206,33 @@ export function createAgentBrowserComputer(options: {
     });
   }
 
-  async function* view(id: string, signal: AbortSignal): AsyncGenerator<Buffer> {
+  async function sealedDocumentOpen(state: BrowserState, signal?: AbortSignal) {
+    if (!state.sealedDocuments.size) return false;
+    if (state.sealedSeenAt !== undefined && Date.now() - state.sealedSeenAt < sealedCheckMs)
+      return true;
+    signal?.throwIfAborted();
+    const sealed = [...state.sealedDocuments];
+    const devtools = await inspector(state, signal).catch(() => undefined);
+    if (!devtools) return true;
+    try {
+      const open = await devtools.documents();
+      for (const document of sealed)
+        if (!open.has(document)) state.sealedDocuments.delete(document);
+      if (!state.sealedDocuments.size) return false;
+      state.sealedSeenAt = Date.now();
+      return true;
+    } catch {
+      return true;
+    } finally {
+      devtools.close();
+    }
+  }
+
+  async function* view(
+    id: string,
+    signal: AbortSignal,
+    options?: { watch?: boolean },
+  ): AsyncGenerator<Buffer> {
     const state = await recoverBrowser(id);
     if (!state?.started) throw new Error('Open a page in this task browser first.');
     if (state.recovered && state.saved.sensitive && !state.secrets.size)
@@ -2217,6 +2245,9 @@ export function createAgentBrowserComputer(options: {
     const socket = new WebSocket(`ws://127.0.0.1:${port}/?pacing=ack&maxFps=30`);
     let latest: z.infer<typeof streamFrame> | undefined;
     let open = true;
+    let blank = false;
+    let acked: number | undefined;
+    let retry: NodeJS.Timeout | undefined;
     let wake = () => {};
     const stop = () => {
       open = false;
@@ -2247,12 +2278,31 @@ export function createAgentBrowserComputer(options: {
           frame.metadata.deviceWidth / frame.metadata.pageScaleFactor,
           frame.metadata.deviceHeight / frame.metadata.pageScaleFactor,
         ];
-        if (!state.injecting && !(await privateDocumentOpen(state, signal)))
+        clearTimeout(retry);
+        const hidden =
+          state.injecting ||
+          (await privateDocumentOpen(state, signal)) ||
+          (options?.watch && (await sealedDocumentOpen(state, signal)));
+        if (!hidden) {
+          blank = false;
           yield Buffer.from(frame.data, 'base64');
-        if (socket.readyState === WebSocket.OPEN)
+        } else if (options?.watch) {
+          retry = setTimeout(() => {
+            latest ??= frame;
+            wake();
+          }, sealedCheckMs);
+          if (!blank) {
+            blank = true;
+            yield Buffer.alloc(0);
+          }
+        }
+        if (socket.readyState === WebSocket.OPEN && acked !== frame.seq) {
+          acked = frame.seq;
           socket.send(JSON.stringify({ type: 'ack', seq: frame.seq }));
+        }
       }
     } finally {
+      clearTimeout(retry);
       signal.removeEventListener('abort', stop);
       socket.close();
     }
@@ -2292,7 +2342,8 @@ export function createAgentBrowserComputer(options: {
       await state.proxy?.dispose();
       await saveState(state);
       state.secrets.clear();
-      delete state.sealedDocument;
+      state.sealedDocuments.clear();
+      delete state.sealedSeenAt;
       for (const directory of state.uploads) await rm(directory, { recursive: true, force: true });
       state.uploads.clear();
       await rm(cachePath(state), { recursive: true, force: true });
