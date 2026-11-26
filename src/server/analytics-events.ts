@@ -237,7 +237,16 @@ export const analyticsEvent = z.discriminatedUnion('event', [
             ])
             .optional(),
           waiting_reason: z.enum(['question', 'approval', 'credentials']).optional(),
-          failure_reason: z.enum(['spending_limit', 'model', 'unknown']).optional(),
+          failure_reason: z.enum(['spending_limit', 'model', 'offline', 'unknown']).optional(),
+          failure_class: z
+            .enum([
+              ...serviceFailureReason.exclude(['cancelled']).options,
+              'tools_unsupported',
+              'quota_exhausted',
+              'context_too_large',
+            ])
+            .optional(),
+          provider_status: z.number().int().min(100).max(599).optional(),
         })
         .strict(),
     })

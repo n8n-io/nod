@@ -225,8 +225,10 @@ export async function inlineAppResult(
   save: (text: string) => Promise<string>,
   check: MailCheck,
   signal?: AbortSignal,
+  nested = false,
 ) {
   result = await privateEmailResult(result, check, signal);
+  if (nested) return result;
   const text = JSON.stringify(result ?? null);
   if (text.length <= appResultInlineChars) return result;
   const bytes = Buffer.byteLength(text);

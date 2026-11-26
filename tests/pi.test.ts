@@ -48,6 +48,7 @@ import type { DecisionQuestion } from '../src/ports/decisions.ts';
 import type { ProviderUsageEvent } from '../src/ports/provider-usage.ts';
 import { createSandbox } from '../src/providers/pi/sandbox.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
+import { inlineAppResult, noMailCheck } from '../src/server/integration-result.ts';
 import { createCommandRedactor } from '../src/server/redaction.ts';
 import type { WorkspaceCommandRecord } from '../src/shared/execution.ts';
 import { Type } from '@sinclair/typebox';
@@ -1109,6 +1110,101 @@ test('codemode app calls keep untrusted output and stop after an approval', asyn
         assert.match(text, /Synthetic source text/);
       }
     });
+});
+
+test('a codemode script parses a large app result that a direct call only previews', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-script-large-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const prose = Array.from(
+    { length: 600 },
+    (_, index) =>
+      `Event ${index + 1}: Synthetic planning review with guest${index}@example.test in Room ${index % 12}.`,
+  ).join('\n');
+  const requests: string[] = [];
+  const saved: string[] = [];
+  let round = 0;
+  const runtime = createAgentRuntime({
+    agent: createPiAgent({
+      provider: 'openai',
+      apiKey: 'fixture-key',
+      sessionRoot: join(directory, 'sessions'),
+      createSession: async (options) => {
+        const result = await createAgentSession(options);
+        result.session.agent.streamFunction = (_model, request) => {
+          requests.push(JSON.stringify(request.messages));
+          const step = round++;
+          const message = fauxAssistantMessage(
+            step === 0
+              ? [
+                  {
+                    type: 'toolCall' as const,
+                    id: 'direct',
+                    name: 'apps',
+                    arguments: { action: 'CALENDAR_LIST_EVENTS', args: {} },
+                  },
+                ]
+              : step === 1
+                ? [
+                    {
+                      type: 'toolCall' as const,
+                      id: 'script',
+                      name: 'codemode',
+                      arguments: {
+                        code: 'const data = JSON.parse(await tools.apps({action:"CALENDAR_LIST_EVENTS",args:{}})); const lines = data.text.split("\\n"); text("events=" + lines.length + " chars=" + data.text.length + " last=" + lines[lines.length - 1]);',
+                      },
+                    },
+                  ]
+                : 'Counted the synthetic events.',
+            { stopReason: step < 2 ? 'toolUse' : 'stop' },
+          );
+          const stream = createAssistantMessageEventStream();
+          stream.push({ type: 'start', partial: message });
+          stream.push({ type: 'done', reason: step < 2 ? 'toolUse' : 'stop', message });
+          return stream;
+        };
+        return result;
+      },
+    }),
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  t.after(() => runtime.dispose());
+  const result = await runtime.runTurn({
+    ...context(directory),
+    turnId: randomUUID(),
+    prompt: 'Count the synthetic events.',
+    integration: async (_action, _args, signal, admit, nested) => {
+      await admit?.(false, true);
+      return inlineAppResult(
+        { text: prose },
+        async (text) => {
+          saved.push(text);
+          return 'calendar-events.json';
+        },
+        noMailCheck,
+        signal,
+        nested,
+      );
+    },
+  });
+  const lastToolText = (request: string) =>
+    JSON.parse(request)
+      .findLast((message: { role: string }) => message.role === 'toolResult')
+      .content.filter((part: { type: string }) => part.type === 'text')
+      .map((part: { text: string }) => part.text)
+      .join('\n');
+  assert.equal(result.status, 'succeeded');
+  assert.ok(JSON.stringify({ text: prose }).length > 40_000);
+  const direct = lastToolText(requests[1]!);
+  assert.match(direct, /"workspaceFile":"calendar-events\.json"/);
+  assert.ok(!direct.includes('Event 600:'));
+  assert.equal(saved.length, 1);
+  assert.match(
+    lastToolText(requests[2]!),
+    new RegExp(
+      `events=600 chars=${prose.length} last=Event 600: Synthetic planning review with guest599@example\\.test in Room 11\\.`,
+    ),
+  );
 });
 
 test('a failed Codemode script keeps the outcomes of calls it already started', async (t) => {
@@ -4329,7 +4425,7 @@ test('Pi ChatGPT refresh distinguishes rejected credentials from transient servi
 test('each model call yields one chat-format trace without image data', async () => {
   const { createPiModelBackend, createPiModelRuntime } =
     await import('../src/providers/pi/models.ts');
-  const { piModelTrace } = await import('../src/providers/pi/traces.ts');
+  const { modelFailure, piModelTrace } = await import('../src/providers/pi/traces.ts');
   const backend = createPiModelBackend({
     fetch: async (input) => {
       if (String(input) === 'https://openrouter.ai/api/v1/key')
@@ -4487,6 +4583,40 @@ test('each model call yields one chat-format trace without image data', async ()
     assert.equal(failed.metadata.error_type, expected, error);
     assert.equal(failed.error, error);
   }
+  for (const [error, kind, status] of [
+    [
+      'synthetic-model does not support tools (HTTP 400) [request phase: response]',
+      'tools_unsupported',
+      400,
+    ],
+    ['No endpoints found that support tool use. (HTTP 404)', 'tools_unsupported', 404],
+    ['Function calling is not enabled for models/synthetic (HTTP 400)', 'tools_unsupported', 400],
+    ['"auto" tool choice requires --enable-auto-tool-choice (HTTP 400)', 'tools_unsupported', 400],
+    [
+      'Quota exceeded: GenerateRequestsPerDayPerProjectPerModel-FreeTier (HTTP 429)',
+      'quota_exhausted',
+      429,
+    ],
+    ['Insufficient credits. (HTTP 402)', 'quota_exhausted', 402],
+    ['Too many requests. (HTTP 429)', 'rate_limited', 429],
+    [
+      'Request too large: tokens per minute (TPM): Limit 6000, Requested 9000 (HTTP 413)',
+      'context_too_large',
+      413,
+    ],
+    ['API key expired. (HTTP 401)', 'authentication', 401],
+    ['The caller may not use this model. (HTTP 403)', 'permission', 403],
+    ['The model was not found. (HTTP 404)', 'invalid_request', 404],
+    ['The request timed out. [request phase: request]', 'timeout', undefined],
+    [
+      'fetch failed (transport cause: ECONNRESET) [request phase: request]',
+      'unavailable',
+      undefined,
+    ],
+    ['Synthetic provider error.', 'unknown', undefined],
+  ] as const)
+    assert.deepEqual(modelFailure(error), { kind, ...(status ? { status } : {}) }, error);
+  assert.equal(modelFailure('Synthetic provider error.', true).kind, 'context_too_large');
   for (const errorMessage of [
     undefined,
     'Request aborted by the owner.',
