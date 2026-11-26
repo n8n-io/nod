@@ -1188,8 +1188,13 @@ if (args[0] !== 'release') throw new Error('Unexpected command');
 const tag = args[2];
 if (args[1] === 'create') {
   if (state.releases[tag]) throw new Error('Duplicate release');
+  const serverError = state.createServerError;
+  delete state.createServerError;
+  const fail = () => { save(); process.stderr.write('HTTP 500 (https://api.github.com/repos/synthetic/nod/releases)'); process.exit(1); };
+  if (serverError === 'before') fail();
   const id = ++state.created;
   state.releases[tag] = { id, tag_name: tag, target_commitish: args.includes('--target') ? flag('--target') : 'main', draft: args.includes('--draft'), prerelease: args.includes('--prerelease'), body: readFileSync(flag('--notes-file'), 'utf8'), html_url: 'https://github.com/synthetic/nod/releases/tag/untagged-' + id, assets: [] };
+  if (serverError === 'after') fail();
 } else {
   const release = state.releases[tag];
   if (!release) missing();
@@ -1232,6 +1237,7 @@ save();
 `,
     { mode: 0o700 },
   );
+  await writeFile(join(bin, 'sleep'), '#!/bin/sh\n', { mode: 0o700 });
   const network = join(root, 'network.mjs');
   await writeFile(
     network,
@@ -1436,6 +1442,18 @@ test('releases publish text notes when the release video is unavailable', async 
     assert.equal(published.draft, false);
     assert(published.body.startsWith('## Synthetic update\n\nTry the updated installer.\n\n'));
     assert(!published.body.includes(syntheticVideoUrl));
+  }
+});
+
+test('a GitHub server error while creating the draft still publishes exactly one release', async (t) => {
+  for (const createServerError of ['before', 'after']) {
+    const f = await releaseFixture(t, { plan: true, publish: true });
+    await f.invoke('plan', true);
+    await f.writeState({ ...(await f.readState()), createServerError });
+    await f.invoke('draft', true);
+    const state = await f.readState();
+    assert.equal(state.created, 1);
+    assert.equal(state.releases[f.appTag].draft, false);
   }
 });
 

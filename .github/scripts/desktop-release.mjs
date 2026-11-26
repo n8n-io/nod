@@ -52,17 +52,27 @@ function run(command, args, options = {}) {
   }).trim();
 }
 
+const githubRetrySeconds = [15, 30, 60];
+const githubServerError = /\bHTTP 5\d\d\b/;
+
 function gh(args, repository = sourceRepository) {
   const token = repository === sourceRepository ? process.env.GH_TOKEN : process.env.RELEASE_TOKEN;
   if (!token) throw new Error('Configure RELEASE_TOKEN for the distribution repositories.');
-  try {
-    return run('gh', args, { env: { ...process.env, GH_TOKEN: token } });
-  } catch (error) {
-    const reason = String(error.stderr || error.message)
-      .replaceAll(token, '[redacted]')
-      .trim();
-    if (args[0] === 'api' && reason.includes('(HTTP 404)')) return undefined;
-    throw new Error(`GitHub ${args.slice(0, 2).join(' ')} failed: ${reason}`);
+  const retries = args[0] === 'release' && args[1] === 'create' ? 0 : githubRetrySeconds.length;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return run('gh', args, { env: { ...process.env, GH_TOKEN: token } });
+    } catch (error) {
+      const reason = String(error.stderr || error.message)
+        .replaceAll(token, '[redacted]')
+        .trim();
+      if (args[0] === 'api' && reason.includes('(HTTP 404)')) return undefined;
+      if (attempt < retries && githubServerError.test(reason)) {
+        run('sleep', [String(githubRetrySeconds[attempt])]);
+        continue;
+      }
+      throw new Error(`GitHub ${args.slice(0, 2).join(' ')} failed: ${reason}`);
+    }
   }
 }
 
@@ -456,34 +466,47 @@ function releaseTarget(repository, release) {
 }
 
 async function uploadDraft({ repository, tag, title, notes, marker, files }) {
-  let release = releaseByTag(repository, tag);
-  if (release && (!release.draft || !release.body?.includes(marker)))
-    throw new Error('Refusing to replace a published or unrelated release.');
+  const draftFor = (found) => {
+    if (found && (!found.draft || !found.body?.includes(marker)))
+      throw new Error('Refusing to replace a published or unrelated release.');
+    return found;
+  };
+  let release = draftFor(releaseByTag(repository, tag));
   const id = release?.id;
   const target =
     release || repository === sourceRepository ? releaseTarget(repository, release) : undefined;
   const notesPath = join(process.env.RUNNER_TEMP || root, `nod-${tag}-notes.md`);
   await writeFile(notesPath, notes);
-  if (!release)
-    gh(
-      [
-        'release',
-        'create',
-        tag,
-        '--repo',
-        repository,
-        '--draft',
-        '--prerelease=false',
-        '--latest=false',
-        ...(repository === sourceRepository ? ['--target', sourceRevision] : []),
-        '--title',
-        title,
-        '--notes-file',
-        notesPath,
-      ],
-      repository,
-    );
-  else
+  if (!release) {
+    for (let attempt = 0; !release; attempt++) {
+      try {
+        gh(
+          [
+            'release',
+            'create',
+            tag,
+            '--repo',
+            repository,
+            '--draft',
+            '--prerelease=false',
+            '--latest=false',
+            ...(repository === sourceRepository ? ['--target', sourceRevision] : []),
+            '--title',
+            title,
+            '--notes-file',
+            notesPath,
+          ],
+          repository,
+        );
+        break;
+      } catch (error) {
+        if (attempt === githubRetrySeconds.length || !githubServerError.test(error.message))
+          throw error;
+        run('sleep', [String(githubRetrySeconds[attempt])]);
+        release = draftFor(releaseByTag(repository, tag));
+      }
+    }
+  } else
     gh(
       [
         'release',
