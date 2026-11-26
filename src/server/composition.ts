@@ -64,6 +64,7 @@ import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { DecisionModel, ModelReview } from '../ports/decisions.ts';
 import { createDecisionModel, createOpenRouterDecisionCatalog } from '../providers/decisions.ts';
 import type { SpeechProvider, LocalSpeechControls } from '../ports/speech.ts';
+import type { VoiceCallProvider } from '../ports/voice-call.ts';
 import { createLocalSpeechProvider } from '../providers/local-speech/index.ts';
 import type { MessagingTransport } from '../ports/messaging.ts';
 import type { ChannelSetupVerifier } from '../ports/channel-settings.ts';
@@ -103,6 +104,7 @@ import { createEnvironmentKeyStore } from '../providers/environment/key-store.ts
 import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
 import { createFilesystemKeyStore } from '../providers/filesystem/key-store.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
+import { createOpenAIVoiceCallProvider } from '../providers/openai/voice-call.ts';
 import { createElevenLabsSpeechProvider } from '../providers/elevenlabs/speech.ts';
 import {
   createOpenRouterTranscriptionProvider,
@@ -110,6 +112,7 @@ import {
 } from '../providers/openrouter/speech.ts';
 import { createPreferencesStore, isQuietTime } from './preferences.ts';
 import { registerSpeechSettings } from './speech-settings.ts';
+import { registerVoiceCalls } from './voice-calls.ts';
 import { createImageAnalysis } from './images.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
 import { createModelService, endpointAddress, modelKeyCredential } from './models.ts';
@@ -257,6 +260,7 @@ export interface ApplicationAdapters {
   computer: Computer;
   workspace: Workspace;
   speech: SpeechProvider;
+  voiceCalls?: VoiceCallProvider;
   localSpeech?: LocalSpeechControls;
   speechInputFormat?: (voice: string | null) => 'wav' | undefined;
   integrations: IntegrationProvider;
@@ -387,6 +391,10 @@ export function createDefaultAdapters(
     speechModel: env.TTS_MODEL,
     transcriptionModel: env.STT_MODEL,
     voice: env.TTS_VOICE,
+  });
+  const voiceCalls = createOpenAIVoiceCallProvider({
+    connection: () => models.apiCredential('openai'),
+    configured: () => models.hasApiKey('openai'),
   });
   const openRouterSpeech = createOpenRouterSpeechProvider({
     apiKey: () => models.apiKey('openrouter'),
@@ -544,6 +552,7 @@ export function createDefaultAdapters(
       workspaceRoot: join(dataRoot, 'workspaces'),
     }),
     localSpeech,
+    voiceCalls,
     speechInputFormat: (voice) => {
       const { connections, selection } = models.view();
       const selected = connections
@@ -3459,12 +3468,20 @@ async function initializeApplication(
   }).register(app);
   ledger.registerRoutes(app);
   activityLog.registerRoutes(app);
+  const voiceCalls = adapters.voiceCalls && ledger.voiceCall(adapters.voiceCalls);
   registerSpeechSettings(app, {
     speech,
     preferences: speechPreferences,
     local: adapters.localSpeech,
     inputFormat: adapters.speechInputFormat,
+    calls: () => voiceCalls?.configured ?? false,
   });
+  if (voiceCalls)
+    registerVoiceCalls(app, {
+      provider: voiceCalls,
+      submit: userMessages.submit,
+      voice: async () => (await speechPreferences.get()).speechVoice,
+    });
   registerLinkOpened(app);
   vault.registerRoutes(app);
   payments.registerRoutes(app);

@@ -26,6 +26,7 @@ export function registerSpeechSettings(
     preferences: ReturnType<typeof createPreferencesStore>;
     local?: LocalSpeechControls;
     inputFormat?: (voice: string | null) => 'wav' | undefined;
+    calls?: () => boolean;
   },
 ) {
   const { speech, preferences } = options;
@@ -55,6 +56,7 @@ export function registerSpeechSettings(
         ? options.local?.transcriptionStatus().state === 'ready'
         : speech.transcriptionConfigured,
       synthesis: speech.configured,
+      calls: options.calls?.() ?? false,
       voices: speech.voices,
       speechVoice: saved.speechVoice,
       defaultVoice: speech.defaultVoice,

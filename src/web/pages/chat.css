@@ -235,7 +235,8 @@
   position: relative;
   touch-action: none;
 }
-.record-button.is-recording {
+.record-button.is-recording,
+.call-button.is-calling {
   color: var(--accent);
 }
 .record-button.has-error {

@@ -49,6 +49,7 @@ import { useArtifactDrawer } from './artifact-context';
 import { usePageData } from '../hooks/use-page-data';
 import { useVoiceRecorder } from '../hooks/use-voice-recorder';
 import { MicrophonePicker, VoiceRecorder, VoiceSetup } from './voice-recorder';
+import { VoiceCallButton, type CallPhase } from './voice-call';
 import { MessageQuote } from './message';
 
 interface DraftAttachment {
@@ -76,6 +77,7 @@ export type ComposerSendResult =
 
 interface ComposerProps {
   active?: boolean;
+  threadId?: string;
   draftKey?: string;
   privateReply?: boolean;
   restoreReply?(reply: Message['replyTo']): void;
@@ -100,6 +102,7 @@ interface ComposerProps {
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
   {
     active = true,
+    threadId,
     ready,
     busy = false,
     text,
@@ -134,6 +137,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     refreshing: refreshingSpeech,
   } = usePageData<{
     transcription: boolean;
+    calls?: boolean;
     transcriptionFormat?: 'wav';
     local?: { state: 'not_downloaded' | 'downloading' | 'ready' | 'failed'; progress?: number };
     localInput?: {
@@ -157,6 +161,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   } | null>(null);
   const audioSend = useRef(false);
   const [error, setError] = useState('');
+  const [callPhase, setCallPhase] = useState<CallPhase>('idle');
   const fileInput = useRef<HTMLInputElement>(null);
   const sendButton = useRef<HTMLButtonElement>(null);
   const form = useRef<HTMLFormElement>(null);
@@ -808,6 +813,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         !active ||
         !ready ||
         !recorder.supported ||
+        callPhase !== 'idle' ||
         event.defaultPrevented ||
         event.isComposing ||
         event.keyCode === 229 ||
@@ -846,10 +852,25 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [active, ready, recorder.supported, recorder.phase, sendingAudio, canRecord, editor, mac]);
+  }, [
+    active,
+    ready,
+    recorder.supported,
+    recorder.phase,
+    sendingAudio,
+    canRecord,
+    editor,
+    mac,
+    callPhase,
+  ]);
   const recordingPending = recorder.phase === 'requesting' || recorder.phase === 'finishing';
   const microphoneDisabled =
-    !active || !ready || !recorder.supported || recordingPending || sendingAudio;
+    !active ||
+    !ready ||
+    !recorder.supported ||
+    recordingPending ||
+    sendingAudio ||
+    callPhase !== 'idle';
   const audioProgress =
     speech?.localInput?.progress === undefined
       ? undefined
@@ -899,6 +920,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     <div className="composer-wrap">
       {(lengthError || error || audioSetupError) && (
         <Notice>{lengthError || error || audioSetupError}</Notice>
+      )}
+      {callPhase !== 'idle' && (
+        <Notice kind="info">
+          {callPhase === 'connecting'
+            ? 'Connecting the call…'
+            : 'On a call with Nod. Talk any time, and select the phone button to hang up.'}
+        </Notice>
       )}
       {replyTo && (
         <div className="reply-context composer-reply">
@@ -1124,6 +1152,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               >
                 <Paperclip size={16} />
               </Button>
+            )}
+            {speech?.calls && threadId && !hasRecording && (
+              <VoiceCallButton
+                threadId={threadId}
+                microphoneId={recorder.microphoneId || undefined}
+                disabled={!active || !ready}
+                onError={setError}
+                onPhase={setCallPhase}
+              />
             )}
             <MicrophonePicker
               recorder={recorder}

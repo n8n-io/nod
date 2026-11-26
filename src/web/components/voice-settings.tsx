@@ -5,6 +5,7 @@ import { useModels } from '../hooks/use-models';
 import { usePageData } from '../hooks/use-page-data';
 import { useVoiceRecorder } from '../hooks/use-voice-recorder';
 import { api, apiResponse, errorMessage } from '../lib/api';
+import { appPages } from '../../shared/app-links';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { savePreferences } from '../lib/preferences';
 import { SearchPicker } from './search-picker';
@@ -28,6 +29,7 @@ interface SpeechSettings {
   speechVoice: string | null;
   defaultVoice?: string;
   speechReply: 'auto' | 'voice' | 'always' | 'never';
+  calls?: boolean;
   local?: LocalVoiceStatus;
   localInput?: LocalVoiceStatus;
 }
@@ -464,6 +466,17 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
               ))}
             </div>
           </div>
+          <p className="field-hint">
+            {data.calls ? (
+              'Voice calls: select the phone button in chat to talk with Nod live. Calls use OpenAI GPT-Live with your OpenAI API key.'
+            ) : (
+              <>
+                Voice calls need an OpenAI API key, even when another provider runs Nod. A ChatGPT
+                plan doesn’t include them. Add a key in{' '}
+                <a href="/settings/models">{appPages['/settings/models']}</a>.
+              </>
+            )}
+          </p>
         </>
       ) : (
         !loadError && <p className="field-hint">Loading voices…</p>

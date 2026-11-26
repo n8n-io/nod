@@ -42,6 +42,8 @@ Action confirmation cards show the action status after you answer. [Usage](/use/
 
 ## Send an audio message
 
+To talk with Nod live instead, start a [voice call](/use/voice-calls/).
+
 Press and hold the microphone beside the send button and allow microphone access. Release to finish recording, then select **Send**. You can also press Command+D on macOS or Ctrl+D elsewhere to start recording, then press it again to stop into preview. The shortcut does not send the message or replace an existing preview. To listen first, select **Preview**. You can discard the recording before sending. Recordings can be up to five minutes long. They stay in this window until you send them and are not restored after a reload.
 
 Recording works without setting up a voice provider. Nod reuses a connected transcription service when available. Otherwise, the first recording starts an automatic download of the local transcription model, about 80 MB, on the computer hosting Nod. You can record and preview while it prepares. Send waits until preparation finishes; **Cancel sending** keeps your recording and caption. If preparation fails, send again to retry. Discarding the recording or leaving chat cancels its preparation request. This does not download reply voices or change your chosen voice.

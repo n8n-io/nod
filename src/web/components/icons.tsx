@@ -17,6 +17,8 @@ import {
   Monitor as LucideMonitor,
   Moon as LucideMoon,
   Pause as LucidePause,
+  Phone as LucidePhone,
+  PhoneOff as LucidePhoneOff,
   Plane as LucidePlane,
   Presentation as LucidePresentation,
   Repeat as LucideRepeat,
@@ -193,6 +195,8 @@ export const Merge = lucide(LucideMerge);
 export const Monitor = lucide(LucideMonitor);
 export const Moon = lucide(LucideMoon);
 export const Pause = lucide(LucidePause);
+export const Phone = lucide(LucidePhone);
+export const PhoneOff = lucide(LucidePhoneOff);
 export const Plane = lucide(LucidePlane);
 export const Presentation = lucide(LucidePresentation);
 export const Repeat = lucide(LucideRepeat);

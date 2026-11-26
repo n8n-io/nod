@@ -14,6 +14,7 @@ import type { ProviderUsageEvent, UsageTelemetry } from '../ports/provider-usage
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { DecisionModel } from '../ports/decisions.ts';
 import type { SpeechProvider } from '../ports/speech.ts';
+import type { VoiceCallProvider } from '../ports/voice-call.ts';
 import type {
   TrustAction,
   TrustEntry,
@@ -773,6 +774,23 @@ export function createLedger({
     };
   }
 
+  function voiceCall(base: VoiceCallProvider): VoiceCallProvider {
+    return {
+      ...base,
+      get configured() {
+        return base.configured;
+      },
+      async start(input, onUsage) {
+        if (await limitReached()) throw new Error(spendingLimitReached);
+        return base.start(input, (usage) => {
+          record(usage, null);
+          onUsage?.(usage);
+          void finishUsage();
+        });
+      },
+    };
+  }
+
   async function limits(database: Pick<PoolClient, 'query'> = pool) {
     const row = (
       await database.query(
@@ -1486,6 +1504,7 @@ export function createLedger({
     curator,
     decisions,
     speech,
+    voiceCall,
     attributeMediaUsage,
     action,
     earlierActions,

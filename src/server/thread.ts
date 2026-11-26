@@ -144,6 +144,7 @@ interface SubmitUserMessageOptions {
   questionAnswer?: QuestionAnswer;
   approvalAnswer?: { approvalId: string; approved: boolean };
   audioCaption?: string;
+  spoken?: boolean;
   prompt?: string;
   answer?: ChatConfirmationInput['answer'];
   prepareAttachments?: (client: PoolClient, threadId: string) => Promise<Artifact[]>;
@@ -789,13 +790,14 @@ export async function submitUserMessage(
       confirmation.hasAttachments)
   )
     throw httpError('Answer the approval with the button you chose.', 400);
-  const answer = options.questionAnswer
-    ? undefined
-    : options.approvalAnswer
-      ? options.approvalAnswer
-      : options.client
-        ? options.answer
-        : await readAnswer(text, confirmation.hasAttachments, options, confirmAction, stop);
+  const answer =
+    options.questionAnswer || options.spoken
+      ? undefined
+      : options.approvalAnswer
+        ? options.approvalAnswer
+        : options.client
+          ? options.answer
+          : await readAnswer(text, confirmation.hasAttachments, options, confirmAction, stop);
   let inserted = false;
   const markInserted = () => {
     inserted = true;
