@@ -14,7 +14,7 @@ import {
 } from '../ports/agent.ts';
 import {
   apiKeyConnectionProviders,
-  lightestEffort,
+  checkEffort,
   modelProviderInfo,
   modelProviderNames,
   modelProviders,
@@ -430,12 +430,12 @@ export function createDefaultAdapters(
       const access = await models.resolve();
       return {
         ...access,
-        effort: lightestEffort(access.definition.choice.efforts),
+        effort: checkEffort(access.definition.choice.efforts),
         ...(access.textModel
           ? {
               textModel: {
                 ...access.textModel,
-                effort: lightestEffort(access.textModel.definition.choice.efforts),
+                effort: checkEffort(access.textModel.definition.choice.efforts),
               },
             }
           : {}),

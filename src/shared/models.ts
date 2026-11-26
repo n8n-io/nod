@@ -67,6 +67,12 @@ export function lightestEffort(efforts: ModelEffort[]) {
   return efforts.find((level) => ['off', 'minimal', 'low', 'medium'].includes(level)) ?? efforts[0];
 }
 
+export function checkEffort(efforts: ModelEffort[]) {
+  return (
+    (['medium', 'low', 'minimal'] as const).find((level) => efforts.includes(level)) ?? efforts[0]
+  );
+}
+
 export interface ModelChoice {
   id: string;
   name: string;

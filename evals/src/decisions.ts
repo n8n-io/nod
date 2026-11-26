@@ -3126,14 +3126,19 @@ export function supportedDecisionCases(
 
 export async function decisionEffort(source: string, supported: ModelEffort[]) {
   const file = ts.createSourceFile('models.ts', source, ts.ScriptTarget.Latest, true);
-  const selector = file.statements.find(
-    (node): node is ts.FunctionDeclaration =>
-      ts.isFunctionDeclaration(node) && node.name?.text === 'lightestEffort',
-  );
+  const named = (name: string) =>
+    file.statements.find(
+      (node): node is ts.FunctionDeclaration =>
+        ts.isFunctionDeclaration(node) && node.name?.text === name,
+    );
+  const selector = named('checkEffort') ?? named('lightestEffort');
   if (!selector?.body) throw new Error('Missing review effort selector in this revision.');
-  const code = ts.transpileModule(`${selector.getText(file)}\nexport default lightestEffort;`, {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-  }).outputText;
+  const code = ts.transpileModule(
+    `${selector.getText(file)}\nexport default ${selector.name!.text};`,
+    {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    },
+  ).outputText;
   const module = await import(
     `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
   );
