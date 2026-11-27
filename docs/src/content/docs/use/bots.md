@@ -11,13 +11,15 @@ You don't need bots. If you never add one, Nod works exactly as before.
 
 ## Add a bot
 
-Select **+** at the top of the sidebar, give the bot a name, pick an avatar and select **Create**. Its chat opens, so you can tell it what to do. A new bot starts on the same model as Nod until you pick another in its settings.
+Select **+** below your bots in the sidebar, give the bot a name, pick an avatar and select **Create**. Its chat opens, so you can tell it what to do. A new bot starts on the same model as Nod until you pick another in its settings.
 
 You can also ask Nod or any bot in chat, for example "Make me a bot called Penny that tracks my bills."
 
 ## Talk to a bot
 
-Open a bot in the sidebar and write in its chat. Its questions, approvals and answers stay in that chat. A bot can start [tasks](/use/tasks/) and [schedules](/use/schedules/) like Nod, and their results come back to its chat. A dot marks new messages, and a pink dot marks a bot that needs you.
+Open a bot in the sidebar and write in its chat. The sidebar shows each bot's avatar: point at one to see its name, or expand the sidebar to see names and last messages. Its questions, approvals and answers stay in that chat. A bot can start [tasks](/use/tasks/) and [schedules](/use/schedules/) like Nod, and their results come back to its chat. A dot marks new messages, and a pink dot marks a bot that needs you.
+
+Beside the chat, **Scheduled** and **Tasks** list that bot's own schedules and tasks, one line each. Select a line to run, pause or change it. Select **+**, or the empty row, to ask the bot to set up a new one. To hide or show this column, select the panel button at its top right.
 
 Bots don't hand work to each other. To ask a bot for something, write in its chat. `/clear` works in Nod's chat only.
 
@@ -35,7 +37,7 @@ Your apps, Vault, rules and settings are shared: bots use them with the same [ap
 
 ## Change a bot
 
-Select the name at the top of a bot's chat to open its settings: avatar, name, model and instructions. An avatar is an emoji, or an image you upload or generate. You can also ask Nod, for example "Rename Scout to Atlas" or "Tell Penny to keep answers short." A bot can change only its own settings. Instructions guide a bot. Only that bot and Nod see them, and they never approve an action.
+Select the settings button next to a bot's name, beside its chat, to change its model and instructions. Select its avatar or name there to change them. An avatar is an emoji, or an image you upload or generate. You can also ask Nod, for example "Rename Scout to Atlas" or "Tell Penny to keep answers short." A bot can change only its own settings. Instructions guide a bot. Only that bot and Nod see them, and they never approve an action.
 
 ## Remove a bot
 

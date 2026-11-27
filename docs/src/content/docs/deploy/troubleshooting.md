@@ -242,7 +242,7 @@ Ask Nod to check the result in the app or website before you try again. See [One
 
 ### Report a bug with a diagnostic report
 
-Select **Report bug** in the chat. When something in Nod itself fails, Nod also drafts a bug report in chat that you send with **Send report**, or by replying "send" in Telegram or WhatsApp. See [Report a bug](/use/chat/#report-a-bug). In the desktop app, **Report bug…** is also in the menu bar menu. The dialog names the recipient before you send: the Nod team at n8n by default, or your operator's configured collector.
+Select **Report bug** at the bottom of the sidebar. When something in Nod itself fails, Nod also drafts a bug report in chat that you send with **Send report**, or by replying "send" in Telegram or WhatsApp. See [Report a bug](/use/chat/#report-a-bug). In the desktop app, **Report bug…** is also in the menu bar menu. The dialog names the recipient before you send: the Nod team at n8n by default, or your operator's configured collector.
 
 If the workspace crashes, use **Report bug** on the error screen before **Reload Nod** to include the captured error.
 

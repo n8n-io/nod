@@ -147,6 +147,9 @@ if (process.env.WORKSPACE_CONTAINER) {
   } finally {
     await database.end();
   }
+  const { transaction } = await import('./src/server/transaction.ts');
+  const { pool } = await import('./src/server/db.ts');
+  assert.equal(await transaction(async (client) => (await client.query('SELECT value FROM windows_check')).rows[0].value, pool, AbortSignal.timeout(30_000)), 42);
   await import('./desktop/main/engine.mjs');
   const origin = 'http://127.0.0.1:' + port;
   const denied = await fetch(origin + '/api/configuration');

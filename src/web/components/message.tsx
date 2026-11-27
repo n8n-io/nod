@@ -140,6 +140,7 @@ export function MessageQuote({
         className="message-reply-quote"
         onClick={() => focusMessage(message.id, botId)}
       >
+        {!composing && <CornerUpLeft className="message-reply-icon" size={14} />}
         <strong>
           {composing ? 'Replying to ' : ''}
           {message.role === 'assistant' ? (message.from ?? 'Nod') : composing ? 'yourself' : 'You'}

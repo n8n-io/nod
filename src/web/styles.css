@@ -1018,29 +1018,14 @@ input[type='range']:disabled {
 .composer {
   position: relative;
   z-index: 3;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  column-gap: 8px;
-  border: 1px solid var(--input);
-  border-radius: 16px;
+  border: 1px solid var(--border);
+  border-radius: 24px;
   background: var(--surface);
   box-shadow: var(--shadow-composer);
-  padding: 8px 8px 8px 16px;
+  padding: 12px;
   transition:
     border-color 180ms ease,
     box-shadow 180ms ease;
-}
-.composer > :has(> .composer-editor) {
-  flex: 1 1 200px;
-  min-width: 0;
-  align-self: center;
-}
-.composer > :is(.pending-attachments, .composer-attachments) {
-  flex: 1 0 100%;
-}
-.composer.has-recording .composer-tools {
-  flex: 1 0 100%;
 }
 .composer:focus-within {
   border-color: var(--focus-border);
@@ -1048,10 +1033,9 @@ input[type='range']:disabled {
 }
 .composer-tools {
   display: flex;
-  flex: none;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 12px;
 }
 .composer-left {
   display: flex;

@@ -34,7 +34,7 @@ Unsent files become eligible for cleanup 24 hours after upload or their last suc
 
 Select a passage in a message, then **Reply to selection** to quote it. Selected passages keep their exact text, including literal symbols, and stay separate from your own message. Select a reply quote to visit its source. **Return to previous position** restores your reading position. Copy controls on code blocks and tables copy only that block. Table content pastes into spreadsheet cells. Message Copy includes formatted text where the clipboard supports it. **Copy Markdown** copies the source text.
 
-Select **Search chat** to search stored messages in the current conversation. Search shows up to 50 recent matches, with the sender, date and highlighted text. Use the arrow keys to move between results and Enter to open a message. Escape closes search and returns focus to the control you used before opening it. Press Command/Ctrl+K outside an editor to open pages, files, and tasks. In the desktop app, Command/Ctrl+F opens conversation search outside an editor.
+Select **Search** at the bottom of the sidebar to search stored messages in the current conversation. Search shows up to 50 recent matches, with the sender, date and highlighted text. Use the arrow keys to move between results and Enter to open a message. Escape closes search and returns focus to the control you used before opening it. Press Command/Ctrl+K outside an editor to open pages, files, and tasks. In the desktop app, Command/Ctrl+F opens conversation search outside an editor.
 
 Nod loads earlier messages automatically as you scroll toward the top and keeps your reading position. Select **Back to latest** above the message box to return to the newest message.
 
@@ -180,7 +180,7 @@ On desktop, enabling notifications sends a confirmation. If it does not appear, 
 
 Notifications use Nod's name and icon and are silent. In the desktop app, once notifications are on, turn on **Play a sound** in **Settings → Notifications** if you want one; your computer's notification settings can still mute it. In the web app, they announce a new reply without showing its contents. Keep the Nod tab open to receive them while it is in the background. Select a notification to return to its message. Ordinary browser tabs may also show the browser’s name; the operating system controls that attribution.
 
-When you return to Chat with unread replies, a **New messages** divider marks where they begin and Chat opens there. It stays for that visit, even after you reach the latest reply and clear the unread badge. Selecting a notification still opens that specific message. Replies arriving while you are already at the bottom do not add a divider or move you away.
+When you return to Chat with unread replies, a **New messages** divider marks where they begin and Chat opens there. It stays for that visit, even after you reach the latest reply and clear the unread badge. When every message in the chat is new, such as right after setup, Chat shows only the date and opens at the first message. Selecting a notification still opens that specific message. Replies arriving while you are already at the bottom do not add a divider or move you away.
 
 The web choice applies to this account in this browser. Turning it off does not revoke the browser’s site permission. Quiet hours apply to web and desktop notifications.
 
@@ -282,7 +282,7 @@ Nod answers each request in the app you sent it from. A message from Telegram ge
 
 ## Report a bug
 
-Select **Report bug** at the top of the chat and describe what happened. The dialog opens on **Bug**; choose **Idea** or **Other** for other feedback. The dialog names the recipient: the Nod team at n8n by default, or your server operator's configured collector.
+Select **Report bug** at the bottom of the sidebar and describe what happened. The dialog opens on **Bug**; choose **Idea** or **Other** for other feedback. The dialog names the recipient: the Nod team at n8n by default, or your server operator's configured collector.
 
 After first-time setup, a short invitation points to **Report bug**. Dismiss it with its close button or press Escape while the invitation or **Report bug** is focused; it stays dismissed on that device.
 

@@ -1,22 +1,16 @@
 import { useEffect, useRef } from 'react';
-import { PanelLeftOpen } from './icons';
-import { Tooltip } from './tooltip';
-import { desktopSettingsAvailable } from '../lib/desktop';
-import { isEditingTarget, navigationShortcut, shortcutLabel } from '../lib/navigation';
+import { isEditingTarget, navigationShortcut } from '../lib/navigation';
 
 export function Sidebar({
   nav,
-  panelHidden = false,
   onToggle,
   onNavigate,
 }: {
   nav: React.ReactNode;
-  panelHidden?: boolean;
   onToggle(): void;
   onNavigate(path: string): void;
 }) {
   const mac = /Mac|iPhone|iPad/.test(navigator.platform);
-  const desktop = desktopSettingsAvailable();
   const navigate = useRef(onNavigate);
   navigate.current = onNavigate;
   const toggle = useRef(onToggle);
@@ -66,26 +60,8 @@ export function Sidebar({
     };
   }, [mac]);
   return (
-    <>
-      <aside className="sidebar" aria-label="Sidebar">
-        {nav}
-      </aside>
-      {panelHidden && (
-        <Tooltip
-          content="Show sidebar"
-          shortcut={desktop ? shortcutLabel('b', mac) : undefined}
-          side="right"
-        >
-          <button
-            type="button"
-            className="sidebar-show"
-            aria-label="Show sidebar"
-            onClick={() => onToggle()}
-          >
-            <PanelLeftOpen size={16} aria-hidden="true" />
-          </button>
-        </Tooltip>
-      )}
-    </>
+    <aside className="sidebar" aria-label="Sidebar">
+      {nav}
+    </aside>
   );
 }

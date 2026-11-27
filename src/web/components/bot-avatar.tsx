@@ -12,6 +12,13 @@ export function NodAvatar({ size = 'md' }: { size?: Size }) {
   );
 }
 
+function tintOf(name: string) {
+  let hash = 0;
+  for (const character of name.trim().toLowerCase())
+    hash = (hash * 31 + character.codePointAt(0)!) % 997;
+  return hash % 6;
+}
+
 function useChangeKey(signature: string) {
   const shown = useRef(signature);
   const changed = useRef(false);
@@ -45,6 +52,7 @@ export function BotAvatar({
     <span
       key={changeKey}
       className={`av av-${size}${avatar ? ' av-mark' : ''}${changed}`}
+      data-tint={tintOf(name)}
       aria-hidden="true"
     >
       {glyph}

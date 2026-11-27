@@ -11,15 +11,24 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import type { Activity } from '../../shared/contracts';
-import { botInstructionsLimit, botEmojis, botNameLimit } from '../../shared/bots';
+import type { Activity, Schedule, Task } from '../../shared/contracts';
+import { botInstructionsLimit, botNameLimit } from '../../shared/bots';
 import { api, errorMessage } from '../lib/api';
 import { botActivity, botLine, botPath, type Bot } from '../lib/bots';
-import { Plus, Settings, X } from './icons';
-import { NodModelName, BotModel } from './model-choices';
+import { ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, Plus, Settings } from './icons';
+import { usePageData } from '../hooks/use-page-data';
+import { readUiPreference, writeUiPreference } from '../lib/ui-preferences';
+import { ScheduleRow } from '../pages/schedule';
+import { TaskCard } from '../pages/tasks';
+import { taskLabels } from '../../shared/task-status';
+import { formatDateTime, formatTime, useDateFormat, type DateFormat } from '../lib/date-format';
+import { BotModel } from './model-choices';
+import { ModelPicker } from './models';
 import { NodAvatar, BotAvatar } from './bot-avatar';
 import { LiveLine } from './live-line';
-import { sidebarItems } from '../lib/navigation';
+import { shortcutLabel, sidebarItems } from '../lib/navigation';
+import { desktopSettingsAvailable } from '../lib/desktop';
+import { Tooltip } from './tooltip';
 import { Button, Dialog, DialogContent, DialogTitle, Input, Loading, Notice } from './ui';
 import { EmojiCatalog } from './emoji-picker';
 
@@ -175,6 +184,12 @@ function ContextMenu({
   );
 }
 
+function statusWord(bot: Bot, unread: boolean) {
+  if (bot.status === 'needs_you') return 'needs you';
+  if (bot.status === 'working') return 'working';
+  return unread ? 'new message' : null;
+}
+
 export function BotNav({
   bots,
   activity,
@@ -186,6 +201,9 @@ export function BotNav({
   path,
   settingsActive,
   unread,
+  expanded,
+  toolsRef,
+  onToggle,
   onNavigate,
   onSettings,
 }: {
@@ -199,6 +217,9 @@ export function BotNav({
   path: string;
   settingsActive: boolean;
   unread(bot: Bot): boolean;
+  expanded: boolean;
+  toolsRef(element: HTMLDivElement | null): void;
+  onToggle(): void;
   onNavigate(path: string): void;
   onSettings(): void;
 }) {
@@ -225,65 +246,79 @@ export function BotNav({
     onNavigate(path);
   };
   const openMenu = (bot: Bot, point: { x: number; y: number }) => setMenu({ bot, point });
+  const tip = (text: string) => (expanded ? undefined : text);
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+  const nodStatus = nodUnread ? 'new message' : nodWorking ? 'working' : null;
   return (
     <nav className="bot-nav" aria-label="Chats">
       <div className="bot-top">
-        <Button variant="ghost" size="icon" aria-label="New bot" onClick={newBot}>
-          <Plus size={16} aria-hidden="true" />
-        </Button>
-      </div>
-      <a
-        href="/"
-        className="bot-brand"
-        aria-current={mainActive ? 'page' : undefined}
-        aria-label={['Chat with Nod', nodWorking ? 'working' : null, nodUnread ? 'unread' : null]
-          .filter(Boolean)
-          .join(', ')}
-        onClick={link('/')}
-      >
-        <NodAvatar />
-        <span className="bot-meta">
-          <span className="bot-name">Nod</span>
-          <span className={`bot-sub${nodUnread ? ' bot-sub-unread' : ''}`}>
-            {nodWorking ? (
-              <LiveLine
-                item={activity?.find((item) => !item.botId && !item.background)}
-                history={false}
-              />
+        <Tooltip
+          content={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+          shortcut={desktopSettingsAvailable() ? shortcutLabel('b', mac) : undefined}
+          side="right"
+        >
+          <button
+            type="button"
+            className="bot-toggle"
+            aria-label={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+            aria-expanded={expanded}
+            onClick={onToggle}
+          >
+            {expanded ? (
+              <PanelLeftClose size={18} aria-hidden="true" />
             ) : (
-              nodLine || 'Ask me anything'
+              <PanelLeftOpen size={18} aria-hidden="true" />
             )}
-          </span>
-        </span>
-        {nodUnread ? (
-          <span className="bot-dot" aria-hidden="true" />
-        ) : nodWorking ? (
-          <span className="bot-dot bot-dot-working" aria-hidden="true" />
-        ) : null}
-      </a>
-      {bots.length > 0 && (
-        <ul className="bot-list">
-          {bots.map((bot) => {
-            const active = bot.id === activeId;
-            const isUnread = !active && unread(bot);
-            const live = botActivity(activity, bot.id);
-            return (
-              <li key={bot.id} className={fresh.has(bot.id) ? 'bot-fresh' : ''}>
+          </button>
+        </Tooltip>
+      </div>
+      <ul className="bot-list">
+        <li>
+          <Tooltip content={tip(nodStatus ? `Nod · ${nodStatus}` : 'Nod')} side="right">
+            <a
+              href="/"
+              className="bot-item bot-brand"
+              data-status={nodWorking ? 'working' : undefined}
+              aria-current={mainActive ? 'page' : undefined}
+              aria-label={['Chat with Nod', nodStatus].filter(Boolean).join(', ')}
+              onClick={link('/')}
+            >
+              <NodAvatar />
+              <span className="bot-meta">
+                <span className="bot-name">Nod</span>
+                <span className={`bot-sub${nodUnread ? ' bot-sub-unread' : ''}`}>
+                  {nodWorking ? (
+                    <LiveLine
+                      item={activity?.find((item) => !item.botId && !item.background)}
+                      history={false}
+                    />
+                  ) : (
+                    nodLine || 'Ask me anything'
+                  )}
+                </span>
+              </span>
+              {nodUnread ? (
+                <span className="bot-dot" aria-hidden="true" />
+              ) : nodWorking ? (
+                <span className="bot-dot bot-dot-working" aria-hidden="true" />
+              ) : null}
+            </a>
+          </Tooltip>
+        </li>
+        {bots.map((bot) => {
+          const active = bot.id === activeId;
+          const isUnread = !active && unread(bot);
+          const live = botActivity(activity, bot.id);
+          const status = statusWord(bot, isUnread);
+          return (
+            <li key={bot.id} className={fresh.has(bot.id) ? 'bot-fresh' : ''}>
+              <Tooltip content={tip(status ? `${bot.name} · ${status}` : bot.name)} side="right">
                 <a
                   href={botPath(bot.id)}
                   className="bot-item"
+                  data-status={bot.status}
                   aria-current={active ? 'page' : undefined}
-                  aria-label={[
-                    bot.name,
-                    bot.status === 'needs_you'
-                      ? 'needs you'
-                      : bot.status === 'working'
-                        ? 'working'
-                        : null,
-                    isUnread ? 'unread' : null,
-                  ]
-                    .filter(Boolean)
-                    .join(', ')}
+                  aria-label={[bot.name, status].filter(Boolean).join(', ')}
                   onClick={link(botPath(bot.id))}
                   onContextMenu={(event) => {
                     event.preventDefault();
@@ -310,35 +345,58 @@ export function BotNav({
                   </span>
                   <RowMarker bot={bot} unread={isUnread} />
                 </a>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      <div className="bot-foot">
-        {sidebarItems
-          .filter((item) => item.path !== '/')
-          .map((item) => (
-            <a
-              key={item.path}
-              href={item.path}
-              className="bot-foot-item"
-              aria-current={path === item.path ? 'page' : undefined}
-              onClick={link(item.path)}
+              </Tooltip>
+            </li>
+          );
+        })}
+        <li>
+          <Tooltip content={tip('New bot')} side="right">
+            <button
+              type="button"
+              className="bot-item bot-new"
+              aria-label="New bot"
+              onClick={newBot}
             >
-              <item.icon size={16} aria-hidden="true" />
-              <span>{item.label}</span>
-            </a>
+              <span className="av av-new" aria-hidden="true">
+                <Plus size={16} />
+              </span>
+              <span className="bot-meta">
+                <span className="bot-name">New bot</span>
+              </span>
+            </button>
+          </Tooltip>
+        </li>
+      </ul>
+      <div className="bot-foot">
+        <div className="bot-foot-tools" ref={toolsRef} />
+        {sidebarItems
+          .filter((item) => item.path !== '/' && item.path !== '/tasks')
+          .map((item) => (
+            <Tooltip key={item.path} content={tip(item.label)} side="right">
+              <a
+                href={item.path}
+                className="bot-foot-item"
+                aria-label={item.label}
+                aria-current={path === item.path ? 'page' : undefined}
+                onClick={link(item.path)}
+              >
+                <item.icon size={18} aria-hidden="true" />
+                <span>{item.label}</span>
+              </a>
+            </Tooltip>
           ))}
-        <button
-          type="button"
-          className="bot-foot-item"
-          aria-current={settingsActive ? 'page' : undefined}
-          onClick={onSettings}
-        >
-          <Settings size={16} aria-hidden="true" />
-          <span>Settings</span>
-        </button>
+        <Tooltip content={tip('Settings')} side="right">
+          <button
+            type="button"
+            className="bot-foot-item"
+            aria-label="Settings"
+            aria-current={settingsActive ? 'page' : undefined}
+            onClick={onSettings}
+          >
+            <Settings size={18} aria-hidden="true" />
+            <span>Settings</span>
+          </button>
+        </Tooltip>
       </div>
       {menu && (
         <ContextMenu
@@ -355,37 +413,8 @@ export function BotNav({
   );
 }
 
-export function ChatTop({
-  bot,
-  toolsRef,
-}: {
-  bot?: Bot;
-  toolsRef?(element: HTMLDivElement | null): void;
-}) {
-  const panel = useContext(PanelContext);
-  const summary = bot ? bot.job || 'No job yet' : 'Your main assistant';
-  return (
-    <header className="chat-top">
-      <h1 className="chat-pill-wrap">
-        <button
-          type="button"
-          className="chat-pill"
-          aria-expanded={panel.shown}
-          aria-controls="bot-panel"
-          title={summary}
-          onClick={panel.toggle}
-        >
-          {bot ? (
-            <BotAvatar name={bot.name} avatar={bot.avatar} size="sm" />
-          ) : (
-            <NodAvatar size="sm" />
-          )}
-          <span className="chat-pill-name">{bot?.name ?? 'Nod'}</span>
-        </button>
-      </h1>
-      <div className="chat-top-tools" ref={toolsRef} />
-    </header>
-  );
+export function ChatTop({ bot }: { bot?: Bot }) {
+  return <h1 className="sr-only">{bot?.name ?? 'Nod'}</h1>;
 }
 
 async function uploadAvatar(dataUrl: string) {
@@ -573,9 +602,7 @@ export function NewBotDialog({ bots, onCreated }: { bots: Bot[]; onCreated(bot: 
   taken.current = bots;
   useEffect(() => {
     const show = () => {
-      const free = botEmojis.filter((emoji) => !taken.current.some((bot) => bot.avatar === emoji));
-      const choices = free.length ? free : botEmojis;
-      setAvatar(choices[Math.floor(Math.random() * choices.length)]!);
+      setAvatar('🤖');
       setName('');
       setError('');
       createdBot.current = false;
@@ -712,7 +739,7 @@ function InstructionsField({ bot }: { bot: Bot }) {
     <textarea
       className="input"
       value={value}
-      rows={3}
+      rows={4}
       aria-label="Instructions"
       placeholder="What should it always or never do?"
       maxLength={botInstructionsLimit}
@@ -732,88 +759,241 @@ function InstructionsField({ bot }: { bot: Bot }) {
   );
 }
 
-const PanelContext = createContext<{ shown: boolean; toggle(): void }>({
-  shown: false,
-  toggle() {},
-});
+type CardKey = 'settings' | 'scheduled' | 'tasks';
+
+function CardsToggle({ bot, shown, onToggle }: { bot?: Bot; shown: boolean; onToggle(): void }) {
+  const tasks = usePageData<Task[]>('/api/tasks');
+  const chatId = bot?.id ?? null;
+  const needsYou =
+    !shown &&
+    (tasks.data ?? []).some(
+      (task) => (task.botId ?? null) === chatId && task.status === 'needs_you',
+    );
+  const label = shown ? 'Hide details' : 'Show details';
+  return (
+    <Tooltip content={label} side="left">
+      <button
+        type="button"
+        className="bot-cards-toggle"
+        data-shown={shown || undefined}
+        aria-label={label}
+        aria-expanded={shown}
+        aria-controls="bot-cards"
+        onClick={onToggle}
+      >
+        <PanelLeftOpen size={18} aria-hidden="true" />
+        {needsYou && <span className="bot-dot bot-dot-needs" aria-hidden="true" />}
+      </button>
+    </Tooltip>
+  );
+}
 
 export function PanelProvider({
-  path,
   bot,
   available,
+  activity,
+  onAsk,
+  onNavigate,
   children,
 }: {
   path: string;
   bot?: Bot;
   available: boolean;
+  activity?: Activity[];
+  onAsk(text: string, botId?: string): void;
+  onNavigate(path: string): void;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
-  const [leavingFrom, setLeavingFrom] = useState<string>();
-  if (open && !available) setOpen(false);
-  const shown = open && available;
-  const close = () => {
-    if (shown) setLeavingFrom(path);
-    setOpen(false);
-  };
-  const toggle = () => {
-    if (shown) return close();
-    setLeavingFrom(undefined);
-    setOpen(true);
+  const [shown, setShown] = useState(() => readUiPreference('nod.cards') !== 'hidden');
+  const [open, setOpen] = useState<Record<CardKey, boolean>>({
+    settings: false,
+    scheduled: true,
+    tasks: true,
+  });
+  const toggleCards = () => {
+    writeUiPreference('nod.cards', shown ? 'hidden' : 'shown');
+    setShown(!shown);
   };
   return (
-    <PanelContext.Provider value={{ shown, toggle }}>
+    <>
       {children}
-      {(shown || leavingFrom === path) && (
-        <BotPanel
+      {available && shown && (
+        <BotCards
           bot={bot}
-          closing={!shown}
-          onClose={close}
-          onClosed={() => setLeavingFrom(undefined)}
+          activity={activity ?? []}
+          open={open}
+          onToggle={(key) => setOpen((current) => ({ ...current, [key]: !current[key] }))}
+          onAsk={onAsk}
+          onNavigate={onNavigate}
         />
       )}
-    </PanelContext.Provider>
+      {available && <CardsToggle bot={bot} shown={shown} onToggle={toggleCards} />}
+    </>
   );
 }
 
-export function BotPanel({
+const finishedTask = (task: Task) => task.status === 'done' || task.status === 'cancelled';
+
+function CardHead({
+  title,
+  count,
+  alert,
+  open,
+  add,
+  onToggle,
+  onAdd,
+}: {
+  title: string;
+  count: number;
+  alert?: boolean;
+  open: boolean;
+  add: string;
+  onToggle(): void;
+  onAdd(): void;
+}) {
+  if (count === 0)
+    return (
+      <button type="button" className="bot-card-create" aria-label={add} onClick={onAdd}>
+        <h3>{title}</h3>
+        <span className="bot-card-create-hint">{add}</span>
+        <Plus size={14} aria-hidden="true" />
+      </button>
+    );
+  return (
+    <div className="bot-card-head">
+      <button
+        type="button"
+        className="bot-card-toggle"
+        aria-expanded={count > 0 ? open : undefined}
+        disabled={count === 0}
+        onClick={onToggle}
+      >
+        <h3>{title}</h3>
+        {count > 0 && (
+          <span className={`bot-card-count${alert ? ' bot-card-count-alert' : ''}`}>{count}</span>
+        )}
+        {count > 0 && <ChevronDown size={12} className="bot-card-chevron" aria-hidden="true" />}
+      </button>
+      <Tooltip content={add}>
+        <button type="button" className="bot-card-add" aria-label={add} onClick={onAdd}>
+          <Plus size={14} aria-hidden="true" />
+        </button>
+      </Tooltip>
+    </div>
+  );
+}
+
+function shortWhen(schedule: Schedule, format: DateFormat) {
+  if (schedule.activeRun?.status === 'waiting') return 'Needs you';
+  if (schedule.activeRun) return 'Running';
+  if (!schedule.enabled || !schedule.nextRun) return schedule.lastRun ? 'Done' : 'Paused';
+  const next = new Date(schedule.nextRun);
+  if (next.getTime() - Date.now() > 6 * 86_400_000) return formatDateTime(next, format);
+  const day = new Intl.DateTimeFormat(format.locale, {
+    weekday: 'short',
+    timeZone: format.timeZone,
+  }).format(next);
+  return `${day} ${formatTime(next, format)}`;
+}
+
+function WorkLine({
+  title,
+  side,
+  tone,
+  dot,
+  muted,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  side: string;
+  tone?: string;
+  dot?: string;
+  muted?: boolean;
+  open: boolean;
+  onToggle(): void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="bot-line" data-open={open || undefined}>
+      <button
+        type="button"
+        className="bot-line-row"
+        aria-expanded={open}
+        data-muted={muted || undefined}
+        onClick={onToggle}
+      >
+        {dot && <span className="bot-line-dot" data-tone={dot} aria-hidden="true" />}
+        <span className="bot-line-title">{title}</span>
+        <span className="bot-line-side" data-tone={tone}>
+          {side}
+        </span>
+      </button>
+      {open && <div className="bot-line-detail">{children}</div>}
+    </div>
+  );
+}
+
+const taskTone: Partial<Record<Task['status'], string>> = {
+  working: 'info',
+  needs_you: 'accent',
+  failed: 'error',
+};
+
+function BotCards({
   bot,
-  closing,
-  onClose,
-  onClosed,
+  activity,
+  open,
+  onToggle,
+  onAsk,
+  onNavigate,
 }: {
   bot?: Bot;
-  closing: boolean;
-  onClose(): void;
-  onClosed(): void;
+  activity: Activity[];
+  open: Record<CardKey, boolean>;
+  onToggle(key: CardKey): void;
+  onAsk(text: string, botId?: string): void;
+  onNavigate(path: string): void;
 }) {
-  useEffect(() => {
-    const key = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return;
-      onClose();
-    };
-    document.addEventListener('keydown', key);
-    return () => document.removeEventListener('keydown', key);
-  }, [onClose]);
-  const close = (
-    <Button variant="ghost" size="icon" aria-label="Close settings" onClick={onClose}>
-      <X size={16} aria-hidden="true" />
-    </Button>
+  const schedules = usePageData<Schedule[]>('/api/schedules');
+  const tasks = usePageData<Task[]>('/api/tasks');
+  const format = useDateFormat();
+  const [expanded, setExpanded] = useState<string>();
+  const [showFinished, setShowFinished] = useState(false);
+  const chatId = bot?.id ?? null;
+  const name = bot?.name ?? 'Nod';
+  const ask = (text: string) => onAsk(text, bot?.id);
+  const toggleLine = (id: string) => setExpanded((current) => (current === id ? undefined : id));
+  const scheduled = (schedules.data ?? [])
+    .filter((schedule) => (schedule.botId ?? null) === chatId)
+    .sort(
+      (a, b) =>
+        Number(Boolean(b.enabled && b.nextRun)) - Number(Boolean(a.enabled && a.nextRun)) ||
+        (a.nextRun ?? '').localeCompare(b.nextRun ?? '') ||
+        a.id.localeCompare(b.id),
+    );
+  const own = (tasks.data ?? []).filter((task) => (task.botId ?? null) === chatId);
+  const running = own.filter((task) => !finishedTask(task));
+  const finished = own.filter(finishedTask);
+  const taskLine = (task: Task) => (
+    <WorkLine
+      key={task.id}
+      title={task.title}
+      side={taskLabels[task.status]}
+      tone={taskTone[task.status]}
+      dot={taskTone[task.status] ?? 'muted'}
+      muted={finishedTask(task)}
+      open={expanded === task.id}
+      onToggle={() => toggleLine(task.id)}
+    >
+      <TaskCard task={task} live={activity.find((item) => item.taskId === task.id)} />
+    </WorkLine>
   );
   return (
-    <aside
-      id="bot-panel"
-      className={`bot-panel${closing ? ' bot-panel-closing' : ''}`}
-      aria-label={bot ? `${bot.name} settings` : 'Nod settings'}
-      inert={closing}
-      onTransitionEnd={(event) => {
-        if (closing && event.target === event.currentTarget && event.propertyName === 'opacity')
-          onClosed();
-      }}
-    >
-      <div className="panel-head">
-        <div className="panel-head-top">{close}</div>
-        <div className="panel-identity">
+    <aside id="bot-cards" className="bot-cards" aria-label={`${name} details`}>
+      <section className="bot-card bot-card-identity" aria-label={name}>
+        <div className="bot-card-who">
           {bot ? (
             <AvatarField
               key={bot.id}
@@ -824,69 +1004,118 @@ export function BotPanel({
           ) : (
             <NodAvatar size="lg" />
           )}
-          <div className="panel-identity-text">
+          <div className="bot-card-name">
+            {bot ? <NameField key={bot.id} bot={bot} /> : <h2>Nod</h2>}
+            {bot?.job && <p>{bot.job}</p>}
+          </div>
+          <Tooltip content={`${name} settings`}>
+            <button
+              type="button"
+              className="bot-card-gear"
+              aria-label={`${name} settings`}
+              aria-expanded={open.settings}
+              onClick={() => onToggle('settings')}
+            >
+              <Settings size={16} aria-hidden="true" />
+            </button>
+          </Tooltip>
+        </div>
+        {open.settings && (
+          <div className="bot-card-settings">
+            <div className="bot-card-field">
+              <span className="bot-card-label">Model</span>
+              {bot ? <BotModel bot={bot} /> : <ModelPicker manageConnections={false} />}
+            </div>
             {bot ? (
-              <NameField key={bot.id} bot={bot} />
+              <label className="bot-card-field">
+                <span className="bot-card-label">Instructions</span>
+                <InstructionsField key={bot.id} bot={bot} />
+              </label>
             ) : (
-              <>
-                <h2>Nod</h2>
-                <p>Your main assistant</p>
-              </>
+              <button
+                type="button"
+                className="bot-card-row"
+                onClick={() => onNavigate('/settings/memory')}
+              >
+                <span>Memory</span>
+                <span className="bot-card-row-value">Shared by every bot</span>
+                <ChevronRight size={14} aria-hidden="true" />
+              </button>
             )}
           </div>
-        </div>
-      </div>
-      <div className="panel-body">
-        {bot ? (
-          <>
-            <div className="panel-rows">
-              <div className="panel-row">
-                <label className="panel-row-head panel-row-still">
-                  <span>Model</span>
-                  <BotModel bot={bot} onError={toast} />
-                </label>
-              </div>
-              <div className="panel-row">
-                <div className="panel-row-head panel-row-still">
-                  <span>Instructions</span>
-                </div>
-                <div className="panel-row-body">
-                  <InstructionsField key={bot.id} bot={bot} />
-                </div>
-              </div>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="panel-rows">
-              <div className="panel-row">
-                <div className="panel-row-head panel-row-still">
-                  <span>Model</span>
-                  <span className="panel-row-value">
-                    <NodModelName />
-                  </span>
-                </div>
-              </div>
-              <div className="panel-row">
-                <div className="panel-row-head panel-row-still">
-                  <span>Apps</span>
-                  <span className="panel-row-value">All connected apps</span>
-                </div>
-              </div>
-              <div className="panel-row">
-                <div className="panel-row-head panel-row-still">
-                  <span>Memory</span>
-                  <span className="panel-row-value">Yours</span>
-                </div>
-              </div>
-            </div>
-            <p className="panel-note">
-              Nod can’t be renamed or removed. It holds your Vault, approvals and settings, and
-              every bot’s actions go through its trust check.
-            </p>
-          </>
         )}
-      </div>
+      </section>
+      <section className="bot-card" aria-label="Scheduled">
+        <CardHead
+          title="Scheduled"
+          count={scheduled.length}
+          alert={scheduled.some((schedule) => schedule.activeRun?.status === 'waiting')}
+          open={open.scheduled}
+          add="New schedule"
+          onToggle={() => onToggle('scheduled')}
+          onAdd={() =>
+            ask(
+              'Help me create a schedule. Ask me one question at a time to work out what to do and when.',
+            )
+          }
+        />
+        {schedules.error && <Notice kind="error">{schedules.error}</Notice>}
+        {open.scheduled && scheduled.length > 0 && (
+          <div className="bot-card-body">
+            {scheduled.map((schedule) => (
+              <WorkLine
+                key={schedule.id}
+                title={schedule.title}
+                side={shortWhen(schedule, format)}
+                tone={
+                  schedule.activeRun?.status === 'waiting'
+                    ? 'accent'
+                    : schedule.activeRun
+                      ? 'info'
+                      : undefined
+                }
+                muted={!schedule.enabled}
+                open={expanded === schedule.id}
+                onToggle={() => toggleLine(schedule.id)}
+              >
+                <ScheduleRow schedule={schedule} activity={activity} onAsk={ask} defaultOpen />
+              </WorkLine>
+            ))}
+          </div>
+        )}
+      </section>
+      <section className="bot-card" aria-label="Tasks">
+        <CardHead
+          title="Tasks"
+          count={running.length}
+          alert={running.some((task) => task.status === 'needs_you')}
+          open={open.tasks}
+          add="New task"
+          onToggle={() => onToggle('tasks')}
+          onAdd={() =>
+            ask(
+              'Help me hand you a new task. Ask me one question at a time to work out what to do.',
+            )
+          }
+        />
+        {tasks.error && <Notice kind="error">{tasks.error}</Notice>}
+        {open.tasks && (running.length > 0 || finished.length > 0) && (
+          <div className="bot-card-body">
+            {running.map(taskLine)}
+            {finished.length > 0 && (
+              <button
+                type="button"
+                className="bot-card-link bot-card-finished"
+                aria-expanded={showFinished}
+                onClick={() => setShowFinished((value) => !value)}
+              >
+                Finished {finished.length}
+              </button>
+            )}
+            {showFinished && finished.map(taskLine)}
+          </div>
+        )}
+      </section>
     </aside>
   );
 }

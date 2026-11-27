@@ -1,10 +1,7 @@
 {
-  "version": "0.10.2",
-  "previousTag": "nod-v0.10.1",
-  "source": "55967e37a3da9e542d71988d6d5372c04ab745c3",
-  "highlights": "## Nod stays on when you close it 🌙\n\nClosing the window or pressing ⌘Q now closes the app, not Nod. Nod keeps running in the menu bar or tray, so schedules and Telegram or WhatsApp replies keep working. To stop it, choose **Turn Off Nod**. If something would stop, Nod tells you first.\n\nWith **Open at login**, Nod starts in the background when you sign in. It restarts itself if it stops unexpectedly, and installs updates while idle.\n\n**Keep this computer awake when plugged in** is new in **Settings → General**, on by default. With a schedule or a connected channel, a plugged-in computer won't sleep when left idle. Closing the lid still sleeps.\n\n## Sign in on the website's own page 🔐\n\nWhen a task needs a login you haven't saved, you sign in on the website's real page in the **Browser** panel, with its real address.\n\n## Also in this release\n\n- **Faster chat:** replies come back sooner, and longer research runs as a task.\n- **Easier to read:** clearer replies, fixed choice cards, and links to check a booking or order.\n- **Quiet notifications:** silent by default. Turn on **Play a sound** in **Settings → Notifications**.\n- **Online orders:** Nod tries to continue the same order when you follow up.\n- **Setup:** Nod repairs damaged files that left it stuck at **Preparing your browser…**.\n- **Computer use:** no confirmation when Nod only adds text, and apps such as Thunderbird work.",
-  "video": {
-    "url": "https://github.com/user-attachments/assets/c955963d-5351-4ff4-a594-513c9c1fffa6",
-    "releaseSha256": "80404f32ce368626036a6160c62f2ade04f81af65f25bc161ec142f6d0f93c1f"
-  }
+  "version": "0.10.3",
+  "previousTag": "nod-v0.10.2",
+  "source": "144cde2bd99a124f12e5121f43ac05331dd6769a",
+  "highlights": "## Fixed in this release\n\n- **Chat on Windows:** fixes a database issue in 0.10.1 and 0.10.2 that could stop chat messages on Windows with an unexpected error. Nod updates itself; afterwards, send your message again.",
+  "video": null
 }

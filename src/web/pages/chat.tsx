@@ -234,6 +234,7 @@ function TaskCards({
           type="button"
           className="task-card"
           data-state={state}
+          data-tint={index % 6}
           disabled={disabled || state !== 'idle'}
           onClick={() => onStart(task, suggestions.tasks.indexOf(task))}
         >
@@ -2434,11 +2435,18 @@ export function Chat({
                       message.createdAt,
                       dateFormat,
                     )) && (
-                    <div className="day-divider">
+                    <div
+                      className="day-divider"
+                      ref={
+                        !index && !hasEarlier && message.id === unreadBoundary
+                          ? unreadDivider
+                          : undefined
+                      }
+                    >
                       <span>{formatDayLabel(message.createdAt, dateFormat)}</span>
                     </div>
                   )}
-                  {message.id === unreadBoundary && (
+                  {message.id === unreadBoundary && (index > 0 || hasEarlier) && (
                     <div
                       className="unread-divider"
                       ref={unreadDivider}
