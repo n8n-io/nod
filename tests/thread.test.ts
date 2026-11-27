@@ -5428,8 +5428,17 @@ test(
           const held = new Promise<void>((resolve) => {
             releaseHeld = resolve;
           });
+          let releaseSteer!: () => void;
+          const steer = new Promise<void>((resolve) => {
+            releaseSteer = resolve;
+          });
+          const taken: string[] = [];
           dependencies.runTurn = async (context) => {
             contexts.push(context);
+            if (context.prompt === 'Synthetic bot steer') {
+              await steer;
+              taken.push(...(await context.takeMessages!()).map((message) => message.id));
+            }
             if (context.prompt === 'Synthetic bot hold')
               await Promise.race([
                 held,
@@ -5567,6 +5576,27 @@ test(
             );
             await db.pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [approvalTurn]);
 
+            const steered = await thread.submitUserMessage('Synthetic bot steer', [], {
+              botId: bot,
+            });
+            created.push(steered.turnId);
+            await waitFor(() => contexts.some((context) => context.turnId === steered.turnId));
+            const follow = await thread.submitUserMessage('Synthetic bot follow-up', [], {
+              botId: bot,
+            });
+            const elsewhere = await thread.submitUserMessage('Synthetic main follow-up');
+            created.push(follow.turnId, elsewhere.turnId);
+            releaseSteer();
+            await waitFor(settled(steered.turnId));
+            await waitFor(settled(elsewhere.turnId));
+            assert.deepEqual(taken, [follow.messageId]);
+            assert.equal(await turnStatus(follow.turnId), 'succeeded');
+            assert.ok(!contexts.some((context) => context.turnId === follow.turnId));
+            assert.equal(
+              contexts.find((context) => context.turnId === elsewhere.turnId)?.sessionId,
+              threadId,
+            );
+
             const hold = await thread.submitUserMessage('Synthetic bot hold', [], { botId: bot });
             created.push(hold.turnId);
             await waitFor(() => contexts.some((context) => context.turnId === hold.turnId));
@@ -5577,6 +5607,7 @@ test(
             assert.equal(await turnStatus(hold.turnId), 'cancelled');
           } finally {
             releaseHeld();
+            releaseSteer();
             dependencies.runTurn = runTurn;
             await db.pool.query(
               "UPDATE turns SET status='cancelled',finished_at=now() WHERE id=ANY($1::uuid[]) AND status IN ('queued','running','waiting')",

@@ -750,6 +750,7 @@ export function PanelProvider({
 }) {
   const [open, setOpen] = useState(false);
   const [leavingFrom, setLeavingFrom] = useState<string>();
+  if (open && !available) setOpen(false);
   const shown = open && available;
   const close = () => {
     if (shown) setLeavingFrom(path);
