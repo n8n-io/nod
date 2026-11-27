@@ -36,12 +36,8 @@ function messageKey(message: AssistantMessage) {
         message.provider,
         message.api,
         message.model,
-        message.responseId || [
-          message.timestamp,
-          message.stopReason,
-          message.content,
-          message.usage,
-        ],
+        message.timestamp,
+        message.responseId || [message.stopReason, message.content, message.usage],
       ]),
     )
     .digest('hex');
