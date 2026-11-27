@@ -1,0 +1,38 @@
+{
+  "$schema": "https://nod.n8n.io/docs/schemas/apps/v1/contract.schema.json",
+  "type": "mcp",
+  "source": "https://intercom.help/taplio/en/articles/17771252-getting-started-with-the-taplio-mcp",
+  "tool": {
+    "name": "list_drafts",
+    "description": "List the user's unpublished LinkedIn post drafts.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  "input": {
+    "limit": 1
+  },
+  "output": {
+    "items": [
+      {
+        "id": "synthetic-draft",
+        "status": "draft",
+        "content": "Sample post draft",
+        "media": [],
+        "created_at": "2026-01-01T00:00:00.000Z"
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "taplio",
+  "version": "1.0.0",
+  "description": "Write, schedule, and analyze LinkedIn posts, and find comments worth a reply.",
+  "homepage": "https://taplio.com",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.n8n.nod": {
+      "app": "./io.n8n.nod/app.json"
+    }
+  },
+  "author": {
+    "name": "Taplio",
+    "url": "https://taplio.com"
+  }
+}

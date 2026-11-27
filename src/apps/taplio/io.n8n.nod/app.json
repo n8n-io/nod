@@ -1,0 +1,23 @@
+{
+  "$schema": "https://nod.n8n.io/docs/schemas/apps/v1/app.schema.json",
+  "displayName": "Taplio for LinkedIn",
+  "icon": "./io.n8n.nod/icon.svg",
+  "categories": ["Marketing"],
+  "connection": {
+    "type": "mcp",
+    "server": "taplio",
+    "authentication": ["oauth2"],
+    "scopes": ["taplio:mcp"]
+  },
+  "prompts": [
+    "Which comments on my recent LinkedIn posts deserve a reply?",
+    "Turn these notes into a LinkedIn post draft in my usual tone.",
+    "How did my LinkedIn posts perform over the last 30 days?"
+  ],
+  "requirements": ["A Taplio account with an active plan and a connected LinkedIn profile."],
+  "limitations": [
+    "This connection acts on the LinkedIn profile linked to the Taplio account only.",
+    "Publishing, liking, commenting, and connection requests go through Taplio and follow its daily LinkedIn limits.",
+    "This app does not start automatic monitoring from its MCP connection alone."
+  ]
+}
