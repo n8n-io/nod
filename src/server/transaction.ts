@@ -1,5 +1,14 @@
 import type { Pool, PoolClient } from 'pg';
 
+// PostgreSQL rejects a nonzero client_connection_check_interval on Windows
+// ("must be set to 0 on this platform", SQLSTATE 22023). The desktop app runs
+// its bundled PostgreSQL natively there, so the SET would fail every
+// cancellable transaction. Aborts still release the connection through `stop`.
+const beginCancellable =
+  process.platform === 'win32'
+    ? 'BEGIN'
+    : "BEGIN; SET LOCAL client_connection_check_interval='100ms'";
+
 const committed = new WeakMap<object, Array<() => void>>();
 const reverted = new WeakMap<object, Array<() => void>>();
 
@@ -52,9 +61,7 @@ export async function transaction<T>(
   };
   try {
     signal?.throwIfAborted();
-    await client.query(
-      signal ? "BEGIN; SET LOCAL client_connection_check_interval='100ms'" : 'BEGIN',
-    );
+    await client.query(signal ? beginCancellable : 'BEGIN');
     committed.set(client, callbacks);
     reverted.set(client, rollbackCallbacks);
     const value = await fn(client);
