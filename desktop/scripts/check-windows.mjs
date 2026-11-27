@@ -531,7 +531,7 @@ if (process.env.WORKSPACE_CONTAINER) {
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      'Get-CimInstance Win32_Process -Filter "Name=\'postgres.exe\'" | Where-Object { $_.ExecutablePath -like ($env:NOD_INSTALLATION + \'\\*\') } | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.CommandLine)" }',
+      "Get-CimInstance Win32_Process -Filter \"Name='postgres.exe'\" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($env:NOD_INSTALLATION + '\\', 'OrdinalIgnoreCase') } | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId) $($_.CommandLine)\" }",
     ],
     { env: { ...process.env, NOD_INSTALLATION: installation } },
   );

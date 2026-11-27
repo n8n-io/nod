@@ -115,7 +115,7 @@ The workspace and browser have separate networks, no access to your home folder,
 
 The app includes PostgreSQL 17 for Mac, Windows and Linux. Nod creates the database in the profile's `database` folder on first launch, which takes about a second. It listens only on `127.0.0.1`, on a port Nod picks at each launch, and needs a password that stays in the profile folder. Nod starts it before the server and stops it when you quit. If Nod quit unexpectedly, the next launch stops the old database process first.
 
-If a profile's data is still inside the private computer, Nod moves it once. It starts the private computer, copies every table into the new database in one transaction, and checks that each table has the same number of rows. Only then does Nod use the new database. Before copying, Nod checks for about twice the data's size in free disk space. If the copy fails, nothing changes; select **Try again** or open Nod again to retry. The old database stays on the private computer's disk.
+If a profile's data is still inside the private computer, Nod moves it once. It starts the private computer, copies every table into the new database in one transaction, and checks that each table has the same number of rows. Only then does Nod use the new database. Before copying, Nod checks for free disk space of about twice the data's size plus 256 MB. If the copy fails, nothing changes; select **Try again** or open Nod again to retry. The old database stays on the private computer's disk.
 
 When the private computer can't start, Nod keeps running. A tool that needs the workspace or browser waits while the computer starts, or reports why it can't. Nod shows the cause with **Try again**, or **Install WSL** on Windows.
 

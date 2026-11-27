@@ -404,18 +404,18 @@ export async function moveDatabase({ source, target, schema, signal, space }) {
   const host = new pg.Client({ connectionString: target, connectionTimeoutMillis: 10_000 });
   await legacy.connect();
   try {
-    await space?.(
-      Number(
-        (await legacy.query('SELECT pg_database_size(current_database())::text AS bytes')).rows[0]
-          .bytes,
-      ),
-    );
     await host.connect();
     try {
       const copied = await host.query(
         "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema')) AS value",
       );
       if (copied.rows[0].value) return;
+      await space?.(
+        Number(
+          (await legacy.query('SELECT pg_database_size(current_database())::text AS bytes')).rows[0]
+            .bytes,
+        ),
+      );
       await legacy.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
       await host.query('BEGIN');
       try {

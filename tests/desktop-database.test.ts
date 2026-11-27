@@ -146,7 +146,14 @@ test(
     await assert.rejects(moved.query('INSERT INTO public.threads (at) VALUES (now())'), /not-null/);
 
     const current = (await moved.query(snapshot)).rows[0];
-    await moveDatabase({ source: databaseUrl(source), target: databaseUrl(target), schema });
+    await moveDatabase({
+      source: databaseUrl(source),
+      target: databaseUrl(target),
+      schema,
+      space: async () => {
+        throw new Error('A committed move must not need disk space again.');
+      },
+    });
     assert.deepEqual((await moved.query(snapshot)).rows[0], current);
 
     const occupied = await open(busy);
