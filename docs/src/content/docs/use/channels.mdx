@@ -107,7 +107,7 @@ Nod writes from its own Nextcloud account, in a one-to-one Talk conversation wit
 
 </Steps>
 
-Nod answers only your account in that conversation. It ignores its own messages, system messages, other conversations and group conversations. If your Nextcloud refuses a step, Nod shows the HTTP status and Nextcloud's reason, with the app password replaced by `[redacted]`. Select **Disconnect** to remove the saved settings from Nod. To revoke the app password itself, delete it in Nextcloud.
+Nod answers only your account in that conversation. It ignores its own messages, system messages, other conversations and group conversations. If your Nextcloud refuses a setup step, Nod shows the HTTP status and Nextcloud's reason, with the app password replaced by `[redacted]`, and saves nothing. Select **Disconnect** to remove the saved settings from Nod. To revoke the app password itself, delete it in Nextcloud.
 
 Replies are sent as Markdown. A reply over 32,000 characters arrives as several messages. Nod reads files and voice messages you share in the conversation, with their captions. Files from Nod are uploaded to a `Nod` folder in the Nod account and shared into the conversation; delete them there when you no longer need them. Talk shows no typing status from Nod, and approval questions have no buttons: reply to the question, or react with 👍 or 👎.
 
@@ -238,7 +238,7 @@ These commands prepare a report without starting a task. Your selected model wri
 
 Telegram, the WhatsApp QR connection and Nextcloud Talk receive the PDF and export as documents. With the WhatsApp Cloud API, open Nod to get them.
 
-Both channels have task controls. `/tasks` lists open tasks, with one message per task. Reply to a task message with `/status` to see its goal, steps and state, or `/stop` to stop only that task. `/stop` without a reply stops all active work and closes open tasks. Progress, questions and results stay linked to the same task. See [Track tasks](/use/tasks/#telegram-and-whatsapp-without-a-task-page).
+Every chat app has task controls. `/tasks` lists open tasks, with one message per task. Reply to a task message with `/status` to see its goal, steps and state, or `/stop` to stop only that task. `/stop` without a reply stops all active work and closes open tasks. Progress, questions and results stay linked to the same task. See [Track tasks](/use/tasks/#telegram-and-whatsapp-without-a-task-page).
 
 ## Related resources
 

@@ -2093,6 +2093,8 @@ function holdAwake() {
   }
 }
 
+const channelNames = { telegram: 'Telegram', whatsapp: 'WhatsApp', nextcloud: 'Nextcloud Talk' };
+
 async function checkWaiting() {
   const current = engine;
   if (!current || !engineReady || remoteConnection || quitting) return;
@@ -2108,7 +2110,7 @@ async function checkWaiting() {
           ? { title: value.next.title, at: new Date(value.next.at) }
           : null,
       channels: Array.isArray(value.channels)
-        ? value.channels.filter((name) => ['telegram', 'whatsapp'].includes(name))
+        ? value.channels.filter((name) => Object.hasOwn(channelNames, name))
         : [],
     };
   } catch {
@@ -2166,7 +2168,7 @@ async function stoppedWork() {
       ? `${current.next.title} won’t run ${runTime(current.next.at)}`
       : '';
   const channels = current.channels.length
-    ? `${new Intl.ListFormat('en').format(current.channels.map((name) => (name === 'telegram' ? 'Telegram' : 'WhatsApp')))} won’t get replies`
+    ? `${new Intl.ListFormat('en').format(current.channels.map((name) => channelNames[name]))} won’t get replies`
     : '';
   return [
     work.length ? `Turning off now stops ${new Intl.ListFormat('en').format(work)}.` : '',

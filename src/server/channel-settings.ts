@@ -6,6 +6,7 @@ import { openVaultValue, sealVaultValue } from './vault-crypto.ts';
 import { transaction } from './transaction.ts';
 import {
   ChannelSetupFailure,
+  nextcloudMissing,
   nextcloudServer,
   nextcloudUserId,
   telegramSecret,
@@ -35,14 +36,7 @@ function managedConfigurationReady(provider: ChannelProvider, values: Record<str
       /^\d+:[A-Za-z0-9_-]+$/.test(values.TELEGRAM_BOT_TOKEN ?? '') &&
       telegramSecret.test(values.TELEGRAM_WEBHOOK_SECRET_TOKEN ?? '')
     );
-  if (provider === 'nextcloud')
-    return (
-      Boolean(nextcloudServer(values.NEXTCLOUD_URL)) &&
-      Boolean(values.NEXTCLOUD_APP_PASSWORD) &&
-      nextcloudUserId.test(values.NEXTCLOUD_USER ?? '') &&
-      nextcloudUserId.test(values.NEXTCLOUD_ALLOWED_USER ?? '') &&
-      values.NEXTCLOUD_USER !== values.NEXTCLOUD_ALLOWED_USER
-    );
+  if (provider === 'nextcloud') return !nextcloudMissing(values).length;
   if (values.WHATSAPP_POLICY_CONFIRMED !== 'true') return false;
   if (linkedModes.has(values.WHATSAPP_MODE ?? '')) return true;
   return (
@@ -423,6 +417,9 @@ export async function createChannelSettings(
         mode: linked ? 'linked' : mode === 'polling' ? 'polling' : 'webhook',
         ...(provider === 'telegram' && telegramUserId.test(values.TELEGRAM_ALLOWED_USER_ID ?? '')
           ? { allowedUserId: values.TELEGRAM_ALLOWED_USER_ID }
+          : {}),
+        ...(provider === 'nextcloud' && nextcloudUserId.test(values.NEXTCLOUD_ALLOWED_USER ?? '')
+          ? { pairedUser: values.NEXTCLOUD_ALLOWED_USER }
           : {}),
       });
       rows.push({ provider, enabled: summary.enabled, ciphertext: null, summary });

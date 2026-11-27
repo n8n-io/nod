@@ -876,9 +876,21 @@ export function Channels() {
                   />
                 </div>
                 <div className="channel-wizard-actions">
-                  <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={close}>
-                    Cancel
-                  </Button>
+                  {selected?.setup?.enabled && !selected.setup.managed ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => confirmDisconnect('nextcloud')}
+                    >
+                      Disconnect
+                    </Button>
+                  ) : (
+                    <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={close}>
+                      Cancel
+                    </Button>
+                  )}
                   <Button type="submit" disabled={busy || !settings?.ready}>
                     {busy ? 'Verifying…' : 'Verify and save'}
                   </Button>

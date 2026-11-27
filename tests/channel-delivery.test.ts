@@ -4982,6 +4982,12 @@ test('Nextcloud Talk setup verifies a separate account and keeps the app passwor
     { ...input, ownerUser: 'ada/../x' },
   ])
     await assert.rejects(verifier.verify('nextcloud', invalid), { reason: 'invalid_input' });
+  for (const invalid of [
+    { NEXTCLOUD_ALLOWED_USER: 'ada ' },
+    { NEXTCLOUD_URL: 'https://cloud.example.test/?' },
+    { NEXTCLOUD_URL: 'https://cloud.example.test/#' },
+  ])
+    assert.throws(() => managedChannelEnvironment(invalid));
   await assert.rejects(verifier.verify('nextcloud', { ...input, ownerUser: 'nod-bot' }), {
     reason: 'verification_failed',
   });

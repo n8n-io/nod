@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { nextcloudServer, nextcloudUserId } from '../../ports/channel-settings.ts';
+import { nextcloudMissing, nextcloudServer } from '../../ports/channel-settings.ts';
 import { logRepeatedFailure } from '../../ports/failure-log.ts';
 import type {
   InboundMessage,
@@ -153,24 +153,14 @@ export function talkChunks(text: string, limit = nextcloudTextLimit) {
 
 export function nextcloudConfiguration(env: Environment) {
   const enabled = env.NEXTCLOUD_ENABLED === 'true';
-  const missing = [
-    'NEXTCLOUD_URL',
-    'NEXTCLOUD_USER',
-    'NEXTCLOUD_APP_PASSWORD',
-    'NEXTCLOUD_ALLOWED_USER',
-  ].filter((key) => !env[key]);
-  if (env.NEXTCLOUD_URL && !nextcloudServer(env.NEXTCLOUD_URL)) missing.push('NEXTCLOUD_URL');
-  for (const key of ['NEXTCLOUD_USER', 'NEXTCLOUD_ALLOWED_USER'])
-    if (env[key] && !nextcloudUserId.test(env[key])) missing.push(key);
-  if (env.NEXTCLOUD_USER && env.NEXTCLOUD_USER === env.NEXTCLOUD_ALLOWED_USER)
-    missing.push('NEXTCLOUD_ALLOWED_USER');
+  const missing = nextcloudMissing(env);
   return {
     status: (!enabled
       ? 'disabled'
       : missing.length
         ? 'setup_required'
         : 'configured') as MessagingChannel['status'],
-    missing: enabled ? [...new Set(missing)] : [],
+    missing: enabled ? missing : [],
   };
 }
 
