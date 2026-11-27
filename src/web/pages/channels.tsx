@@ -43,6 +43,11 @@ const providers = [
     name: 'WhatsApp',
     description: 'Chat with Nod in WhatsApp.',
   },
+  {
+    id: 'nextcloud' as const,
+    name: 'Nextcloud Talk',
+    description: 'Chat with Nod on your own Nextcloud server.',
+  },
 ];
 const channelStatus = {
   'needs-setup': 'Needs setup',
@@ -226,6 +231,50 @@ function ChannelSetupStep({
           required
           {...field('verifyToken')}
         />
+      </Field>
+    </>
+  );
+}
+
+function NextcloudSetupFields({
+  fields,
+  onField,
+}: {
+  fields: Record<string, string>;
+  onField(name: string, value: string): void;
+}) {
+  const field = (name: string) => ({
+    value: fields[name] ?? '',
+    onChange: (event: React.ChangeEvent<HTMLInputElement>) => onField(name, event.target.value),
+  });
+  return (
+    <>
+      <p>
+        Create a separate Nextcloud account for Nod, then create an app password for it in{' '}
+        <strong>Personal settings → Security</strong>. Nod writes to you in a one-to-one Talk
+        conversation from that account.
+      </p>
+      <Field label="Nextcloud address" hint="The HTTPS address you open Nextcloud with.">
+        <Input
+          type="url"
+          pattern="https://.*"
+          placeholder="https://cloud.example.com"
+          required
+          autoFocus
+          {...field('serverUrl')}
+        />
+      </Field>
+      <Field label="Nod's login" hint="The login name of the separate account Nod uses.">
+        <Input autoComplete="off" required {...field('login')} />
+      </Field>
+      <Field label="App password" hint="Encrypted when saved and never shown in chat.">
+        <Input type="password" autoComplete="off" required {...field('appPassword')} />
+      </Field>
+      <Field
+        label="Your Nextcloud user ID"
+        hint="Only messages from this account are accepted. Find it under Personal settings."
+      >
+        <Input autoComplete="off" required {...field('ownerUser')} />
       </Field>
     </>
   );
@@ -556,6 +605,7 @@ export function Channels() {
   const managing = Boolean(
     selected?.setup?.enabled &&
     !whatsappCloud &&
+    fields.connection !== 'update' &&
     (editing === 'telegram' ? telegramStatus.paired : selected.setup.mode !== 'linked'),
   );
   function cards(items: typeof channels) {
@@ -649,7 +699,9 @@ export function Channels() {
               )?.focus({ preventScroll: true });
           }}
         >
-          <DialogTitle>Disconnect {removing === 'whatsapp' ? 'WhatsApp' : 'Telegram'}?</DialogTitle>
+          <DialogTitle>
+            Disconnect {providers.find((provider) => provider.id === removing)?.name}?
+          </DialogTitle>
           <DialogDescription>
             Nod will stop receiving messages here. You can connect again later.
           </DialogDescription>
@@ -739,7 +791,7 @@ export function Channels() {
                   </Button>
                 </div>
               </div>
-              {editing === 'telegram' && (
+              {(editing === 'telegram' || editing === 'nextcloud') && (
                 <div className="channel-authorized-account" data-analytics-private>
                   <span className="app-account-avatar" aria-hidden="true">
                     <UserRound size={18} />
@@ -747,9 +799,11 @@ export function Channels() {
                   <div className="compact-account-details">
                     <span className="channel-identity-label">Allowed account</span>
                     <span className="compact-account-name">
-                      {telegramSetup?.pairedUser || 'Your Telegram account'}
+                      {editing === 'nextcloud'
+                        ? selected?.setup?.pairedUser || 'Your Nextcloud account'
+                        : telegramSetup?.pairedUser || 'Your Telegram account'}
                     </span>
-                    {telegramSetup?.pairedUsername && (
+                    {editing === 'telegram' && telegramSetup?.pairedUsername && (
                       <span className="compact-account-email">
                         @{telegramSetup.pairedUsername.replace(/^@/, '')}
                       </span>
@@ -776,6 +830,16 @@ export function Channels() {
                 ))}
               {editing === 'telegram' && telegramUrl ? (
                 <TelegramChat key={telegramUrl} url={telegramUrl} />
+              ) : editing === 'nextcloud' && !selected?.setup?.managed ? (
+                <div className="dialog-actions app-manage-actions">
+                  <Button
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => setFields({ connection: 'update' })}
+                  >
+                    Update connection
+                  </Button>
+                </div>
               ) : editing === 'whatsapp' ? (
                 <div className="dialog-actions app-manage-actions">
                   <Button
@@ -791,6 +855,35 @@ export function Channels() {
                   </Button>
                 </div>
               ) : null}
+            </>
+          ) : editing === 'nextcloud' ? (
+            <>
+              <DialogTitle className="channel-wizard-title">
+                <img src="/logos/nextcloud.svg" alt="" width={24} height={24} />
+                Connect Nextcloud Talk
+              </DialogTitle>
+              <DialogDescription>
+                Nod checks the account and opens your conversation before it saves anything.
+              </DialogDescription>
+              {error && <Notice>{error}</Notice>}
+              <form onSubmit={(event) => void submit(event)}>
+                <div className="channel-wizard-step">
+                  <NextcloudSetupFields
+                    fields={fields}
+                    onField={(name, value) =>
+                      setFields((current) => ({ ...current, [name]: value }))
+                    }
+                  />
+                </div>
+                <div className="channel-wizard-actions">
+                  <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={close}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={busy || !settings?.ready}>
+                    {busy ? 'Verifying…' : 'Verify and save'}
+                  </Button>
+                </div>
+              </form>
             </>
           ) : editing === 'telegram' ? (
             <>

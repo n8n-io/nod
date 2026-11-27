@@ -146,6 +146,6 @@ You can also tell Nod to change a limit, for example "Raise my monthly limit to 
 ## Related resources
 
 - [Chat with Nod](/use/chat/)
-- [Telegram and WhatsApp](/use/channels/)
+- [Chat apps](/use/channels/)
 - [Models](/connect/models/)
 - [Trust and Vault](/trust/)

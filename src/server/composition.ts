@@ -78,6 +78,7 @@ import type { UsageTelemetry } from '../ports/provider-usage.ts';
 import { agentModels, defaultEffort, defaultModel } from '../shared/model-defaults.ts';
 import { createChatSdkTransport } from '../providers/chat-sdk/index.ts';
 import { createWhatsAppLinkedTransport } from '../providers/chat-sdk/whatsapp.ts';
+import { createNextcloudTalkTransport } from '../providers/chat-sdk/nextcloud.ts';
 import { combineMessagingTransports } from '../providers/chat-sdk/combined.ts';
 import { createChatSdkSetupVerifier } from '../providers/chat-sdk/settings.ts';
 import { createContainerBrowserComputer } from '../providers/container-browser/index.ts';
@@ -677,21 +678,27 @@ export function createDefaultAdapters(
           (environment.WHATSAPP_ENABLED === 'true' && environment.WHATSAPP_ACCESS_TOKEN
             ? 'cloud'
             : configured.WHATSAPP_MODE);
-        if (
-          configured.WHATSAPP_ENABLED !== 'true' ||
-          configured.WHATSAPP_POLICY_CONFIRMED !== 'true' ||
-          !['linked', 'bot', 'self-chat'].includes(mode ?? '')
-        )
-          return createChatSdkTransport(pool, configured);
+        const linked =
+          configured.WHATSAPP_ENABLED === 'true' &&
+          configured.WHATSAPP_POLICY_CONFIRMED === 'true' &&
+          ['linked', 'bot', 'self-chat'].includes(mode ?? '');
         return combineMessagingTransports(
-          createChatSdkTransport(pool, { ...configured, WHATSAPP_ENABLED: 'false' }),
-          createWhatsAppLinkedTransport({
-            allowedNumber: configured.WHATSAPP_ALLOWED_NUMBER || undefined,
-            allowedLid: configured.WHATSAPP_ALLOWED_LID || undefined,
-            store: createChannelSessionStore({ pool, ownerId, keyStore }),
-            onDrop: (drop) =>
-              logFailure('channel_message_dropped', null, { provider: 'whatsapp', ...drop }),
-          }),
+          createChatSdkTransport(
+            pool,
+            linked ? { ...configured, WHATSAPP_ENABLED: 'false' } : configured,
+          ),
+          ...(linked
+            ? [
+                createWhatsAppLinkedTransport({
+                  allowedNumber: configured.WHATSAPP_ALLOWED_NUMBER || undefined,
+                  allowedLid: configured.WHATSAPP_ALLOWED_LID || undefined,
+                  store: createChannelSessionStore({ pool, ownerId, keyStore }),
+                  onDrop: (drop) =>
+                    logFailure('channel_message_dropped', null, { provider: 'whatsapp', ...drop }),
+                }),
+              ]
+            : []),
+          createNextcloudTalkTransport(pool, configured),
         );
       },
     },
@@ -2435,7 +2442,12 @@ async function initializeApplication(
         event: 'owner_message_accepted',
         properties: {
           channel:
-            source === 'web' || source === 'telegram' || source === 'whatsapp' ? source : 'other',
+            source === 'web' ||
+            source === 'telegram' ||
+            source === 'whatsapp' ||
+            source === 'nextcloud'
+              ? source
+              : 'other',
         },
       });
     };

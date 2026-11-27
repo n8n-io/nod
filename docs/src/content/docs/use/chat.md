@@ -277,7 +277,7 @@ Links stay inline in the reply. Hover over a link, or focus it with the keyboard
 
 ## Replies go back where you wrote
 
-Nod answers each request in the app you sent it from. A message from Telegram gets its reply on Telegram. Schedule results and messages Nod starts on its own also go to the chat app you used last, Telegram or WhatsApp, if you've written from one. Everything also appears in the chat in Nod's own app. See [Telegram and WhatsApp](/use/channels/).
+Nod answers each request in the app you sent it from. A message from Telegram gets its reply on Telegram. Schedule results and messages Nod starts on its own also go to the chat app you used last, Telegram, WhatsApp or Nextcloud Talk, if you've written from one. Everything also appears in the chat in Nod's own app. See [Chat apps](/use/channels/).
 
 ## Report a bug
 
@@ -306,5 +306,5 @@ If delivery cannot be confirmed, Nod keeps the draft and checks its status for s
 - [Track tasks](/use/tasks/)
 - [Schedules and background work](/use/schedules/)
 - [Workspace and files](/use/workspace/)
-- [Telegram and WhatsApp](/use/channels/)
+- [Chat apps](/use/channels/)
 - [Approvals and the trust check](/trust/approvals/)

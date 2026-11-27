@@ -108,6 +108,7 @@ const channels: Record<string, string> = {
   web: 'Nod web',
   telegram: 'Telegram',
   whatsapp: 'WhatsApp',
+  nextcloud: 'Nextcloud Talk',
 };
 
 const archivedKey = (item: MemoryArchived) => `${item.path}@${item.archived}`;

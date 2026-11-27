@@ -4,10 +4,13 @@ import { z } from 'zod';
 import { modelServiceError } from '../model-error.ts';
 import {
   ChannelSetupFailure,
+  nextcloudServer,
+  nextcloudUserId,
   telegramSecret,
   type ChannelSetupVerifier,
 } from '../../ports/channel-settings.ts';
 import { telegramUpdateTypes } from './telegram.ts';
+import { nextcloudAuthorization, nextcloudFailure } from './nextcloud.ts';
 
 const webhookUrl = z.url().max(2048).optional();
 const telegramInput = z
@@ -46,6 +49,15 @@ const whatsappInput = z
     verifyToken: z.string().regex(/^[A-Za-z0-9_-]{16,256}$/),
     webhookUrl,
     policyConfirmed: z.literal(true),
+  })
+  .strict();
+
+const nextcloudInput = z
+  .object({
+    serverUrl: z.string().trim().max(2048),
+    login: z.string().trim().min(1).max(255),
+    appPassword: z.string().trim().min(1).max(512),
+    ownerUser: z.string().trim().regex(nextcloudUserId),
   })
   .strict();
 
@@ -137,9 +149,90 @@ export function createChatSdkSetupVerifier(
       ).message,
     );
   }
+  async function nextcloud(input: unknown): ReturnType<ChannelSetupVerifier['verify']> {
+    const parsed = nextcloudInput.safeParse(input);
+    const server = parsed.success ? nextcloudServer(parsed.data.serverUrl) : undefined;
+    if (!parsed.success || !server) throw new ChannelSetupFailure('invalid_input');
+    const value = parsed.data;
+    const authorization = nextcloudAuthorization(value.login, value.appPassword);
+    const secrets = [value.appPassword, authorization, authorization.slice(6)];
+    const call = async (path: string, action: string, body?: object) => {
+      let response: Response;
+      try {
+        response = await request(`${server}/ocs/v2.php${path}`, {
+          method: body ? 'POST' : 'GET',
+          headers: {
+            Authorization: authorization,
+            'OCS-APIRequest': 'true',
+            Accept: 'application/json',
+            ...(body ? { 'Content-Type': 'application/json' } : {}),
+          },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+          signal: AbortSignal.timeout(15_000),
+          redirect: 'error',
+        });
+      } catch (error) {
+        const reason = unreachable(error);
+        throw new ChannelSetupFailure(
+          'verification_failed',
+          `Nextcloud could not be reached${reason ? `: ${reason}` : ''}.`,
+        );
+      }
+      if (!response.ok)
+        throw new ChannelSetupFailure(
+          'verification_failed',
+          (await nextcloudFailure(response, action, secrets)).message,
+        );
+      return z.object({ ocs: z.object({ data: z.unknown() }) }).parse(await response.json()).ocs
+        .data;
+    };
+    const account = z
+      .object({
+        id: z.string().regex(nextcloudUserId),
+        'display-name': z.string().max(200).nullish(),
+        displayname: z.string().max(200).nullish(),
+      })
+      .parse(await call('/cloud/user', 'sign-in'));
+    if (account.id === value.ownerUser)
+      throw new ChannelSetupFailure(
+        'verification_failed',
+        'Use a separate Nextcloud account for Nod, not your own account.',
+      );
+    const room = z
+      .object({
+        token: z.string().regex(/^[A-Za-z0-9]{4,64}$/),
+        type: z.literal(1),
+        displayName: z.string().max(200).optional(),
+      })
+      .parse(
+        await call('/apps/spreed/api/v4/room', 'conversation setup', {
+          roomType: 1,
+          invite: value.ownerUser,
+        }),
+      );
+    const name = account['display-name'] || account.displayname;
+    return {
+      environment: {
+        NEXTCLOUD_ENABLED: 'true',
+        NEXTCLOUD_URL: server,
+        NEXTCLOUD_USER: account.id,
+        NEXTCLOUD_APP_PASSWORD: value.appPassword,
+        NEXTCLOUD_ALLOWED_USER: value.ownerUser,
+      },
+      summary: {
+        provider: 'nextcloud',
+        enabled: true,
+        ...(name ? { accountName: name.slice(0, 200) } : {}),
+        accountHandle: `${account.id}@${new URL(server).host}`.slice(0, 200),
+        mode: 'polling',
+        pairedUser: (room.displayName || value.ownerUser).slice(0, 200),
+      },
+    };
+  }
   return {
     async verify(provider, input): ReturnType<ChannelSetupVerifier['verify']> {
       try {
+        if (provider === 'nextcloud') return await nextcloud(input);
         if (provider === 'telegram') {
           const parsed = telegramInput.safeParse(input);
           if (!parsed.success) throw new ChannelSetupFailure('invalid_input');

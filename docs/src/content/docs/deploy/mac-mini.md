@@ -29,7 +29,7 @@ For private access, open an [SSH tunnel](/deploy/self-host/#open-a-remote-server
 
 The desktop app connects with the same server address and token as the web app. Nod keeps working on the Mac mini after you close the app on your other device.
 
-Telegram and the WhatsApp QR connection use outbound connections and can work without opening your router. Meta's WhatsApp Cloud API needs a public HTTPS webhook. See [Telegram and WhatsApp](/use/channels/).
+Telegram, the WhatsApp QR connection and Nextcloud Talk use outbound connections and can work without opening your router. Meta's WhatsApp Cloud API needs a public HTTPS webhook. See [Chat apps](/use/channels/).
 
 ## Keep data recoverable
 

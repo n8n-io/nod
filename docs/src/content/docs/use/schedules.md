@@ -135,6 +135,6 @@ You see the same in chat. The first message of a late run, or of a run after ski
 
 - [Track tasks](/use/tasks/)
 - [Chat with Nod](/use/chat/)
-- [Telegram and WhatsApp](/use/channels/)
+- [Chat apps](/use/channels/)
 - [Approvals and the trust check](/trust/approvals/)
 - [Connect apps](/connect/apps/)

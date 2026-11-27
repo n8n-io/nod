@@ -1,13 +1,13 @@
 ---
-title: Telegram and WhatsApp
-description: Chat with Nod from Telegram or WhatsApp, set up each channel, and finish private steps such as sign-in and payments in the Nod app.
+title: Telegram, WhatsApp and Nextcloud Talk
+description: Chat with Nod from Telegram, WhatsApp or Nextcloud Talk, set up each channel, and finish private steps such as sign-in and payments in the Nod app.
 sidebar:
   order: 7
 ---
 
 import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
-You can chat with Nod from Telegram or WhatsApp. It's the same conversation, memory and tasks as in the Nod app.
+You can chat with Nod from Telegram, WhatsApp or Nextcloud Talk. It's the same conversation, memory and tasks as in the Nod app.
 
 With the desktop app's local assistant, channels reply only while Nod is on, on an awake computer with an internet connection and the channel connected. Closing the window keeps Nod on. While a channel is connected and the computer is plugged in, [Keep this computer awake when plugged in](/get-started/install-desktop/#keep-your-computer-awake) stops it from sleeping when it's left idle. Turning off Nod or sleeping the computer stops live replies. Messages sent while Nod is stopped may arrive after it restarts and reconnects, but Nod does not read old WhatsApp history. If no reply appears, send the message again.
 
@@ -15,19 +15,19 @@ With a [self-hosted server](/deploy/self-host/), channels stay connected while t
 
 If the desktop app runs Nod, quitting it stops Telegram and WhatsApp replies. The computer must stay awake. Reconnect cannot receive messages while Nod is stopped.
 
-Nod replies in the app you wrote from. Schedule results, nudges and other messages Nod starts on its own also go to the chat app you used last, Telegram or WhatsApp, if you've written from one. Everything also shows in the chat in the Nod app.
+Nod replies in the app you wrote from. Schedule results, nudges and other messages Nod starts on its own also go to the chat app you used last, Telegram, WhatsApp or Nextcloud Talk, if you've written from one. Everything also shows in the chat in the Nod app.
 
 Nod uses your conversation language for pairing notices and private-step guidance. Its model writes the message; the server adds permitted file links and keeps private sign-in and payment links out of chat apps. If an attachment cannot be read, its caption still helps set the recovery message’s language; the failed attachment does not start a task.
 
 ## Before you start
 
-|                     | Telegram                                | WhatsApp with a QR code                            |
-| ------------------- | --------------------------------------- | -------------------------------------------------- |
-| You need            | A Telegram bot, made with BotFather     | A registered WhatsApp account                      |
-| Works on a laptop   | Yes                                     | Yes                                                |
-| Who can message Nod | The Telegram account that pressed Start | Message yourself, and a phone you link with a code |
-| Files from Nod      | Images, documents, video and audio      | Images, documents, video and audio                 |
-| When Nod can write  | While Nod runs                          | While Nod runs and WhatsApp is connected           |
+|                     | Telegram                                | WhatsApp with a QR code                            | Nextcloud Talk                                 |
+| ------------------- | --------------------------------------- | -------------------------------------------------- | ---------------------------------------------- |
+| You need            | A Telegram bot, made with BotFather     | A registered WhatsApp account                      | A separate account on your Nextcloud with Talk |
+| Works on a laptop   | Yes                                     | Yes                                                | Yes                                            |
+| Who can message Nod | The Telegram account that pressed Start | Message yourself, and a phone you link with a code | Your Nextcloud account, in a one-to-one chat   |
+| Files from Nod      | Images, documents, video and audio      | Images, documents, video and audio                 | Text only; open Nod to get files               |
+| When Nod can write  | While Nod runs                          | While Nod runs and WhatsApp is connected           | While Nod runs and can reach your Nextcloud    |
 
 The QR connection does not need a Meta developer account, an API token, or a public callback address. It uses Baileys, an unofficial WhatsApp client, so there's a small risk of account restrictions, and a WhatsApp update can break the connection for a while. Nod only messages you. A separate bot number keeps your own chats safe. Check the WhatsApp terms before you connect.
 
@@ -35,7 +35,7 @@ Replies keep their bold text, lists, links, quotes, and code. A table arrives as
 
 ## Set up a channel
 
-Open **Channels** in the sidebar, then select **Connect** on Telegram or WhatsApp. Nod checks your details before it saves them, and keeps them encrypted, outside the chat.
+Open **Channels** in the sidebar, then select **Connect** on Telegram, WhatsApp or Nextcloud Talk. Nod checks your details before it saves them, and keeps them encrypted, outside the chat.
 
 If Telegram or the WhatsApp Cloud API rejects setup, Nod shows the service's HTTP status and reason. If Nod can't reach the service, it says so, and names the network error when it recognizes one, such as `ECONNREFUSED` or a timeout after 15 seconds. Submitted tokens and secrets are replaced with `[redacted]`. If webhook registration fails after setup was saved, the error also states that message delivery is unconfirmed.
 
@@ -94,12 +94,30 @@ Cloud API mode needs a [self-hosted server](/deploy/self-host/) with public HTTP
 </details>
 
 </TabItem>
+<TabItem label="Nextcloud Talk">
+
+Nod writes from its own Nextcloud account, in a one-to-one Talk conversation with you. It needs no public address: Nod keeps one request open to your Nextcloud and receives messages as soon as you send them.
+
+<Steps>
+
+1. On your Nextcloud, create a separate account for Nod, such as `nod`. Your server needs the Talk app.
+2. Sign in as that account and open **Personal settings → Security**. Create an app password.
+3. In Nod, select **Connect** on Nextcloud Talk. Enter your Nextcloud's HTTPS address, the Nod account's login, the app password and your own Nextcloud user ID. Select **Verify and save**.
+4. Nod signs in, checks that the accounts differ, and opens the one-to-one conversation with you. Write to Nod there.
+
+</Steps>
+
+Nod answers only your account in that conversation. It ignores its own messages, system messages, other conversations and group conversations. If your Nextcloud refuses a step, Nod shows the HTTP status and Nextcloud's reason, with the app password replaced by `[redacted]`. Select **Disconnect** to remove the saved settings from Nod. To revoke the app password itself, delete it in Nextcloud.
+
+Nextcloud Talk takes text only. Nod doesn't read files or voice messages you share in Talk; send your request as text. Files from Nod, including `/usage` and `/memory` exports, stay in Nod, and the reply says so. Replies are sent as Markdown. A reply over 32,000 characters arrives as several messages. Nod can react to your messages, but your reactions don't reach Nod. Nod shows no typing status or progress section in Talk.
+
+</TabItem>
 </Tabs>
 
 <details>
 <summary>Configure channels in .env instead</summary>
 
-On a source install or self-hosted server, set the `TELEGRAM_*` or `WHATSAPP_*` values in [Configuration](/deploy/configuration/#channels), then [apply the configuration](/deploy/configuration/#apply-configuration-changes). Any nonempty value makes that channel server-managed. The **Channels** page cannot edit or remove its configuration, and Telegram pairing is unavailable. A managed WhatsApp QR connection still lets you scan or renew its QR code.
+On a source install or self-hosted server, set the `TELEGRAM_*`, `WHATSAPP_*` or `NEXTCLOUD_*` values in [Configuration](/deploy/configuration/#channels), then [apply the configuration](/deploy/configuration/#apply-configuration-changes). Any nonempty value makes that channel server-managed. The **Channels** page cannot edit or remove its configuration, and Telegram pairing is unavailable. A managed WhatsApp QR connection still lets you scan or renew its QR code.
 
 To configure and pair the channel in the app, clear all its environment variables and apply the configuration again. This restores any configuration previously saved through **Channels**.
 
@@ -149,9 +167,11 @@ After a restart or network loss, Nod uses the saved link to connect again. Repli
 
 Each connected channel shows when your last message from it reached Nod, or that none has yet. If you write and that line doesn't change, Nod isn't receiving your messages: check that you write from the linked account or chat. Nod can read the same line when you ask whether a chat app works.
 
-If messages stop, open **Channels** and select **Reconnect** for Telegram or WhatsApp. Nod restarts message delivery with the saved settings. It keeps your paired Telegram account and saved WhatsApp device keys. A saved Telegram webhook is registered again. Telegram polling errors show the service's status and reason on this page.
+If messages stop, open **Channels** and select **Reconnect** for Telegram, WhatsApp or Nextcloud Talk. Nod restarts message delivery with the saved settings. It keeps your paired Telegram account and saved WhatsApp device keys. A saved Telegram webhook is registered again. Telegram polling errors show the service's status and reason on this page.
 
 **Reconnect** also works for server-managed channels. Their settings still come from the server environment. For WhatsApp, the connection panel opens after reconnecting. If WhatsApp has signed out the device, select **Start again** and scan a new code.
+
+Nod remembers the last Nextcloud Talk message it handled. After a restart within 24 hours, it continues from there; after a longer pause, it starts with new messages. Nextcloud polling errors show the HTTP status and Nextcloud's reason on this page.
 
 Nod keeps one request open to Telegram, so messages arrive as soon as they're sent. Telegram can change its update numbers after seven days without messages. Nod stops using the saved update number after 24 hours without a received update. Telegram keeps pending updates for 24 hours.
 
@@ -159,13 +179,13 @@ The Channels page checks status every five seconds while visible. During Telegra
 
 ## Answer approval questions
 
-In Telegram, tap one of the two buttons below a new approval question: the action or the refusal, in the question's language. If the question appears without buttons, reply directly to it with yes or no. If it spans more than one message, reply to one of them, including the reply guidance. In WhatsApp, reply directly to the question. See [how approvals work](/trust/approvals/).
+In Telegram, tap one of the two buttons below a new approval question: the action or the refusal, in the question's language. If the question appears without buttons, reply directly to it with yes or no. If it spans more than one message, reply to one of them, including the reply guidance. In WhatsApp and Nextcloud Talk, reply directly to the question. See [how approvals work](/trust/approvals/).
 
 Approval buttons work automatically in Telegram polling mode. If you set up a Telegram webhook in Nod before buttons were available, open **Channels** and select **Reconnect**. For a webhook you registered yourself, [update the Telegram webhook registration](/deploy/configuration/#telegram-webhooks).
 
 ## Private steps happen in the Nod app
 
-Passwords, saved logins, app sign-ins and payment approvals never go through a chat app. When a task started on Telegram or WhatsApp needs one, Nod asks you to open Nod. Finish the step there, and the task carries on and replies in the chat app.
+Passwords, saved logins, app sign-ins and payment approvals never go through a chat app. When a task started in a chat app needs one, Nod asks you to open Nod. Finish the step there, and the task carries on and replies in the chat app.
 
 ```mermaid
 sequenceDiagram

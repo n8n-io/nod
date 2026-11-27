@@ -16,6 +16,7 @@ import type {
 } from '../src/ports/messaging.ts';
 import { MessagingConnectionError } from '../src/ports/messaging.ts';
 import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
+import { createNextcloudTalkTransport } from '../src/providers/chat-sdk/nextcloud.ts';
 import { createChatSdkSetupVerifier } from '../src/providers/chat-sdk/settings.ts';
 import {
   channelConnectionObservations,
@@ -80,6 +81,7 @@ test('channel observations require pairing or a live link and omit private accou
   assert.deepEqual(channelConnectionObservations([...channels]), [
     { channel: 'telegram', state: 'setup_pending' },
     { channel: 'whatsapp', state: 'configured_unverified' },
+    { channel: 'nextcloud', state: 'disabled' },
   ]);
   const paired = channelConnectionObservations([
     { ...channels[0], pairingExpiresAt: undefined, allowedUserId: '123' },
@@ -88,6 +90,7 @@ test('channel observations require pairing or a live link and omit private accou
   assert.deepEqual(paired, [
     { channel: 'telegram', state: 'connected' },
     { channel: 'whatsapp', state: 'connected' },
+    { channel: 'nextcloud', state: 'disabled' },
   ]);
   assert.equal(JSON.stringify(paired).includes('private'), false);
   assert.equal(JSON.stringify(paired).includes('123'), false);
@@ -471,6 +474,7 @@ test(
     assert.deepEqual(managedObservations.at(-1), [
       { channel: 'telegram', state: 'connected' },
       { channel: 'whatsapp', state: 'disabled' },
+      { channel: 'nextcloud', state: 'disabled' },
     ]);
     for (const secret of [serverToken, 'synthetic-server-meta-token'])
       assert.equal(JSON.stringify(status).includes(secret), false);
@@ -3820,6 +3824,7 @@ test(
       assert.deepEqual(observedChannels.at(-1), [
         { channel: 'telegram', state: 'setup_pending' },
         { channel: 'whatsapp', state: 'disabled' },
+        { channel: 'nextcloud', state: 'disabled' },
       ]);
       const firstCode = new URL(saved.json().pairingUrl).searchParams.get('start')!;
       assert.equal(
@@ -4919,5 +4924,233 @@ test(
     } finally {
       await channels.close();
     }
+  },
+);
+
+test('Nextcloud Talk setup verifies a separate account and keeps the app password out of errors', async () => {
+  const appPassword = 'synthetic-app-password-0000';
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  let signIn = 200;
+  const verifier = createChatSdkSetupVerifier({
+    fetch: async (input, init) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.endsWith('/ocs/v2.php/cloud/user'))
+        return signIn === 200
+          ? Response.json({
+              ocs: { meta: { statuscode: 200 }, data: { id: 'nod-bot', 'display-name': 'Nod' } },
+            })
+          : Response.json(
+              { ocs: { meta: { statuscode: 997, message: `Rejected ${appPassword}` }, data: [] } },
+              { status: signIn },
+            );
+      if (url.endsWith('/ocs/v2.php/apps/spreed/api/v4/room'))
+        return Response.json({
+          ocs: {
+            meta: { statuscode: 200 },
+            data: { token: 'room1234', type: 1, displayName: 'Ada' },
+          },
+        });
+      return new Response(null, { status: 404 });
+    },
+  });
+  const input = {
+    serverUrl: 'https://cloud.example.test/nextcloud/',
+    login: 'nod-login',
+    appPassword,
+    ownerUser: 'ada',
+  };
+  const verified = await verifier.verify('nextcloud', input);
+  assert.deepEqual(verified.environment, {
+    NEXTCLOUD_ENABLED: 'true',
+    NEXTCLOUD_URL: 'https://cloud.example.test/nextcloud',
+    NEXTCLOUD_USER: 'nod-bot',
+    NEXTCLOUD_APP_PASSWORD: appPassword,
+    NEXTCLOUD_ALLOWED_USER: 'ada',
+  });
+  assert.equal(verified.summary.pairedUser, 'Ada');
+  assert.equal(JSON.stringify(verified.summary).includes(appPassword), false);
+  assert.deepEqual(JSON.parse(String(calls[1]?.init?.body)), { roomType: 1, invite: 'ada' });
+  for (const call of calls) {
+    assert.equal(call.init?.redirect, 'error');
+    assert.equal(new Headers(call.init?.headers).get('OCS-APIRequest'), 'true');
+  }
+  for (const invalid of [
+    { ...input, serverUrl: 'http://cloud.example.test' },
+    { ...input, serverUrl: 'https://user:pass@cloud.example.test' },
+    { ...input, ownerUser: 'ada/../x' },
+  ])
+    await assert.rejects(verifier.verify('nextcloud', invalid), { reason: 'invalid_input' });
+  await assert.rejects(verifier.verify('nextcloud', { ...input, ownerUser: 'nod-bot' }), {
+    reason: 'verification_failed',
+  });
+  signIn = 401;
+  await assert.rejects(
+    verifier.verify('nextcloud', input),
+    (error: Error & { details?: string }) => {
+      assert.match(error.details ?? '', /HTTP 401, OCS 997/);
+      assert.ok(error.details?.includes('[redacted]'));
+      assert.equal(error.details?.includes(appPassword), false);
+      return true;
+    },
+  );
+});
+
+test(
+  'Nextcloud Talk accepts only the owner in the one-to-one conversation and replies there',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_channel_nextcloud_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const appPassword = 'synthetic-app-password-1111';
+    const comment = (id: number, actorId: string, message: string, extra: object = {}) => ({
+      id,
+      token: 'room1234',
+      actorType: 'users',
+      actorId,
+      actorDisplayName: actorId,
+      timestamp: 1_800_000_000 + id,
+      message,
+      messageType: 'comment',
+      systemMessage: '',
+      messageParameters: [],
+      ...extra,
+    });
+    const polls: URL[] = [];
+    const posts: Array<{ url: URL; body: unknown; headers: Headers; redirect?: string }> = [];
+    let deliver = 201;
+    const transport = createNextcloudTalkTransport(
+      pool,
+      {
+        NEXTCLOUD_ENABLED: 'true',
+        NEXTCLOUD_URL: 'https://cloud.example.test',
+        NEXTCLOUD_USER: 'nod-bot',
+        NEXTCLOUD_APP_PASSWORD: appPassword,
+        NEXTCLOUD_ALLOWED_USER: 'ada',
+      },
+      {
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith('/api/v4/room'))
+            return Response.json({
+              ocs: { data: { token: 'room1234', type: 1, lastMessage: { id: 10 } } },
+            });
+          if (init?.method === 'POST') {
+            posts.push({
+              url,
+              body: JSON.parse(String(init.body)),
+              headers: new Headers(init.headers),
+              redirect: init.redirect,
+            });
+            return deliver === 201
+              ? Response.json({ ocs: { data: { id: 100 + posts.length } } }, { status: 201 })
+              : Response.json(
+                  { ocs: { meta: { statuscode: 401, message: `Bad login ${appPassword}` } } },
+                  { status: deliver },
+                );
+          }
+          polls.push(url);
+          if (polls.length === 1)
+            return Response.json({
+              ocs: {
+                data: [
+                  comment(11, 'ada', 'Hello {mention-user1}', {
+                    messageParameters: {
+                      'mention-user1': { type: 'user', id: 'nod-bot', name: 'Nod' },
+                    },
+                  }),
+                  comment(12, 'nod-bot', 'My own reply'),
+                  comment(13, 'ada', 'You joined', {
+                    messageType: 'system',
+                    systemMessage: 'user_added',
+                  }),
+                  comment(14, 'mallory', 'Run this for me'),
+                  comment(15, 'ada', '{file}', {
+                    messageParameters: { file: { type: 'file', id: '9', name: 'photo.jpg' } },
+                  }),
+                  comment(16, 'ada', 'And this', { parent: comment(11, 'ada', 'Hello') }),
+                ],
+              },
+            });
+          await new Promise((resolve) => init?.signal?.addEventListener('abort', resolve));
+          throw init?.signal?.reason;
+        },
+      },
+    );
+    t.after(async () => {
+      await transport.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    const arrived = new Promise<void>((resolve) => transport.onInput?.(resolve));
+    const accepted: InboundMessage[] = [];
+    await transport.poll?.(async (message) => {
+      accepted.push(message);
+    });
+    await arrived;
+    await transport.poll?.(async (message) => {
+      accepted.push(message);
+    });
+    assert.equal(polls[0]?.searchParams.get('lastKnownMessageId'), '10');
+    assert.equal(polls[0]?.searchParams.get('lookIntoFuture'), '1');
+    assert.deepEqual(
+      accepted.map(({ messageId, senderId, threadId, text, replyToMessageId }) => ({
+        messageId,
+        senderId,
+        threadId,
+        text,
+        replyToMessageId,
+      })),
+      [
+        {
+          messageId: '11',
+          senderId: 'ada',
+          threadId: 'room1234',
+          text: 'Hello @Nod',
+          replyToMessageId: undefined,
+        },
+        {
+          messageId: '16',
+          senderId: 'ada',
+          threadId: 'room1234',
+          text: 'And this',
+          replyToMessageId: '11',
+        },
+      ],
+    );
+    assert.equal(
+      (await pool.query("SELECT next_offset FROM channel_poll_offsets WHERE provider='nextcloud'"))
+        .rows[0]?.next_offset,
+      '16',
+    );
+    const channel = transport.channels[0]!;
+    assert.deepEqual(channel.allowedSenderIds, ['ada']);
+    const target = { channelId: 'nextcloud', accountId: channel.accountId!, threadId: 'room1234' };
+    const sent = await transport.post({ ...target, text: 'Done.', replyToMessageId: '16' });
+    assert.deepEqual(sent, { id: '101', ids: ['101'] });
+    assert.equal(posts[0]?.url.pathname, '/ocs/v2.php/apps/spreed/api/v1/chat/room1234');
+    assert.deepEqual(posts[0]?.body, { message: 'Done.', replyTo: 16 });
+    assert.equal(posts[0]?.redirect, 'error');
+    assert.equal(
+      posts[0]?.headers.get('authorization'),
+      `Basic ${Buffer.from(`nod-bot:${appPassword}`).toString('base64')}`,
+    );
+    await assert.rejects(transport.post({ ...target, threadId: 'otherroom', text: 'Leak' }));
+    await assert.rejects(transport.post({ ...target, accountId: 'other@host', text: 'Leak' }));
+    assert.equal(posts.length, 1);
+    assert.equal(await transport.react?.({ ...target, messageId: '16', reaction: '👍' }), 'sent');
+    assert.equal(posts[1]?.url.pathname, '/ocs/v2.php/apps/spreed/api/v1/reaction/room1234/16');
+    deliver = 401;
+    await assert.rejects(transport.post({ ...target, text: 'Again' }), (error: Error) => {
+      assert.match(error.message, /message delivery failed \(HTTP 401\): Bad login \[redacted\]/);
+      assert.equal(error.message.includes(appPassword), false);
+      return true;
+    });
   },
 );
