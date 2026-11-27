@@ -73,7 +73,7 @@ For a small run, add `--tier pr --repeat 1`. To cap the spend at $20, add `--bud
 
 ### Run the release suite
 
-The release suite adds 244 cases: 197 of everyday work across every connected app, the browser, computer use, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
+The release suite adds 245 cases: 198 of everyday work across every connected app, the browser, computer use, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
 
 ```sh title="Terminal"
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500
@@ -294,7 +294,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 388 cases: 140 controlled cases, 244 release cases, three live web cases and the harness canary.
+The suite has 389 cases: 140 controlled cases, 245 release cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -554,6 +554,7 @@ Every release case is calibrating until it has been run and sorted. The table li
 | `notion-overdue-tasks`                  | Which of my Notion tasks are overdue?                                                                                             | apps                            |
 | `notion-policy-answer`                  | What's our refund window according to the Notion handbook?                                                                        | apps                            |
 | `notion-save-recipe-from-email`         | Save the recipe Mum emailed me to my Recipes database in Notion                                                                   | apps                            |
+| `onboarding-offers-connectable-senders` | Finish setup with Gmail and be offered only the apps Nod can connect                                                              | apps                            |
 | `paginated-job-list`                    | List every open design job in Lisbon on jobs.portal-emprego.example.org.                                                          | browser, research               |
 | `parallel-venue-research`               | Check which of these five venues can host 40 people on a date                                                                     | research, browser, progress     |
 | `pdf-statement-card-total`              | How much did I spend by card this month? Don't count transfers, and subtract refunds                                              | files                           |
