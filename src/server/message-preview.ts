@@ -97,7 +97,7 @@ function htmlText(node: DefaultTreeAdapterMap['node']): string {
 
 function urlHost(url: string): string {
   try {
-    return new URL(url).hostname;
+    return new URL(url.startsWith('//') ? `https:${url}` : url).hostname;
   } catch {
     return '';
   }
