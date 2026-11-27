@@ -274,7 +274,8 @@ function CartesianChart({ visual }: { visual: ChartVisual }) {
                 })}
                 {labels.map(
                   (label, index) =>
-                    (index % step === 0 || index === labels.length - 1) && (
+                    (index === labels.length - 1 ||
+                      (index % step === 0 && labels.length - 1 - index >= step)) && (
                       <text
                         key={label}
                         x={x(index)}
