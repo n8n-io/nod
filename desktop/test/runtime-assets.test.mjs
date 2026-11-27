@@ -5298,8 +5298,8 @@ test('the computer starts without PostgreSQL unless a data move is pending, a fa
             .map((name) => `sha256:${name}`)
             .join('\n');
         if (args[0] === 'inspect')
-          return args[3] === names.workspace &&
-            (outcome === 'stopped' || (outcome === 'repaired' && runs(names.workspace) === 1))
+          return (outcome === 'stopped' && args[3] === names.workspace) ||
+            (outcome === 'repaired' && args[3] === names.browser && runs(names.browser) === 1)
             ? 'false'
             : 'true';
         if (args[0] === 'exec' && args[1] === names.browser && outcome === 'aborted') {
@@ -5444,10 +5444,8 @@ test('the computer starts without PostgreSQL unless a data move is pending, a fa
         assert.deepEqual(
           calls
             .slice(repair, rerun)
-            .filter((command) => command[0] === 'image' && command[1] === 'rm')
-            .map((command) => command[2])
-            .sort(),
-          ['sha256:browser', 'sha256:old-base', 'sha256:workspace'],
+            .filter((command) => command[0] === 'image' && command[1] === 'rm'),
+          [['image', 'rm', '--force', 'sha256:workspace', 'sha256:browser', 'sha256:old-base']],
         );
         assert.equal(prepared('workspace'), 2);
         assert.equal(prepared('browser'), 2);

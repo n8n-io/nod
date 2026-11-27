@@ -1058,9 +1058,12 @@ exec "$docker" "$@"
     if (error.code !== 'NOD_CONTAINER_STOPPED') throw error;
     status('starting', 'Repairing your private computer…', 'workspace');
     await runDocker(['rm', '--force', names.workspace, names.browser]);
-    await removeStaleImages(runDocker, runGuest, {
-      images: manifest.images.filter((item) => item.name === 'postgres'),
-    });
+    const damaged = new Set(
+      (await runDocker(['image', 'ls', '--quiet', '--no-trunc']))
+        .split('\n')
+        .filter((id) => id && id !== image('postgres')),
+    );
+    if (damaged.size) await runDocker(['image', 'rm', '--force', ...damaged]);
     loadImage('workspace');
     loadImage('browser');
     await startContainers();
