@@ -68,6 +68,8 @@ type Desktop = StartupFeedbackDesktop & {
 };
 
 const desktop = (window as Window & { nodDesktop?: Desktop }).nodDesktop;
+const selfHostGuide = 'https://nod.n8n.io/docs/deploy/self-host/';
+const cloudGuide = 'https://nod.n8n.io/docs/deploy/cloud-vm/';
 const parameters = new URLSearchParams(location.search);
 const firstSetup = parameters.get('firstSetup') === 'true';
 document.documentElement.dataset.theme = window.matchMedia?.('(prefers-color-scheme: dark)').matches
@@ -218,7 +220,25 @@ function ConnectionSetup() {
           }}
         >
           <h1>Connect to your server</h1>
-          <p>Use the same assistant in this app, your browser and your chat apps.</p>
+          <p>
+            A Nod server is a computer you host, such as a cloud VM or a Mac mini, that runs your
+            assistant.
+          </p>
+          <ul className="server-modes">
+            <li>
+              <strong>On this computer</strong>
+              <span>
+                Nod runs in this app. Tasks run only while Nod is open and this computer is awake.
+              </span>
+            </li>
+            <li>
+              <strong>On a server</strong>
+              <span>
+                Nod keeps running when this app is closed. Every device you connect shares the same
+                chats, files and connected apps.
+              </span>
+            </li>
+          </ul>
           <label htmlFor="server-address">Server address</label>
           <input
             id="server-address"
@@ -230,7 +250,12 @@ function ConnectionSetup() {
             spellCheck={false}
             required
             disabled={busy || loading}
+            aria-describedby="server-address-help"
           />
+          <p id="server-address-help" className="server-help">
+            Use the server’s HTTPS address. Through an SSH tunnel, use {'http://localhost:<port>'}{' '}
+            with the tunnel’s local port, 4310 by default.
+          </p>
           <label htmlFor="server-token">Authentication token</label>
           <PasswordInput
             id="server-token"
@@ -245,7 +270,8 @@ function ConnectionSetup() {
             aria-describedby="server-token-help"
           />
           <p id="server-token-help" className="server-help">
-            Enter your server’s NOD_AUTH_TOKEN. Nod saves it in your computer’s secure storage.
+            Find NOD_AUTH_TOKEN in the server’s .env file. Nod saves it in this computer’s secure
+            storage.
           </p>
           {error && (
             <p className="server-error" role="alert">
@@ -256,7 +282,20 @@ function ConnectionSetup() {
             {busy ? 'Connecting…' : 'Connect and restart app'}
           </button>
           <p className="server-help">
-            Your local chats and files are kept. You can switch back anytime.
+            {connected
+              ? 'Use this computer switches back to the local assistant on this computer, with its chats and files.'
+              : 'Your local assistant stays on this computer, with its chats and files. Nothing moves to the server. To switch back later, open Replay onboarding… and choose Change server, then Use this computer.'}
+          </p>
+          <p className="server-help">
+            Need a server?{' '}
+            <a className="ob-link" href={selfHostGuide} target="_blank" rel="noreferrer">
+              Host your own server
+            </a>{' '}
+            or{' '}
+            <a className="ob-link" href={cloudGuide} target="_blank" rel="noreferrer">
+              run Nod on a cloud VM
+            </a>
+            .
           </p>
           <div className="server-actions">
             <button

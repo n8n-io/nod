@@ -27,7 +27,7 @@ One server belongs to one person. Its access token grants full access to that pe
 | Remote access | An SSH tunnel, or a domain and inbound ports 80 and 443 for HTTPS.                                               |
 | Model         | Connect one after startup. No model key is needed to install the server.                                         |
 
-Choose a [cloud server](/deploy/providers/) or prepare a [Mac mini](/deploy/mac-mini/). The suggested size is a starting point; simultaneous browser tasks and local models need more capacity.
+Choose a [cloud server](/deploy/providers/) or prepare a [Mac mini](/deploy/mac-mini/). For the cloud steps in order, see [Run Nod on a cloud VM](/deploy/cloud-vm/). The suggested size is a starting point; simultaneous browser tasks and local models need more capacity.
 
 ## Install a prebuilt bundle
 
@@ -169,7 +169,7 @@ On first launch, the setup screen is already open. If you've already set up Nod,
   </TabItem>
 </Tabs>
 
-At the bottom of the setup screen, choose **Connect to a server**. If the app already uses a server, the button says **Change server**. Enter the server address and the value of `NOD_AUTH_TOKEN`, then select **Connect and restart app**.
+At the bottom of the setup screen, choose **Connect to a server**. If the app already uses a server, the button says **Change server**. The connection screen explains how a server differs from running Nod on this computer and links to this guide and [Run Nod on a cloud VM](/deploy/cloud-vm/). Enter the server address and the value of `NOD_AUTH_TOKEN` from the server's `.env`, then select **Connect and restart app**.
 
 Use the server's HTTPS address. Nod accepts HTTP only for loopback addresses such as `localhost`. For an HTTP-only server on another device, [open an SSH tunnel](#open-a-remote-server-without-a-domain) and enter `http://localhost:<port>` using the tunnel's local port (`4310` by default).
 
@@ -228,6 +228,7 @@ Follow [Back up and update a server](/deploy/server-operations/) before your fir
 
 - [Deploy and operate](/deploy/)
 - [Configuration reference](/deploy/configuration/)
+- [Run Nod on a cloud VM](/deploy/cloud-vm/)
 - [Choose a cloud server](/deploy/providers/)
 - [Host on a Mac mini](/deploy/mac-mini/)
 - [Back up and update a server](/deploy/server-operations/)

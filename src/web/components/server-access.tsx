@@ -45,9 +45,15 @@ export function ServerAccess({ onConnected }: { onConnected(): Promise<boolean> 
         <header className="server-access-header">
           <NodGlyph size={72} mode="still" />
           <h1 id="server-access-title">Connect to Nod</h1>
-          <p>Enter your server’s token to open your assistant.</p>
+          <p>
+            This server runs your assistant. Every browser and app you connect to it shares the same
+            chats, files and connected apps.
+          </p>
         </header>
-        <Field label="Authentication token">
+        <Field
+          label="Authentication token"
+          hint="On a self-hosted server, find NOD_AUTH_TOKEN in its .env file. For a local source install, use the access link printed when Nod starts."
+        >
           <Input
             type="password"
             autoComplete="current-password"
@@ -63,7 +69,15 @@ export function ServerAccess({ onConnected }: { onConnected(): Promise<boolean> 
           {busy ? 'Connecting…' : 'Connect'}
         </Button>
         <p className="server-access-note">
-          Your chats, files and connected apps stay on this server.
+          Keep this token private. It gives full access to your assistant.{' '}
+          <a
+            className="ob-link"
+            href="https://nod.n8n.io/docs/deploy/self-host/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Read the self-host guide
+          </a>
         </p>
       </form>
     </main>

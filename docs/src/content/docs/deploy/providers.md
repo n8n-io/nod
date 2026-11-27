@@ -99,5 +99,6 @@ Before a trial expires, export a backup and decide whether to move or keep the s
 
 - [Deploy and operate](/deploy/)
 - [Host your own server](/deploy/self-host/)
+- [Run Nod on a cloud VM](/deploy/cloud-vm/)
 - [Back up and update a server](/deploy/server-operations/)
 - [Host on a Mac mini](/deploy/mac-mini/)

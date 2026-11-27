@@ -1,0 +1,63 @@
+---
+title: Run Nod on a cloud VM
+description: Put your own Nod server on any Linux VM with Docker, keep it private, and connect your devices to it.
+sidebar:
+  order: 2
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+Run Nod on a Linux virtual machine (VM) so your assistant keeps working when your own computer is off. Every device you connect shares the same assistant.
+
+This page puts the steps in order and links to the full instructions for each one. It works with any provider that gives you a Linux VM with Docker.
+
+<Aside type="caution" title="Cloud metadata">
+  Cloud VM metadata services can give cloud credentials to workspace commands. Keep Nod's workspace
+  firewall enabled and turn on your provider's metadata access controls.
+</Aside>
+
+## Set up the server
+
+<Steps>
+
+1. Create a Linux VM, AMD64 or ARM64, with two CPU cores, 8 GB of memory, and 50 GB of persistent disk. Add your SSH key and allow SSH only from your own address. For provider notes and trial limits, see [Choose a cloud server](/deploy/providers/).
+
+2. Connect through SSH and [install Docker Engine](https://docs.docker.com/engine/install/) 25 or newer with Compose v2. The full list of tools is in [What you need](/deploy/self-host/#what-you-need).
+
+3. Install Nod with a [prebuilt bundle](/deploy/self-host/#install-a-prebuilt-bundle) or [from source](/deploy/self-host/#build-from-source). Both create a private `.env` file with your access token, a Vault key, and a database password.
+
+4. Choose how you reach the server:
+   - **Private:** [open an SSH tunnel](/deploy/self-host/#open-a-remote-server-without-a-domain) from your computer and use `http://localhost:4310`. You don't open any port other than SSH.
+   - **Public with bundled HTTPS:** point a domain at the VM, allow inbound TCP 80 and 443, and [add HTTPS](/deploy/self-host/#add-public-https). Your address looks like `https://nod.example.com`.
+   - **Public with your own proxy:** point a domain at the VM, allow inbound traffic on the proxy's HTTPS port, and [use your own proxy](/deploy/self-host/#use-an-existing-proxy). The address can use a custom port, such as `https://nod.example.com:8443`.
+
+5. Open the `.env` file in the installation folder on the VM and copy the value of `NOD_AUTH_TOKEN`.
+
+6. Open your address in a browser and enter the token. Finish onboarding to connect a model.
+
+</Steps>
+
+## Connect your devices
+
+Use the same address and token in each browser and desktop app:
+
+- **Browser:** open the address and enter the token.
+- **Desktop app:** choose **Connect to a server** on the setup screen. See [Connect the desktop app](/deploy/self-host/#connect-the-desktop-app).
+
+To use Telegram or WhatsApp, connect them on the server's **Channels** page. See [Connect Telegram or WhatsApp](/deploy/self-host/#connect-telegram-or-whatsapp).
+
+Connecting the desktop app doesn't move its local assistant or its data to the server. To switch back, choose **Replay onboarding… → Change server → Use this computer**.
+
+## Keep it private
+
+- Don't expose Nod over plain HTTP on a public address. Use the SSH tunnel or HTTPS.
+- Keep the access token private. It gives full access to your assistant and connected accounts. If it leaks, [rotate it](/deploy/server-operations/#rotate-access).
+- Use your provider's firewall too. Don't publish PostgreSQL, the browser, the workspace, or the Docker API. See [Finish the network setup](/deploy/providers/#finish-the-network-setup).
+- [Back up](/deploy/server-operations/#back-up) the server and keep a copy outside the VM. The backup needs the Vault key to restore saved credentials.
+
+## Related resources
+
+- [Deploy and operate](/deploy/)
+- [Host your own server](/deploy/self-host/)
+- [Choose a cloud server](/deploy/providers/)
+- [Back up and update a server](/deploy/server-operations/)

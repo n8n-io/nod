@@ -12,6 +12,7 @@ Each server has one assistant and one owner. Everyone with its access token can 
 ## In this section
 
 - [Host your own server](/deploy/self-host/): install the Docker stack and connect to it.
+- [Run Nod on a cloud VM](/deploy/cloud-vm/): set up a server on any Linux VM with Docker, step by step.
 - [Choose a cloud server](/deploy/providers/): compare persistent VPS hosting and the limits of trial and disposable VM offers.
 - [Deploy on boxd](/deploy/boxd/): use a community guide with its test scope, managed HTTPS setup, and operating limits.
 - [Host on a Mac mini](/deploy/mac-mini/): run the same stack on your own Mac.
