@@ -59,6 +59,7 @@ import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { Trash } from '../ports/trash.ts';
 import type { DesktopControl } from '../ports/desktop.ts';
 import { desktopTrash } from '../providers/trash.ts';
+import { pairedWindows } from '../providers/paired-windows.ts';
 import { desktopControl } from '../providers/desktop.ts';
 import type { KeepAwake } from '../ports/keep-awake.ts';
 import { desktopKeepAwake } from '../providers/keep-awake.ts';
@@ -348,6 +349,10 @@ export function createDefaultAdapters(
   env: Record<string, string | undefined> = process.env,
   computer?: { ready(signal?: AbortSignal): Promise<void>; available(): boolean },
 ): ApplicationAdapters {
+  const paired =
+    !desktopMode && env.NOD_PAIRED_WINDOWS === 'true'
+      ? pairedWindows('/tmp/nod-paired-windows')
+      : undefined;
   const bootstrap = modelEnvironment(env);
   const { provider } = bootstrap;
   const model = bootstrap.model || agentModels[provider];
@@ -516,6 +521,7 @@ export function createDefaultAdapters(
     ...(analyticsEnabled(env) ? { analytics: createPostHogAnalytics() } : {}),
     telemetry: createOtlpTelemetry(env.OTEL_EXPORTER_OTLP_ENDPOINT),
     initialize: async () => {
+      await paired?.start();
       await models.initialize();
       await integrationProxy.initialize();
     },
@@ -534,7 +540,7 @@ export function createDefaultAdapters(
       ready: computer?.ready,
     }),
     trash: desktopMode ? desktopTrash() : undefined,
-    desktop: desktopMode ? desktopControl() : undefined,
+    desktop: desktopMode ? desktopControl() : paired?.control,
     keepAwake: desktopMode ? desktopKeepAwake() : undefined,
     workspace: createDockerWorkspace({
       container: env.WORKSPACE_CONTAINER || 'nod-workspace',
@@ -3079,7 +3085,9 @@ async function initializeApplication(
         return { filled: true as const };
       },
       localFiles: localFiles.available,
-      computerUse: computerUse.available,
+      computerUse: adapters.desktop?.paired
+        ? () => Boolean(adapters.desktop?.session)
+        : computerUse.available,
       integration: async (turn, action, args, options) => {
         if (action === 'CONNECTED_HTTP') args = structuredClone(args);
         if (isComputerAction(action)) {
@@ -3709,6 +3717,7 @@ async function initializeApplication(
     stopConnectionInventory();
     const failures: unknown[] = [];
     for (const close of [
+      () => adapters.desktop?.close?.(),
       () => adapters.integrationBrowser?.close(),
       () => adapters.localSpeech?.close(),
       () => channels?.close(),

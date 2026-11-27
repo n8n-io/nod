@@ -1,3 +1,5 @@
+import * as pairedAppPolicy from '../../src/shared/computer-app-policy.mjs';
+import { scopedWindowsRequest } from '../main/paired-windows.mjs';
 import assert from 'node:assert/strict';
 import {
   createCipheriv,
@@ -13115,4 +13117,62 @@ test('startup status masks overlapping credentials and private roots in one pass
   assert.ok(!review.content.includes('Synthetic Private Owner'));
   assert.ok(!review.content.includes('synthetic-private-cross-tail'));
   assert.ok(!review.content.includes('synthetic-private-path-tail'));
+});
+
+test('paired Windows sharing fences app names and waits for local consent before input', async () => {
+  const received = [];
+  let allow = false;
+  const helper = {
+    async request(input) {
+      received.push(input);
+      if (input.op === 'apps')
+        return {
+          apps: [
+            { name: 'Notepad.exe', program: 'Notepad.exe' },
+            { name: 'other.exe', program: 'other.exe' },
+          ],
+        };
+      return { done: true };
+    },
+  };
+  const request = scopedWindowsRequest(helper, 'notepad.exe', async () => allow, pairedAppPolicy);
+  const signal = new AbortController();
+  const send = (input) => request(input, randomUUID(), signal.signal);
+  assert.deepEqual(
+    (await send({ op: 'apps' })).apps.map((x) => x.name),
+    ['Notepad.exe'],
+  );
+  await assert.rejects(send({ op: 'open', bundle: 'other.exe', app: 'Notepad' }), /not shared/);
+  await assert.rejects(send({ op: 'inspect', app: 'other.exe' }), /not shared/);
+  await assert.rejects(send({ op: 'type', app: 'Notepad', text: 'example' }), /declined/);
+  await assert.rejects(send({ op: 'screenshot', app: 'Notepad' }), /declined/);
+  assert.equal(received.length, 1);
+  allow = true;
+  await send({ op: 'type', app: 'Notepad', text: 'example', deadline: 0 });
+  assert.equal(received.at(-1).text, 'example');
+  assert.ok(received.at(-1).deadline > Date.now());
+  signal.abort();
+  await assert.rejects(send({ op: 'type', app: 'Notepad', text: 'late' }));
+  assert.equal(received.length, 2);
+});
+
+test('desktop sharing can switch apps but checks restricted targets on the Windows PC', async () => {
+  const completed = [];
+  const helper = {
+    async request(input) {
+      completed.push(input);
+      return { done: true };
+    },
+  };
+  const run = scopedWindowsRequest(helper, null, async () => true, pairedAppPolicy);
+  const send = (input) => run(input, randomUUID(), new AbortController().signal);
+  await send({ op: 'snapshot', app: 'Notepad.exe' });
+  await send({ op: 'snapshot', app: 'mspaint.exe' });
+  await send({ op: 'type', app: 'Notepad.exe', text: 'fixture' });
+  await send({ op: 'inspect', app: 'msedge.exe' });
+  await assert.rejects(send({ op: 'type', app: 'msedge.exe', text: 'fixture' }), /view-only/);
+  await assert.rejects(send({ op: 'open', bundle: 'cmd.exe' }), /not shared/);
+  await assert.rejects(send({ op: 'locate', bundle: 'KeePass.exe' }), /not shared/);
+  await assert.rejects(send({ op: 'key', app: 'Notepad.exe', keys: 'win+r' }), /System shortcuts/);
+  assert.equal(completed.length, 4);
 });

@@ -323,7 +323,7 @@ export interface ThreadDependencies {
   accountProfile?: () => Promise<RuntimeContext['account']>;
   connectedApps?: () => Promise<NonNullable<RuntimeContext['connectedApps']>>;
   localFiles?: boolean;
-  computerUse?: boolean;
+  computerUse?: boolean | (() => boolean);
   mcpServers?: () => Promise<NonNullable<RuntimeContext['mcpServers']>>;
   memoryContext?: () => Promise<RuntimeContext['memory']>;
   recall?: (
@@ -2193,7 +2193,11 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       ...(learnedSkills?.length ? { learnedSkills } : {}),
       ...(connectedApps ? { connectedApps } : {}),
       ...(dependencies.localFiles ? { localFiles: true } : {}),
-      ...(dependencies.computerUse && preference?.computer_use ? { computerUse: true } : {}),
+      ...((typeof dependencies.computerUse === 'function'
+        ? dependencies.computerUse()
+        : dependencies.computerUse) && preference?.computer_use
+        ? { computerUse: true }
+        : {}),
       ...(mcpServers?.length ? { mcpServers } : {}),
     },
   };
