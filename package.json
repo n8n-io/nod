@@ -45,7 +45,7 @@
     "@composio/core": "0.30.0",
     "@earendil-works/pi-ai": "1.5.2",
     "@earendil-works/pi-coding-agent": "1.5.2",
-    "@fastify/middie": "^9.3.6",
+    "@fastify/middie": "^9.3.8",
     "@fastify/multipart": "^10.1.9",
     "@fastify/rate-limit": "11.2.2",
     "@fastify/static": "^10.1.12",
