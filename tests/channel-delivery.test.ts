@@ -289,6 +289,228 @@ test('channel verification keeps service failures specific and removes submitted
   }
 });
 
+test('model service errors preserve safe provider JSON reasons and hide unsafe response bodies', async () => {
+  const { modelServiceError } = await import('../src/providers/model-error.ts');
+  const secret = 'synthetic/secret key';
+  const encodedSecret = encodeURIComponent(secret);
+  const scenarios = [
+    {
+      name: 'Google array error',
+      body: [{ error: { code: 429, message: `Quota exceeded: ${encodedSecret}` } }],
+      status: 429,
+      secrets: [secret],
+      hidden: [secret, encodedSecret],
+      expected: 'Quota exceeded: [redacted]',
+    },
+    {
+      name: 'array continues past metadata-only error',
+      body: [
+        { error: { code: 429, status: 'rate_limit_exceeded' } },
+        { error: { message: 'Quota exceeded' } },
+      ],
+      status: 429,
+      secrets: [],
+      hidden: [],
+      expected: 'message: Quota exceeded',
+    },
+    {
+      name: 'array keeps details-only fallback',
+      body: [
+        { error: { code: 429, status: 'rate_limit_exceeded' } },
+        { error: { type: 'temporary_failure' } },
+      ],
+      status: 429,
+      secrets: [],
+      hidden: [],
+      expected: 'code: 429',
+    },
+    {
+      name: 'array inspection remains bounded',
+      body: [
+        ...Array.from({ length: 10 }, () => ({ error: { code: 429 } })),
+        { error: { message: 'uninspected message' } },
+      ],
+      status: 429,
+      secrets: [],
+      hidden: [],
+      expected: 'code: 429',
+    },
+    {
+      name: 'FastAPI string detail',
+      body: { detail: `Not authenticated: ${secret}` },
+      status: 401,
+      secrets: [secret],
+      hidden: [secret],
+      expected: 'Not authenticated: [redacted]',
+    },
+    {
+      name: 'FastAPI validation detail',
+      body: {
+        detail: [{ loc: ['body', 'name'], msg: `field required: ${secret}`, type: 'missing' }],
+      },
+      status: 422,
+      secrets: [secret],
+      hidden: [secret],
+      expected: 'field required: [redacted]',
+    },
+    {
+      name: 'empty validation detail falls back to sibling message',
+      body: { message: 'The request could not be validated', detail: [] },
+      status: 422,
+      secrets: [],
+      hidden: [],
+      expected: 'message: The request could not be validated',
+    },
+    {
+      name: 'unrecognized validation detail falls back to sibling message',
+      body: {
+        message: 'The request could not be validated',
+        detail: [{ unrecognized: 'field' }],
+      },
+      status: 422,
+      secrets: [],
+      hidden: [],
+      expected: 'message: The request could not be validated',
+    },
+    {
+      name: 'recognized validation detail takes precedence over sibling message',
+      body: {
+        message: 'The request could not be validated',
+        detail: [{ msg: 'field required' }],
+      },
+      status: 422,
+      secrets: [],
+      hidden: [],
+      expected: 'msg: field required',
+    },
+    {
+      name: 'object detail compatibility',
+      body: { detail: { status: 'quota_exceeded', message: `No credits: ${secret}` } },
+      status: 401,
+      secrets: [secret],
+      hidden: [secret],
+      expected: 'No credits: [redacted]',
+    },
+    {
+      name: 'OpenAI object envelope',
+      body: { error: { message: `Invalid request: ${secret}`, code: 'invalid_request' } },
+      status: 400,
+      secrets: [secret],
+      hidden: [secret],
+      expected: 'Invalid request: [redacted]',
+    },
+    {
+      name: 'provider-specific detail fields',
+      body: { error: { message: 'Invalid request', description: 'Synthetic description' } },
+      status: 400,
+      secrets: [],
+      hidden: [],
+      detailFields: ['message', 'description'],
+      expected: 'description: Synthetic description',
+    },
+    {
+      name: 'numeric detail field redaction',
+      body: { error: { code: 123456789, status: 'synthetic_status' } },
+      status: 400,
+      secrets: ['123456789'],
+      hidden: ['123456789'],
+      expected: 'code: [redacted]',
+    },
+    {
+      name: 'large complete JSON body',
+      body: { error: { message: 'context length exceeded' }, padding: 'x'.repeat(20_000) },
+      status: 400,
+      secrets: [],
+      hidden: [],
+      expected: 'context length exceeded',
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const failure = await modelServiceError(
+      Response.json(scenario.body, { status: scenario.status, statusText: 'Synthetic status' }),
+      'Synthetic service',
+      scenario.secrets,
+      scenario.detailFields,
+    );
+    assert.equal(failure.status, scenario.status, scenario.name);
+    assert.ok(failure.message.includes(scenario.expected), scenario.name);
+    assert.ok(failure.details?.includes(scenario.expected), scenario.name);
+    for (const hidden of scenario.hidden) {
+      assert.ok(!failure.message.includes(hidden), scenario.name);
+      assert.ok(!failure.details?.includes(hidden), scenario.name);
+      assert.ok(!failure.reason?.includes(hidden), scenario.name);
+    }
+  }
+});
+
+test('model service errors redact credentials before truncating provider text', async () => {
+  const { modelServiceError } = await import('../src/providers/model-error.ts');
+  const secret = 'synthetic-cross-boundary-credential/7f3c';
+  const encodedSecret = encodeURIComponent(secret);
+  const prefix = 'x'.repeat(1_990);
+  const failure = await modelServiceError(
+    Response.json(
+      {
+        error: {
+          message: `${prefix}${secret}${encodedSecret}`,
+        },
+      },
+      { status: 400, statusText: 'Synthetic status' },
+    ),
+    'Synthetic service',
+    [secret],
+  );
+  const values = [failure.message, failure.details, failure.reason].filter(
+    (value): value is string => value !== undefined,
+  );
+  assert.ok(failure.details);
+  assert.ok(failure.details.length <= 2_000);
+  assert.ok(failure.reason);
+  assert.ok(failure.reason.length <= 2_000);
+  for (const value of values) {
+    assert.ok(!value.includes(secret));
+    assert.ok(!value.includes(encodedSecret));
+    assert.ok(!value.includes(secret.slice(0, 12)));
+    assert.ok(!value.includes(secret.slice(-12)));
+  }
+  assert.ok(failure.reason.includes('[redacted]'));
+});
+
+test('model service errors fall back to status for malformed, truncated, oversized, and plain-text bodies', async () => {
+  const { modelServiceError } = await import('../src/providers/model-error.ts');
+  const bodies = [
+    new Response('{"error":{"message":"synthetic upstream detail"', {
+      status: 400,
+      statusText: 'Synthetic status',
+      headers: { 'content-type': 'application/json' },
+    }),
+    new Response('{"error":{"message":"synthetic upstream detail', {
+      status: 400,
+      statusText: 'Synthetic status',
+      headers: { 'content-type': 'application/json' },
+    }),
+    Response.json(
+      { error: { message: 'synthetic oversized detail' }, padding: 'x'.repeat(80_000) },
+      { status: 400, statusText: 'Synthetic status' },
+    ),
+    new Response('synthetic plain-text upstream detail', {
+      status: 400,
+      statusText: 'Synthetic status',
+      headers: { 'content-type': 'text/plain' },
+    }),
+  ];
+
+  for (const response of bodies) {
+    const failure = await modelServiceError(response, 'Synthetic service');
+    assert.equal(failure.message, 'Synthetic service failed (HTTP 400): Synthetic status');
+    assert.equal(failure.details, 'Synthetic status');
+    assert.ok(!failure.message.includes('upstream detail'));
+    assert.ok(!failure.message.includes('oversized detail'));
+    assert.ok(!failure.message.includes('plain-text'));
+  }
+});
+
 test('a newer unchanged channel status suppresses an older observation that finishes later', async () => {
   const pool = {
     async query(statement: string) {

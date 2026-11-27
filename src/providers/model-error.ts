@@ -31,16 +31,28 @@ export class ModelServiceError extends Error {
   }
 }
 
+const MAX_MODEL_ERROR_BODY_SIZE = 64 * 1024;
+const MAX_MODEL_ERROR_TEXT_SIZE = 2000;
+const MODEL_ERROR_REDACTED_MARKER = '[redacted]';
+
+function modelErrorTextForOutput(value: string, secrets: string[]) {
+  return value
+    .split(MODEL_ERROR_REDACTED_MARKER)
+    .map((part) => modelErrorText(part, secrets))
+    .join(MODEL_ERROR_REDACTED_MARKER);
+}
+
 export async function modelServiceError(
   response: Response,
   service: string,
   secrets: string[] = [],
   detailFields = ['message', 'type', 'code', 'status', 'param'],
 ) {
-  let reason = response.statusText;
+  let reason = modelErrorText(response.statusText, secrets);
   let serviceReason: string | undefined;
-  const reader = response.body?.getReader();
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
+    reader = response.body?.getReader();
     if (
       reader &&
       /\/(?:json|[\w.-]+\+json)$/i.test(
@@ -49,39 +61,121 @@ export async function modelServiceError(
     ) {
       const chunks: Uint8Array[] = [];
       let size = 0;
+      let complete = false;
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          complete = true;
+          break;
+        }
+        if (size + value.length > MAX_MODEL_ERROR_BODY_SIZE) break;
         size += value.length;
-        if (size > 16_384) break;
         chunks.push(value);
       }
-      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      const error = body.error ?? body;
-      if (typeof error === 'string') reason = serviceReason = error;
-      else if (error && typeof error === 'object') {
-        const message = typeof error.message === 'string' ? error.message : error.detail;
-        if (typeof message === 'string') serviceReason = message;
-        else if (detailFields.includes('description') && typeof error.description === 'string')
-          serviceReason = error.description;
-        const fields = detailFields.flatMap((name) => {
-          const value = name === 'message' && typeof message === 'string' ? message : error[name];
-          return typeof value === 'string' || typeof value === 'number'
-            ? [`${name}: ${value}`]
-            : [];
-        });
-        if (fields.length) reason = fields.join('; ');
+      if (complete) {
+        const body: unknown = JSON.parse(Buffer.concat(chunks, size).toString('utf8'));
+        const text = (value: unknown) =>
+          typeof value === 'string' && value.trim()
+            ? modelErrorText(value.trim(), secrets).slice(0, MAX_MODEL_ERROR_TEXT_SIZE)
+            : undefined;
+        const fieldValue = (value: unknown) =>
+          typeof value === 'number' && Number.isFinite(value)
+            ? modelErrorTextForOutput(`${value}`, secrets).slice(0, MAX_MODEL_ERROR_TEXT_SIZE)
+            : text(value);
+        const fields = (error: Record<string, unknown>, message?: string) =>
+          detailFields.flatMap((name) => {
+            const selected = name === 'message' && message ? message : fieldValue(error[name]);
+            return selected ? [`${name}: ${selected}`] : [];
+          });
+        const parseValidationDetails = (validationDetails: unknown[]) => {
+          const entries = validationDetails.slice(0, 10);
+          const selected: string[] = [];
+          let message: string | undefined;
+          for (const entry of entries) {
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+            const validation = entry as Record<string, unknown>;
+            const msg = text(validation.msg);
+            const entryMessage = text(validation.message);
+            message ??= msg ?? entryMessage;
+            if (msg) selected.push(`msg: ${msg}`);
+            for (const name of detailFields) {
+              if (name === 'message' && msg && !entryMessage) continue;
+              const field =
+                name === 'message' && entryMessage ? entryMessage : fieldValue(validation[name]);
+              if (field) selected.push(`${name}: ${field}`);
+            }
+          }
+          const formatted = selected.length ? selected.join('; ') : undefined;
+          return {
+            details: formatted,
+            reason: message,
+          };
+        };
+        const parseError = (value: unknown): { details?: string; reason?: string } | undefined => {
+          if (typeof value === 'string') {
+            const selected = text(value);
+            if (!selected) return;
+            return { details: selected, reason: selected };
+          }
+          if (Array.isArray(value)) {
+            let fallback: { details?: string; reason?: string } | undefined;
+            for (const entry of value.slice(0, 10)) {
+              const parsed = parseError(entry);
+              if (parsed?.reason) return parsed;
+              fallback ??= parsed;
+            }
+            return fallback;
+          }
+          if (!value || typeof value !== 'object') return;
+          const envelope = value as Record<string, unknown>;
+          const error = envelope.error;
+          let selected: Record<string, unknown>;
+          if (error !== undefined && error !== null) {
+            if (typeof error === 'string') return parseError(error);
+            if (!error || typeof error !== 'object' || Array.isArray(error)) return;
+            selected = error as Record<string, unknown>;
+          } else if (
+            typeof envelope.message !== 'string' &&
+            envelope.detail &&
+            typeof envelope.detail === 'object' &&
+            !Array.isArray(envelope.detail)
+          ) {
+            selected = envelope.detail as Record<string, unknown>;
+          } else {
+            selected = envelope;
+          }
+          if (Array.isArray(selected.detail)) {
+            const parsed = parseValidationDetails(selected.detail);
+            if (parsed.details || parsed.reason) return parsed;
+          }
+          const message = text(selected.message) ?? text(selected.detail);
+          const fallbackReason =
+            message ??
+            (detailFields.includes('description') ? text(selected.description) : undefined);
+          const formatted = fields(selected, message);
+          return {
+            details: formatted.length ? formatted.join('; ') : undefined,
+            reason: fallbackReason,
+          };
+        };
+        const parsed = parseError(body);
+        if (parsed?.details) reason = parsed.details;
+        if (parsed?.reason) serviceReason = parsed.reason;
       }
     }
   } catch {
   } finally {
-    await reader?.cancel().catch(() => {});
-    reader?.releaseLock();
+    if (reader) {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
   }
-  const details = modelErrorText(reason, secrets).slice(0, 2000);
+  const details = modelErrorTextForOutput(reason, secrets).slice(0, MAX_MODEL_ERROR_TEXT_SIZE);
   return new ModelServiceError(
     `${service} failed (HTTP ${response.status})${reason ? `: ${details}` : '.'}`,
-    serviceReason ? modelErrorText(serviceReason, secrets) : undefined,
+    serviceReason
+      ? modelErrorTextForOutput(serviceReason, secrets).slice(0, MAX_MODEL_ERROR_TEXT_SIZE)
+      : undefined,
     Number.isInteger(response.status) && response.status >= 100 && response.status <= 599
       ? response.status
       : undefined,
