@@ -694,6 +694,7 @@ export function createPiAgent(options: {
         runtime.streamSimple = (target, context, options) =>
           stream(target, context, { ...options, cacheRetention: 'long' });
       }
+      let summaryRetries = 0;
       const fallback =
         access && connection && backups.length
           ? createTurnFallback({
@@ -706,7 +707,9 @@ export function createPiAgent(options: {
               switched: (at) => turnModels.set(input.turnId, modelKey(chain[at]!)),
               retrying: () => {
                 const retry = settings.getRetrySettings();
-                return retry.enabled && session.retryAttempt < retry.maxRetries;
+                return (
+                  retry.enabled && Math.max(session.retryAttempt, summaryRetries) < retry.maxRetries
+                );
               },
               moved: (from, to) =>
                 input.onEvent({
@@ -938,6 +941,14 @@ export function createPiAgent(options: {
                   session.agent.streamFunction,
                   undefined,
                   settings.getRetrySettings(),
+                  {
+                    onRetryScheduled: (attempt) => {
+                      summaryRetries = attempt;
+                    },
+                    onRetryFinished: () => {
+                      summaryRetries = 0;
+                    },
+                  },
                 );
                 return { compaction: result };
               } catch (error) {

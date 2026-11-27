@@ -11750,19 +11750,29 @@ test('model HTTP failures keep their response status within each request and ret
   assert.ok(reports.every(({ status }) => status === 'failed'));
 });
 
-async function fallbackServer(t: TestContext, answer: (model: string) => number) {
+async function fallbackServer(t: TestContext, answer: (model: string, body: string) => number) {
   const { createServer } = await import('node:http');
   const requests: string[] = [];
   const server = createServer((request, response) => {
     const parts: Buffer[] = [];
     request.on('data', (part) => parts.push(part));
     request.on('end', () => {
-      const { model } = JSON.parse(Buffer.concat(parts).toString()) as { model: string };
+      const text = Buffer.concat(parts).toString();
+      const { model } = JSON.parse(text) as { model: string };
       requests.push(model);
-      const status = answer(model);
+      const status = answer(model, text);
       if (status !== 200) {
         response.writeHead(status, { 'content-type': 'application/json' });
-        response.end(JSON.stringify({ error: { message: 'Synthetic failure.' } }));
+        response.end(
+          JSON.stringify({
+            error: {
+              message:
+                status === 400
+                  ? 'Context length exceeded: Synthetic fixture request.'
+                  : 'Synthetic failure.',
+            },
+          }),
+        );
         return;
       }
       response.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -11856,6 +11866,52 @@ test('a busy work model gets one retry, then the same request continues on a bac
   await helper.dispose();
   await main.dispose();
   assert.deepEqual(requests, ['fixture-backup']);
+});
+
+test('a busy work model moves compaction to the backup after one retry', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-fallback-compaction-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let overflowed = false;
+  const { requests, access } = await fallbackServer(t, (model, body) => {
+    if (model === 'fixture-backup') return 200;
+    if (body.includes('<conversation>')) return 503;
+    if (body.includes('Second synthetic question.') && !overflowed) {
+      overflowed = true;
+      return 400;
+    }
+    return 200;
+  });
+  const agent = createPiAgent({
+    provider: 'compatible',
+    resolve: async () => [access('fixture-primary'), access('fixture-backup')],
+    sessionRoot: directory,
+    createSession: async (options) => {
+      options?.settingsManager?.applyOverrides({ retry: { baseDelayMs: 1, maxAgentDelayMs: 1 } });
+      return createAgentSession(options);
+    },
+  });
+  t.after(() => agent.dispose());
+  const events: AgentEvent[] = [];
+  const session = await agent.open({
+    ...fakeExecution(randomUUID()),
+    ...sandbox,
+    systemPrompt: 'Synthetic fixture',
+    tools: [],
+    shouldStop: () => false,
+    onEvent: (event) => events.push(event),
+  });
+  await session.prompt('First synthetic question.', []);
+  await session.prompt('Second synthetic question.', []);
+  await session.dispose();
+  assert.deepEqual(requests.slice(0, 5), [
+    'fixture-primary',
+    'fixture-primary',
+    'fixture-primary',
+    'fixture-primary',
+    'fixture-backup',
+  ]);
+  assert.ok(requests.slice(5).every((model) => model === 'fixture-backup'));
+  assert.ok(events.some((event) => event.type === 'final' && /fixture-backup/.test(event.text)));
 });
 
 test('a turn fallback moves on after Pi gives up or at once on request errors, never after output, on a refusal, a Stop or the selected model overflowing, and sends a backup no primary credentials', async () => {
