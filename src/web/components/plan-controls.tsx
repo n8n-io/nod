@@ -114,7 +114,12 @@ export function PlanToast() {
         </Notice>
       )}
       {value?.phoneOffer && (
-        <PhoneOfferCard offer={value.phoneOffer} path="form" onAnswered={() => showToast(null)} />
+        <PhoneOfferCard
+          offer={value.phoneOffer}
+          path="form"
+          viewKey={String(value.id)}
+          onAnswered={() => showToast(null)}
+        />
       )}
     </div>
   );

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ChannelProvider, PhoneOffer } from '../../shared/contracts';
-import { analyticsForCurrentSession } from '../lib/analytics';
+import { analyticsForCurrentSession, observeAnalyticsView } from '../lib/analytics';
 import { errorMessage, post } from '../lib/api';
 import { navigate } from '../lib/navigation';
 import { Button, Notice } from './ui';
@@ -10,14 +10,21 @@ const names: Record<ChannelProvider, string> = { telegram: 'Telegram', whatsapp:
 export function PhoneOfferCard({
   offer,
   path,
+  viewKey,
   onAnswered,
 }: {
   offer: PhoneOffer;
   path: 'chat' | 'form';
+  viewKey: string;
   onAnswered?(): void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const root = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!root.current) return;
+    return observeAnalyticsView(root.current, viewKey, 'phone_offer_viewed', { path });
+  }, [path, viewKey]);
   async function answer(choice: ChannelProvider | 'not_now') {
     const capture = analyticsForCurrentSession();
     setBusy(true);
@@ -34,7 +41,7 @@ export function PhoneOfferCard({
     }
   }
   return (
-    <aside className="notification-choice phone-offer" aria-label="Phone channel">
+    <aside ref={root} className="notification-choice phone-offer" aria-label="Phone channel">
       <div className="notification-choice-copy">
         <strong>Get the result on your phone too?</strong>
       </div>
