@@ -9,6 +9,7 @@ import { desktopSettingsAvailable } from '../lib/desktop';
 import { savePreferences } from '../lib/preferences';
 import { SearchPicker } from './search-picker';
 import { useSettingsDraft } from './settings-drafts';
+import { TranscriptionServer } from './transcription-server';
 import { VoiceConnections } from './voice-connections';
 import {
   VoicePicker,
@@ -366,6 +367,7 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
           {microphoneHelp}
         </p>
       )}
+      <TranscriptionServer disabled={busy} onChanged={() => void refresh()} />
       {data ? (
         <>
           <div ref={voiceRow} className="account-preference-row">

@@ -204,7 +204,7 @@ try {
       'tsx',
       '--input-type=module',
       '-e',
-      "import {modelProviderInfo} from './src/shared/models.ts';console.log(JSON.stringify(Object.values(modelProviderInfo).map(provider=>provider.env)))",
+      "import {modelProviderInfo} from './src/shared/models.ts';console.log(JSON.stringify(Object.values(modelProviderInfo).map(provider=>provider.env).filter(Boolean)))",
     ]),
   );
   const providerEnvironment = Object.fromEntries(

@@ -26,9 +26,12 @@ export function registerSpeechSettings(
     preferences: ReturnType<typeof createPreferencesStore>;
     local?: LocalSpeechControls;
     inputFormat?: (voice: string | null) => 'wav' | undefined;
+    transcriptionServer?: () => boolean;
   },
 ) {
   const { speech, preferences } = options;
+  const localInput = (voice: string | null) =>
+    Boolean(voice?.startsWith('local:')) && !options.transcriptionServer?.();
   let preview: AbortController | undefined;
   const preparations = new Set<AbortController>();
   async function current(reply: FastifyReply, force = false) {
@@ -51,7 +54,7 @@ export function registerSpeechSettings(
     const saved = await preferences.get();
     const transcriptionFormat = options.inputFormat?.(saved.speechVoice);
     return {
-      transcription: saved.speechVoice?.startsWith('local:')
+      transcription: localInput(saved.speechVoice)
         ? options.local?.transcriptionStatus().state === 'ready'
         : speech.transcriptionConfigured,
       synthesis: speech.configured,
@@ -79,7 +82,7 @@ export function registerSpeechSettings(
       .strict()
       .parse(request.body ?? {});
     const saved = await preferences.get();
-    if (inputOnly && !saved.speechVoice?.startsWith('local:') && speech.transcriptionConfigured)
+    if (inputOnly && !localInput(saved.speechVoice) && speech.transcriptionConfigured)
       return { transcription: true, transcriptionFormat: options.inputFormat?.(saved.speechVoice) };
     if (!options.local) return reply.code(404).send({ error: 'On-device audio is unavailable.' });
     const controller = new AbortController();

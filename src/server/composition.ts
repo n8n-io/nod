@@ -68,6 +68,7 @@ import type { DecisionModel, ModelReview } from '../ports/decisions.ts';
 import { createDecisionModel, createOpenRouterDecisionCatalog } from '../providers/decisions.ts';
 import type { SpeechProvider, LocalSpeechControls } from '../ports/speech.ts';
 import { createLocalSpeechProvider } from '../providers/local-speech/index.ts';
+import { createCompatibleTranscriptionProvider } from '../providers/compatible/speech.ts';
 import type { MessagingTransport } from '../ports/messaging.ts';
 import type { ChannelSetupVerifier } from '../ports/channel-settings.ts';
 import type { LinkPreviewProvider } from '../ports/link-preview.ts';
@@ -407,6 +408,10 @@ export function createDefaultAdapters(
     model:
       env.STT_MODEL && (env.STT_MODEL.includes('/') ? env.STT_MODEL : `openai/${env.STT_MODEL}`),
   });
+  const compatibleTranscription = createCompatibleTranscriptionProvider({
+    connection: () => models.transcriptionServer(),
+    configured: () => models.hasTranscriptionServer(),
+  });
   const traces = createModelTraces(
     createN8nTraces({
       url: env.NOD_TRACES_URL ?? 'https://internal.users.n8n.cloud/webhook/nod/traces',
@@ -561,10 +566,11 @@ export function createDefaultAdapters(
         .find((connection) => connection.id === selection?.connectionId)
         ?.models.find((model) => model.id === selection?.modelId);
       return selected?.audio ||
-        voice?.startsWith('local:') ||
-        (!openAISpeech.configured &&
-          !openRouterTranscription.configured &&
-          !elevenLabsSpeech.configured)
+        (!compatibleTranscription.configured &&
+          (voice?.startsWith('local:') ||
+            (!openAISpeech.configured &&
+              !openRouterTranscription.configured &&
+              !elevenLabsSpeech.configured)))
         ? 'wav'
         : undefined;
     },
@@ -589,6 +595,7 @@ export function createDefaultAdapters(
       },
       get transcriptionConfigured() {
         return (
+          compatibleTranscription.configured ||
           openAISpeech.configured ||
           openRouterTranscription.configured ||
           elevenLabsSpeech.configured ||
@@ -623,6 +630,8 @@ export function createDefaultAdapters(
         return selected.synthesize(text, signal, report, options);
       },
       transcribe: async (audio, signal, report) => {
+        if (compatibleTranscription.configured)
+          return compatibleTranscription.transcribe(audio, signal, report);
         const voice = (await voicePreferences.get()).speechVoice;
         const local = voice?.startsWith('local:');
         signal?.throwIfAborted();
@@ -3577,6 +3586,7 @@ async function initializeApplication(
     preferences: speechPreferences,
     local: adapters.localSpeech,
     inputFormat: adapters.speechInputFormat,
+    transcriptionServer: () => adapters.models?.hasTranscriptionServer() ?? false,
   });
   registerLinkOpened(app);
   vault.registerRoutes(app);

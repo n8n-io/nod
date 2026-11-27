@@ -4430,6 +4430,80 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(managed.view().selection, null);
   });
 
+  test('a transcription server stays encrypted and owned, keeps one address and never becomes a chat model', async (t) => {
+    const f = await fixture(t);
+    const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+    const secret = 'fixture-transcription-owned-secret';
+    const asked: string[] = [];
+    const backend = createPiModelBackend({
+      fetch: async (input, init) => {
+        const url = String(input);
+        asked.push(url);
+        const key = new Headers(init?.headers).get('authorization');
+        assert.equal(init?.redirect, 'error');
+        if (url === 'http://127.0.0.1:8765/models') return new Response('missing', { status: 404 });
+        if (url === 'http://127.0.0.1:8765/v1/models')
+          return key === `Bearer ${secret}`
+            ? Response.json({ data: [] })
+            : Response.json({ error: { message: `refused ${key}` } }, { status: 401 });
+        if (url === 'http://192.168.1.9:9000/v1/models') return Response.json({ models: [] });
+        assert.match(url, /^http:\/\/192\.168\.1\.[5-7]:9000\/v1\/models$/);
+        assert.equal(key, null);
+        return Response.json({ data: [] });
+      },
+    });
+    const owner = await f.create('fixture-transcription-owner', backend);
+    const id = await owner.addTranscriptionServer('http://127.0.0.1:8765', secret, 'large-v3');
+    assert.deepEqual(asked, ['http://127.0.0.1:8765/models', 'http://127.0.0.1:8765/v1/models']);
+    assert.equal(owner.hasTranscriptionServer(), true);
+    assert.deepEqual(await owner.transcriptionServer(), {
+      type: 'endpoint',
+      url: 'http://127.0.0.1:8765/v1',
+      key: secret,
+      model: 'large-v3',
+    });
+    assert.equal(owner.configured, false);
+    assert.equal(owner.view().selection, null);
+    assert.deepEqual(owner.view().connections[0].models, []);
+    assert.deepEqual(owner.analyticsConnections(), []);
+    await assert.rejects(owner.select({ connectionId: id, modelId: 'large-v3', effort: 'off' }));
+    assert.doesNotMatch(JSON.stringify(owner.view()), /fixture-transcription-owned-secret/);
+    for (const table of ['model_connections', 'vault_app_grants'])
+      assert.doesNotMatch(
+        JSON.stringify((await f.database.query(`SELECT * FROM ${table}`)).rows),
+        /fixture-transcription-owned-secret/,
+      );
+    const other = await f.create('fixture-other-transcription-owner', backend);
+    assert.equal(await other.transcriptionServer(), undefined);
+    await assert.rejects(
+      owner.addTranscriptionServer('http://127.0.0.1:8765/v1', 'fixture-wrong-transcription-key'),
+      (error: Error) => !/fixture-wrong-transcription-key|127\.0\.0\.1/.test(error.message),
+    );
+    assert.equal((await owner.transcriptionServer())?.key, secret);
+    assert.equal(await owner.addTranscriptionServer('http://192.168.1.5:9000/v1'), id);
+    assert.equal(owner.view().connections.length, 1);
+    assert.deepEqual(await owner.transcriptionServer(), {
+      type: 'endpoint',
+      url: 'http://192.168.1.5:9000/v1',
+    });
+    await assert.rejects(
+      owner.addTranscriptionServer('http://192.168.1.9:9000/v1'),
+      /invalid model list/,
+    );
+    await Promise.all([
+      owner.addTranscriptionServer('http://192.168.1.6:9000/v1'),
+      owner.addTranscriptionServer('http://192.168.1.7:9000/v1'),
+    ]);
+    assert.equal(owner.view().connections.length, 1);
+    assert.equal(owner.hasTranscriptionServer(), true);
+    await owner.addTranscriptionServer('http://192.168.1.5:9000/v1');
+    const reloaded = await f.create('fixture-transcription-owner', backend);
+    assert.equal((await reloaded.transcriptionServer())?.url, 'http://192.168.1.5:9000/v1');
+    await reloaded.remove(id);
+    assert.equal(reloaded.hasTranscriptionServer(), false);
+    assert.equal(await reloaded.transcriptionServer(), undefined);
+  });
+
   test('every environment model connection resolves only its managed credential and loses access after removal', async (t) => {
     const f = await fixture(t);
     const { modelEnvironment } = await import('../src/server/composition.ts');

@@ -127,6 +127,9 @@ const workNames = {
   lane: { schedule: 'Schedules', background: 'Work Nod starts on its own' },
 } as const;
 
+const speechOnly = (provider: ModelProvider): provider is 'elevenlabs' | 'compatible-speech' =>
+  modelProviderInfo[provider].speechOnly === true;
+
 export function endpointAddress(address: string) {
   let url: URL;
   try {
@@ -350,7 +353,7 @@ export function createModelService(options: {
     status: 'connected' | 'disconnected' | 'failed',
     capture = analytics,
   ) {
-    if (provider === 'elevenlabs') return;
+    if (speechOnly(provider)) return;
     capture?.({
       event: 'model_connection_changed',
       properties: { provider, method, status },
@@ -914,11 +917,13 @@ export function createModelService(options: {
       replace = false,
       status = 'connected',
       signal,
+      single = false,
     }: {
       managed?: boolean;
       replace?: boolean;
       status?: ModelRecord['status'];
       signal?: AbortSignal;
+      single?: boolean;
     } = {},
   ) {
     remember(value);
@@ -929,16 +934,18 @@ export function createModelService(options: {
     if (status === 'connected' && !definitions.length && !modelProviderInfo[provider].speechOnly)
       throw new ConnectionError('This connection has no supported models.');
     const saved = await store.change((state) => {
+      const same = (row: (typeof state.connections)[number]) =>
+        single
+          ? row.provider === provider && !row.managed
+          : sameAccount(row, provider, method, value);
       const previous = state.connections.find((row) =>
-        id ? row.id === id : !managed && sameAccount(row, provider, method, value),
+        id ? row.id === id : !managed && same(row),
       );
       if (replace && !previous)
         throw new ConnectionError('This model connection was removed. Start a new connection.');
       const duplicates = managed
         ? []
-        : state.connections.filter(
-            (row) => row !== previous && sameAccount(row, provider, method, value),
-          );
+        : state.connections.filter((row) => row !== previous && same(row));
       if (!previous && state.connections.length - duplicates.length >= 80)
         throw new ConnectionError('Remove an unused model connection before adding another.');
       const working = status === 'loading' && previous?.status === 'connected';
@@ -1555,6 +1562,30 @@ export function createModelService(options: {
         return save('compatible', 'api_key', value, definitions);
       });
     },
+    async addTranscriptionServer(address: string, key?: string, model?: string) {
+      const url = endpointAddress(address);
+      if (!url)
+        throw new ConnectionError('Enter a server address such as http://localhost:8000/v1.');
+      const value: ModelCredential = {
+        type: 'endpoint',
+        url,
+        ...(key ? { key } : {}),
+        ...(model ? { model } : {}),
+      };
+      remember(value);
+      return tracked('compatible-speech', 'api_key', async () => {
+        await checkStorage();
+        let connected = value;
+        try {
+          await catalog('compatible-speech', 'api_key', connected);
+        } catch (error) {
+          if (url.endsWith('/v1')) throw error;
+          connected = { ...value, url: `${url}/v1` };
+          await catalog('compatible-speech', 'api_key', connected);
+        }
+        return save('compatible-speech', 'api_key', connected, [], undefined, { single: true });
+      });
+    },
     async select(input: ModelSelection, actor: SettingActor = 'owner', client?: PoolClient) {
       const value = modelSelectionInput.parse(input);
       checked = undefined;
@@ -1628,7 +1659,7 @@ export function createModelService(options: {
     analyticsConnections() {
       return rows.flatMap((row) => {
         const provider = row.provider;
-        if (provider === 'elevenlabs') return [];
+        if (speechOnly(provider)) return [];
         const selected = row.id === selection?.connectionId;
         return [
           {
@@ -1657,6 +1688,14 @@ export function createModelService(options: {
     },
     async apiKey(provider: ModelProvider) {
       return (await service.apiCredential(provider))?.key;
+    },
+    hasTranscriptionServer() {
+      return Boolean(apiKeyConnection('compatible-speech'));
+    },
+    async transcriptionServer() {
+      const row = apiKeyConnection('compatible-speech');
+      const value = row && (await read(row.id));
+      return value?.type === 'endpoint' ? value : undefined;
     },
     hasImageModel() {
       return Boolean(imageModel());
@@ -1765,6 +1804,22 @@ export function createModelService(options: {
             .strict()
             .parse(request.body);
           await service.addEndpoint(input.url, input.key || undefined);
+          return service.view();
+        });
+        routes.post('/api/models/transcription', async (request) => {
+          const input = z
+            .object({
+              url: z.string().trim().min(1).max(2000),
+              key: z.string().trim().max(32000).optional(),
+              model: z.string().trim().max(200).optional(),
+            })
+            .strict()
+            .parse(request.body);
+          await service.addTranscriptionServer(
+            input.url,
+            input.key || undefined,
+            input.model || undefined,
+          );
           return service.view();
         });
         routes.put('/api/models/selection', async (request) => {

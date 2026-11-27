@@ -9,7 +9,7 @@ import type {
 
 export type ModelCredential =
   | { type: 'api_key'; key: string; workspaceId?: string; region?: OpenAIRegion }
-  | { type: 'endpoint'; url: string; key?: string }
+  | { type: 'endpoint'; url: string; key?: string; model?: string }
   | { type: 'bedrock'; key: string; region: string }
   | { type: 'cloudflare'; key: string; accountId: string; gatewayId?: string }
   | { type: 'azure'; url: string; key: string; model: string; deployment: string }

@@ -32,6 +32,7 @@ import {
   readElevenLabsVoices,
 } from '../src/providers/elevenlabs/speech.ts';
 import { createLocalSpeechProvider } from '../src/providers/local-speech/index.ts';
+import { createCompatibleTranscriptionProvider } from '../src/providers/compatible/speech.ts';
 import { decodeLocalAudio } from '../src/providers/local-speech/audio.ts';
 import { phonemizeSpeech } from '../src/providers/local-speech/phonemizer.ts';
 import {
@@ -6424,3 +6425,69 @@ test(
     );
   },
 );
+
+test('a transcription server gets the recording once with its key, and its failures stay with it', async () => {
+  const audio = { bytes: new Uint8Array([1, 2, 3]), mimeType: 'audio/ogg', name: 'voice.ogg' };
+  const requests: { url: string; init: RequestInit }[] = [];
+  const usage: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
+  const server = { url: 'http://127.0.0.1:8765/v1', key: 'fixture-never-live', model: 'large-v3' };
+  const provider = (
+    answer: (init: RequestInit) => Response | Promise<Response>,
+    connected = true,
+  ) =>
+    createCompatibleTranscriptionProvider({
+      connection: async () => (connected ? server : undefined),
+      configured: () => connected,
+      fetch: async (url, init) => {
+        requests.push({ url: String(url), init: init! });
+        return answer(init!);
+      },
+    });
+  const report = (event: (typeof usage)[number]) => usage.push(event);
+
+  assert.equal(
+    await provider(() => Response.json({ text: 'Synthetic voice note.' })).transcribe(
+      audio,
+      undefined,
+      report,
+    ),
+    'Synthetic voice note.',
+  );
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]!.url, 'http://127.0.0.1:8765/v1/audio/transcriptions');
+  assert.equal(requests[0]!.init.redirect, 'error');
+  assert.deepEqual(requests[0]!.init.headers, { Authorization: 'Bearer fixture-never-live' });
+  const body = requests[0]!.init.body as FormData;
+  assert.equal(body.get('model'), 'large-v3');
+  assert.deepEqual(new Uint8Array(await (body.get('file') as File).arrayBuffer()), audio.bytes);
+  assert.equal(usage.at(-1)!.provider, 'compatible-speech');
+  assert.equal(usage.at(-1)!.status, 'succeeded');
+
+  await assert.rejects(
+    provider(() => {
+      throw new TypeError('fetch failed');
+    }).transcribe(audio, undefined, report),
+    /did not answer/,
+  );
+  assert.equal(usage.at(-1)!.status, 'failed');
+  await assert.rejects(
+    provider(() =>
+      Response.json(
+        { error: { message: 'refused fixture-never-live at http://127.0.0.1:8765/v1' } },
+        { status: 500 },
+      ),
+    ).transcribe(audio),
+    (error: Error) => !/fixture-never-live|127\.0\.0\.1/.test(error.message),
+  );
+  const stopped = new AbortController();
+  await assert.rejects(
+    provider(() => {
+      stopped.abort();
+      throw stopped.signal.reason;
+    }).transcribe(audio, stopped.signal, report),
+  );
+  assert.equal(usage.at(-1)!.status, 'cancelled');
+  const before = requests.length;
+  await assert.rejects(provider(() => Response.json({ text: 'never' }), false).transcribe(audio));
+  assert.equal(requests.length, before);
+});

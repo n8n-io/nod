@@ -947,6 +947,32 @@ test(
         if (provider === 'openrouter') await assert.rejects(speech.synthesize('Synthetic reply'));
         await adapters.models!.close();
       }
+      const ownServer = createDefaultAdapters({
+        OPENAI_API_KEY: 'fixture-openai',
+        OPENROUTER_API_KEY: 'fixture-router',
+        NOD_VAULT_KEY: key.toString('base64'),
+      });
+      await ownServer.models!.initialize();
+      const ownServerId = await ownServer.models!.addTranscriptionServer(
+        'http://127.0.0.1:8765/v1',
+        'fixture-transcription',
+        'large-v3',
+      );
+      const ownSpeech = createSpeech(ownServer.speech);
+      speechFails = false;
+      assert.equal(await ownSpeech.transcribe(audio), 'Synthetic transcription');
+      assert.deepEqual(requests.at(-1), {
+        url: 'http://127.0.0.1:8765/v1/audio/transcriptions',
+        key: 'Bearer fixture-transcription',
+        model: 'large-v3',
+      });
+      const beforeOwnFailure = requests.length;
+      speechFails = true;
+      await assert.rejects(ownSpeech.transcribe(audio));
+      assert.equal(requests.length, beforeOwnFailure + 1);
+      assert.equal(ownServer.speechInputFormat?.('local:af_heart'), undefined);
+      await ownServer.models!.remove(ownServerId);
+      await ownServer.models!.close();
       const localChoice = createDefaultAdapters({
         OPENAI_API_KEY: 'fixture-openai',
         OPENROUTER_API_KEY: 'fixture-router',

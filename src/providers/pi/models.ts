@@ -277,6 +277,33 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       spec: JSON.parse(JSON.stringify(model)),
     };
   }
+  async function transcriptionEndpoint(credential?: ModelCredential) {
+    if (credential?.type !== 'endpoint')
+      throw new ModelAuthError('Add the server address in Voice & audio.');
+    const headers: Record<string, string> = credential.key
+      ? { Authorization: `Bearer ${credential.key}` }
+      : {};
+    const response = await request(`${credential.url}/models`, {
+      headers,
+      redirect: 'error',
+      signal: AbortSignal.timeout(15000),
+    });
+    if (response.ok) {
+      const list = z
+        .object({ data: z.array(z.unknown()) })
+        .safeParse(await response.json().catch(() => undefined));
+      if (list.success) return;
+      throw new ModelAuthError('The transcription server returned an invalid model list.');
+    }
+    throw new ModelAuthError(
+      (
+        await modelServiceError(response, 'The transcription server', [
+          credential.url,
+          credential.key ?? '',
+        ])
+      ).message,
+    );
+  }
   async function endpointCatalog(credential?: ModelCredential) {
     if (credential?.type !== 'endpoint') throw new Error('Add the server address in Models.');
     const headers: Record<string, string> = credential.key
@@ -790,6 +817,10 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
               : 'ElevenLabs voices could not be loaded. Try again.',
           );
         }
+      }
+      if (provider === 'compatible-speech') {
+        await transcriptionEndpoint(credential);
+        return [];
       }
       if (!modelProviders.includes(provider))
         throw new Error('This model provider is unavailable.');
