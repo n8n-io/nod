@@ -273,8 +273,10 @@ export function createBridgeComputer(options: {
     forceOneShot = false,
   ): Promise<unknown> {
     if (!options.ready || input.method === 'dispose')
-      return dispatch(input, signal, transfer, recovery);
-    return options.ready(signal).then(() => dispatch(input, signal, transfer, recovery));
+      return dispatch(input, signal, transfer, recovery, forceOneShot);
+    return options
+      .ready(signal)
+      .then(() => dispatch(input, signal, transfer, recovery, forceOneShot));
   }
 
   function dispatch(
@@ -282,6 +284,7 @@ export function createBridgeComputer(options: {
     signal?: AbortSignal,
     transfer: { data?: Uint8Array; chunks?: Buffer[] } = {},
     recovery = false,
+    forceOneShot = false,
   ): Promise<unknown> {
     signal?.throwIfAborted();
     const request = browserRequest.parse({
