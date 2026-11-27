@@ -1,0 +1,29 @@
+{
+  "$schema": "https://nod.n8n.io/docs/schemas/apps/v1/app.schema.json",
+  "displayName": "Google Antigravity",
+  "icon": "./io.n8n.nod/icon.svg",
+  "categories": ["Development"],
+  "connection": {
+    "type": "mcp",
+    "endpoint": {
+      "source": "owner",
+      "path": "/mcp"
+    },
+    "authentication": ["oauth2", "bearer"],
+    "hints": {
+      "token": "Enter your Antigravity Bridge API Key or leave blank for local loopback."
+    }
+  },
+  "prompts": [
+    "In my project backend-api, add an API endpoint and commit to git.",
+    "Check git status and commit pending changes in my project.",
+    "List all my active Antigravity projects."
+  ],
+  "requirements": [
+    "An Antigravity MCP Bridge running locally or on a reachable server."
+  ],
+  "limitations": [
+    "Workspace permissions limit file system modifications on the Antigravity host.",
+    "This app does not start automatic monitoring from its MCP connection alone."
+  ]
+}
