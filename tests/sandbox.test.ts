@@ -805,7 +805,15 @@ test('workspace uploads transfer binary chunks atomically and reject symlink dir
     assert.equal(launches, before);
     await assert.rejects(
       workspace.readArtifact('fixture', 'nested/file.bin', bytes.length - 1),
-      /workspace file operation failed/,
+      /larger than the allowed size/,
+    );
+    await assert.rejects(
+      workspace.readArtifact('fixture', 'nested/missing.bin', bytes.length),
+      /No file exists/,
+    );
+    await assert.rejects(
+      workspace.readArtifact('fixture', 'nested', bytes.length),
+      /not a regular file/,
     );
   } finally {
     await workspace.dispose();

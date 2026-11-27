@@ -20,9 +20,18 @@ export function workspaceFile(id: string, path: string): string {
 
 const artifactChunk = 8 * 1024 * 1024;
 
+const artifactReadFailures = new Map([
+  ['missing', 'No file exists at that workspace path.'],
+  ['not_file', 'That workspace path is not a regular file.'],
+  ['too_large', 'The workspace file is larger than the allowed size.'],
+]);
+
 export const artifactReadProgram = `import os,sys,json,stat
 r=json.load(sys.stdin)
 fds=[]
+def fail(reason):
+ sys.stderr.write(reason)
+ sys.exit(1)
 try:
  limit=int(r['maxBytes'])
  offset=int(r['offset'])
@@ -37,7 +46,9 @@ try:
  fd=os.open(parts[-1],os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
  fds.append(fd)
  info=os.fstat(fd)
- if not stat.S_ISREG(info.st_mode) or info.st_size>limit or offset>info.st_size: raise ValueError()
+ if not stat.S_ISREG(info.st_mode): fail('not_file')
+ if info.st_size>limit: fail('too_large')
+ if offset>info.st_size: raise ValueError()
  identity='%d:%d:%d:%d:%d'%(info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns,info.st_ctime_ns)
  if r.get('identity') not in (None,identity): raise ValueError()
  want=min(${artifactChunk},info.st_size-offset)
@@ -47,6 +58,8 @@ try:
   if not chunk: raise ValueError()
   data.extend(chunk)
  sys.stdout.buffer.write(identity.encode()+b'\\n'+data)
+except FileNotFoundError:
+ fail('missing')
 except Exception:
  sys.exit(1)
 finally:
@@ -197,7 +210,11 @@ export function createCommandWorkspace(options: {
       ...input,
       input: JSON.stringify(request),
     });
-    if (result.exitCode) throw new Error('The workspace file operation failed.');
+    if (result.exitCode)
+      throw new Error(
+        artifactReadFailures.get(result.stderr.toString().trim()) ??
+          'The workspace file operation failed.',
+      );
     return result;
   }
   return {
