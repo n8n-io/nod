@@ -15,6 +15,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { run } from './release-tools.mjs';
 import { assetHash } from '../runtime/assets.mjs';
@@ -180,7 +181,7 @@ if (process.env.WORKSPACE_CONTAINER) {
     const profile = join(installation, 'synthetic-profile');
     const runtime = await import('../runtime/windows.mjs');
     const { openDatabase } = await import('../runtime/database.mjs');
-    const { computerNames } = await import('../runtime/index.mjs');
+    const { availablePort, computerNames } = await import('../runtime/index.mjs');
     const names = computerNames(profile);
     const system = (name) => join(process.env.SYSTEMROOT, 'System32', name);
     console.log('Checking that a WSL failure offers its repair and keeps the Windows error.');
@@ -386,6 +387,124 @@ if (process.env.WORKSPACE_CONTAINER) {
       );
       receipt.reopened = true;
       receipt.reattached = true;
+      console.log('Checking that data from an earlier version moves out of the private computer.');
+      const docker = (args, env = {}) =>
+        run(join(engine, 'windows-runtime/bin/docker.exe'), args, {
+          env: { ...computerEnvironment(), ...env },
+          timeout: 300_000,
+        });
+      const upgrade = async () => {
+        await database.close();
+        await rm(join(profile, 'database'), { recursive: true, force: true });
+        database = await openDatabase({ dataRoot: profile, resourcesPath: engine });
+        assert.equal(database.pendingMove, true);
+        let moved = 0;
+        prepared = await runtime.prepareWindowsRuntime(
+          {
+            dataRoot: profile,
+            resourcesPath: engine,
+            database,
+            onMoved: () => moved++,
+            onStatus: (value) => console.log(value.message),
+          },
+          () => {},
+        );
+        assert.equal(moved, 1);
+        assert.equal(database.pendingMove, false);
+        assert.doesNotMatch(
+          await docker(['ps', '--all', '--format', '{{.Names}}']),
+          new RegExp(names.postgres),
+        );
+      };
+      await upgrade();
+      const identity = distribution.slice(4);
+      const { images } = JSON.parse(
+        await readFile(join(engine, 'windows-runtime/manifest.json'), 'utf8'),
+      );
+      const legacyPassword = JSON.parse(
+        await readFile(join(profile, 'desktop-runtime/state.json'), 'utf8'),
+      ).password;
+      const legacyPort = await availablePort();
+      await docker(
+        [
+          'run',
+          '--detach',
+          '--name',
+          names.postgres,
+          '--network',
+          `nod-control-${identity}`,
+          '--publish',
+          `127.0.0.1:${legacyPort}:5432`,
+          '--env',
+          'POSTGRES_USER=nod',
+          '--env',
+          'POSTGRES_DB=nod',
+          '--env',
+          'POSTGRES_PASSWORD',
+          '--volume',
+          `nod-postgres-${identity}:/var/lib/postgresql/data`,
+          images.find(({ name }) => name === 'postgres').id,
+        ],
+        { POSTGRES_PASSWORD: legacyPassword },
+      );
+      const legacyUrl = `postgresql://nod:${legacyPassword}@127.0.0.1:${legacyPort}/nod`;
+      const { default: pg } = await import('pg');
+      for (let attempt = 1; ; attempt++) {
+        const client = new pg.Client({
+          connectionString: legacyUrl,
+          connectionTimeoutMillis: 5000,
+        });
+        try {
+          await client.connect();
+          await client.end();
+          break;
+        } catch (error) {
+          await client.end().catch(() => {});
+          if (attempt === 60) throw error;
+          await delay(1000);
+        }
+      }
+      assert.match(
+        await run(application, [smoke], {
+          cwd: engine,
+          env: { ...computerEnvironment(), DATABASE_URL: legacyUrl },
+          timeout: 300_000,
+        }),
+        /Windows application and browser verified\./,
+      );
+      const fingerprint = `SELECT
+        (SELECT count(*) FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema'))::int AS tables,
+        (SELECT md5(string_agg(body, ',' ORDER BY id)) FROM synthetic_bulk) AS bulk,
+        (SELECT value FROM windows_check) AS marker`;
+      const legacy = new pg.Client({ connectionString: legacyUrl });
+      await legacy.connect();
+      await legacy.query(
+        'CREATE TABLE synthetic_bulk (id bigserial PRIMARY KEY, body text NOT NULL, at timestamptz NOT NULL DEFAULT now())',
+      );
+      await legacy.query(
+        "INSERT INTO synthetic_bulk (body) SELECT repeat(md5(g::text), 4) || ' π' FROM generate_series(1, 200000) g",
+      );
+      const before = (await legacy.query(fingerprint)).rows[0];
+      await legacy.end();
+      assert.ok(before.tables > 10);
+      await docker(['rm', '--force', names.postgres]);
+      await upgrade();
+      const host = new pg.Client({ connectionString: database.url });
+      await host.connect();
+      assert.deepEqual((await host.query(fingerprint)).rows[0], before);
+      await host.end();
+      assert.match(
+        await run(application, [smoke], {
+          cwd: engine,
+          env: { ...computerEnvironment(), NOD_WINDOWS_REOPEN: '1' },
+          timeout: 300_000,
+        }),
+        /Windows application and browser verified\./,
+      );
+      await database.close();
+      database = await openDatabase({ dataRoot: profile, resourcesPath: engine });
+      assert.equal(database.pendingMove, false);
+      receipt.upgraded = true;
     } finally {
       await run(system('WindowsPowerShell/v1.0/powershell.exe'), [
         '-NoProfile',
