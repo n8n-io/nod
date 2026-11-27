@@ -63,6 +63,7 @@
     "jose": "6.2.18",
     "libphonenumber-js": "1.13.17",
     "lottie-web": "5.13.0",
+    "onnxruntime-node": "1.30.0",
     "parse5": "8.1.1",
     "pdfjs-dist": "6.4.299",
     "pg": "^8.23.1",

@@ -131,6 +131,9 @@ importers:
       lottie-web:
         specifier: 5.13.0
         version: 5.13.0
+      onnxruntime-node:
+        specifier: 1.30.0
+        version: 1.30.0
       parse5:
         specifier: 8.1.1
         version: 8.1.1

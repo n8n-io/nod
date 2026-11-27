@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { AccountPreferences } from '../../shared/account';
-import type { SpeechVoice } from '../../shared/speech';
+import type { LocalTranscriptionModel, SpeechVoice } from '../../shared/speech';
 import { useModels } from '../hooks/use-models';
 import { usePageData } from '../hooks/use-page-data';
 import { useVoiceRecorder } from '../hooks/use-voice-recorder';
@@ -30,6 +30,10 @@ interface SpeechSettings {
   speechReply: 'auto' | 'voice' | 'always' | 'never';
   local?: LocalVoiceStatus;
   localInput?: LocalVoiceStatus;
+  localTranscription?: {
+    model: LocalTranscriptionModel;
+    choices: { id: LocalTranscriptionModel; name: string; description: string; bytes: number }[];
+  };
 }
 
 export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): void }) {
@@ -57,11 +61,13 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
   const [error, setError] = useState('');
   const [preparationError, setPreparationError] = useState('');
   const [preparing, setPreparing] = useState(false);
+  const [preparingInput, setPreparingInput] = useState(false);
   const [catalogRefreshing, setCatalogRefreshing] = useState(false);
   const [catalogError, setCatalogError] = useState('');
   const catalogRequest = useRef<AbortController | null>(null);
   const catalogResult = useRef<Promise<SpeechSettings | undefined> | null>(null);
   const prepareRequest = useRef<AbortController | null>(null);
+  const inputRequest = useRef<AbortController | null>(null);
   const saveRequest = useRef<AbortController | null>(null);
   const previewRequest = useRef<AbortController | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -86,7 +92,13 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
     setPlaying(null);
     setPreviewing(null);
   }
-  const busy = saving || preparing || connectionBusy || catalogRefreshing || recorder.discovering;
+  const busy =
+    saving ||
+    preparing ||
+    preparingInput ||
+    connectionBusy ||
+    catalogRefreshing ||
+    recorder.discovering;
   useLayoutEffect(() => {
     onBusyChange(busy);
     return () => onBusyChange(false);
@@ -98,6 +110,7 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
       mounted.current = false;
       saveRequest.current?.abort();
       prepareRequest.current?.abort();
+      inputRequest.current?.abort();
       catalogRequest.current?.abort();
       stop();
     };
@@ -133,13 +146,14 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
     if (
       refreshing ||
       (!preparing &&
+        !preparingInput &&
         data?.local?.state !== 'downloading' &&
         data?.localInput?.state !== 'downloading')
     )
       return;
     const timer = window.setTimeout(() => void refresh(), 1000);
     return () => window.clearTimeout(timer);
-  }, [preparing, data?.local?.state, data?.localInput?.state, refresh, refreshing]);
+  }, [preparing, preparingInput, data?.local?.state, data?.localInput?.state, refresh, refreshing]);
   async function prepare() {
     if (prepareRequest.current) return;
     const controller = new AbortController();
@@ -237,6 +251,56 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
       }
     }
   }
+  async function chooseTranscription(model: LocalTranscriptionModel) {
+    if (saveRequest.current || prepareRequest.current || inputRequest.current) return;
+    const controller = new AbortController();
+    saveRequest.current = controller;
+    setSaving(true);
+    setError('');
+    setPreparationError('');
+    let next: SpeechSettings | undefined;
+    try {
+      const saved = await api<SpeechSettings>('/api/speech/transcription-model', {
+        method: 'PUT',
+        body: JSON.stringify({ model }),
+        signal: controller.signal,
+      });
+      controller.signal.throwIfAborted();
+      next = saved;
+      update(() => saved);
+    } catch (cause) {
+      if (!controller.signal.aborted) setError(errorMessage(cause));
+    } finally {
+      if (saveRequest.current === controller) {
+        saveRequest.current = null;
+        if (mounted.current) setSaving(false);
+      }
+    }
+    if (!next || next.localInput?.state === 'ready' || !mounted.current) return;
+    const preparation = new AbortController();
+    inputRequest.current = preparation;
+    setPreparingInput(true);
+    try {
+      await api('/api/speech/prepare', {
+        method: 'POST',
+        body: JSON.stringify({ inputOnly: true }),
+        signal: preparation.signal,
+      });
+    } catch (cause) {
+      if (!preparation.signal.aborted) setPreparationError(errorMessage(cause));
+    } finally {
+      if (inputRequest.current === preparation) {
+        inputRequest.current = null;
+        if (mounted.current) {
+          setPreparingInput(false);
+          void refresh();
+        }
+      }
+    }
+  }
+  const transcriptionModel = data?.localTranscription?.choices.find(
+    (choice) => choice.id === data.localTranscription?.model,
+  );
   const voices =
     data?.voices.filter(
       (voice) => voiceProvider(voice) !== 'local' || data.local?.state === 'ready',
@@ -438,6 +502,56 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
                 </Button>
               )}
             </p>
+          )}
+          {data.localTranscription && transcriptionModel && (
+            <>
+              <div className="account-preference-row voice-spoken-row">
+                <span id={`${id}-transcription`}>On-device transcription</span>
+                <div
+                  className="voice-reply-options"
+                  role="group"
+                  aria-labelledby={`${id}-transcription`}
+                >
+                  {data.localTranscription.choices.map((choice) => (
+                    <button
+                      key={choice.id}
+                      type="button"
+                      aria-pressed={transcriptionModel.id === choice.id}
+                      disabled={
+                        saving ||
+                        preparing ||
+                        preparingInput ||
+                        data.localInput?.state === 'downloading'
+                      }
+                      onClick={() => {
+                        if (
+                          choice.id !== transcriptionModel.id ||
+                          data.localInput?.state !== 'ready'
+                        )
+                          void chooseTranscription(choice.id);
+                      }}
+                    >
+                      {choice.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <p className="field-hint" role="status">
+                {preparingInput || data.localInput?.state === 'downloading'
+                  ? `Downloading ${transcriptionModel.name} · ${Math.round(data.localInput?.progress ?? 0)}%`
+                  : `${transcriptionModel.description} · ${Math.round(transcriptionModel.bytes / 1_000_000)} MB${data.localInput?.state === 'ready' ? ', downloaded' : ', downloads on first use'}. Used when Nod transcribes voice messages on this device.`}
+                {preparingInput && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => inputRequest.current?.abort()}
+                  >
+                    Cancel
+                  </Button>
+                )}
+              </p>
+            </>
           )}
           <div className="account-preference-row voice-spoken-row">
             <span id={`${id}-replies`}>Spoken replies</span>

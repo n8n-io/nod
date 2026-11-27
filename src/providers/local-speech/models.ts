@@ -1,3 +1,5 @@
+import type { LocalTranscriptionModel } from '../../shared/speech.ts';
+
 export const localSpeechModels = [
   {
     name: 'whisper',
@@ -53,6 +55,33 @@ export const localSpeechModels = [
         path: 'onnx/decoder_model_merged_quantized.onnx',
         size: 53693315,
         sha256: 'fa3ef9902734ce5ae6f9ef2bdb2ba9a6c4b5785b09f4f420ce036573dc9d090b',
+      },
+    ],
+  },
+  {
+    name: 'parakeet',
+    repository: 'mrfakename/parakeet-ultra-ONNX',
+    revision: '590d2668ea7c80d7e487da67a2946a20cb50780f',
+    files: [
+      {
+        path: 'vocab.txt',
+        size: 93939,
+        sha256: 'd58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d',
+      },
+      {
+        path: 'preprocessor.onnx',
+        size: 136430,
+        sha256: 'e931b8a8361bfbda004ef8b21378049f7199faea6f99320058f89983eda05bfe',
+      },
+      {
+        path: 'encoder-model.q4.onnx',
+        size: 392976086,
+        sha256: '40265cd6754f44f3deed117fa551eed69b974233b1c28c9b5a46750d0e27f648',
+      },
+      {
+        path: 'decoder_joint-model.int8.onnx',
+        size: 18203490,
+        sha256: 'f7e2db395a3b738cb2893cfb853d25863cebcc5282583a2e86b5762559e0bd32',
       },
     ],
   },
@@ -149,3 +178,16 @@ export const localSpeechModels = [
     ],
   },
 ] as const;
+
+export function speechModels(transcription: LocalTranscriptionModel | false) {
+  return localSpeechModels.filter((model) =>
+    transcription ? model.name === transcription : model.name !== 'parakeet',
+  );
+}
+
+export function speechModelBytes(transcription: LocalTranscriptionModel) {
+  return speechModels(transcription).reduce(
+    (sum, model) => sum + model.files.reduce((total, file) => total + file.size, 0),
+    0,
+  );
+}

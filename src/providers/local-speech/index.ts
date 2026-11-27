@@ -1,16 +1,23 @@
 import { fork, type ChildProcess, type ForkOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  SpeechBusyError,
   SpeechProviderError,
   type SpeechProvider,
   type LocalSpeechControls,
 } from '../../ports/speech.ts';
 import type { ProviderUsageEvent } from '../../ports/provider-usage.ts';
 import { logFailure } from '../../ports/failure-log.ts';
-import { speechVoices } from '../../shared/speech.ts';
+import {
+  localTranscriptionModels,
+  speechVoices,
+  type LocalTranscriptionModel,
+} from '../../shared/speech.ts';
 import { verifySpeechCache } from './cache.ts';
+import { speechModelBytes } from './models.ts';
 
 interface LocalSpeechStatus {
   state: 'not_downloaded' | 'downloading' | 'ready' | 'failed';
@@ -18,9 +25,9 @@ interface LocalSpeechStatus {
 }
 
 type Request =
-  | { method: 'prepare'; transcription: boolean }
+  | { method: 'prepare'; transcription: LocalTranscriptionModel | false }
   | { method: 'synthesize'; text: string; voice: string }
-  | { method: 'transcribe'; bytes: Uint8Array; mimeType: string };
+  | { method: 'transcribe'; bytes: Uint8Array; mimeType: string; model: LocalTranscriptionModel };
 
 type Reply =
   { type: 'ready' } | { type: 'audio'; bytes: Uint8Array } | { type: 'text'; text: string };
@@ -46,6 +53,9 @@ export function createLocalSpeechProvider(options: {
 }): SpeechProvider & LocalSpeechControls {
   let status: LocalSpeechStatus = { state: 'not_downloaded' };
   let inputStatus: LocalSpeechStatus = { state: 'not_downloaded' };
+  let model: LocalTranscriptionModel = 'whisper';
+  let switching = false;
+  const selection = join(options.cacheDir, 'transcription-model.json');
   let child: ChildProcess | undefined;
   let active: Job | undefined;
   const queue: Job[] = [];
@@ -58,8 +68,14 @@ export function createLocalSpeechProvider(options: {
     last?: { stage: string; exitCode?: number | null; signal?: string | null; detail?: string };
   } = {};
   const cached = (async () => {
+    const saved = await readFile(selection, 'utf8')
+      .then((text) => (JSON.parse(text) as { model?: unknown }).model)
+      .catch(() => undefined);
+    if (localTranscriptionModels.some((choice) => choice.id === saved))
+      model = saved as LocalTranscriptionModel;
     const ready = await verifySpeechCache(options.cacheDir);
-    const inputReady = ready || (await verifySpeechCache(options.cacheDir, true, true));
+    const inputReady =
+      (model === 'whisper' && ready) || (await verifySpeechCache(options.cacheDir, true, model));
     if (closed) return;
     if (ready && status.state === 'not_downloaded') status = { state: 'ready' };
     if (inputReady && inputStatus.state === 'not_downloaded') inputStatus = { state: 'ready' };
@@ -69,7 +85,7 @@ export function createLocalSpeechProvider(options: {
     if (transcription) inputStatus = value;
     else {
       status = value;
-      if (inputStatus.state !== 'ready') inputStatus = value;
+      if (model === 'whisper' && inputStatus.state !== 'ready') inputStatus = value;
     }
   }
   const voices = speechVoices.filter((voice) => voice.engine === 'Local');
@@ -130,7 +146,7 @@ export function createLocalSpeechProvider(options: {
         const request = active?.request;
         preparationStatus(
           request?.method === 'transcribe' ||
-            (request?.method === 'prepare' && request.transcription),
+            (request?.method === 'prepare' && Boolean(request.transcription)),
           { state: 'failed' },
         );
         stop(new SpeechProviderError('Local speech stopped. Try again.'));
@@ -151,7 +167,7 @@ export function createLocalSpeechProvider(options: {
         if (reply.id !== active.id) return;
         if (reply.type === 'progress' && active.request.method === 'prepare') {
           if (typeof reply.progress === 'number' && reply.progress >= 0 && reply.progress <= 100)
-            preparationStatus(active.request.transcription, {
+            preparationStatus(Boolean(active.request.transcription), {
               state: 'downloading',
               progress: reply.progress,
             });
@@ -261,7 +277,7 @@ export function createLocalSpeechProvider(options: {
   }
 
   async function measured<T>(
-    operation: string,
+    operation: 'synthesize' | 'transcribe',
     report: ((usage: ProviderUsageEvent) => void) | undefined,
     signal: AbortSignal | undefined,
     run: () => Promise<T>,
@@ -272,7 +288,12 @@ export function createLocalSpeechProvider(options: {
       provider: 'local',
       category: 'agent',
       operation,
-      model: operation === 'synthesize' ? 'kokoro-82m' : 'whisper-base',
+      model:
+        operation === 'synthesize'
+          ? 'kokoro-82m'
+          : model === 'parakeet'
+            ? 'parakeet-ultra'
+            : 'whisper-base',
       status: 'failed',
       durationMs: 0,
       costUsd: 0,
@@ -321,6 +342,7 @@ export function createLocalSpeechProvider(options: {
     await cached;
     signal?.throwIfAborted();
     if (closed) throw new SpeechProviderError('Local speech is closed.');
+    if (switching) throw new SpeechBusyError('Local speech is busy. Try again when it finishes.');
     if ((transcription ? inputStatus : status).state === 'ready') return;
     if (preparing) {
       const running = preparing;
@@ -345,7 +367,10 @@ export function createLocalSpeechProvider(options: {
       stderr = '';
       try {
         await mkdir(options.cacheDir, { recursive: true });
-        await call({ method: 'prepare', transcription }, preparation.controller.signal);
+        await call(
+          { method: 'prepare', transcription: transcription && model },
+          preparation.controller.signal,
+        );
         if (preparing === preparation) preparationStatus(transcription, { state: 'ready' });
       } catch (error) {
         if (!preparation.controller.signal.aborted)
@@ -389,6 +414,41 @@ export function createLocalSpeechProvider(options: {
     prepare: (signal) => prepare(false, signal),
     prepareTranscription: (signal) => prepare(true, signal),
     transcriptionStatus: () => ({ ...inputStatus }),
+    transcriptionModel: () => ({
+      model,
+      choices: localTranscriptionModels.map((choice) => ({
+        ...choice,
+        bytes: speechModelBytes(choice.id),
+      })),
+    }),
+    async selectTranscriptionModel(next) {
+      await cached;
+      if (closed) throw new SpeechProviderError('Local speech is closed.');
+      if (switching || preparing || active || queue.length)
+        throw new SpeechBusyError('Local speech is busy. Try again when it finishes.');
+      if (next === model) return;
+      const previous = { model, inputStatus };
+      switching = true;
+      model = next;
+      inputStatus = { state: 'not_downloaded' };
+      stop(new SpeechProviderError('Local speech stopped.'));
+      try {
+        await mkdir(options.cacheDir, { recursive: true });
+        await writeFile(`${selection}.download`, JSON.stringify({ model: next }), { mode: 0o600 });
+        await rename(`${selection}.download`, selection);
+        if (
+          (next === 'whisper' && status.state === 'ready') ||
+          (await verifySpeechCache(options.cacheDir, true, next))
+        )
+          inputStatus = { state: 'ready' };
+      } catch (error) {
+        model = previous.model;
+        inputStatus = previous.inputStatus;
+        throw error;
+      } finally {
+        switching = false;
+      }
+    },
     async synthesize(text, signal, report, synthesis) {
       signal?.throwIfAborted();
       if (status.state !== 'ready') throw new SpeechProviderError('Enable local speech first.');
@@ -414,7 +474,7 @@ export function createLocalSpeechProvider(options: {
         throw new SpeechProviderError('The recording is too large.');
       return measured('transcribe', report, signal, async () => {
         const reply = await call(
-          { method: 'transcribe', bytes: audio.bytes, mimeType: audio.mimeType },
+          { method: 'transcribe', bytes: audio.bytes, mimeType: audio.mimeType, model },
           signal,
         );
         if (reply.type !== 'text') throw new SpeechProviderError('Local transcription failed.');

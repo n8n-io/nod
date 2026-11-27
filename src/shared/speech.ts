@@ -116,3 +116,9 @@ export function isSpeechVoiceId(id: string) {
     /^elevenlabs-direct:[A-Za-z0-9_-]{1,64}$/.test(id)
   );
 }
+
+export const localTranscriptionModels = [
+  { id: 'whisper', name: 'Whisper Base', description: 'About 100 languages' },
+  { id: 'parakeet', name: 'Parakeet Ultra', description: '25 European languages' },
+] as const;
+export type LocalTranscriptionModel = (typeof localTranscriptionModels)[number]['id'];

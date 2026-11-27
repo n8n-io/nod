@@ -33,6 +33,7 @@ import {
 } from '../src/providers/elevenlabs/speech.ts';
 import { createLocalSpeechProvider } from '../src/providers/local-speech/index.ts';
 import { decodeLocalAudio } from '../src/providers/local-speech/audio.ts';
+import { speechSegments } from '../src/providers/local-speech/parakeet.ts';
 import { phonemizeSpeech } from '../src/providers/local-speech/phonemizer.ts';
 import {
   createOpenRouterSpeechProvider,
@@ -3418,13 +3419,16 @@ test('local transcription prepares only input assets and keeps voice synthesis u
     });
   `,
   );
-  const requests: { method: string; transcription?: boolean }[] = [];
+  const requests: { method: string; transcription?: string | false; model?: string }[] = [];
   const provider = createLocalSpeechProvider({
     cacheDir: join(root, 'models'),
     fork: (_path, args, options) => {
       const child = fork(worker, args, options);
       const send = child.send.bind(child);
-      child.send = ((message: { method: string; transcription?: boolean }, ...rest: unknown[]) => {
+      child.send = ((
+        message: { method: string; transcription?: string | false; model?: string },
+        ...rest: unknown[]
+      ) => {
         requests.push(message);
         return Reflect.apply(send, child, [message, ...rest]);
       }) as typeof child.send;
@@ -3438,7 +3442,7 @@ test('local transcription prepares only input assets and keeps voice synthesis u
   await Promise.all([provider.prepareTranscription(), provider.prepareTranscription()]);
   assert.deepEqual(
     requests.map(({ method, transcription }) => ({ method, transcription })),
-    [{ method: 'prepare', transcription: true }],
+    [{ method: 'prepare', transcription: 'whisper' }],
   );
   assert.equal(provider.transcriptionConfigured, true);
   assert.equal(provider.configured, false);
@@ -3459,6 +3463,58 @@ test('local transcription prepares only input assets and keeps voice synthesis u
   const count = requests.length;
   await provider.prepareTranscription();
   assert.equal(requests.length, count);
+  await provider.selectTranscriptionModel('parakeet');
+  assert.equal(provider.transcriptionStatus().state, 'not_downloaded');
+  assert.equal(provider.transcriptionConfigured, false);
+  assert.equal(provider.configured, true);
+  await provider.prepareTranscription();
+  assert.deepEqual(
+    { method: requests.at(-1)?.method, transcription: requests.at(-1)?.transcription },
+    { method: 'prepare', transcription: 'parakeet' },
+  );
+  const usage: import('../src/ports/provider-usage.ts').ProviderUsageEvent[] = [];
+  await provider.transcribe!(
+    { bytes: new Uint8Array([1]), mimeType: 'audio/wav', name: 'synthetic.wav' },
+    undefined,
+    (event) => usage.push(event),
+  );
+  assert.equal(requests.at(-1)?.model, 'parakeet');
+  const working = provider.transcribe!({
+    bytes: new Uint8Array([1]),
+    mimeType: 'audio/wav',
+    name: 'synthetic.wav',
+  });
+  await assert.rejects(provider.selectTranscriptionModel('whisper'), { statusCode: 409 });
+  assert.equal(await working, 'Synthetic recorded words.');
+  assert.equal(provider.transcriptionModel().model, 'parakeet');
+  assert.deepEqual(
+    usage.map(({ model, status }) => ({ model, status })),
+    [{ model: 'parakeet-ultra', status: 'succeeded' }],
+  );
+  const restarted = createLocalSpeechProvider({ cacheDir: join(root, 'models') });
+  try {
+    await restarted.selectTranscriptionModel('parakeet');
+    assert.equal(restarted.transcriptionModel().model, 'parakeet');
+  } finally {
+    await restarted.close();
+  }
+});
+
+test('local transcription splits long recordings at a quiet point without dropping audio', () => {
+  const rate = 16_000;
+  const samples = new Float32Array(75 * rate).fill(0.5);
+  samples.fill(0, 24 * rate, 24 * rate + 1600);
+  samples.fill(0, 50 * rate, 50 * rate + 1600);
+  const segments = speechSegments(samples);
+  assert.deepEqual(
+    segments.map((segment) => segment.length),
+    [24 * rate + 800, 26 * rate, 25 * rate - 800],
+  );
+  assert.equal(
+    segments.reduce((total, segment) => total + segment.length, 0),
+    samples.length,
+  );
+  assert.ok(segments.every((segment) => segment.length <= 30 * rate));
 });
 
 test('local speech failures stay within their preparation mode and do not block independent input setup', async (t) => {
@@ -3491,7 +3547,7 @@ test('local speech failures stay within their preparation mode and do not block 
       const running = new Promise<void>((resolve) => {
         started = resolve;
       });
-      const requests: Array<{ method: string; transcription?: boolean }> = [];
+      const requests: Array<{ method: string; transcription?: string | false }> = [];
       const provider = createLocalSpeechProvider({
         cacheDir: join(root, scenario),
         fork: (_path, args, options) => {
@@ -3502,7 +3558,7 @@ test('local speech failures stay within their preparation mode and do not block 
             send({ method: 'fail' });
           };
           child.send = ((
-            message: { method: string; transcription?: boolean },
+            message: { method: string; transcription?: string | false },
             ...rest: unknown[]
           ) => {
             requests.push(message);
@@ -3539,7 +3595,7 @@ test('local speech failures stay within their preparation mode and do not block 
         assert.equal(provider.transcriptionConfigured, scenario === 'independent-input');
         assert.deepEqual(
           requests.map(({ transcription }) => transcription),
-          scenario === 'independent-input' ? [false, true] : [false],
+          scenario === 'independent-input' ? [false, 'whisper'] : [false],
         );
       } finally {
         await provider.close();
@@ -3777,9 +3833,10 @@ const modules = {
     } },
   },
   '@pedrobef/vozz/g2p': { phonemize: () => { throw new Error('unused language'); } },
-  './phonemizer.ts': { phonemizeSpeech }, './models.ts': { localSpeechModels: [] },
+  './phonemizer.ts': { phonemizeSpeech }, './models.ts': { speechModels: () => [] },
   './audio.ts': { decodeLocalAudio: () => { throw new Error('unused decoder'); } },
-  './cache.ts': { localSpeechCacheMarker: '{}', localTranscriptionCacheMarker: '{}', matchesSpeechFile: async () => true, verifySpeechCache: async () => true },
+  './cache.ts': { speechCacheMarker: () => ({ name: 'speech-cache.json', content: '{}' }), matchesSpeechFile: async () => true, verifySpeechCache: async () => true },
+  './parakeet.ts': { createParakeet: async () => { throw new Error('unused transcriber'); } },
 };
 await worker.link(async (specifier) => {
   const exports = modules[specifier];

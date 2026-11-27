@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { SpeechService } from './speech.ts';
 import { SpeechProviderError, type LocalSpeechControls } from '../ports/speech.ts';
 import type { createPreferencesStore } from './preferences.ts';
+import { localTranscriptionModels } from '../shared/speech.ts';
 
 const previews: Record<string, string> = {
   en: 'Hello, I’m nod. Here’s how I sound. What would you like to work on?',
@@ -61,7 +62,11 @@ export function registerSpeechSettings(
       speechReply: saved.speechReply,
       ...(voicesError ? { voicesError } : {}),
       ...(options.local
-        ? { local: options.local.status(), localInput: options.local.transcriptionStatus() }
+        ? {
+            local: options.local.status(),
+            localInput: options.local.transcriptionStatus(),
+            localTranscription: options.local.transcriptionModel(),
+          }
         : {}),
       ...(transcriptionFormat ? { transcriptionFormat } : {}),
     };
@@ -72,6 +77,15 @@ export function registerSpeechSettings(
       .strict()
       .parse(request.body ?? {});
     return current(reply, true);
+  });
+  app.put('/api/speech/transcription-model', async (request, reply) => {
+    const { model } = z
+      .object({ model: z.enum(localTranscriptionModels.map((choice) => choice.id)) })
+      .strict()
+      .parse(request.body);
+    if (!options.local) return reply.code(404).send({ error: 'On-device audio is unavailable.' });
+    await options.local.selectTranscriptionModel(model);
+    return current(reply);
   });
   app.post('/api/speech/prepare', async (request, reply) => {
     const { inputOnly } = z

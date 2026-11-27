@@ -11,14 +11,11 @@ import {
 } from '@huggingface/transformers';
 import { phonemize } from '@pedrobef/vozz/g2p';
 import { phonemizeSpeech } from './phonemizer.ts';
-import { localSpeechModels } from './models.ts';
+import type { LocalTranscriptionModel } from '../../shared/speech.ts';
+import { speechModels } from './models.ts';
 import { decodeLocalAudio } from './audio.ts';
-import {
-  localSpeechCacheMarker,
-  localTranscriptionCacheMarker,
-  matchesSpeechFile,
-  verifySpeechCache,
-} from './cache.ts';
+import { matchesSpeechFile, speechCacheMarker, verifySpeechCache } from './cache.ts';
+import { createParakeet } from './parakeet.ts';
 
 const cacheDir = process.argv[2];
 if (!cacheDir || !process.send) process.exit(1);
@@ -29,6 +26,7 @@ env.cacheDir = cacheDir;
 env.backends.onnx.logLevel = 'error';
 let transcriber: Awaited<ReturnType<typeof createTranscriber>> | undefined;
 let synthesizer: Awaited<ReturnType<typeof createSynthesizer>> | undefined;
+let parakeet: Awaited<ReturnType<typeof createParakeet>> | undefined;
 let busy = false;
 const voiceStyles = new Map<string, Float32Array>();
 const voiceLanguages = {
@@ -68,18 +66,19 @@ function createTranscriber() {
   });
 }
 
-async function load(transcription = false) {
+async function load(transcription: LocalTranscriptionModel | false) {
   if (
-    (!transcriber || (!transcription && !synthesizer)) &&
+    (transcription === 'parakeet' ? !parakeet : !transcriber || (!transcription && !synthesizer)) &&
     !(await verifySpeechCache(cacheDir, false, transcription))
   )
     throw new Error('cache');
-  transcriber ??= await createTranscriber();
+  if (transcription === 'parakeet') parakeet ??= await createParakeet(join(cacheDir, 'parakeet'));
+  else transcriber ??= await createTranscriber();
   if (!transcription) synthesizer ??= await createSynthesizer();
 }
 
-async function prepare(id: number, transcription: boolean) {
-  const models = localSpeechModels.filter((model) => !transcription || model.name === 'whisper');
+async function prepare(id: number, transcription: LocalTranscriptionModel | false) {
+  const models = speechModels(transcription);
   const total = models.reduce(
     (sum, model) => sum + model.files.reduce((sum, file) => sum + file.size, 0),
     0,
@@ -135,13 +134,9 @@ async function prepare(id: number, transcription: boolean) {
     }
   }
   await load(transcription);
-  const name = transcription ? 'input-ready.json' : 'ready.json';
-  await writeFile(
-    join(cacheDir, `${name}.download`),
-    transcription ? localTranscriptionCacheMarker : localSpeechCacheMarker,
-    { mode: 0o600 },
-  );
-  await rename(join(cacheDir, `${name}.download`), join(cacheDir, name));
+  const marker = speechCacheMarker(transcription);
+  await writeFile(join(cacheDir, `${marker.name}.download`), marker.content, { mode: 0o600 });
+  await rename(join(cacheDir, `${marker.name}.download`), join(cacheDir, marker.name));
 }
 
 async function generate(text: string, voice: LocalVoice) {
@@ -225,6 +220,10 @@ async function detectLanguage(samples: Float32Array) {
   return language;
 }
 
+function transcriptionModel(value: unknown): LocalTranscriptionModel | undefined {
+  return value === 'whisper' || value === 'parakeet' ? value : undefined;
+}
+
 process.on('message', async (raw: unknown) => {
   if (!raw || typeof raw !== 'object') return;
   const message = raw as {
@@ -234,17 +233,30 @@ process.on('message', async (raw: unknown) => {
     voice?: string;
     bytes?: Uint8Array;
     mimeType?: string;
-    transcription?: boolean;
+    transcription?: unknown;
+    model?: unknown;
   };
   if (!Number.isSafeInteger(message.id) || busy) return;
   busy = true;
   try {
     if (message.method === 'prepare') {
-      await prepare(message.id, message.transcription === true);
+      await prepare(message.id, transcriptionModel(message.transcription) ?? false);
       process.send!({ id: message.id, type: 'ready' });
     } else {
-      await load(message.method === 'transcribe');
+      const model = transcriptionModel(message.model) ?? 'whisper';
+      await load(message.method === 'transcribe' && model);
       if (
+        message.method === 'transcribe' &&
+        model === 'parakeet' &&
+        message.bytes instanceof Uint8Array &&
+        message.bytes.length <= 25 * 1024 * 1024 &&
+        typeof message.mimeType === 'string'
+      ) {
+        const text = await parakeet!(await decodeLocalAudio(message.bytes, message.mimeType));
+        if (!text) throw new Error('silence');
+        if (text.length > 100_000) throw new Error('format');
+        process.send!({ id: message.id, type: 'text', text });
+      } else if (
         message.method === 'transcribe' &&
         message.bytes instanceof Uint8Array &&
         message.bytes.length <= 25 * 1024 * 1024 &&

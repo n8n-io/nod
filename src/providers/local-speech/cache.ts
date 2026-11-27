@@ -2,19 +2,23 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { localSpeechModels } from './models.ts';
+import type { LocalTranscriptionModel } from '../../shared/speech.ts';
+import { speechModels } from './models.ts';
 
-export const localSpeechCacheMarker = JSON.stringify({
-  version: 1,
-  revisions: localSpeechModels.map((model) => model.revision),
-});
-
-export const localTranscriptionCacheMarker = JSON.stringify({
-  version: 1,
-  revisions: localSpeechModels
-    .filter((model) => model.name === 'whisper')
-    .map((model) => model.revision),
-});
+export function speechCacheMarker(transcription: LocalTranscriptionModel | false) {
+  return {
+    name:
+      transcription === 'whisper'
+        ? 'input-ready.json'
+        : transcription
+          ? `input-${transcription}-ready.json`
+          : 'ready.json',
+    content: JSON.stringify({
+      version: 1,
+      revisions: speechModels(transcription).map((model) => model.revision),
+    }),
+  };
+}
 
 export async function matchesSpeechFile(file: string, size: number, sha256: string) {
   try {
@@ -27,19 +31,16 @@ export async function matchesSpeechFile(file: string, size: number, sha256: stri
   }
 }
 
-export async function verifySpeechCache(cacheDir: string, marker = true, transcription = false) {
+export async function verifySpeechCache(
+  cacheDir: string,
+  marker = true,
+  transcription: LocalTranscriptionModel | false = false,
+) {
   try {
-    if (
-      marker &&
-      (await readFile(
-        join(cacheDir, transcription ? 'input-ready.json' : 'ready.json'),
-        'utf8',
-      )) !== (transcription ? localTranscriptionCacheMarker : localSpeechCacheMarker)
-    )
+    const expected = speechCacheMarker(transcription);
+    if (marker && (await readFile(join(cacheDir, expected.name), 'utf8')) !== expected.content)
       return false;
-    for (const model of localSpeechModels.filter(
-      (model) => !transcription || model.name === 'whisper',
-    ))
+    for (const model of speechModels(transcription))
       for (const file of model.files)
         if (
           !(await matchesSpeechFile(join(cacheDir, model.name, file.path), file.size, file.sha256))
