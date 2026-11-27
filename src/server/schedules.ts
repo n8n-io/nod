@@ -1395,8 +1395,11 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     });
     app.post('/api/schedules', async (request) => {
       const schedule = await create(request.body);
-      const phoneOffer = (await dependencies.phoneOffer?.channels()) ?? [];
-      return phoneOffer.length ? { ...schedule, phoneOffer } : schedule;
+      const phoneOffer = await dependencies.phoneOffer?.channels().catch((error: unknown) => {
+        logFailure('phone_offer_check_failed', error);
+        return [];
+      });
+      return phoneOffer?.length ? { ...schedule, phoneOffer } : schedule;
     });
     app.patch<{ Params: { id: string } }>('/api/schedules/:id', (request) => {
       const { expectedRevision, ...body } = updateSchema

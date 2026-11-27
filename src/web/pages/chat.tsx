@@ -973,8 +973,7 @@ export function Chat({
   const phoneOfferMessageId =
     phoneOffer &&
     !state.turns.some(
-      (turn) =>
-        turn.id === phoneOffer.turnId && ['queued', 'running', 'waiting'].includes(turn.status),
+      (turn) => turn.id === phoneOffer.turnId && ['queued', 'running'].includes(turn.status),
     )
       ? visibleMessages.findLast(
           (message) => message.role === 'assistant' && message.turnId === phoneOffer.turnId,

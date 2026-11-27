@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import type { ChannelProvider, PhoneOffer } from '../shared/contracts.ts';
+import { logFailure } from './failure-log.ts';
 
 type ChannelState = {
   provider: string;
@@ -19,7 +20,7 @@ export function channelConnected(channel: ChannelState) {
 export function createPhoneOffer(dependencies: {
   pool: Pool;
   ownerId: string;
-  channels(): Promise<ChannelState[] | undefined>;
+  channels(client: Pool | PoolClient): Promise<ChannelState[] | undefined>;
   refresh(): void;
 }) {
   const { pool, ownerId } = dependencies;
@@ -32,7 +33,7 @@ export function createPhoneOffer(dependencies: {
       )
     ).rows[0]?.dismissed;
     if (dismissed) return [];
-    const states = (await dependencies.channels()) ?? [];
+    const states = (await dependencies.channels(client)) ?? [];
     if (states.some(channelConnected)) return [];
     return phoneChannels.filter((provider) =>
       states.some((channel) => channel.provider === provider),
@@ -40,6 +41,18 @@ export function createPhoneOffer(dependencies: {
   }
 
   async function saved(client: PoolClient, turnId: string) {
+    await client.query('SAVEPOINT phone_offer');
+    try {
+      await record(client, turnId);
+      await client.query('RELEASE SAVEPOINT phone_offer');
+    } catch (error) {
+      await client.query('ROLLBACK TO SAVEPOINT phone_offer');
+      await client.query('RELEASE SAVEPOINT phone_offer');
+      logFailure('phone_offer_record_failed', error);
+    }
+  }
+
+  async function record(client: PoolClient, turnId: string) {
     if (!(await channels(client)).length) return;
     await client.query(
       `WITH RECURSIVE chain(id,next,source,depth) AS (

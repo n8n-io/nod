@@ -59,10 +59,15 @@ test(
     let modelPaused = false;
     const clearedBrowsers: string[] = [];
     let phoneChannels = [{ provider: 'telegram', status: 'configured', ownerLinked: true }];
+    let phoneStatusFails = false;
     const phoneOffer = createPhoneOffer({
       pool: db.pool,
       ownerId,
-      channels: async () => phoneChannels,
+      channels: async (client) => {
+        if (phoneStatusFails)
+          await client.query('SELECT synthetic_missing_column FROM preferences');
+        return phoneChannels;
+      },
       refresh() {},
     });
     const personal = createPersonalService({
@@ -2164,8 +2169,17 @@ test(
           assert.equal(await offered(), null);
           assert.equal(await form('Connected form reminder'), undefined);
           phoneChannels = unlinked;
+          phoneStatusFails = true;
+          await save(origin.turnId, 'Unchecked reminder');
+          assert.equal(await offered(), null);
+          assert.equal(await form('Unchecked form reminder'), undefined);
+          phoneStatusFails = false;
           await save(origin.turnId, 'Second phone offer reminder');
           assert.equal(await offered(), origin.turnId);
+          phoneChannels = linked;
+          assert.equal(await phoneOffer.pending(), undefined);
+          assert.equal(await offered(), origin.turnId);
+          phoneChannels = unlinked;
           await answer('not_now');
           assert.equal(await offered(), null);
           await save(origin.turnId, 'Declined reminder');

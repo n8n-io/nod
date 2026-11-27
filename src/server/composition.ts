@@ -1116,7 +1116,7 @@ async function initializeApplication(
   const phoneOffer = createPhoneOffer({
     pool,
     ownerId,
-    channels: async () => channels?.status(),
+    channels: async (client) => channels?.status(client),
     refresh,
   });
   const communication = createCommunication({
