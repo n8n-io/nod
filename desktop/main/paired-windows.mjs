@@ -1,7 +1,9 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { setTimeout as delay } from 'node:timers/promises';
+import { promisify } from 'node:util';
 
 const name = (value) =>
   String(value || '')
@@ -22,23 +24,102 @@ const changes = new Set([
   'screenshot',
 ]);
 
-function discordChatInput(input) {
-  if (input.ownerChat !== true || name(input.app || input.bundle) !== 'discord') return false;
+const exec = promisify(execFile);
+const desktopCodex = { program: 'ChatGPT.exe', appId: 'OpenAI.Codex_2p2nqsd0c76g0!App' };
+const taskApps = new Map([
+  ['codex', desktopCodex],
+  ['chatgpt', desktopCodex],
+  ['claude', { program: 'Claude.exe', appId: 'Claude_pzs8sxrjxfjjc!Claude' }],
+  ['cloudroom', { program: 'Cloudroom.exe', appId: 'dev.cloudroom.gui' }],
+]);
+
+async function registeredTaskApp(target, op, signal, helper) {
+  const command =
+    "$ErrorActionPreference='Stop'; $item=(New-Object -ComObject Shell.Application).NameSpace('shell:AppsFolder').ParseName($env:NOD_TASK_APP_ID); if ($null -ne $item) { if ($env:NOD_TASK_APP_ACTION -eq 'open') { $item.InvokeVerb() }; [Console]::Write('registered') }";
+  const { stdout } = await exec(
+    join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command],
+    {
+      windowsHide: true,
+      timeout: 10_000,
+      signal,
+      env: { ...process.env, NOD_TASK_APP_ID: target.appId, NOD_TASK_APP_ACTION: op },
+    },
+  );
+  if (stdout !== 'registered') return;
+  if (op === 'locate')
+    return { bundle: target.program, program: target.program, name: target.program };
+  for (let n = 0; n < 24; n++) {
+    signal.throwIfAborted();
+    const { apps } = await helper.request({ op: 'apps' });
+    const found = apps.filter((app) => name(app.name) === name(target.program));
+    if (found.length === 1) return { pid: found[0].pid };
+    await delay(400, undefined, { signal });
+  }
+  throw Error(
+    'Windows accepted the launch but a unique application window has not appeared. Check the running apps.',
+  );
+}
+
+const taskComposer = (control) =>
+  ['textfield', 'textarea', 'textbox'].includes(control?.role) &&
+  /^(?:prompt|mit codex arbeiten|(?:work with|ask|message|reply to) (?:codex|claude|chatgpt)|(?:nachricht an|frage an) (?:codex|claude|chatgpt)|build anything|describe (?:a|your) task|write (?:a message|your prompt)(?: to claude)?)[.!…\s]*$/i.test(
+    control?.name ?? '',
+  );
+
+const taskButton =
+  /^(?:send(?: message| prompt)?|submit(?: prompt)?|senden|nachricht senden|start task|new (?:chat|thread|task|session)|neue[rn]? (?:chat|thread|aufgabe|sitzung)|code|coding)(?:\s+\((?:ctrl|strg)\s*\+\s*[a-z]\))?$/i;
+const projectThread = /^(?:new (?:thread|chat)|neuer chat) in [\p{L}\p{N} ._()–-]{1,90}$/iu;
+
+async function chatInput(input, taskApp, helper, id, signal) {
+  if (input.ownerChat !== true) return false;
   if (input.op === 'open') return true;
   if (!input.window) return false;
-  if (input.op === 'key')
-    return (
-      Boolean(input.expected && input.expectedFocus && input.noSecureFocus) &&
-      /^(ctrl\+[akf]|backspace|enter|return|esc|escape|tab|shift\+tab|up|down|arrowup|arrowdown)$/i.test(
-        input.keys,
-      )
+  if (input.op === 'key') {
+    if (!input.expected || !input.expectedFocus || !input.noSecureFocus) return false;
+    if (taskApp) {
+      if (!/^(enter|return)$/i.test(input.keys)) return false;
+      const check = await helper.request({
+        op: 'inspect',
+        app: input.app,
+        window: input.window,
+        step: id,
+      });
+      signal.throwIfAborted();
+      return (
+        check.focus === input.expectedFocus &&
+        check.focused?.length === 1 &&
+        taskComposer(check.focused[0])
+      );
+    }
+    return /^(ctrl\+[abfknpsuyz]|backspace|delete|enter|return|esc|escape|(?:shift\+)?tab|(?:ctrl\+|shift\+)?(?:home|end|pageup|pagedown|(?:arrow)?(?:left|right|up|down)))$/i.test(
+      input.keys,
     );
-  if (!input.ref || !input.control || !input.role) return false;
+  }
+  if (!input.ref || !input.control || !input.role || input.role !== input.control.role)
+    return false;
+  if (
+    taskApp &&
+    !taskComposer(input.control) &&
+    !(
+      input.op === 'press' &&
+      ['button', 'tab', 'tabitem'].includes(input.role) &&
+      (taskButton.test(input.control.name) || projectThread.test(input.control.name))
+    )
+  )
+    return false;
   if (input.op === 'focus') return true;
   return Boolean(input.expected) && ['type', 'set_value', 'press', 'select'].includes(input.op);
 }
 
-export function scopedWindowsRequest(helper, application, approve, policy, discordOrders = false) {
+export function scopedWindowsRequest(
+  helper,
+  application,
+  approve,
+  policy,
+  chatOrders = false,
+  registeredApp = registeredTaskApp,
+) {
   const selected = application && name(application);
   const eligible = (value) =>
     typeof value === 'string' &&
@@ -77,13 +158,23 @@ export function scopedWindowsRequest(helper, application, approve, policy, disco
       (typeof input.keys !== 'string' || policy.systemShortcut(input.keys, 'win32'))
     )
       throw Error('System shortcuts are unavailable.');
-    if (
-      changes.has(input.op) &&
-      !(discordOrders && discordChatInput(input)) &&
-      !(await approve(input, signal))
-    )
-      throw Error('The Windows user declined this step.');
+    const taskApp = taskApps.get(name(targets[0]));
+    if (changes.has(input.op)) {
+      const covered = chatOrders && (await chatInput(input, taskApp, helper, id, signal));
+      signal.throwIfAborted();
+      if (!covered && chatOrders && taskApp && input.ownerChat && input.op !== 'screenshot')
+        throw Error(
+          'Use the coding app’s task composer. Handle other controls and permission prompts directly in the app.',
+        );
+      if (!covered && !(await approve(input, signal)))
+        throw Error('The Windows user declined this step.');
+    }
     signal.throwIfAborted();
+    if (chatOrders && taskApp && registeredApp && ['locate', 'open'].includes(input.op)) {
+      const result = await registeredApp(taskApp, input.op, signal, helper);
+      signal.throwIfAborted();
+      if (result) return result;
+    }
     return helper.request({ ...input, step: id, deadline: Date.now() + 45_000 });
   };
 }
@@ -112,21 +203,21 @@ export function windowsSharing({
     current.ssh.kill();
     changed();
   }
-  async function start(config, origin, application, discordOrders = false) {
+  async function start(config, origin, application, chatOrders = false) {
     const choice = generation;
     if (active || (await configuredOrigin()) !== origin) return;
     const policy = await loadPolicy();
     const label = application || 'Windows desktop';
     const confirmation = await dialog.showMessageBox({
       type: 'question',
-      buttons: ['Cancel', discordOrders ? 'Share desktop' : 'Share app'],
+      buttons: ['Cancel', chatOrders ? 'Share desktop' : 'Share app'],
       defaultId: 0,
       cancelId: 0,
       message: label + ' – share with Nod?',
       detail:
         origin +
-        (discordOrders
-          ? '\nNod can read windows of shared apps. During this session, Nod can search, type and send in Discord for requests you give in chat. Stop desktop sharing in the Nod toolbar at any time.'
+        (chatOrders
+          ? '\nFor your direct chat requests, Nod can open, read and operate eligible Windows apps and switch between them. This includes sending messages and submitting coding tasks. Sharing lasts for this session. Stop it in the Nod toolbar at any time.'
           : '\nNod can read the windows of the apps you share. You confirm input and window pictures on this PC. Stop in the Nod menu or disconnect to end sharing.'),
     });
     if (
@@ -223,7 +314,7 @@ export function windowsSharing({
         );
       },
       policy,
-      discordOrders,
+      chatOrders,
     );
     reader.on('line', async (line) => {
       if (active !== current) return;
@@ -269,8 +360,8 @@ export function windowsSharing({
         ssh.stdin.write(JSON.stringify({ id, ...answer }) + '\n');
     });
   }
-  async function choose(wholeDesktop = false, discordOrders = false) {
-    if (active) return discordOrders ? undefined : stop();
+  async function choose(wholeDesktop = false, chatOrders = false) {
+    if (active) return chatOrders ? undefined : stop();
     if (choosing) return;
     choosing = true;
     try {
@@ -283,7 +374,7 @@ export function windowsSharing({
         !/^[a-z0-9][a-z0-9_.-]{0,95}$/i.test(config.container)
       )
         throw Error('Check the server origin, SSH alias and container in paired-windows.json.');
-      if (wholeDesktop) return await start(config, origin, null, discordOrders);
+      if (wholeDesktop) return await start(config, origin, null, chatOrders);
       const policy = await loadPolicy();
       const { apps } = await helper.request({ op: 'apps' });
       const names = [

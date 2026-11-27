@@ -13177,7 +13177,7 @@ test('desktop sharing can switch apps but checks restricted targets on the Windo
   assert.equal(completed.length, 4);
 });
 
-test('chat sharing covers checked Discord inputs only for a direct owner message', async () => {
+test('chat sharing carries a direct owner request across Windows apps', async () => {
   const actions = [];
   let prompts = 0;
   const run = scopedWindowsRequest(
@@ -13215,18 +13215,92 @@ test('chat sharing covers checked Discord inputs only for a direct owner message
     expectedFocus: 'focus-state',
     noSecureFocus: true,
   });
+  await send({ ...target, app: 'Notepad.exe', op: 'set_value', text: 'Fixture summary' });
+  await send({
+    ...target,
+    app: 'Notepad.exe',
+    op: 'key',
+    keys: 'ctrl+s',
+    expectedFocus: 'focus-state',
+    noSecureFocus: true,
+  });
   assert.equal(prompts, 0);
   for (const input of [
     { ...target, op: 'type', ownerChat: false },
     { ...target, op: 'type', expected: '' },
-    { ...target, op: 'type', app: 'Notepad.exe' },
+    { ...target, op: 'type', app: 'Notepad.exe', ownerChat: false },
     { ...target, op: 'key', keys: 'ctrl+shift+i' },
     { ...target, op: 'screenshot' },
   ])
     await assert.rejects(send(input), /declined/);
   assert.equal(prompts, 5);
-  assert.deepEqual(actions, ['open', 'type', 'key']);
+  assert.deepEqual(actions, ['open', 'type', 'key', 'set_value', 'key']);
   signal.abort();
   await assert.rejects(send({ ...target, op: 'press' }));
-  assert.equal(actions.length, 3);
+  assert.equal(actions.length, 5);
+});
+
+test('chat sharing submits coding tasks in the composer and leaves provider approvals to the owner', async () => {
+  const delivered = [];
+  let focused;
+  let activation;
+  const helper = {
+    async request(input) {
+      if (input.op === 'inspect') return { focus: 'bound', focused: [focused] };
+      delivered.push(input.op);
+      return {};
+    },
+  };
+  const run = scopedWindowsRequest(
+    helper,
+    null,
+    async () => assert.fail('Unexpected input confirmation'),
+    pairedAppPolicy,
+    true,
+    async (app, op) => {
+      activation = [app.program, op];
+      return { pid: 42 };
+    },
+  );
+  const signal = new AbortController().signal;
+  const send = (input) => run({ ownerChat: true, ...input }, randomUUID(), signal);
+  for (const [app, label] of [
+    ['Claude.exe', 'Prompt'],
+    ['ChatGPT.exe', 'Mit Codex arbeiten'],
+    ['Cloudroom.exe', 'Build anything...'],
+  ]) {
+    const target = {
+      app,
+      ref: '@abcdef:e1',
+      window: 'w',
+      role: 'textfield',
+      control: { role: 'textfield', name: label },
+      expected: 'state',
+    };
+    await send({ op: 'open', bundle: app === 'ChatGPT.exe' ? 'Codex' : app });
+    assert.deepEqual(activation, [app, 'open']);
+    await send({ ...target, op: 'type', text: 'Add a unit test for date formatting.' });
+    focused = target.control;
+    const enter = {
+      op: 'key',
+      app,
+      window: 'w',
+      keys: 'enter',
+      expected: 'state',
+      expectedFocus: 'bound',
+      noSecureFocus: true,
+    };
+    await send(enter);
+    focused = { role: 'button', name: 'Allow always' };
+    await assert.rejects(send(enter), /task composer/);
+    await assert.rejects(
+      send({ ...target, op: 'press', role: 'button', control: focused }),
+      /task composer/,
+    );
+    await assert.rejects(
+      send({ ...target, op: 'type', control: { role: 'textfield', name: 'Terminal' } }),
+      /task composer/,
+    );
+  }
+  assert.deepEqual(delivered, ['type', 'key', 'type', 'key', 'type', 'key']);
 });

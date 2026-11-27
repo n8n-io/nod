@@ -33,7 +33,9 @@ Save a file named `paired-windows.json` in `%APPDATA%\nod\profiles\local`. Set `
 
 Turn on computer use in server settings. From the Windows Nod tray menu, choose **Share the Windows desktop with the server…** and confirm desktop sharing. Ask in your usual server chat to work across Windows apps. Nod applies its app and system shortcut restrictions on both devices. Confirm inputs and window pictures in the Windows dialog. End sharing from the desktop overlay or choose **Stop sharing the Windows desktop** in the tray. Closing Nod or losing the connection ends the session. A new session needs a new local choice.
 
-In the Windows app toolbar, choose **Share PC** and confirm the server shown in the native dialog. During this session, explicit chat requests can open Discord, search, type and send using its installed app. Nod still checks each action against the request, recipient and current window. Use **Stop sharing PC** to end the session. Other apps, screenshots and work started by a schedule keep their local confirmation.
+In the Windows app toolbar, choose **Share PC** and confirm the server shown in the native dialog once per session. An explicit request in your server chat can span several eligible Windows apps. For example, Nod can take a total from Calculator and enter it in a Notepad document. Opening, typing, selecting controls, and common editing shortcuts use the same session. Nod checks each action against the request and current window. Screenshots, other shortcuts and scheduled work keep their local confirmation. Use **Stop sharing PC** to disconnect.
+
+To delegate coding work, name the app, project and task in your chat. Nod can submit the task through the composer in Claude, Codex or Cloudroom on Windows. Some installations list the Codex desktop app as ChatGPT. Select the intended workspace in the coding app if it is not already open. Review any permission request in that app yourself.
 
 ## Start with a request
 
