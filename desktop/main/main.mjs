@@ -349,6 +349,18 @@ const lifecycle = createDesktopLifecycle({
         dataRoot: profileRoot,
         resourcesPath: engineRoot,
         signal,
+        onEvent: ({ event, error, details }) =>
+          void writeDiagnostic(
+            [
+              event === 'database_restarted'
+                ? 'Database restarted after it stopped.'
+                : 'Database restart failed.',
+              details,
+            ]
+              .filter(Boolean)
+              .join('\n'),
+            { event, ...(error ? { error } : {}) },
+          ).catch(() => {}),
       });
       knownSecrets.add(database.password);
       await writeDiagnostic(`Database opened. ${diagnosticFields({ ms: Date.now() - started })}`, {
@@ -1023,6 +1035,11 @@ function trustedAppURL(value) {
 
 function allowSetup(event) {
   if (!isSetup(event)) throw new Error('This action is unavailable.');
+}
+
+function allowLocalRuntime(event) {
+  if (!isSetup(event) && !(isEngine(event) && !remoteConnection))
+    throw new Error('This action is unavailable.');
 }
 
 async function openExternal(value) {
@@ -3239,10 +3256,10 @@ function replayOnboarding() {
   return status;
 }
 
-async function chooseComputerDirectory() {
+async function chooseComputerDirectory(parent = setupWindow) {
   if (process.platform !== 'win32' || lifecycle.busy || quitting || !status.runtime.needsStorage)
     throw new Error('This setup action is unavailable.');
-  const chosen = await dialog.showOpenDialog(setupWindow, {
+  const chosen = await dialog.showOpenDialog(parent, {
     title: 'Choose a folder for Nod’s private computer',
     buttonLabel: 'Use this folder',
     properties: ['openDirectory', 'createDirectory'],
@@ -3260,9 +3277,9 @@ async function chooseComputerDirectory() {
   return prepare({ retry: true });
 }
 
-async function importRuntime() {
+async function importRuntime(parent = setupWindow) {
   if (lifecycle.busy || quitting) throw new Error('Wait for Nod to finish its current setup step.');
-  const chosen = await dialog.showOpenDialog(setupWindow, {
+  const chosen = await dialog.showOpenDialog(parent, {
     title: 'Choose the Nod Runtime pack',
     buttonLabel: 'Install runtime',
     properties: ['openFile'],
@@ -3285,7 +3302,7 @@ async function importRuntime() {
     return prepare();
   } catch (error) {
     void writeDiagnostic(error.message).catch(() => {});
-    if (onboardingCompleted)
+    if (onboardingCompleted && !engineReady)
       update({
         phase: 'error',
         message: bounded(error.message),
@@ -3809,12 +3826,11 @@ else {
         void lifecycle.warmup().catch(() => {});
       });
       ipcMain.handle('nod:runtime:import', (event) => {
-        allowSetup(event);
-        return importRuntime();
+        allowLocalRuntime(event);
+        return importRuntime(BrowserWindow.fromWebContents(event.sender) ?? setupWindow);
       });
       ipcMain.handle('nod:runtime:install-wsl', async (event) => {
-        if (!isSetup(event) && !(isEngine(event) && !remoteConnection))
-          throw new Error('This action is unavailable.');
+        allowLocalRuntime(event);
         if (process.platform !== 'win32' || lifecycle.busy || quitting || !status.runtime.needsWsl)
           throw new Error('This setup action is unavailable.');
         const parent = BrowserWindow.fromWebContents(event.sender) ?? setupWindow;
@@ -3842,8 +3858,8 @@ else {
         return status;
       });
       ipcMain.handle('nod:runtime:choose-folder', (event) => {
-        allowSetup(event);
-        return chooseComputerDirectory();
+        allowLocalRuntime(event);
+        return chooseComputerDirectory(BrowserWindow.fromWebContents(event.sender) ?? setupWindow);
       });
       ipcMain.handle('nod:chat-read:get', (event, ownerId, threadId) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');

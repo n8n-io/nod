@@ -633,8 +633,7 @@ test('workspace commands wait for the private computer and fail with its reason'
     await assert.rejects(
       execute(refused.session, 'ok'),
       (error: Error & { code?: string }) =>
-        error.code === 'NOD_WSL_REQUIRED' &&
-        error.message === 'Nod’s private computer is unavailable. WSL 2 is not installed.',
+        error.code === 'NOD_WSL_REQUIRED' && error.message.includes('WSL 2 is not installed.'),
     );
     assert.equal(refused.launches.length, 0);
   } finally {

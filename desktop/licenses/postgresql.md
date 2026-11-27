@@ -34,3 +34,9 @@ OpenSSL (Apache License 2.0 or OpenSSL License), libxml2 (MIT), zlib (zlib Licen
 (BSD 2-Clause), Zstandard (BSD), XZ Utils (public domain and 0BSD), MIT Kerberos (MIT),
 libedit (BSD), OSSP uuid (MIT-style), and GNU libiconv and gettext runtime (LGPL 2.1 or later,
 dynamically linked).
+
+The LGPL 2.1 text is at https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html. You may replace
+the libiconv and gettext libraries in the `lib` folder with your own builds. Their source is at
+https://ftp.gnu.org/gnu/libiconv/ and https://ftp.gnu.org/gnu/gettext/. To get the exact source of
+the versions Nod ships, open an issue at https://github.com/n8n-io/nod/issues for at least three
+years after Nod stops shipping them.

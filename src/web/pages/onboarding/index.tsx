@@ -279,7 +279,9 @@ export function Onboarding({
     retry();
   }
 
-  if (finishing && completionFailed) {
+  if (finishing && !completionFailed) return <SetupProgress title="Getting ready…" />;
+
+  if (finishing) {
     return (
       <SetupProgress
         title="Setup needs another try."

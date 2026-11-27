@@ -17,6 +17,8 @@ type LocalRuntime = {
   subscribeStatus(listener: (status: DesktopStatus) => void): () => void;
   prepare(options?: { retry: boolean }): Promise<DesktopStatus>;
   installWsl?(): Promise<DesktopStatus>;
+  importRuntime?(): Promise<DesktopStatus>;
+  chooseComputerDirectory?(): Promise<DesktopStatus>;
   setup(): Promise<LocalSetup>;
   completePreferences(): Promise<LocalSetup>;
   reconcileSetup(): Promise<void>;
@@ -42,6 +44,8 @@ export type DesktopStatus = {
     progress?: number;
     secondsLeft?: number;
     needsWsl?: boolean;
+    needsStorage?: boolean;
+    needsRuntimeArchive?: boolean;
   };
 };
 
@@ -102,6 +106,9 @@ type DesktopWindow = Window & {
     downloadUpdate?(): Promise<void>;
     restartUpdate?(): Promise<void>;
     prepare?(options?: { retry: boolean }): Promise<DesktopStatus>;
+    installWsl?(): Promise<DesktopStatus>;
+    importRuntime?(): Promise<DesktopStatus>;
+    chooseComputerDirectory?(): Promise<DesktopStatus>;
     savePreferences?(input: DesktopSettingsChange): Promise<DesktopSettings>;
     saveSettings(
       input:
@@ -162,6 +169,9 @@ export function clientPlatform(): ClientPlatform {
         if (!bridge.prepare) throw new Error('Restart Nod to try setting up your workspace again.');
         return bridge.prepare(options);
       },
+      installWsl: bridge.installWsl,
+      importRuntime: bridge.importRuntime,
+      chooseComputerDirectory: bridge.chooseComputerDirectory,
       setup: async () => ({
         preferenceStep: (await bridge.getSettings()).onboardingPreferenceStep ?? 'launchAtLogin',
       }),
@@ -367,11 +377,15 @@ export function retryDesktopComputer() {
   return localRuntime().prepare({ retry: true });
 }
 
-export function installDesktopWsl() {
-  const install = localRuntime().installWsl;
-  if (!install) return Promise.reject(new Error('Update Nod to install WSL from here.'));
-  return install();
+function runtimeAction(name: 'installWsl' | 'importRuntime' | 'chooseComputerDirectory') {
+  const action = localRuntime()[name];
+  if (!action) return Promise.reject(new Error('Update Nod to do this from here.'));
+  return action();
 }
+
+export const installDesktopWsl = () => runtimeAction('installWsl');
+export const importDesktopRuntime = () => runtimeAction('importRuntime');
+export const chooseDesktopComputerFolder = () => runtimeAction('chooseComputerDirectory');
 
 export function desktopFilesAvailable() {
   return (

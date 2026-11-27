@@ -393,7 +393,9 @@ if (process.env.WORKSPACE_CONTAINER) {
         '-Command',
         `Remove-Item -LiteralPath '${otherRegistration}' -Recurse -Force -ErrorAction SilentlyContinue`,
       ]);
-      await database?.close();
+      await database
+        ?.close()
+        .catch((error) => console.log(`The test database did not stop: ${error.message}`));
       console.log('Stopping the test computer.');
       await runtime.stopWindowsRuntime({ dataRoot: profile });
       const saved = await readFile(join(profile, 'desktop-runtime/state.json'), 'utf8')
@@ -414,7 +416,9 @@ if (process.env.WORKSPACE_CONTAINER) {
   console.log(JSON.stringify(receipt));
 } finally {
   console.log('Removing the test installation.');
-  await rm(installation, { recursive: true, force: true });
+  await rm(installation, { recursive: true, force: true }).catch((error) =>
+    console.log(`The test installation was not removed: ${error.message}`),
+  );
   await rm(foreign, { recursive: true, force: true });
   await rm(alone, { recursive: true, force: true });
 }

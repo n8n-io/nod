@@ -205,9 +205,10 @@ export function createCommandWorkspace(options: {
     if (result.exitCode) throw new Error('The workspace file operation failed.');
     return result;
   }
+  const available = () => !disposed && !unavailable && options.available?.() !== false;
   return {
     connectedCliAvailable: Boolean(options.runConnectedCommand),
-    available: options.available,
+    available,
     dispose: async () => {
       disposed = true;
       lifecycle.abort();
@@ -292,7 +293,7 @@ export function createCommandWorkspace(options: {
       return {
         path: `/workspace/${id}`,
         instructions: options.instructions,
-        available: options.available,
+        available,
         async exec(script, { input: stdin, signal, timeoutMs = 600_000, onData, notices } = {}) {
           const result = await command(
             id,

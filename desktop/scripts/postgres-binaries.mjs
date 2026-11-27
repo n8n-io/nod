@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
   cp,
-  stat,
   mkdir,
   mkdtemp,
   readdir,
@@ -73,12 +72,21 @@ async function download(build, cacheDir) {
   const cached = join(cacheDir, file);
   const saved = await readFile(cached).catch(() => undefined);
   if (saved && sha256(saved) === build.sha256) return saved;
-  const response = await fetch(
-    `https://repo1.maven.org/maven2/io/zonky/test/postgres/${build.artifact}/${postgresVersion}/${file}`,
-    { redirect: 'error', signal: AbortSignal.timeout(600_000) },
-  );
-  if (!response.ok) throw new Error(`PostgreSQL download failed with HTTP ${response.status}.`);
-  const bytes = Buffer.from(await response.arrayBuffer());
+  const url = `https://repo1.maven.org/maven2/io/zonky/test/postgres/${build.artifact}/${postgresVersion}/${file}`;
+  let bytes;
+  for (let attempt = 1; !bytes; attempt++) {
+    try {
+      const response = await fetch(url, {
+        redirect: 'error',
+        signal: AbortSignal.timeout(600_000),
+      });
+      if (!response.ok) throw new Error(`PostgreSQL download failed with HTTP ${response.status}.`);
+      bytes = Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      if (attempt === 3) throw error;
+      await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+    }
+  }
   if (sha256(bytes) !== build.sha256)
     throw new Error('The PostgreSQL download does not match its checksum.');
   await mkdir(cacheDir, { recursive: true });
@@ -145,6 +153,7 @@ export async function copyPostgres({
       join(dirname(fileURLToPath(import.meta.url)), '..', 'licenses', 'postgresql.md'),
       join(output, 'LICENSE.md'),
     );
+    await writeFile(join(output, 'VERSION'), `${postgresVersion} ${build.sha256}\n`);
   } finally {
     await rm(work, { recursive: true, force: true });
   }
@@ -153,11 +162,7 @@ export async function copyPostgres({
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-  const binary = join(
-    root,
-    'postgres',
-    'bin',
-    process.platform === 'win32' ? 'postgres.exe' : 'postgres',
-  );
-  if (!(await stat(binary).catch(() => undefined))) await copyPostgres({ target: root });
+  const build = builds[`${process.platform}-${process.arch}`];
+  const current = await readFile(join(root, 'postgres', 'VERSION'), 'utf8').catch(() => '');
+  if (current !== `${postgresVersion} ${build?.sha256}\n`) await copyPostgres({ target: root });
 }

@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Button } from './ui';
 import {
+  chooseDesktopComputerFolder,
   desktopStatus,
+  importDesktopRuntime,
   installDesktopWsl,
   retryDesktopComputer,
   subscribeDesktopStatus,
@@ -32,6 +34,14 @@ export function ComputerNotice() {
   const message = runtime?.message ?? '';
   if (status?.phase !== 'ready' || runtime?.phase !== 'error' || dismissed === message) return null;
 
+  const [label, action] = runtime.needsWsl
+    ? ['Install WSL', installDesktopWsl]
+    : runtime.needsStorage
+      ? ['Choose folder', chooseDesktopComputerFolder]
+      : runtime.needsRuntimeArchive
+        ? ['Choose Runtime pack', importDesktopRuntime]
+        : ['Try again', retryDesktopComputer];
+
   const act = (action: () => Promise<unknown>) => {
     setBusy(true);
     setFailed(undefined);
@@ -48,13 +58,8 @@ export function ComputerNotice() {
         <p>Chat, your apps and schedules keep working.</p>
         {failed && <p role="alert">{failed}</p>}
         <div className="desktop-update-toast-actions">
-          <Button
-            type="button"
-            size="sm"
-            disabled={busy}
-            onClick={() => act(runtime.needsWsl ? installDesktopWsl : retryDesktopComputer)}
-          >
-            {busy ? 'Please wait…' : runtime.needsWsl ? 'Install WSL' : 'Try again'}
+          <Button type="button" size="sm" disabled={busy} onClick={() => act(action)}>
+            {busy ? 'Please wait…' : label}
           </Button>
           <Button
             type="button"

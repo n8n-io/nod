@@ -206,7 +206,10 @@ function withFolders(session: WorkspaceSession, path: string, folders: string[])
     (created ??= session
       .exec(`mkdir -p -- ${folders.map((folder) => `'${folder}'`).join(' ')}`, { signal })
       .then((result) => {
-        if (result.exitCode) throw new Error('The working folder could not be created.');
+        if (result.exitCode)
+          throw new Error(
+            `The working folder ${folders.join(', ')} could not be created (exit code ${result.exitCode}).`,
+          );
       })
       .catch((error) => {
         created = undefined;

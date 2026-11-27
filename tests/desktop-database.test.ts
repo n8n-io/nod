@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -61,23 +61,29 @@ test(
   { skip: !url },
   async (t) => {
     const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
-    const [source, target, busy] = ['from', 'to', 'busy'].map((name) => `move_${name}_${suffix}`);
+    const names = ['from', 'to', 'busy', 'broken'].map((name) => `move_${name}_${suffix}`);
+    const [source, target, busy, broken] = names;
     const admin = new pg.Client({ connectionString: url });
-    await admin.connect();
-    for (const name of [source, target, busy]) await admin.query(`CREATE DATABASE ${name}`);
     const clients: pg.Client[] = [];
+    t.after(async () => {
+      await Promise.all(clients.map((client) => client.end()));
+      for (const name of names) await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+      await admin.end();
+    });
+    await admin.connect();
+    for (const name of names) await admin.query(`CREATE DATABASE ${name}`);
     const open = async (name: string) => {
       const client = new pg.Client({ connectionString: databaseUrl(name) });
       await client.connect();
       clients.push(client);
       return client;
     };
-    t.after(async () => {
-      await Promise.all(clients.map((client) => client.end()));
-      for (const name of [source, target, busy])
-        await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
-      await admin.end();
-    });
+    const tables = async (client: pg.Client) =>
+      (
+        await client.query(
+          "SELECT tablename FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema')",
+        )
+      ).rows;
     const original = await open(source);
     await original.query(pre.replace(/^\\(?:un)?restrict .+$/gm, ''));
     await original.query(post);
@@ -119,6 +125,13 @@ test(
       moved.query('INSERT INTO jobs.queue (thread_id) VALUES (999)'),
       /queue_thread/,
     );
+    await assert.rejects(
+      moved.query(
+        "INSERT INTO public.threads (id, title, at) OVERRIDING SYSTEM VALUE VALUES (1, 'twin', now())",
+      ),
+      /threads_pkey/,
+    );
+    await assert.rejects(moved.query('INSERT INTO public.threads (at) VALUES (now())'), /not-null/);
 
     const current = (await moved.query(snapshot)).rows[0];
     await moveDatabase({ source: databaseUrl(source), target: databaseUrl(target), schema });
@@ -130,14 +143,17 @@ test(
       moveDatabase({ source: databaseUrl(source), target: databaseUrl(busy), schema }),
       /already exists/,
     );
-    assert.deepEqual(
-      (
-        await occupied.query(
-          "SELECT tablename FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema')",
-        )
-      ).rows,
-      [],
+    assert.deepEqual(await tables(occupied), []);
+
+    await assert.rejects(
+      moveDatabase({
+        source: databaseUrl(source),
+        target: databaseUrl(broken),
+        schema: async (section) => (section === 'pre-data' ? pre : `${post}\nSELECT missing();`),
+      }),
+      /missing/,
     );
+    assert.deepEqual(await tables(await open(broken)), []);
   },
 );
 
@@ -145,13 +161,24 @@ test(
   'the host database restarts after a crash, quits cleanly and keeps its data',
   { skip: !existsSync(binaries) },
   async (t) => {
-    const root = await mkdtemp(join(tmpdir(), 'nod-host-database-'));
-    t.after(() => rm(root, { recursive: true, force: true }));
+    const root = await mkdtemp(join(tmpdir(), 'nod-host-database-ü-'));
+    const opened: HostDatabase[] = [];
+    let pool: pg.Pool | undefined;
+    t.after(async () => {
+      await pool?.end().catch(() => {});
+      for (const database of opened.reverse()) await database.close().catch(() => {});
+      await rm(root, { recursive: true, force: true });
+    });
+    const open = async () => {
+      const database = await openDatabase({ dataRoot: root, resourcesPath: process.cwd() });
+      opened.push(database);
+      return database;
+    };
     const postmaster = () =>
       Number(readFileSync(join(root, 'database', 'data', 'postmaster.pid'), 'utf8').split('\n')[0]);
-    const database = await openDatabase({ dataRoot: root, resourcesPath: process.cwd() });
+    const database = await open();
     assert.equal(database.pendingMove, false);
-    const pool = new pg.Pool({ connectionString: database.url, max: 2 });
+    pool = new pg.Pool({ connectionString: database.url, max: 2 });
     pool.on('error', () => {});
     await pool.query('CREATE TABLE synthetic (value text)');
     await pool.query("INSERT INTO synthetic VALUES ('kept')");
@@ -167,14 +194,18 @@ test(
     }
     assert.equal(value, 'kept');
     assert.notEqual(postmaster(), crashed);
-    await pool.end();
     process.kill(postmaster(), 'SIGKILL');
     await database.close();
-    const reopened = await openDatabase({ dataRoot: root, resourcesPath: process.cwd() });
+    const lock = join(root, 'database', 'data', 'postmaster.pid');
+    const lines = readFileSync(lock, 'utf8').split('\n');
+    lines[0] = String(process.pid);
+    writeFileSync(lock, lines.join('\n'));
+    const reopening = Date.now();
+    const reopened = await open();
+    assert.ok(Date.now() - reopening < 15_000);
     const client = new pg.Client({ connectionString: reopened.url });
     await client.connect();
     assert.equal((await client.query('SELECT value FROM synthetic')).rows[0].value, 'kept');
     await client.end();
-    await reopened.close();
   },
 );

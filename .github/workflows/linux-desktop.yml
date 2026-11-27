@@ -30,6 +30,8 @@ on:
       - 'desktop/scripts/release-tools.mjs'
       - 'desktop/scripts/runtime-build-lock.json'
       - 'desktop/runtime/assets.mjs'
+      - 'desktop/runtime/database.mjs'
+      - 'desktop/scripts/postgres-binaries.mjs'
       - 'desktop/test/*linux*.test.mjs'
       - 'desktop/test/runtime-assets.test.mjs'
 

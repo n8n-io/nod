@@ -29,7 +29,7 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, join, posix, relative, resolve } from 'node:path';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
-import { createDesktopLifecycle } from '../main/lifecycle.mjs';
+import { createDesktopLifecycle, startupErrorDetails } from '../main/lifecycle.mjs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { create } from 'tar';
@@ -5360,8 +5360,10 @@ test('the computer starts without PostgreSQL unless a data move is pending, and 
       if (outcome === 'move-failed') {
         assert.equal(error.code, 'NOD_DATABASE_MOVE_FAILED');
         assert.match(error.details, /Synthetic dump failure/);
-        assert.equal(JSON.stringify(error).includes('synthetic-host-password'), false);
-        assert.equal(JSON.stringify(error).includes('synthetic-old-password'), false);
+        assert.doesNotMatch(
+          startupErrorDetails(error),
+          /synthetic-host-password|synthetic-old-password/,
+        );
         assert.equal(database.pendingMove, true);
         assert.equal(runs(names.postgres), 1);
         assert.equal(runs(names.workspace), 0);

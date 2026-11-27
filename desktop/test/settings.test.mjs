@@ -954,6 +954,7 @@ async function runningDesktop(
       },
     },
     BrowserWindow: class extends EventEmitter {
+      static fromWebContents() {}
       constructor(options = {}) {
         super();
         this.sent = [];

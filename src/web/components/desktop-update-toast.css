@@ -1,11 +1,19 @@
 .desktop-toasts {
+  --toast-top: calc(var(--page-top) + var(--shell-heading-height) + 16px);
   position: fixed;
   z-index: 40;
-  top: calc(var(--page-top) + var(--shell-heading-height) + 16px);
+  top: var(--toast-top);
   right: 24px;
   display: grid;
   gap: 12px;
   justify-items: end;
+  max-height: calc(100dvh - var(--toast-top) - 16px);
+  overflow-y: auto;
+}
+:root[data-desktop='true'] .desktop-toasts {
+  --toast-top: calc(
+    var(--desktop-titlebar-height) + var(--page-top) + var(--shell-heading-height) + 16px
+  );
 }
 .desktop-toasts:empty {
   display: none;
@@ -14,8 +22,7 @@
   display: flex;
   gap: 12px;
   width: min(360px, calc(100vw - 32px));
-  max-height: calc(50dvh - 30px);
-  overflow-y: auto;
+
   padding: 16px;
   border: 1px solid var(--border);
   border-radius: var(--card-radius);

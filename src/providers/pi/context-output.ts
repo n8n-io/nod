@@ -51,7 +51,7 @@ export function createContextOutput(workspace: WorkspaceSession, ownerHeader?: s
         preview,
         ...ending,
         message:
-          'Nod’s workspace is still starting, so only this preview of the full content is kept.',
+          'Nod’s workspace is unavailable right now, so only this preview of the full content is kept.',
       });
     let file = files.get(key);
     if (!file) {

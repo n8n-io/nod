@@ -844,7 +844,6 @@ async function moveComputerDatabase({
     throw Object.assign(
       new Error(
         'Nod could not move your saved data out of its private computer. Your data is unchanged. Quit Nod and open it again.',
-        { cause },
       ),
       {
         code: 'NOD_DATABASE_MOVE_FAILED',

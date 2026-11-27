@@ -1,8 +1,10 @@
+import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import {
   access,
   appendFile,
   mkdir,
+  open,
   readdir,
   readFile,
   rename,
@@ -13,6 +15,7 @@ import {
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import { availablePort, execute } from './index.mjs';
 
 const stateVersion = 1;
@@ -108,10 +111,9 @@ async function nativePath(path) {
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      '& { param($path) (New-Object -ComObject Scripting.FileSystemObject).GetFolder($path).ShortPath }',
-      path,
+      '(New-Object -ComObject Scripting.FileSystemObject).GetFolder($env:NOD_LONG_PATH).ShortPath',
     ],
-    { env, timeout: 60_000 },
+    { env: { ...env, NOD_LONG_PATH: path }, timeout: 60_000 },
   ).catch(() => '');
   return /^[\x20-\x7e]+$/.test(short) ? short : path;
 }
@@ -135,38 +137,55 @@ async function connect(port, password, database) {
   return client;
 }
 
-async function stopLeftover({ data, password, pgCtl, env, signal }) {
+function alive(pid) {
+  if (!Number.isSafeInteger(pid) || pid < 1) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+}
+
+async function lockOwner(data) {
   const lock = await readFile(join(data, 'postmaster.pid'), 'utf8').catch(() => undefined);
-  if (lock === undefined) return;
-  const port = Number(lock.split('\n')[3]);
-  const client = Number.isSafeInteger(port)
-    ? await connect(port, password, 'postgres').catch(() => undefined)
-    : undefined;
-  if (client) {
-    const directory = await client
-      .query("SELECT current_setting('data_directory') AS value")
-      .then(
-        (result) => result.rows[0].value,
-        () => undefined,
-      )
-      .finally(() => client.end().catch(() => {}));
-    if (directory && resolve(directory).toLowerCase() === resolve(data).toLowerCase()) {
-      await execute(
-        pgCtl,
-        ['stop', '--pgdata', data, '--mode', 'fast', '--wait', '--timeout', '60'],
-        {
-          env,
-          signal,
-          timeout: 90_000,
-        },
-      );
-      return;
+  if (lock === undefined) return undefined;
+  const lines = lock.split('\n');
+  return { pid: Number(lines[0]), port: Number(lines[3]) };
+}
+
+async function stopLeftover({ data, password, pgCtl, env, signal }) {
+  const lock = await lockOwner(data);
+  if (!lock) return;
+  for (let attempt = 0; alive(lock.pid) && attempt < 30; attempt++) {
+    const client = await connect(lock.port, password, 'postgres').catch((error) => {
+      if (error.code !== '57P03') return null;
+    });
+    if (client === null) break;
+    if (client) {
+      const directory = await client
+        .query("SELECT current_setting('data_directory') AS value")
+        .then(
+          (result) => result.rows[0].value,
+          () => undefined,
+        )
+        .finally(() => client.end().catch(() => {}));
+      if (directory && resolve(directory).toLowerCase() === resolve(data).toLowerCase()) {
+        await execute(
+          pgCtl,
+          ['stop', '--pgdata', data, '--mode', 'fast', '--wait', '--timeout', '60'],
+          { env, signal, timeout: 90_000 },
+        );
+        return;
+      }
+      break;
     }
+    await delay(1000, undefined, { signal });
   }
   await rm(join(data, 'postmaster.pid'), { force: true });
 }
 
-export async function openDatabase({ dataRoot, resourcesPath, signal }) {
+export async function openDatabase({ dataRoot, resourcesPath, signal, onEvent }) {
   const root = join(resolve(dataRoot), 'database');
   const statePath = join(root, 'state.json');
   const env = toolEnvironment();
@@ -236,38 +255,51 @@ export async function openDatabase({ dataRoot, resourcesPath, signal }) {
   }
   await stopLeftover({ data, password: state.password, pgCtl, env, signal }).catch(() => {});
   let port;
-  const start = (abort) =>
-    execute(
-      pgCtl,
-      [
-        'start',
-        '--pgdata',
-        data,
-        '--log',
-        log,
-        '--wait',
-        '--timeout',
-        '300',
-        '--options',
-        `-p ${port}`,
-      ],
-      { env, signal: abort, timeout: 330_000 },
-    );
-  const running = async () => {
-    const pid = Number(
-      (await readFile(join(data, 'postmaster.pid'), 'utf8').catch(() => '')).split('\n')[0],
-    );
-    if (!Number.isSafeInteger(pid) || pid < 1) return false;
+  const start = async (abort) => {
+    abort?.throwIfAborted();
+    await rm(log, { force: true }).catch(() => {});
+    const output = await open(`${log}.start`, 'w');
     try {
-      process.kill(pid, 0);
-      return true;
-    } catch (error) {
-      return error.code === 'EPERM';
+      const code = await new Promise((resolveStart, reject) => {
+        const child = spawn(
+          pgCtl,
+          [
+            'start',
+            '--pgdata',
+            data,
+            '--log',
+            log,
+            '--wait',
+            '--timeout',
+            '300',
+            '--options',
+            `-p ${port}`,
+          ],
+          { env, stdio: ['ignore', output.fd, output.fd], windowsHide: true },
+        );
+        const stop = () => child.kill();
+        const timer = setTimeout(stop, 330_000);
+        abort?.addEventListener('abort', stop, { once: true });
+        child.once('error', reject);
+        child.once('exit', (exitCode) => {
+          clearTimeout(timer);
+          abort?.removeEventListener('abort', stop);
+          resolveStart(exitCode);
+        });
+      });
+      abort?.throwIfAborted();
+      if (code !== 0)
+        throw Object.assign(new Error(`pg_ctl start failed (${code ?? 'stopped'}).`), {
+          exitCode: code,
+          details: (await readFile(`${log}.start`, 'utf8').catch(() => '')).slice(-4000),
+        });
+    } finally {
+      await output.close();
     }
   };
+  const running = async () => alive((await lockOwner(data))?.pid);
   for (let attempt = 1; ; attempt++) {
     port = await availablePort();
-    await rm(log, { force: true });
     try {
       await start(signal);
       break;
@@ -289,18 +321,29 @@ export async function openDatabase({ dataRoot, resourcesPath, signal }) {
   }
   let closing = false;
   let restarting;
+  let restart;
   const watchdog = setInterval(() => {
     restarting ??= running()
-      .then((up) => (up || closing ? undefined : start()))
-      .catch(() => {})
+      .then(async (up) => {
+        if (up || closing) return;
+        restart = new AbortController();
+        await start(restart.signal);
+        onEvent?.({ event: 'database_restarted' });
+      })
+      .catch(async (error) => {
+        if (!closing)
+          onEvent?.({ event: 'database_restart_failed', error, details: await logTail(log) });
+      })
       .finally(() => {
         restarting = undefined;
+        restart = undefined;
       });
   }, 5000);
   watchdog.unref?.();
   const close = async () => {
     closing = true;
     clearInterval(watchdog);
+    restart?.abort();
     await restarting;
     try {
       await execute(
@@ -398,15 +441,20 @@ export async function moveDatabase({ source, target, schema, signal }) {
         }
         const sequences = (
           await legacy.query(`
-            SELECT format('%I.%I', schemaname, sequencename) AS name, last_value::text AS value
+            SELECT format('%I.%I', schemaname, sequencename) AS name
             FROM pg_sequences
-            WHERE last_value IS NOT NULL AND schemaname NOT IN ('pg_catalog', 'information_schema')`)
+            WHERE schemaname NOT IN ('pg_catalog', 'information_schema')`)
         ).rows;
-        for (const { name, value } of sequences)
-          await host.query('SELECT pg_catalog.setval($1::regclass, $2::bigint, true)', [
+        for (const { name } of sequences) {
+          const sequence = (
+            await legacy.query(`SELECT last_value::text AS value, is_called FROM ${name}`)
+          ).rows[0];
+          await host.query('SELECT pg_catalog.setval($1::regclass, $2::bigint, $3)', [
             name,
-            value,
+            sequence.value,
+            sequence.is_called,
           ]);
+        }
         await host.query(post.replace(restrictLine, ''));
         await host.query('COMMIT');
       } catch (error) {

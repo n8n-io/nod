@@ -314,32 +314,29 @@ test(
         }
         assert.equal(handled.mock.callCount(), 0);
       });
-      await t.test(
-        'one backend serves setup and runs turns while the computer starts',
-        async () => {
-          const session = await application.app.inject({
-            method: 'GET',
-            url: '/api/session',
-            headers,
-          });
-          assert.equal(session.statusCode, 200);
-          const choice = await application.app.inject({
-            method: 'PATCH',
-            url: '/api/account',
-            headers,
-            payload: { usageData: false },
-          });
-          assert.equal(choice.statusCode, 200);
-          const turn = await send({ text: 'Synthetic runtime startup probe.' });
-          await settle(turn, 'succeeded');
-          assert.ok(contexts.length > 0);
-          assert.equal(
-            (await application.app.inject({ method: 'GET', url: '/api/session', headers })).json()
-              .user.id,
-            session.json().user.id,
-          );
-        },
-      );
+      await t.test('one backend serves setup and runs turns', async () => {
+        const session = await application.app.inject({
+          method: 'GET',
+          url: '/api/session',
+          headers,
+        });
+        assert.equal(session.statusCode, 200);
+        const choice = await application.app.inject({
+          method: 'PATCH',
+          url: '/api/account',
+          headers,
+          payload: { usageData: false },
+        });
+        assert.equal(choice.statusCode, 200);
+        const turn = await send({ text: 'Synthetic runtime startup probe.' });
+        await settle(turn, 'succeeded');
+        assert.ok(contexts.length > 0);
+        assert.equal(
+          (await application.app.inject({ method: 'GET', url: '/api/session', headers })).json()
+            .user.id,
+          session.json().user.id,
+        );
+      });
       const assertSilent = async (
         turnId: string,
         finalText = 'Synthetic memory request handled.',

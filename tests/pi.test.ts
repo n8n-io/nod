@@ -867,7 +867,7 @@ test('small Pi sessions save full output and keep nested results available to sc
   await session.dispose();
 });
 
-test('an oversized result keeps an inline preview while the workspace is still starting', async () => {
+test('an oversized result keeps an inline preview while the workspace is unavailable', async () => {
   const { createContextOutput } = await import('../src/providers/pi/context-output.ts');
   let commands = 0;
   const output = createContextOutput({
@@ -886,7 +886,7 @@ test('an oversized result keeps an inline preview while the workspace is still s
   assert.equal(saved.characters, full.length);
   assert.ok(saved.preview.startsWith('synthetic result line'));
   assert.ok(saved.tail.endsWith('synthetic last line'));
-  assert.match(saved.message, /still starting/);
+  assert.match(saved.message, /unavailable/);
 });
 
 test('direct image results save over-budget images in the workspace', async (t) => {

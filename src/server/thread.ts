@@ -2469,7 +2469,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         result,
         async (text) => {
           if (dependencies.workspaceAvailable?.() === false)
-            throw new Error('Nod’s workspace is still starting');
+            throw new Error('Nod’s workspace is unavailable right now');
           return workspaceReference(
             await stage(
               randomUUID(),
