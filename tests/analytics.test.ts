@@ -356,10 +356,12 @@ assert.equal(captured[2].properties.server_connection_telemetry_available,true);
 assert.equal(captured[2].uuid,'00000000-0000-4000-8000-000000000006');
 const beforeLoginItem=captured.length;
 captureAnalytics('login_item_observed',{login_item:'registered'});
+captureAnalytics('login_item_observed',{login_item:'failed'});
 captureAnalytics('login_item_observed',{login_item:'/Users/private-name'});
 const loginItems=captured.slice(beforeLoginItem).filter(event=>event.event==='login_item_observed');
-assert.equal(loginItems.length,1);
+assert.equal(loginItems.length,2);
 assert.equal(loginItems[0].properties.login_item,'registered');
+assert.equal(loginItems[1].properties.login_item,'failed');
 assert.equal(JSON.stringify(captured.slice(beforeLoginItem)).includes('private-name'),false);
 configureAnalytics(undefined,'desktop');dom.window.close();
 `,

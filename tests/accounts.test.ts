@@ -786,6 +786,136 @@ test('Join sends fixed answers only with a matching confirmed share', async (t) 
   assert.equal(completed, 4);
 });
 
+test('the desktop preferences step shows a login-item notice only on failure and reaches onReady either way', async (t) => {
+  const { JSDOM } = await import('jsdom');
+  const { act, createElement } = await import('react');
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    url: 'https://nod.example.test/onboarding',
+  });
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    Element: dom.window.Element,
+    Node: dom.window.Node,
+    Event: dom.window.Event,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const originals = new Map(
+    Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const { createRoot } = await import('react-dom/client');
+  let root = createRoot(dom.window.document.getElementById('root')!);
+  const { setAnalyticsClient, configureAnalytics } = await import('../src/web/lib/analytics.ts');
+  const { setRequestAccount } = await import('../src/web/lib/api.ts');
+  const { onboardingSteps } = await import('../src/shared/onboarding.ts');
+  type AnalyticsCapture = { event: string; properties: Record<string, unknown> };
+  function isAnalyticsCapture(value: unknown): value is AnalyticsCapture {
+    return typeof value === 'object' && value !== null && 'event' in value && 'properties' in value;
+  }
+  const captured: AnalyticsCapture[] = [];
+  let beforeSend: ((result: AnalyticsCapture) => unknown) | undefined;
+  const mockClient = {
+    init(
+      _key: string,
+      options: { loaded?(): void; before_send(result: AnalyticsCapture): unknown },
+    ) {
+      beforeSend = options.before_send;
+      options.loaded?.();
+    },
+    capture(event: string, properties: Record<string, unknown> = {}) {
+      const sent = beforeSend!({ event, properties });
+      if (isAnalyticsCapture(sent)) captured.push(sent);
+    },
+    reset() {},
+    set_config() {},
+    stopSessionRecording() {},
+    startSessionRecording() {},
+  };
+  const analyticsClient = mockClient as unknown as Parameters<typeof setAnalyticsClient>[0];
+  setRequestAccount('desktop-preferences-owner');
+  setAnalyticsClient(analyticsClient);
+  configureAnalytics(
+    { enabled: true, distinctId: 'local:desktop-preferences-owner', environment: 'development' },
+    'desktop',
+  );
+  t.after(async () => {
+    configureAnalytics(undefined);
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, value] of originals)
+      if (value) Object.defineProperty(globalThis, key, value);
+      else Reflect.deleteProperty(globalThis, key);
+  });
+  const { DesktopPreferencesSetup } =
+    await import('../src/web/pages/onboarding/steps/desktop-preferences.tsx');
+  let ready = 0;
+  let saveSettings: () => Promise<{
+    onboardingPreferenceStep: string;
+    launchAtLogin: boolean;
+    loginItemError?: string;
+  }>;
+  Reflect.set(dom.window, 'nodDesktop', {
+    getSettings: async () => ({ onboardingPreferenceStep: 'launchAtLogin' }),
+    saveSettings: async () => saveSettings(),
+  });
+  const mount = async () => {
+    await act(async () => root.unmount());
+    root = createRoot(dom.window.document.getElementById('root')!);
+    await act(async () =>
+      root.render(
+        createElement(DesktopPreferencesSetup, {
+          onReady: () => ready++,
+          steps: onboardingSteps,
+        }),
+      ),
+    );
+  };
+  saveSettings = async () => ({ onboardingPreferenceStep: 'complete', launchAtLogin: true });
+  await mount();
+  await act(async () => {});
+  assert.equal(ready, 1);
+  assert.equal(dom.window.document.querySelector('.notice'), null);
+  assert.deepEqual(
+    captured
+      .filter((event) => event.event === 'login_item_observed')
+      .map((event) => event.properties.login_item),
+    ['registered'],
+  );
+  captured.length = 0;
+  saveSettings = async () => ({
+    onboardingPreferenceStep: 'complete',
+    launchAtLogin: false,
+    loginItemError: 'Open at login needs the Flatpak or the RPM package.',
+  });
+  await mount();
+  await act(async () => {});
+  assert.equal(ready, 1);
+  const notice = dom.window.document.querySelector('.notice-info');
+  assert.ok(notice);
+  assert.match(notice!.textContent ?? '', /Open at login needs the Flatpak or the RPM package\./);
+  assert.deepEqual(
+    captured
+      .filter((event) => event.event === 'login_item_observed')
+      .map((event) => event.properties.login_item),
+    ['failed'],
+  );
+  const continueButton = Array.from(
+    dom.window.document.querySelectorAll<HTMLButtonElement>('.notice button'),
+  ).find((button) => button.textContent === 'Continue');
+  assert.ok(continueButton);
+  await act(async () => continueButton!.click());
+  assert.equal(ready, 2);
+  await mount();
+  await act(async () => {});
+  const dismiss = dom.window.document.querySelector<HTMLButtonElement>('.notice-dismiss');
+  assert.ok(dismiss);
+  await act(async () => dismiss!.click());
+  assert.equal(ready, 3);
+});
+
 test('decision catalog filters native text decisions, expires and refuses failed lookups', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 1_000 });
   let calls = 0;

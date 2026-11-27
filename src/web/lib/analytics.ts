@@ -26,10 +26,10 @@ type AnalyticsEvents = {
   app_opened: {
     entry: 'native_setup' | 'app_ui';
     server_connection_telemetry_available?: true;
-    login_item?: 'registered' | 'not_registered' | 'unknown';
+    login_item?: 'registered' | 'not_registered' | 'failed' | 'unknown';
     since_boot?: 'under_5m' | 'under_1h' | 'over_1h';
   };
-  login_item_observed: { login_item: 'registered' | 'not_registered' };
+  login_item_observed: { login_item: 'registered' | 'not_registered' | 'failed' };
   onboarding_step_viewed: {
     step: OnboardingStep;
     direction: 'forward' | 'back';
@@ -181,10 +181,10 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
   app_opened: {
     entry: ['native_setup', 'app_ui'],
     server_connection_telemetry_available: [true],
-    login_item: ['registered', 'not_registered', 'unknown'],
+    login_item: ['registered', 'not_registered', 'failed', 'unknown'],
     since_boot: ['under_5m', 'under_1h', 'over_1h'],
   },
-  login_item_observed: { login_item: ['registered', 'not_registered'] },
+  login_item_observed: { login_item: ['registered', 'not_registered', 'failed'] },
   onboarding_step_viewed: {
     step: onboardingSteps,
     direction: ['forward', 'back'],

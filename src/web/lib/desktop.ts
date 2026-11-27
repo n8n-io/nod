@@ -10,7 +10,11 @@ export type DesktopPreferences = {
 
 export type DesktopSettings = DesktopPreferences;
 
-type LocalSetup = { preferenceStep: 'launchAtLogin' | 'complete'; launchAtLogin?: boolean };
+type LocalSetup = {
+  preferenceStep: 'launchAtLogin' | 'complete';
+  launchAtLogin?: boolean;
+  loginItemError?: string;
+};
 
 type LocalRuntime = {
   status(): Promise<DesktopStatus>;
@@ -77,7 +81,7 @@ type DesktopAppOpening = {
   uuid: string;
   entry: 'native_setup' | 'app_ui';
   serverConnectionTelemetryAvailable?: true;
-  loginItem?: 'registered' | 'not_registered' | 'unknown';
+  loginItem?: 'registered' | 'not_registered' | 'failed' | 'unknown';
   sinceBoot?: 'under_5m' | 'under_1h' | 'over_1h';
 };
 
@@ -106,7 +110,12 @@ type DesktopWindow = Window & {
         | DesktopSettingsChange
         | { onboardingCompleted: true }
         | { launchAtLogin: true; onboardingPreferenceStep: 'complete' },
-    ): Promise<DesktopSettings & { onboardingPreferenceStep?: LocalSetup['preferenceStep'] }>;
+    ): Promise<
+      DesktopSettings & {
+        onboardingPreferenceStep?: LocalSetup['preferenceStep'];
+        loginItemError?: string;
+      }
+    >;
     getZoomFactor?(): Promise<number>;
     setZoomFactor?(factor: number): Promise<number>;
     removeAllData(): Promise<void>;
@@ -170,7 +179,11 @@ export function clientPlatform(): ClientPlatform {
         });
         if (saved.onboardingPreferenceStep !== 'complete')
           throw new Error('Nod could not finish device setup. Try again.');
-        return { preferenceStep: 'complete', launchAtLogin: saved.launchAtLogin };
+        return {
+          preferenceStep: 'complete',
+          launchAtLogin: saved.launchAtLogin,
+          ...(saved.loginItemError ? { loginItemError: saved.loginItemError } : {}),
+        };
       },
       reconcileSetup: async () => {
         await bridge.saveSettings({ onboardingCompleted: true });

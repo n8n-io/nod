@@ -65,7 +65,7 @@ import { connectFlatpakPortal, createFlatpakUpdater } from './flatpak-update.mjs
 import { clearInstalledWindowsUpdates, startWindowsInstall } from './windows-update.mjs';
 import { appOpenPath } from './app-links.mjs';
 import { trustSystemCertificates } from './system-certificates.mjs';
-import { opensAtLogin, setOpenAtLogin } from './login-item.mjs';
+import { opensAtLogin, repairStaleAutostart, setOpenAtLogin } from './login-item.mjs';
 import { createStartupFeedbackClient } from './feedback-client.mjs';
 
 trustSystemCertificates();
@@ -194,9 +194,19 @@ let localSetupObservation;
 const secondsSinceBootAtLaunch = uptime();
 const claimedAppOpens = new Set();
 const appUIOpenings = new Map();
+let lastLoginItemAttemptFailed = false;
+let lastLoginItemFailureMessage;
+function realLaunchAtLogin(saved) {
+  try {
+    return opensAtLogin();
+  } catch {
+    return saved;
+  }
+}
 function loginItemState() {
   try {
-    return opensAtLogin() ? 'registered' : 'not_registered';
+    if (opensAtLogin()) return 'registered';
+    return lastLoginItemAttemptFailed ? 'failed' : 'not_registered';
   } catch {
     return 'unknown';
   }
@@ -515,6 +525,7 @@ function showDownloadProgress() {
 function publicPreferences() {
   return {
     ...preferences,
+    launchAtLogin: realLaunchAtLogin(preferences.launchAtLogin),
     resolvedTheme: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
   };
 }
@@ -2060,6 +2071,7 @@ async function saveRendererSettings(event, value) {
     throw new Error('These settings are not supported.');
   let loginChanged = typeof value.launchAtLogin === 'boolean';
   let previousLogin;
+  let loginItemFailureMessage;
   if (loginChanged) {
     try {
       previousLogin = opensAtLogin();
@@ -2068,9 +2080,17 @@ async function saveRendererSettings(event, value) {
         throw new Error(
           'Open at login could not be updated. Check Nod in your computer’s login items, then try again.',
         );
+      lastLoginItemAttemptFailed = false;
+      lastLoginItemFailureMessage = undefined;
     } catch (error) {
       if (value.onboardingPreferenceStep !== 'complete' || value.launchAtLogin !== true)
         throw error;
+      lastLoginItemAttemptFailed = true;
+      loginItemFailureMessage =
+        error.retryable === false
+          ? error.message
+          : `${error.message} You can turn it on later in Settings.`;
+      lastLoginItemFailureMessage = loginItemFailureMessage;
       if (typeof previousLogin === 'boolean') {
         try {
           setOpenAtLogin(previousLogin);
@@ -2100,7 +2120,8 @@ async function saveRendererSettings(event, value) {
   if (confirmNotifications) showNotificationConfirmation();
   for (const window of engineWindows) deliverAppLink(window);
   if (!['preparing', 'starting', 'error'].includes(status.phase)) update({ message: 'Ready.' });
-  return readDesktopSettings();
+  const result = await readDesktopSettings();
+  return loginItemFailureMessage ? { ...result, loginItemError: loginItemFailureMessage } : result;
 }
 
 async function accountSetupComplete() {
@@ -3667,17 +3688,27 @@ else {
       });
       ipcMain.handle('nod:setup:get', async (event) => {
         if (!isEngine(event) || remoteConnection) throw new Error('Local setup is unavailable.');
-        return { preferenceStep: (await settings.get()).onboardingPreferenceStep };
+        const preferenceStep = (await settings.get()).onboardingPreferenceStep;
+        return {
+          preferenceStep,
+          ...(preferenceStep === 'complete' && lastLoginItemAttemptFailed
+            ? { loginItemError: lastLoginItemFailureMessage }
+            : {}),
+        };
       });
       ipcMain.handle('nod:setup:preferences', async (event) => {
         if (!isEngine(event) || remoteConnection) throw new Error('Local setup is unavailable.');
         if ((await settings.get()).onboardingPreferenceStep === 'complete')
           return { preferenceStep: 'complete' };
-        const saved = await saveRendererSettings(event, {
+        const { launchAtLogin, loginItemError } = await saveRendererSettings(event, {
           launchAtLogin: true,
           onboardingPreferenceStep: 'complete',
         });
-        return { preferenceStep: 'complete', launchAtLogin: saved.launchAtLogin };
+        return {
+          preferenceStep: 'complete',
+          launchAtLogin,
+          ...(loginItemError ? { loginItemError } : {}),
+        };
       });
       ipcMain.handle('nod:setup:reconcile', async (event) => {
         if (!isEngine(event) || remoteConnection) throw new Error('Local setup is unavailable.');
@@ -3770,6 +3801,13 @@ else {
       });
       try {
         const saved = await settings.get();
+        if (saved.launchAtLogin) {
+          try {
+            repairStaleAutostart();
+          } catch (error) {
+            void writeDiagnostic(error.message).catch(() => {});
+          }
+        }
         await resumeState();
         const removeData = Menu.getApplicationMenu?.()?.getMenuItemById('remove-local-data');
         if (removeData) removeData.enabled = !saved.serverUrl;
