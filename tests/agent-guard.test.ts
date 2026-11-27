@@ -441,6 +441,47 @@ test('native visual replies need no filler and deduplicate only identical conten
   }
 });
 
+test('replies drop leaked tool-call blocks and keep text that only mentions the tags', async () => {
+  const fenced =
+    'Here is the shape:\n\n```xml\n<function_calls>\n<invoke name="get_weather">\n<parameter name="city">Paris</parameter>\n</invoke>\n</function_calls>\n```\n\nThat is the whole call.';
+  const mention =
+    'The format wraps each call in `<invoke name="get_weather">` with `<parameter name="city">Paris</parameter>` inside, then closes with `</invoke>`. Anything else?';
+  const bare =
+    'Put the call inside an <invoke> element, then add one <parameter> per argument. Remember the closing tag is required.';
+  const doubled =
+    'Quote a backtick with double backticks, like ``a ` <invoke name="get_weather">``, and keep the rest of the sentence.';
+  const cases: Array<[string, string]> = [
+    [
+      'Your flight is on time.\n<function_calls>\n<invoke name="send_message">\n<parameter name="text">Hello</parameter>\n</invoke>\n</function_calls>',
+      'Your flight is on time.',
+    ],
+    [
+      'The meeting moved to noon.\n<function_calls>\n<invoke name="send_message">\n<parameter name="text">The meeting',
+      'The meeting moved to noon.',
+    ],
+    [
+      'Let me check that.<function_calls>\n<invoke name="get_weather">\n<parameter name="city">Paris</parameter>\n</invoke>\n</function_calls>',
+      'Let me check that.',
+    ],
+    [mention, mention],
+    [bare, bare],
+    [doubled, doubled],
+    [fenced, fenced],
+    [
+      'Example:\n```xml\n<invoke name="get_weather">\n</invoke>\n````\nChecking now.\n<function_calls>\n<invoke name="send_message">\n<parameter name="text">Hello</parameter>\n</invoke>\n</function_calls>',
+      'Example:\n```xml\n<invoke name="get_weather">\n</invoke>\n````\nChecking now.',
+    ],
+  ];
+  const { result, replies } = await fixture(async (tools) => {
+    for (const [text] of cases) await call(tools, 'send_message', { text });
+  });
+  assert.equal(result.status, 'succeeded');
+  assert.deepEqual(
+    replies,
+    cases.map(([, expected]) => expected),
+  );
+});
+
 test('final replies finish after persistence, retain staged files and speech, and leave later messages queued', async () => {
   for (const task of [false, true]) {
     const file = {

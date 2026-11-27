@@ -385,12 +385,37 @@ export function createAgentRuntime(dependencies: {
     let taskResult = '';
     let screened = false;
     const speaks = !context.proactivity && (!context.background || Boolean(context.taskContext));
-    const stripToolMarkup = (text: string) =>
-      text
-        .replace(/<invoke\b[\s\S]*?(?:<\/invoke>|$)/gi, '')
-        .replace(/<\/?(?:invoke|parameter|function_calls|antml:[a-z_]+)\b[^>]*>/gi, '')
-        .replace(/[\u200b\ufeff]+$/g, '')
-        .trim();
+    const stripToolMarkup = (text: string) => {
+      const markup =
+        /^[ \t]*((`|~)\2{2,})(?!\2)[^\n]*\n[\s\S]*?(?:^[ \t]*\1\2*[ \t]*$|(?![\s\S]))|(?<!`)(`+)(?!`)|<(?:antml:)?(function_calls(?=>)|invoke(?=\s+name=))[\s\S]*?(?:<\/(?:antml:)?\4>|(?![\s\S]))|<\/(?:antml:)?(?:invoke|function_calls|parameter)>/gim;
+      const runs = /`+/g;
+      const lastRun = new Map<number, number>();
+      let lineEnd = -1;
+      let kept = '';
+      let from = 0;
+      for (let match = markup.exec(text); match; match = markup.exec(text)) {
+        const [, fence, , ticks] = match;
+        if (!ticks) {
+          if (!fence) {
+            kept += text.slice(from, match.index);
+            from = markup.lastIndex;
+          }
+          continue;
+        }
+        if (match.index > lineEnd) {
+          lineEnd = text.indexOf('\n', match.index);
+          if (lineEnd < 0) lineEnd = text.length;
+          runs.lastIndex = match.index;
+          for (let run = runs.exec(text); run && run.index < lineEnd; run = runs.exec(text))
+            lastRun.set(run[0].length, run.index);
+        }
+        if ((lastRun.get(ticks.length) ?? 0) <= match.index) continue;
+        runs.lastIndex = markup.lastIndex;
+        while (runs.exec(text)![0].length !== ticks.length);
+        markup.lastIndex = runs.lastIndex;
+      }
+      return (kept + text.slice(from)).replace(/[\u200b\ufeff]+$/g, '').trim();
+    };
     const words = (text: string) => new Set(text.match(/[\p{L}\p{N}]+/gu) ?? []);
     const restates = (text: string, earlier: string) => {
       if (text === earlier) return true;
