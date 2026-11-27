@@ -343,7 +343,7 @@ The gate receives the complete action, owner messages and rules. It receives no 
 
 Jev classifies the full action, then checks the selected owner words in a separate request without action data. A fixed local classifier combines those probabilities. This uses no LLM in decision mode. Reads and private work get a separate effect check, including each declared nested operation.
 
-The server adds calendar facts for month ends, leap days, time zones, and local scheduled-run times. Jev selects the relevant time fields and owner constraints. It also reads calendar dates inside scheduled messages. Code compares explicit clocks, weekdays and elapsed event lengths. These facts grant no permission. The original input stays unchanged. An action that changes Nod settings, signs in, opens a saved session, or uploads a file cannot use the private-preparation path.
+The server adds calendar facts for month ends, leap days, time zones, and local scheduled-run times. Jev selects the relevant time fields and owner constraints. It also reads calendar dates inside scheduled messages. Code compares explicit clocks, weekdays and elapsed event lengths. These facts grant no permission. The original input stays unchanged. An action that changes Nod settings, signs in, or uploads a file cannot use the private-preparation path.
 
 A time zone in your words controls conversion. Otherwise, Nod uses your configured time zone, or UTC when none is set. An unresolved relative date requires confirmation.
 

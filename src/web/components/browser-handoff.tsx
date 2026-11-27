@@ -559,8 +559,7 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
           <div className="browser-handoff-recovery">
             <strong>The browser view could not connect.</strong>
             <p>
-              Your task is waiting. Try to reconnect the view. The page can close after 30 minutes.
-              Your last input will not run again.
+              Your task is waiting. Try to reconnect the view. Your last input will not run again.
             </p>
             <Button
               variant="outline"

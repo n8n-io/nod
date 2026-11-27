@@ -257,17 +257,17 @@ Nod sometimes reacts to your messages too, such as ✅ when you say yes to somet
 
 Links to Nod screens open in the current window. A link to **Settings > Models** opens that Settings tab. Close Settings to return to the screen and control you used before. Browser Back and Forward also work.
 
-| To see or change                          | Open                                      |
-| ----------------------------------------- | ----------------------------------------- |
-| Your conversation                         | **Chat** in the sidebar                   |
-| Scheduled work                            | **Scheduled** in the sidebar              |
-| App connections                           | **Apps** in the sidebar                   |
-| Telegram and WhatsApp                     | **Channels** in the sidebar               |
-| Spending and activity                     | **Usage** in the sidebar                  |
-| Saved logins, cards, and browser sessions | **Vault** in the sidebar                  |
-| General preferences                       | **Settings** at the bottom of the sidebar |
-| Model connections and selection           | **Settings > Models**                     |
-| Saved notes and skills                    | **Settings > Memory**                     |
+| To see or change                | Open                                      |
+| ------------------------------- | ----------------------------------------- |
+| Your conversation               | **Chat** in the sidebar                   |
+| Scheduled work                  | **Scheduled** in the sidebar              |
+| App connections                 | **Apps** in the sidebar                   |
+| Telegram and WhatsApp           | **Channels** in the sidebar               |
+| Spending and activity           | **Usage** in the sidebar                  |
+| Saved logins and cards          | **Vault** in the sidebar                  |
+| General preferences             | **Settings** at the bottom of the sidebar |
+| Model connections and selection | **Settings > Models**                     |
+| Saved notes and skills          | **Settings > Memory**                     |
 
 In Telegram and WhatsApp, a screen link opens a public page. Select **Open in Nod** on the computer where Nod is installed. On a phone, use the location on that page to continue in Nod on your computer. The link contains only the screen name. It cannot change settings or approve an action.
 
