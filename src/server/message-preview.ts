@@ -112,24 +112,38 @@ export function plainPreview(text: string): string {
     parts.push(piece);
     remaining -= piece.length;
   };
-  function walk(node: Nodes) {
+  function walk(node: Nodes, block = true) {
     if (remaining <= 0 || nodes-- <= 0) return;
     if (node.type === 'code' || node.type === 'definition' || node.type === 'footnoteDefinition')
       return;
-    if (node.type === 'html') return add(htmlText(parseFragment(node.value)));
+    if (node.type === 'html') {
+      add(/^<br\s*\/?>$/i.test(node.value.trim()) ? ' ' : htmlText(parseFragment(node.value)));
+      if (block) add(' ');
+      return;
+    }
     if (node.type === 'image' || node.type === 'imageReference') return add(node.alt || '');
     if (node.type === 'break') return add(' ');
     if (node.type === 'link') {
       const [label, ...rest] = node.children;
       if (!rest.length && label?.type === 'text' && label.value === node.url)
-        return add(urlHost(node.url));
+        return add(urlHost(node.url) || label.value);
     }
     if ('value' in node) add(node.value);
-    if ('children' in node) for (const child of node.children) walk(child);
+    if ('children' in node) {
+      const blocks = ['root', 'blockquote', 'list', 'listItem'].includes(node.type);
+      for (const child of node.children) walk(child, blocks);
+    }
     if (['paragraph', 'heading', 'listItem', 'tableCell'].includes(node.type)) add(' ');
   }
+  let source = text;
+  if (text.length > 2000) {
+    const window = previewSlice(text, 2000);
+    const block = window.lastIndexOf('\n\n');
+    const space = window.search(/\s\S*$/);
+    source = window.slice(0, block > 0 ? block : space > 0 ? space : window.length);
+  }
   try {
-    walk(markdown.parse(previewSlice(text, 2000)));
+    walk(markdown.parse(source));
   } catch {
     return '';
   }

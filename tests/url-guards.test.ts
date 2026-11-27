@@ -596,6 +596,12 @@ test('notification previews read the chat Markdown without link targets or hidde
     preview,
     'Your report is ready Read the summary and review.csv at files.example.test. Use <b> for bold, see Foo now.',
   );
+  const link = '[the report](https://example.test/private?token=synthetic-cut-secret)';
+  for (const intro of ['', 'Intro.\n\n'])
+    assert.doesNotMatch(
+      plainPreview(`${intro}${'word '.repeat(398)}${link} ready.\n\nMore.`),
+      /synthetic-cut-secret|example\.test/,
+    );
 });
 
 test('the browser proxy refuses private network destinations, including names that resolve to them', async () => {

@@ -69,7 +69,7 @@ test('notification previews show only the engine preview text', () => {
 
 test('notification previews redact configured credentials', () => {
   const known = 'synthetic-notification-secret/123456=';
-  for (const input of [known, encodeURIComponent(known)]) {
+  for (const input of [known, encodeURIComponent(known), known.replace('-', '-​')]) {
     const preview = assistantNotificationPreview(
       { previewText: `Result: ${input}` },
       new Set([known]),

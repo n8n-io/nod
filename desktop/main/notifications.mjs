@@ -11,13 +11,13 @@ function redactPreview(value, secrets) {
 
 export function assistantNotificationPreview(message, secrets = []) {
   function plain(value) {
-    return redactPreview(value.slice(0, 16_384), secrets)
+    const text = redactPreview(value, secrets)
+      .slice(0, 16_384)
       .replace(
         /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b\u200e\u200f\u202a-\u202e\u2060\u2066-\u2069]/g,
         '',
-      )
-      .replace(/\s+/g, ' ')
-      .trim();
+      );
+    return redactPreview(text, secrets).replace(/\s+/g, ' ').trim();
   }
   let text = plain(typeof message?.previewText === 'string' ? message.previewText : '');
   if (!text) {
