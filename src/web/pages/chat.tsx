@@ -44,7 +44,7 @@ import { Button, Notice } from '../components/ui';
 import type { ModelSelection } from '../../shared/models';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { usePageData } from '../hooks/use-page-data';
-import { api, apiResponse, ApiError, errorMessage, post } from '../lib/api';
+import { api, apiResponse, ApiError, errorMessage, post, responseError } from '../lib/api';
 import { analyticsForCurrentSession, captureAnalytics } from '../lib/analytics';
 import {
   collapseScreenshotMessages,
@@ -1612,7 +1612,10 @@ export function Chat({
         headers: recording ? undefined : { 'Content-Type': 'application/json' },
         body,
       });
-      const result = (await response.json()) as Partial<SubmitMessageResponse> & {
+      const result = (await response
+        .clone()
+        .json()
+        .catch(() => ({}))) as Partial<SubmitMessageResponse> & {
         error?: string;
         attachments?: Artifact[];
         retryable?: boolean;
@@ -1635,7 +1638,7 @@ export function Chat({
           !privateVerification;
         if (response.status === 409 && verificationStatus === undefined)
           void refresh().catch(() => {});
-        throw new Error(result.error || 'The message could not be sent.');
+        throw await responseError(response);
       }
       if (threadRef.current !== sentThread) return { sent: true };
       if (result.messageId !== id || typeof result.turnId !== 'string')

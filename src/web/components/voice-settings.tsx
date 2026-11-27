@@ -4,7 +4,7 @@ import type { SpeechVoice } from '../../shared/speech';
 import { useModels } from '../hooks/use-models';
 import { usePageData } from '../hooks/use-page-data';
 import { useVoiceRecorder } from '../hooks/use-voice-recorder';
-import { api, apiResponse, errorMessage } from '../lib/api';
+import { api, apiResponse, errorMessage, responseError } from '../lib/api';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { savePreferences } from '../lib/preferences';
 import { SearchPicker } from './search-picker';
@@ -263,10 +263,7 @@ export function VoiceSettings({ onBusyChange }: { onBusyChange(busy: boolean): v
         body: JSON.stringify({ voice: voiceId, locale: navigator.language }),
         signal: controller.signal,
       });
-      if (!response.ok) {
-        const body = await response.json();
-        throw new Error(body.error || 'The voice preview could not play. Try again.');
-      }
+      if (!response.ok) throw await responseError(response);
       const blob = await response.blob();
       controller.signal.throwIfAborted();
       const url = URL.createObjectURL(blob);

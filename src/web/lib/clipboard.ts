@@ -1,4 +1,4 @@
-import { apiResponse } from './api';
+import { apiResponse, responseError } from './api';
 import { ownedArtifactUrl } from './attachment-url';
 
 export function selectedText(element: HTMLElement | null) {
@@ -40,7 +40,7 @@ export async function copyImage(url: string) {
   if (!ownedArtifactUrl(url)) throw new Error('This image is unavailable.');
   const png = (async () => {
     const response = await apiResponse(url);
-    if (!response.ok) throw new Error('The image could not be loaded.');
+    if (!response.ok) throw await responseError(response);
     const blob = await response.blob();
     if (!/^image\/(png|jpeg|webp|gif|avif|bmp)$/.test(blob.type))
       throw new Error('Download this image to use its original format.');

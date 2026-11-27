@@ -34,7 +34,7 @@ import {
 import AttachmentData, { PreviewUnavailable } from './attachment-data';
 import PdfPreview from './attachment-pdf';
 import { FileActions, fileDrag, prepareFile } from './file-actions';
-import { apiResponse } from '../lib/api';
+import { apiResponse, errorMessage, responseError } from '../lib/api';
 import { Button } from './ui';
 import { Tooltip } from './tooltip';
 import { SharedMessageCard } from './shared-message-card';
@@ -441,13 +441,13 @@ function ArtifactDrawer({
         });
       } else {
         const response = await apiResponse(current.url);
-        if (!response.ok) throw new Error('The file could not be loaded.');
+        if (!response.ok) throw await responseError(response);
         await navigator.clipboard.writeText(await response.text());
         capture('artifact_action', { kind: kind ?? 'file', location: 'drawer', action: 'copy' });
       }
       setCopied(true);
-    } catch {
-      setCopyError('Could not copy. Select the text or download the file.');
+    } catch (cause) {
+      setCopyError(`Could not copy. ${errorMessage(cause)} Select the text or download the file.`);
     }
   }
   const meta = current.presentation
