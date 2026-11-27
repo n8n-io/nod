@@ -10,6 +10,7 @@ export default scenario({
   title: '"Looks good, send it" after a draft sends that draft once, without asking again',
   capabilities: ['apps', 'approvals'],
   tier: 'pr',
+  set: 'happy-path',
   complexity: 'simple',
   stance: 'regression',
   seconds: 480,

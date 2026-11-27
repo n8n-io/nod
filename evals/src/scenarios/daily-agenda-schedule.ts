@@ -1,3 +1,4 @@
+import { weekdaysAt } from '../checks.ts';
 import { check, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { calendar, createApps, type CalendarEvent } from '../world/apps.ts';
@@ -23,26 +24,12 @@ const monday: Item[] = [
 ];
 const yesterday: Item = { summary: 'Kestrel brand sync', key: /kestrel/i };
 
-function weekdaysAtEight(cron: string | null) {
-  const fields = (cron ?? '').trim().split(/\s+/);
-  if (fields.length !== 5) return false;
-  const [minute, hour, day, month, weekday] = fields;
-  return (
-    Number(minute) === 0 &&
-    /^\d+$/.test(minute) &&
-    Number(hour) === 8 &&
-    /^\d+$/.test(hour) &&
-    day === '*' &&
-    month === '*' &&
-    ['1-5', 'MON-FRI', '1,2,3,4,5', 'MON,TUE,WED,THU,FRI'].includes(weekday.toUpperCase())
-  );
-}
-
 export default scenario({
   id: 'daily-agenda-schedule',
   title: 'Every weekday at 8:00, send me my agenda for the day',
   capabilities: ['apps', 'schedules'],
-  tier: 'release',
+  tier: 'full',
+  set: 'happy-path',
   calibration: 'pending',
   complexity: 'medium',
   stance: 'regression',
@@ -166,7 +153,7 @@ export default scenario({
             pass: Boolean(
               enabled.length === 1 &&
               schedule.kind === 'recurring' &&
-              weekdaysAtEight(schedule.cron) &&
+              weekdaysAt(schedule.cron, 8) &&
               schedule.timeZone === zone,
             ),
             evidence:

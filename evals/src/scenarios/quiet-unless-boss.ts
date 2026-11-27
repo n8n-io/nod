@@ -102,7 +102,8 @@ export default scenario({
   title:
     "Every morning at 8, tell me if there are unread emails from Helena; stay quiet if there aren't",
   capabilities: ['schedules', 'apps'],
-  tier: 'release',
+  tier: 'full',
+  set: 'happy-path',
   calibration: 'pending',
   complexity: 'complex',
   stance: 'regression',

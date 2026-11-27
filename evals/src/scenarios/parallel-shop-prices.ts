@@ -43,6 +43,7 @@ export default scenario({
   title: 'Check three shops at the same time and name the cheapest',
   capabilities: ['browser', 'progress'],
   tier: 'full',
+  set: 'happy-path',
   complexity: 'medium',
   stance: 'regression',
   seconds: 900,

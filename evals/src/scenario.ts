@@ -99,6 +99,7 @@ export interface Scenario<W extends World = World> {
   tier: 'pr' | 'full' | 'release' | 'live' | 'canary';
   complexity: 'simple' | 'medium' | 'complex';
   stance: 'regression' | 'gap';
+  set?: 'happy-path';
   seconds: number;
   timeZone?: string;
   window?: { from: number; to: number };

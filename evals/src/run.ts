@@ -57,6 +57,7 @@ export interface RunOptions {
   tier: string;
   scenarioIds?: string[];
   capability?: string;
+  set?: string;
   shard?: Shard;
   label?: string;
   ref?: string;
@@ -188,7 +189,7 @@ export async function prepare(root: string) {
 export function select(
   options: Pick<
     RunOptions,
-    'tier' | 'scenarioIds' | 'capability' | 'shard' | 'ignoreWindow' | 'includePending'
+    'tier' | 'scenarioIds' | 'capability' | 'set' | 'shard' | 'ignoreWindow' | 'includePending'
   >,
 ) {
   let chosen = scenarios.filter(
@@ -203,7 +204,8 @@ export function select(
             item.calibration !== 'pending' ||
             item.stance === 'gap')) &&
       (options.scenarioIds || options.tier !== 'pr' || item.tier === 'pr') &&
-      (!options.capability || item.capabilities.includes(options.capability as never)),
+      (!options.capability || item.capabilities.includes(options.capability as never)) &&
+      (!options.set || item.set === options.set),
   );
   if (
     !chosen.length ||
