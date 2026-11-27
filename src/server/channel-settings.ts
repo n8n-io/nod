@@ -4,6 +4,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { openVaultValue, sealVaultValue } from './vault-crypto.ts';
 import { transaction } from './transaction.ts';
+import { logFailure } from './failure-log.ts';
 import {
   ChannelSetupFailure,
   telegramSecret,
@@ -680,26 +681,28 @@ export async function createChannelSettings(
           pairing_unavailable:
             'This channel setup step is no longer available. Refresh Channels and try again.',
         };
-        reply
-          .code(
-            error instanceof ChannelSetupFailure && error.reason === 'server_managed'
-              ? 409
-              : error instanceof ChannelSetupFailure && error.reason === 'activation_pending'
-                ? 503
-                : error instanceof ChannelSetupFailure || error instanceof z.ZodError
-                  ? 400
-                  : 503,
-          )
-          .send({
-            error:
-              error instanceof ChannelSetupFailure
-                ? error.details
-                  ? error.reason === 'activation_pending'
-                    ? `${messages.activation_pending} ${error.details}`
-                    : error.details
-                  : messages[error.reason]
-                : 'Channel settings could not be saved securely. Check the setup before retrying.',
-          });
+        const clientStatus = (error as { statusCode?: number }).statusCode;
+        const code =
+          error instanceof ChannelSetupFailure && error.reason === 'server_managed'
+            ? 409
+            : error instanceof ChannelSetupFailure && error.reason === 'activation_pending'
+              ? 503
+              : error instanceof ChannelSetupFailure || error instanceof z.ZodError
+                ? 400
+                : clientStatus && clientStatus >= 400 && clientStatus < 500
+                  ? clientStatus
+                  : 503;
+        if (code >= 500) logFailure('channel_settings_failed', error);
+        reply.code(code).send({
+          error:
+            error instanceof ChannelSetupFailure
+              ? error.details
+                ? error.reason === 'activation_pending'
+                  ? `${messages.activation_pending} ${error.details}`
+                  : error.details
+                : messages[error.reason]
+              : 'Channel settings could not be saved securely. Check the setup before retrying.',
+        });
       });
       scope.get('/api/channel-settings', status);
       scope.post<{ Params: { provider: string } }>(
