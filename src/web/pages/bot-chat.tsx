@@ -18,6 +18,9 @@ export function BotChat({
   onRead,
   onFeedback,
   focusMessageId,
+  tools,
+  requestedMessage,
+  onRequestHandled,
 }: {
   bot: Bot;
   ownerId: string;
@@ -30,11 +33,13 @@ export function BotChat({
   onRead(chatId: string, at: string): void;
   onFeedback?(): void;
   focusMessageId?: string;
+  tools?: HTMLDivElement | null;
+  requestedMessage?: { id: string; text: string };
+  onRequestHandled?(id: string): void;
 }) {
   const [page, setPage] = useState<MessageHistoryPage | null>(null);
   const [failure, setFailure] = useState('');
   const [attempt, setAttempt] = useState(0);
-  const [tools, setTools] = useState<HTMLDivElement | null>(null);
   const request = useRef(0);
   const chatTurns = state.turns.filter((turn) => turn.botId === bot.id);
   const version = `${chatTurns.map((turn) => `${turn.id}${turn.status}`).join()}:${bot.status}:${bot.latestReply?.id ?? ''}:${bot.lastMessage?.text ?? ''}:${bot.question ?? ''}`;
@@ -60,7 +65,7 @@ export function BotChat({
       if (event.key !== 'Escape') return;
       const busy = [
         ...document.querySelectorAll(
-          '[role="dialog"],[role="menu"],.artifact-drawer,.bot-chat-route :is(.composer-reply,.composer.has-recording),#bot-panel:not(.bot-panel-closing)',
+          '[role="dialog"],[role="menu"],.artifact-drawer,.bot-chat-route :is(.composer-reply,.composer.has-recording)',
         ),
       ].some((element) => element.getClientRects().length);
       if (busy) return;
@@ -99,7 +104,7 @@ export function BotChat({
   );
   return (
     <div className="bot-chat-route chat-surface">
-      <ChatTop bot={bot} toolsRef={setTools} />
+      <ChatTop bot={bot} />
       {!page && failure && (
         <div className="initial-loading">
           <Notice>{failure}</Notice>
@@ -123,6 +128,8 @@ export function BotChat({
             readUnavailable
             initialFocusMessageId={focusMessageId}
             onFeedback={onFeedback}
+            requestedMessage={requestedMessage}
+            onRequestHandled={onRequestHandled}
             empty={<BotEmpty bot={bot} />}
           />
         </ChatBot.Provider>

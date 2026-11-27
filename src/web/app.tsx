@@ -121,10 +121,8 @@ function Workspace({
   useBrowserNotifications(session.user!.id, state);
   useSavedDateFormat();
   useBrowserTimeZone();
-  const [panelHidden, setPanelHidden] = useState(
-    () => readUiPreference('nod.side-panel') === 'hidden',
-  );
-  const [mainTools, setMainTools] = useState<HTMLDivElement | null>(null);
+  const [expanded, setExpanded] = useState(() => readUiPreference('nod.sidebar') === 'expanded');
+  const [railTools, setRailTools] = useState<HTMLDivElement | null>(null);
   const [pendingMessageFocus, setPendingMessageFocus] = useState(initialFocusMessageId);
   const [botFocus, setBotFocus] = useState<{ botId: string; messageId: string }>();
   useEffect(() => {
@@ -138,7 +136,9 @@ function Workspace({
     messageId: string;
     botId?: string;
   } | null>();
-  const [chatRequests, setChatRequests] = useState<Array<{ id: string; text: string }>>([]);
+  const [chatRequests, setChatRequests] = useState<
+    Array<{ id: string; text: string; botId?: string }>
+  >([]);
   const ownerId = session.user!.id;
   const openBotId = botIdOf(path);
   const [chatCursors, setChatCursors] = useState<Record<string, string>>(() =>
@@ -182,10 +182,12 @@ function Workspace({
   const nodWorking = Boolean(
     connected && state?.activity?.some((item) => !item.background && !item.botId),
   );
-  const askInChat = (text: string) => {
-    setChatRequests((current) => [...current, { id: crypto.randomUUID(), text }]);
-    navigate('/');
+  const askInChat = (text: string, botId?: string) => {
+    setChatRequests((current) => [...current, { id: crypto.randomUUID(), text, botId }]);
+    navigate(botId ? botPath(botId) : '/');
   };
+  const handledRequest = (id: string) =>
+    setChatRequests((current) => current.filter((request) => request.id !== id));
   useEffect(() => subscribeDesktopFocusMessage(setNotificationTarget), []);
   useEffect(() => {
     if (notificationTarget === undefined || (notificationTarget && !state)) return;
@@ -243,21 +245,24 @@ function Workspace({
     ]);
   }, []);
   useEffect(() => {
-    writeUiPreference('nod.side-panel', panelHidden ? 'hidden' : 'shown');
-  }, [panelHidden]);
+    writeUiPreference('nod.sidebar', expanded ? 'expanded' : 'collapsed');
+  }, [expanded]);
   const shell = useRef<HTMLDivElement>(null);
   function toggleSidebar() {
-    setPanelHidden((value) => !value);
+    setExpanded((value) => !value);
   }
   return (
     <div
       ref={shell}
-      className={`app-shell${panelHidden ? ' panel-hidden' : ''}${entering ? ' shell-entering' : ''}${settingsPage(path) ? ' settings-open' : ''}`}
+      className={`app-shell${expanded ? ' sidebar-expanded' : ''}${entering ? ' shell-entering' : ''}${settingsPage(path) ? ' settings-open' : ''}`}
     >
       <PanelProvider
         path={path}
         bot={path === '/' ? undefined : openBot}
         available={path === '/' || Boolean(openBot)}
+        activity={connected ? state?.activity : undefined}
+        onAsk={askInChat}
+        onNavigate={navigate}
       >
         <a href="#workspace" className="skip-link">
           Skip to content
@@ -275,11 +280,13 @@ function Workspace({
               path={path}
               settingsActive={inSettings}
               unread={(bot) => chatUnread(bot, chatCursors)}
+              expanded={expanded}
+              toolsRef={setRailTools}
+              onToggle={toggleSidebar}
               onNavigate={navigate}
               onSettings={() => navigate(lastSettings.current)}
             />
           }
-          panelHidden={panelHidden}
           onToggle={toggleSidebar}
           onNavigate={navigate}
         />
@@ -293,7 +300,7 @@ function Workspace({
               {inSettings && <SettingsNav path={path} account={account} onNavigate={navigate} />}
               <PageHeader path={path} />
               <div className="chat-route chat-surface" hidden={path !== '/'}>
-                {state && <ChatTop toolsRef={setMainTools} />}
+                {state && <ChatTop />}
                 {state ? (
                   <Chat
                     turnTraces={session.capabilities.turnTraces === true}
@@ -309,17 +316,15 @@ function Workspace({
                     refresh={refresh}
                     initialFocusMessageId={pendingMessageFocus}
                     onReturnToMemory={onReturnToMemory}
-                    toolbarActions={path === '/' ? mainTools : null}
+                    toolbarActions={path === '/' ? railTools : null}
                     visible={path === '/'}
                     readCursor={unread.cursor}
                     readUnavailable={unread.unavailable}
                     onReadLatest={unread.markRead}
                     onFeedback={onFeedback}
                     onDismissFeedbackDiscovery={onDismissFeedbackDiscovery}
-                    requestedMessage={chatRequests[0]}
-                    onRequestHandled={(id) =>
-                      setChatRequests((current) => current.filter((request) => request.id !== id))
-                    }
+                    requestedMessage={chatRequests.find((request) => !request.botId)}
+                    onRequestHandled={handledRequest}
                   />
                 ) : error ? (
                   <div className="initial-loading">
@@ -346,6 +351,9 @@ function Workspace({
                   onNavigate={navigate}
                   onRead={(chatId, at) => setChatCursors(writeChatCursor(ownerId, chatId, at))}
                   onFeedback={onFeedback}
+                  tools={railTools}
+                  requestedMessage={chatRequests.find((request) => request.botId === openBot.id)}
+                  onRequestHandled={handledRequest}
                 />
               )}
               {(path === '/usage' || path === '/vault') && (

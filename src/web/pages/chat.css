@@ -87,26 +87,34 @@
   width: 100%;
 }
 .message-reply-quote {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: 6px;
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  margin: 0 0 8px;
-  padding: 6px 10px;
+  margin: 2px 0 8px;
+  padding: 6px 12px 7px 10px;
   border: 0;
-  border-left: 3px solid var(--accent);
-  border-radius: 4px;
-  background: color-mix(in srgb, currentColor 5%, transparent);
-  color: var(--text-secondary);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--background) 65%, transparent);
+  color: var(--muted-foreground);
   text-align: left;
   font-family: inherit;
   font-size: var(--text-control);
   line-height: 1.5;
   cursor: pointer;
 }
+.message-reply-quote:has(> .message-reply-icon) {
+  grid-template-columns: 12px minmax(0, 1fr);
+}
+.message-reply-icon {
+  grid-row: 1 / span 2;
+  margin-top: 5px;
+}
 .message-reply-quote:hover {
-  background: color-mix(in srgb, currentColor 9%, transparent);
+  color: var(--text-secondary);
+  background: var(--background);
 }
 .message-reply-quote:focus-visible {
   outline: 2px solid var(--ring);
@@ -114,7 +122,7 @@
 }
 .message-reply-quote > strong {
   font-weight: 500;
-  color: var(--foreground);
+  color: var(--text-secondary);
 }
 .message-excerpt {
   display: -webkit-box;
@@ -141,18 +149,12 @@
   flex: none;
 }
 .chat-page .message-arriving {
-  animation: chat-message-arrive 320ms var(--ease-enter);
-}
-.chat-page .message-user.message-arriving {
-  transform-origin: 100% 100%;
-}
-.chat-page .message-assistant.message-arriving {
-  transform-origin: 0 0;
+  animation: chat-message-arrive 260ms ease-out;
 }
 @keyframes chat-message-arrive {
   from {
     opacity: 0;
-    transform: translateY(8px) scale(0.98);
+    transform: translateY(6px);
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -161,11 +163,11 @@
   }
 }
 .composer-editor {
-  min-height: 32px;
+  min-height: 40px;
   max-height: 240px;
   overflow-y: auto;
   scrollbar-gutter: stable;
-  padding: 4px 0;
+  padding: 0 4px 8px;
   outline: none;
   color: var(--foreground);
   font-size: var(--text-body);
@@ -210,6 +212,8 @@
   flex: 1;
   min-width: 0;
   margin: 0;
+  padding: 0;
+  background: transparent;
 }
 .composer-reply .message-excerpt {
   -webkit-line-clamp: 1;
@@ -582,14 +586,21 @@ button.message-work:is(:hover, :focus-visible) {
   border: 0;
 }
 .chat-page {
-  --chat-inline: clamp(16px, calc(16px + (100cqi - 560px) / 5), 32px);
   position: relative;
   container-type: inline-size;
 }
 .chat-page .conversation-scroll {
   overflow-anchor: none;
   padding-top: 16px;
-  mask-image: linear-gradient(to bottom, transparent 0, black 24px);
+  mask-image: linear-gradient(
+    to bottom,
+    transparent var(--chat-edge-offset, 0px),
+    black calc(var(--chat-edge-offset, 0px) + 24px)
+  );
+}
+:root[data-desktop='true'] .chat-page .conversation-scroll {
+  --chat-edge-offset: var(--desktop-titlebar-height);
+  padding-top: calc(var(--desktop-titlebar-height) + 16px);
 }
 .chat-report-action {
   display: flex;
@@ -597,7 +608,7 @@ button.message-work:is(:hover, :focus-visible) {
   justify-content: flex-end;
   gap: var(--chat-action-gap);
   min-height: 60px;
-  padding: 12px var(--chat-inline);
+  padding: 12px 32px;
 }
 .chat-report-button {
   min-height: var(--chat-action-size);
@@ -608,11 +619,11 @@ button.message-work:is(:hover, :focus-visible) {
 .chat-page .conversation-scroll > .conversation-column,
 .chat-page > .chat-bottom.conversation-column {
   max-width: var(--chat-width);
-  padding-inline: var(--chat-inline);
+  padding-inline: 32px;
 }
 .chat-page > .chat-bottom.conversation-column {
   max-width: calc(var(--chat-width) + var(--chat-scrollbar-width, 0px));
-  padding-inline-end: calc(var(--chat-inline) + var(--chat-scrollbar-width, 0px));
+  padding-inline-end: calc(32px + var(--chat-scrollbar-width, 0px));
 }
 .chat-jump-actions {
   position: absolute;
@@ -658,6 +669,18 @@ button.message-work:is(:hover, :focus-visible) {
   flex-shrink: 0;
 }
 @container (max-width: 640px) {
+  .chat-page .message {
+    gap: 8px;
+  }
+  .chat-report-action,
+  .chat-page .conversation-scroll > .conversation-column,
+  .chat-page > .chat-bottom.conversation-column {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .chat-page > .chat-bottom.conversation-column {
+    padding-inline-end: calc(16px + var(--chat-scrollbar-width, 0px));
+  }
   .chat-report-action {
     gap: 8px;
     flex-wrap: wrap;
@@ -732,18 +755,17 @@ button.message-work:is(:hover, :focus-visible) {
   align-items: flex-end;
 }
 .chat-page .message .message-body {
-  --message-background: var(--surface);
+  --message-background: var(--surface-subtle);
   flex: 0 1 auto;
-  padding: 10px 14px;
-  border: 1px solid var(--bubble-border);
-  border-radius: 12px;
+  padding: 8px 16px;
+  border-radius: 22px;
   background: var(--message-background);
   color: var(--foreground);
   overflow-x: auto;
 }
 .chat-page .message-user .message-body {
   --message-background: var(--chat-sent);
-  border-color: transparent;
+  padding: 8px 16px;
   color: var(--chat-sent-foreground);
 }
 .chat-page .message-bubble {
@@ -950,8 +972,45 @@ button.message-work:is(:hover, :focus-visible) {
     background-color 140ms,
     transform 140ms;
 }
+.task-card[data-tint] {
+  --tint-fill: 20%;
+  --tint-edge: 34%;
+  border-color: color-mix(in srgb, var(--tint) var(--tint-edge), var(--surface));
+  background: color-mix(in srgb, var(--tint) var(--tint-fill), var(--surface));
+}
+:root[data-theme='dark'] .task-card[data-tint] {
+  --tint-fill: 14%;
+  --tint-edge: 26%;
+}
+:is(.task-card, .av)[data-tint='0'] {
+  --tint: var(--tint-0);
+}
+:is(.task-card, .av)[data-tint='1'] {
+  --tint: var(--tint-1);
+}
+:is(.task-card, .av)[data-tint='2'] {
+  --tint: var(--tint-2);
+}
+:is(.task-card, .av)[data-tint='3'] {
+  --tint: var(--tint-3);
+}
+:is(.task-card, .av)[data-tint='4'] {
+  --tint: var(--tint-4);
+}
+:is(.task-card, .av)[data-tint='5'] {
+  --tint: var(--tint-5);
+}
+.task-card[data-tint] .task-meta {
+  color: color-mix(in srgb, var(--tint) 35%, var(--text-secondary));
+}
 .task-card:hover:not(:disabled) {
   background: var(--hover);
+}
+.task-card[data-tint]:hover:not(:disabled) {
+  --tint-fill: 30%;
+}
+:root[data-theme='dark'] .task-card[data-tint]:hover:not(:disabled) {
+  --tint-fill: 22%;
 }
 .task-card:active:not(:disabled) {
   transform: scale(0.98);

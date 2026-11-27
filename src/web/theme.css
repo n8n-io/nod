@@ -46,7 +46,6 @@
   --primary-foreground: var(--black);
   --chat-sent: var(--pink-20);
   --chat-sent-foreground: var(--black);
-  --bubble-border: var(--gray-20);
   --control: var(--gray-15);
   --control-hover: var(--gray-10);
   --control-foreground: var(--foreground);
@@ -121,7 +120,12 @@
   --ease-enter: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-reveal: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-travel: cubic-bezier(0.65, 0, 0.35, 1);
-  --glass: color-mix(in srgb, var(--surface) 78%, transparent);
+  --tint-0: #f59e66;
+  --tint-1: #5fbf86;
+  --tint-2: #9b87ea;
+  --tint-3: #5ea9e8;
+  --tint-4: #e8c34a;
+  --tint-5: #ec86a5;
 }
 
 :root[data-theme='dark'] {
@@ -143,7 +147,6 @@
   --accent-border: var(--pink-70);
   --chat-sent: var(--pink-80);
   --chat-sent-foreground: var(--white);
-  --bubble-border: var(--gray-85);
   --control: color-mix(in srgb, var(--white) 12%, transparent);
   --control-hover: color-mix(in srgb, var(--white) 20%, transparent);
   --control-active: color-mix(in srgb, var(--white) 16%, transparent);

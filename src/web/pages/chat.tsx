@@ -234,6 +234,7 @@ function TaskCards({
           type="button"
           className="task-card"
           data-state={state}
+          data-tint={index % 6}
           disabled={disabled || state !== 'idle'}
           onClick={() => onStart(task, suggestions.tasks.indexOf(task))}
         >

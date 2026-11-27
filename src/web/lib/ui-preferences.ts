@@ -1,5 +1,5 @@
 type UiPreference =
-  | 'nod.side-panel'
+  | 'nod.sidebar'
   | 'nod.chat-layout'
   | 'nod.artifact-width'
   | 'nod.trace-open'
