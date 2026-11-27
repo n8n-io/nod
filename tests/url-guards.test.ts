@@ -25,6 +25,7 @@ import {
   createPublicLinkPreviewProvider,
   requestPublicPreview,
 } from '../src/providers/public-web/link-preview.ts';
+import { plainPreview } from '../src/server/message-preview.ts';
 import { previewableUrl, publicMediaUrl } from '../src/shared/link-preview.ts';
 import { MessageQuote, MessageText } from '../src/web/components/message.tsx';
 import { connectionUrl } from '../src/web/lib/connection-url.ts';
@@ -585,6 +586,16 @@ test('reply excerpts cannot load media or expose nested actions', () => {
   );
   assert.match(selected, /&lt;button data-x=&quot;1&quot;&gt; \*literal\*/);
   assert.equal((selected.match(/<button\b/g) ?? []).length, 1);
+});
+
+test('notification previews read the chat Markdown without link targets or hidden markup', () => {
+  const preview = plainPreview(
+    '## **Your report is ready**\n\nRead [the summary](https://example.test/private?token=synthetic-link-secret) and `review.csv` at https://files.example.test/synthetic-path-secret.\n\nUse &lt;b&gt; for bold, see [Foo](https://en.wikipedia.org/wiki/Foo_(bar)) now.\n\n```\nsynthetic-code-block\n```\n\n<!--hidden comment--><script>hidden script</script>',
+  );
+  assert.equal(
+    preview,
+    'Your report is ready Read the summary and review.csv at files.example.test. Use <b> for bold, see Foo now.',
+  );
 });
 
 test('the browser proxy refuses private network destinations, including names that resolve to them', async () => {

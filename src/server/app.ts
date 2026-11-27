@@ -67,7 +67,7 @@ import type {
 import type { createChatVerification } from './chat-verification.ts';
 import { registerWorkAdmission, type WorkAdmission } from './work-admission.ts';
 import { registerAnalyticsRoutes, snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
-import { messagePreview } from './message-preview.ts';
+import { messagePreview, plainPreview } from './message-preview.ts';
 import { validateRequestText } from './request-text.ts';
 import { createCardInteractions } from './card-interactions.ts';
 
@@ -478,6 +478,9 @@ export async function createApp(dependencies: AppDependencies = {}) {
       visibleMessages.map((message) => message.turnId).filter((id) => id && !recentIds.has(id)),
     );
     const planning = dependencies.planningTasks?.();
+    const views = await messageViews(visibleMessages);
+    const latest = views.findLast((message) => message.role === 'assistant');
+    if (latest) latest.previewText = plainPreview(latest.text);
     return {
       threadId: thread.id,
       ...(cleared ? { chatClearedAt: cleared } : {}),
@@ -487,7 +490,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       hiddenMessageCount: hiddenMessages.rows[0]!.count,
       hiddenMessageIds: hiddenMessages.rows[0]!.ids,
       pendingAnswerChoiceMessageIds: pendingChoices.rows.map(({ id }) => id),
-      messages: await messageViews(visibleMessages),
+      messages: views,
       turns: [...turns.rows, ...olderTurns],
       activity,
       verificationRequests,

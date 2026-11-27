@@ -46,20 +46,17 @@ test('readiness notices require an observed preparation and durable opt-in, then
   assert.equal(notices, 1);
 });
 
-test('notification previews extract readable message text without link targets or hidden markup', () => {
+test('notification previews show only the engine preview text', () => {
   const preview = assistantNotificationPreview({
-    text: '## **Your report is ready**\n\nRead [the summary](https://example.test/private?token=synthetic-link-secret) and `review.csv`.\n<!--hidden comment--><script>hidden script</script>',
+    text: 'Read [the summary](https://example.test/private?token=synthetic-link-secret).',
+    previewText: 'Read the summary.',
     replyTo: { text: 'synthetic-private-quoted-message' },
   });
-  assert.ok(preview.includes('Your report is ready'));
-  assert.ok(preview.includes('the summary'));
-  for (const value of [
-    'synthetic-link-secret',
-    'hidden comment',
-    'hidden script',
-    'synthetic-private-quoted-message',
-  ])
-    assert.ok(!preview.includes(value));
+  assert.equal(preview, 'Read the summary.');
+  assert.equal(
+    assistantNotificationPreview({ text: 'Synthetic text from an older engine' }),
+    'You have a new message from Nod.',
+  );
   const attachment = assistantNotificationPreview({
     text: '',
     attachments: [
@@ -70,11 +67,13 @@ test('notification previews extract readable message text without link targets o
   assert.ok(!attachment.includes('synthetic-capability-token'));
 });
 
-test('notification previews redact configured credentials after decoding formatting', () => {
+test('notification previews redact configured credentials', () => {
   const known = 'synthetic-notification-secret/123456=';
-  const encoded = [...known].map((character) => `&#${character.codePointAt(0)};`).join('');
-  for (const input of [known, encodeURIComponent(known), encoded]) {
-    const preview = assistantNotificationPreview({ text: `Result: ${input}` }, new Set([known]));
+  for (const input of [known, encodeURIComponent(known)]) {
+    const preview = assistantNotificationPreview(
+      { previewText: `Result: ${input}` },
+      new Set([known]),
+    );
     assert.ok(!preview.includes(known));
     assert.ok(!preview.includes(encodeURIComponent(known)));
     assert.ok(preview.includes('[redacted]'));

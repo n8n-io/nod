@@ -95,6 +95,47 @@ function htmlText(node: DefaultTreeAdapterMap['node']): string {
   return text.trimEnd();
 }
 
+function urlHost(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
+}
+
+export function plainPreview(text: string): string {
+  const parts: string[] = [];
+  let remaining = 1000;
+  let nodes = 4096;
+  const add = (value: string) => {
+    const piece = previewSlice(value, remaining);
+    parts.push(piece);
+    remaining -= piece.length;
+  };
+  function walk(node: Nodes) {
+    if (remaining <= 0 || nodes-- <= 0) return;
+    if (node.type === 'code' || node.type === 'definition' || node.type === 'footnoteDefinition')
+      return;
+    if (node.type === 'html') return add(htmlText(parseFragment(node.value)));
+    if (node.type === 'image' || node.type === 'imageReference') return add(node.alt || '');
+    if (node.type === 'break') return add(' ');
+    if (node.type === 'link') {
+      const [label, ...rest] = node.children;
+      if (!rest.length && label?.type === 'text' && label.value === node.url)
+        return add(urlHost(node.url));
+    }
+    if ('value' in node) add(node.value);
+    if ('children' in node) for (const child of node.children) walk(child);
+    if (['paragraph', 'heading', 'listItem', 'tableCell'].includes(node.type)) add(' ');
+  }
+  try {
+    walk(markdown.parse(previewSlice(text, 2000)));
+  } catch {
+    return '';
+  }
+  return parts.join('').replace(/\s+/g, ' ').trim();
+}
+
 export function messagePreview(text: string): string {
   if (text.length <= 1000) return text;
   let remaining = 1000;
