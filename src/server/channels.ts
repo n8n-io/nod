@@ -1714,9 +1714,12 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
 
   async function progressStep(work: LiveWork[]) {
     if (!transport.progress || presenceUnavailable()) return;
+    const live = channels
+      .filter((channel) => channel.supportsProgress)
+      .map((channel) => channel.id);
     const targets = new Map(
       work
-        .filter((item) => item.messageId && item.channel.startsWith('telegram:'))
+        .filter((item) => item.messageId && live.includes(item.channel.split(':')[0]!))
         .map((item) => [item.messageId!, item]),
     );
     for (const id of confirmedProgress.keys()) if (!targets.has(id)) confirmedProgress.delete(id);
@@ -1733,12 +1736,12 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
        FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id
        JOIN messages m ON m.id=o.message_id AND m.owner_id=i.owner_id
        JOIN threads th ON th.id=m.thread_id AND th.owner_id=m.owner_id
-       WHERE m.owner_id=$1 AND i.provider='telegram' AND o.state='sent'
+       WHERE m.owner_id=$1 AND i.provider=ANY($3::text[]) AND o.state='sent'
          AND (th.archived_at IS NULL OR o.live_status IS NOT NULL)
          AND cardinality(o.provider_message_ids)=1 AND m.attachments='[]'::jsonb
          AND m.presentation IS NULL AND o.presentation IS NULL AND o.approval_delivery IS NULL
          AND (o.live_status IS NOT NULL OR o.message_id=ANY($2::uuid[]))`,
-      [ownerId, [...targets.keys()]],
+      [ownerId, [...targets.keys()], live],
     );
     for (const row of rows) {
       if (presenceUnavailable()) return;

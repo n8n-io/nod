@@ -1,13 +1,16 @@
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { nextcloudServer, nextcloudUserId } from '../../ports/channel-settings.ts';
 import { logRepeatedFailure } from '../../ports/failure-log.ts';
 import type {
   InboundMessage,
+  InboundReaction,
+  MessagingAttachment,
   MessagingChannel,
   MessagingTransport,
 } from '../../ports/messaging.ts';
-import { MessagingConnectionError } from '../../ports/messaging.ts';
+import { MessagingAttachmentError, MessagingConnectionError } from '../../ports/messaging.ts';
 import { errorCode } from '../../shared/error-code.ts';
 import { modelErrorText } from '../model-error.ts';
 import { hasLiteralBlock } from './format.ts';
@@ -18,6 +21,9 @@ export const nextcloudTextLimit = 32_000;
 const roomToken = /^[A-Za-z0-9]{4,64}$/;
 const mentionTypes = new Set(['user', 'guest', 'call', 'user-group', 'group', 'email', 'circle']);
 const offsetLifetime = "interval '24 hours'";
+const fileBytes = 50 * 1024 * 1024;
+const voiceTypes = new Set(['voice-message', 'record-audio']);
+const messageTypes = new Set(['comment', 'voice-message', 'record-audio', 'record-video']);
 
 const ocsMeta = z.object({
   ocs: z.object({
@@ -39,7 +45,13 @@ const talkRoom = z
   })
   .passthrough();
 const talkParameter = z
-  .object({ type: z.string().max(64), name: z.string().max(500).optional() })
+  .object({
+    type: z.string().max(64),
+    name: z.string().max(500).optional(),
+    path: z.string().max(4096).optional(),
+    size: z.union([z.string(), z.number()]).optional(),
+    mimetype: z.string().max(200).optional(),
+  })
   .passthrough();
 export const talkMessage = z
   .object({
@@ -77,18 +89,45 @@ export async function nextcloudFailure(
   );
 }
 
+function talkParameters(message: z.infer<typeof talkMessage>) {
+  return Array.isArray(message.messageParameters) ? {} : (message.messageParameters ?? {});
+}
+
 export function talkText(message: z.infer<typeof talkMessage>) {
-  const parameters = Array.isArray(message.messageParameters)
-    ? {}
-    : (message.messageParameters ?? {});
-  if (Object.values(parameters).some((parameter) => parameter.type === 'file')) return undefined;
+  const parameters = talkParameters(message);
   return message.message
     .replace(/\{([A-Za-z0-9_-]{1,64})\}/g, (match, key: string) => {
       const parameter = parameters[key];
+      if (parameter?.type === 'file') return '';
       if (!parameter?.name) return match;
       return mentionTypes.has(parameter.type) ? `@${parameter.name}` : parameter.name;
     })
     .trim();
+}
+
+export function talkFile(message: z.infer<typeof talkMessage>) {
+  const file = Object.values(talkParameters(message)).find((item) => item.type === 'file');
+  if (!file?.path || !file.name) return undefined;
+  const segments = file.path.split('/');
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) return undefined;
+  const size = Number(file.size ?? 0);
+  return {
+    name: file.name.slice(0, 255),
+    segments,
+    mimeType: /^[\w.+-]+\/[\w.+-]+$/.test(file.mimetype ?? '')
+      ? file.mimetype!
+      : 'application/octet-stream',
+    size: Number.isSafeInteger(size) && size > 0 ? size : 0,
+    voice: voiceTypes.has(message.messageType),
+  };
+}
+
+export function talkFileName(name: string) {
+  const clean = name
+    .replace(/[\u0000-\u001f\u007f/\\]/g, '')
+    .trim()
+    .slice(0, 200);
+  return clean && clean !== '.' && clean !== '..' ? clean : 'file';
 }
 
 export function talkChunks(text: string, limit = nextcloudTextLimit) {
@@ -135,6 +174,12 @@ export function nextcloudConfiguration(env: Environment) {
   };
 }
 
+type Fetched = {
+  id: number;
+  message?: InboundMessage;
+  reaction?: InboundReaction;
+};
+
 export function createNextcloudTalkTransport(
   pool: Pick<Pool, 'query'>,
   env: Environment,
@@ -157,7 +202,8 @@ export function createNextcloudTalkTransport(
     missing: configuration.missing,
     ...(accountId ? { accountId } : {}),
     allowedSenderIds: configured ? [owner] : [],
-    supportsAttachments: false,
+    supportsAttachments: true,
+    supportsProgress: true,
     ...(configured ? { available: false } : {}),
   };
   const lifetime = new AbortController();
@@ -165,11 +211,18 @@ export function createNextcloudTalkTransport(
   let polling = false;
   let token: string | undefined;
   let fetching: Promise<void> | undefined;
-  let fetched: Array<{ id: number; message?: InboundMessage }> = [];
+  let fetched: Fetched[] = [];
   let fetchFailure: MessagingConnectionError | undefined;
   let processed: (() => void) | undefined;
   let inputListener: (() => void) | undefined;
   let offsetsReady: Promise<unknown> | undefined;
+
+  const headers = (extra: Record<string, string> = {}) => ({
+    Authorization: authorization,
+    'OCS-APIRequest': 'true',
+    Accept: 'application/json',
+    ...extra,
+  });
 
   function ocs(
     path: string,
@@ -178,22 +231,51 @@ export function createNextcloudTalkTransport(
       body?: object;
       query?: Record<string, string>;
       timeoutMs?: number;
+      signal?: AbortSignal;
     } = {},
   ) {
     const url = new URL(`${server}/ocs/v2.php${path}`);
     for (const [name, value] of Object.entries(init.query ?? {})) url.searchParams.set(name, value);
     return request(url, {
       method: init.method ?? 'GET',
-      headers: {
-        Authorization: authorization,
-        'OCS-APIRequest': 'true',
-        Accept: 'application/json',
-        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-      },
+      headers: headers(init.body ? { 'Content-Type': 'application/json' } : {}),
       ...(init.body ? { body: JSON.stringify(init.body) } : {}),
-      signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(init.timeoutMs ?? 15_000)]),
+      signal: AbortSignal.any([
+        lifetime.signal,
+        AbortSignal.timeout(init.timeoutMs ?? 15_000),
+        ...(init.signal ? [init.signal] : []),
+      ]),
       redirect: 'error',
     });
+  }
+
+  function dav(
+    method: string,
+    segments: string[],
+    init: { body?: Uint8Array; contentType?: string; signal?: AbortSignal } = {},
+  ) {
+    const path = [user, ...segments].map(encodeURIComponent).join('/');
+    return request(`${server}/remote.php/dav/files/${path}`, {
+      method,
+      headers: {
+        Authorization: authorization,
+        ...(init.contentType ? { 'Content-Type': init.contentType } : {}),
+      },
+      ...(init.body ? { body: Buffer.from(init.body) } : {}),
+      signal: AbortSignal.any([
+        lifetime.signal,
+        AbortSignal.timeout(60_000),
+        ...(init.signal ? [init.signal] : []),
+      ]),
+      redirect: 'error',
+    });
+  }
+
+  async function davFailure(response: Response, action: string) {
+    await response.body?.cancel().catch(() => {});
+    return new MessagingConnectionError(
+      modelErrorText(`Nextcloud ${action} failed (HTTP ${response.status}).`, secrets),
+    );
   }
 
   async function savedOffset() {
@@ -242,7 +324,43 @@ export function createNextcloudTalkTransport(
       reason,
     });
 
-  function inbound(raw: unknown, room: string): { id: number; message?: InboundMessage } | null {
+  function download(file: NonNullable<ReturnType<typeof talkFile>>): MessagingAttachment {
+    return {
+      name: file.name,
+      mimeType: file.mimeType,
+      size: file.size,
+      ...(file.voice ? { voice: true } : {}),
+      async read(signal) {
+        if (file.size > fileBytes) throw new MessagingAttachmentError(fileBytes);
+        const response = await dav('GET', file.segments, { signal });
+        if (!response.ok) throw await davFailure(response, 'file download');
+        if (!response.body) throw new Error('The Nextcloud file is unavailable.');
+        if (Number(response.headers.get('content-length') ?? 0) > fileBytes) {
+          await response.body.cancel().catch(() => {});
+          throw new MessagingAttachmentError(fileBytes);
+        }
+        const reader = response.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        try {
+          for (;;) {
+            signal?.throwIfAborted();
+            const next = await reader.read();
+            if (next.done) break;
+            size += next.value.length;
+            if (size > fileBytes) throw new MessagingAttachmentError(fileBytes);
+            chunks.push(next.value);
+          }
+        } finally {
+          await reader.cancel().catch(() => {});
+          reader.releaseLock();
+        }
+        return Buffer.concat(chunks, size);
+      },
+    };
+  }
+
+  function inbound(raw: unknown, room: string): Fetched | null {
     const parsed = talkMessage.safeParse(raw);
     if (!parsed.success) {
       dropped('unsupported_message');
@@ -252,13 +370,31 @@ export function createNextcloudTalkTransport(
     const message = parsed.data;
     const skip = { id: message.id };
     if (message.actorType === 'users' && message.actorId === user) return skip;
-    if (message.systemMessage || message.messageType !== 'comment') return skip;
-    if (message.actorType !== 'users' || message.actorId !== owner) {
+    const fromOwner = message.actorType === 'users' && message.actorId === owner;
+    if (message.systemMessage === 'reaction' || message.systemMessage === 'reaction_revoked') {
+      if (!fromOwner || !message.parent) return skip;
+      const emoji = message.message.trim();
+      if (message.systemMessage === 'reaction' && (!emoji || emoji.length > 64)) return skip;
+      return {
+        id: message.id,
+        reaction: {
+          channelId: 'nextcloud',
+          accountId: accountId!,
+          senderId: message.actorId,
+          messageId: String(message.parent.id),
+          reaction: message.systemMessage === 'reaction' ? emoji : null,
+        },
+      };
+    }
+    if (message.systemMessage || !messageTypes.has(message.messageType)) return skip;
+    if (!fromOwner) {
       dropped('unknown_sender');
       return skip;
     }
+    const file = talkFile(message);
     const text = talkText(message);
-    if (!text) {
+    const attachments = file ? [download(file)] : [];
+    if (!text && !attachments.length) {
       dropped('unsupported_type');
       return skip;
     }
@@ -271,6 +407,7 @@ export function createNextcloudTalkTransport(
         messageId: String(message.id),
         threadId: room,
         text,
+        ...(attachments.length ? { attachments } : {}),
         ...(message.parent ? { replyToMessageId: String(message.parent.id) } : {}),
         sentAt: new Date(message.timestamp * 1000),
       },
@@ -374,13 +511,14 @@ export function createNextcloudTalkTransport(
       throw new Error('Channel is not configured.');
   }
 
+  const messageId = (value?: string) =>
+    value && /^\d{1,18}$/.test(value) ? Number(value) : undefined;
+
   async function send(threadId: string, message: string, replyTo?: string) {
+    const parent = messageId(replyTo);
     const response = await ocs(`/apps/spreed/api/v1/chat/${threadId}`, {
       method: 'POST',
-      body: {
-        message,
-        ...(replyTo && /^\d{1,18}$/.test(replyTo) ? { replyTo: Number(replyTo) } : {}),
-      },
+      body: { message, ...(parent ? { replyTo: parent } : {}) },
       timeoutMs: 30_000,
     });
     if (!response.ok) throw await nextcloudFailure(response, 'message delivery', secrets);
@@ -388,6 +526,57 @@ export function createNextcloudTalkTransport(
       await response.json(),
     );
     return String(sent.ocs.data.id);
+  }
+
+  async function folder(segments: string[]) {
+    const response = await dav('MKCOL', segments);
+    if (!response.ok && response.status !== 405) throw await davFailure(response, 'folder setup');
+    await response.body?.cancel().catch(() => {});
+  }
+
+  async function sendFile(
+    threadId: string,
+    file: MessagingAttachment,
+    bytes: Uint8Array,
+    replyTo?: string,
+  ) {
+    const name = talkFileName(file.name);
+    const segments = ['Nod', randomUUID(), name];
+    await folder(segments.slice(0, 1));
+    await folder(segments.slice(0, 2));
+    const uploaded = await dav('PUT', segments, { body: bytes, contentType: file.mimeType });
+    if (!uploaded.ok) throw await davFailure(uploaded, 'file upload');
+    await uploaded.body?.cancel().catch(() => {});
+    const referenceId = createHash('sha256').update(randomBytes(32)).digest('hex');
+    const parent = messageId(replyTo);
+    const shared = await ocs('/apps/files_sharing/api/v1/shares', {
+      method: 'POST',
+      body: {
+        shareType: 10,
+        shareWith: threadId,
+        path: `/${segments.join('/')}`,
+        referenceId,
+        talkMetaData: JSON.stringify({
+          messageType: file.mimeType.startsWith('audio/') ? 'voice-message' : 'comment',
+          ...(parent ? { replyTo: parent } : {}),
+        }),
+      },
+      timeoutMs: 30_000,
+    });
+    if (!shared.ok) throw await nextcloudFailure(shared, 'file sharing', secrets);
+    await shared.body?.cancel().catch(() => {});
+    const history = await ocs(`/apps/spreed/api/v1/chat/${threadId}`, {
+      query: { lookIntoFuture: '0', limit: '20', setReadMarker: '0' },
+    }).catch(() => undefined);
+    const fallback = `ref:${referenceId}`;
+    if (!history?.ok) return fallback;
+    const messages = ocsData(
+      z.array(z.object({ id: z.number().int().positive(), referenceId: z.string().optional() })),
+    ).safeParse(await history.json().catch(() => undefined));
+    const found = messages.success
+      ? messages.data.ocs.data.find((item) => item.referenceId === referenceId)
+      : undefined;
+    return found ? String(found.id) : fallback;
   }
 
   return {
@@ -402,7 +591,7 @@ export function createNextcloudTalkTransport(
     onInput(listener) {
       inputListener = listener;
     },
-    async poll(accept) {
+    async poll(accept, _pair, react) {
       if (closed || polling || !configured) return;
       fetching ??= fetchMessages();
       polling = true;
@@ -415,6 +604,7 @@ export function createNextcloudTalkTransport(
         while (fetched.length && !closed) {
           const item = fetched[0]!;
           if (item.message) await accept(item.message);
+          if (item.reaction) await react?.(item.reaction);
           await saveOffset(item.id);
           fetched.shift();
         }
@@ -438,29 +628,111 @@ export function createNextcloudTalkTransport(
     async post(input) {
       target(input);
       const ids: string[] = [];
-      for (const part of talkChunks(input.text))
+      let delivered = false;
+      for (const part of talkChunks(input.text)) {
         ids.push(await send(input.threadId, part, ids.length ? undefined : input.replyToMessageId));
-      if (input.attachments?.length) {
-        const notice = await input
-          .attachmentFailure?.(input.attachments.map((file) => ({ name: file.name })))
-          .catch(() => undefined);
-        for (const part of talkChunks(notice ?? ''))
-          ids.push(await send(input.threadId, part).catch(() => ''));
+        delivered = true;
       }
-      const delivered = ids.filter(Boolean);
-      if (!delivered.length) throw new Error('Channel delivery was not confirmed.');
-      return { id: delivered[0]!, ids: delivered };
+      const unsent: Array<{ name: string; reason?: string }> = [];
+      for (const file of input.attachments ?? []) {
+        let bytes: Uint8Array;
+        try {
+          if (!file.size || file.size > fileBytes) throw new MessagingAttachmentError(fileBytes);
+          bytes = await file.read(lifetime.signal);
+          if (bytes.length !== file.size) throw new Error('The file has changed.');
+        } catch {
+          lifetime.signal.throwIfAborted();
+          unsent.push({ name: file.name });
+          continue;
+        }
+        try {
+          const id = await sendFile(
+            input.threadId,
+            file,
+            bytes,
+            delivered ? undefined : input.replyToMessageId,
+          );
+          delivered = true;
+          ids.push(id);
+        } catch (cause) {
+          lifetime.signal.throwIfAborted();
+          unsent.push({
+            name: file.name,
+            ...(cause instanceof MessagingConnectionError ? { reason: cause.message } : {}),
+          });
+        }
+      }
+      if (unsent.length) {
+        const notice = await input.attachmentFailure?.(unsent).catch(() => undefined);
+        for (const part of talkChunks(notice ?? '')) {
+          const id = await send(input.threadId, part).catch(() => '');
+          if (id) {
+            ids.push(id);
+            delivered = true;
+          }
+        }
+      }
+      if (!delivered) throw new Error('Channel delivery was not confirmed.');
+      return { id: ids[0]!, ids };
     },
     async react(input) {
       target(input);
       input.signal?.throwIfAborted();
-      if (!input.reaction || !/^\d{1,18}$/.test(input.messageId)) return 'unsupported';
-      const response = await ocs(
-        `/apps/spreed/api/v1/reaction/${input.threadId}/${input.messageId}`,
-        { method: 'POST', body: { reaction: input.reaction } },
-      );
-      if (!response.ok) throw await nextcloudFailure(response, 'reaction', secrets);
+      if (!messageId(input.messageId)) return 'unsupported';
+      const path = `/apps/spreed/api/v1/reaction/${input.threadId}/${input.messageId}`;
+      const listed = await ocs(path, { signal: input.signal });
+      if (!listed.ok) throw await nextcloudFailure(listed, 'reaction lookup', secrets);
+      const reactions = ocsData(
+        z.union([
+          z.record(
+            z.string(),
+            z.array(z.object({ actorType: z.string(), actorId: z.string() }).passthrough()),
+          ),
+          z.array(z.never()),
+        ]),
+      ).parse(await listed.json()).ocs.data;
+      const own = Object.entries(Array.isArray(reactions) ? {} : reactions)
+        .filter(([, actors]) =>
+          actors.some((actor) => actor.actorType === 'users' && actor.actorId === user),
+        )
+        .map(([emoji]) => emoji);
+      for (const emoji of own) {
+        if (emoji === input.reaction) continue;
+        const removed = await ocs(path, {
+          method: 'DELETE',
+          query: { reaction: emoji },
+          signal: input.signal,
+        });
+        if (!removed.ok) throw await nextcloudFailure(removed, 'reaction removal', secrets);
+        await removed.body?.cancel().catch(() => {});
+      }
+      if (input.reaction && !own.includes(input.reaction)) {
+        const added = await ocs(path, {
+          method: 'POST',
+          body: { reaction: input.reaction },
+          signal: input.signal,
+        });
+        if (!added.ok) throw await nextcloudFailure(added, 'reaction', secrets);
+        await added.body?.cancel().catch(() => {});
+      }
       return 'sent';
+    },
+    async progress(input) {
+      target(input);
+      if (!messageId(input.messageId)) throw new Error('The Nextcloud Talk message is unknown.');
+      const message = input.status
+        ? `${input.text}\n\n> ${input.status.replaceAll('\n', '\n> ')}`
+        : input.text;
+      if (message.length > nextcloudTextLimit)
+        throw new Error('The Nextcloud Talk status is too long.');
+      input.signal.throwIfAborted();
+      const response = await ocs(`/apps/spreed/api/v1/chat/${input.threadId}/${input.messageId}`, {
+        method: 'PUT',
+        body: { message },
+        signal: input.signal,
+      });
+      if (!response.ok) throw await nextcloudFailure(response, 'status update', secrets);
+      await response.body?.cancel().catch(() => {});
     },
     async close() {
       if (closed) return;
