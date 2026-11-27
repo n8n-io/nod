@@ -23,6 +23,9 @@ import { Button, Loading, Notice } from '../components/ui';
 import { money } from '../lib/money';
 import { ScheduleCost, ScheduleModel } from '../components/model-choices';
 
+const focusMessage = (messageId: string) =>
+  window.dispatchEvent(new CustomEvent('nod:focus-message', { detail: { messageId } }));
+
 export function ScheduleRow({
   schedule,
   activity,
@@ -67,7 +70,8 @@ export function ScheduleRow({
         : !lastRun || (item.runId !== lastRun.id && item.since > lastRun.createdAt)),
   );
   const activeStatus = live ? 'running' : activeRun?.status;
-  const questionMessageId = activeStatus === 'waiting' ? activeRun?.questionMessageId : null;
+  const questionMessageId =
+    activeStatus === 'waiting' ? (activeRun?.questionMessageId ?? null) : null;
   const runLabel = starting
     ? 'Starting…'
     : activeStatus
@@ -190,10 +194,6 @@ export function ScheduleRow({
       : null,
     schedule.timeZone !== dateFormat.timeZone ? schedule.timeZone : null,
   ].filter(Boolean);
-  const focusQuestion = () =>
-    window.dispatchEvent(
-      new CustomEvent('nod:focus-message', { detail: { messageId: questionMessageId } }),
-    );
   return (
     <article
       className="schedule-row"
@@ -231,7 +231,7 @@ export function ScheduleRow({
                 className="task-status"
                 data-status="needs_you"
                 aria-label={`Open the question for ${schedule.title}`}
-                onClick={focusQuestion}
+                onClick={() => focusMessage(questionMessageId)}
               >
                 <MessageCircle size={12} aria-hidden="true" />
                 Needs your input
@@ -264,7 +264,7 @@ export function ScheduleRow({
           aria-busy={starting}
           aria-live="polite"
           onClick={() => {
-            if (questionMessageId) focusQuestion();
+            if (questionMessageId) focusMessage(questionMessageId);
             else void runNow();
           }}
         >
@@ -335,7 +335,13 @@ export function ScheduleRow({
               </Button>
               <DeletePlan id={schedule.id} title={schedule.title} />
             </div>
-            {showRuns && <ScheduleRuns schedule={schedule} resultTurnId={resultTurnId} />}
+            {showRuns && (
+              <ScheduleRuns
+                schedule={schedule}
+                resultTurnId={resultTurnId}
+                questionMessageId={questionMessageId}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -382,7 +388,15 @@ function ScheduleRunLine({
   );
 }
 
-function ScheduleRunDetail({ run, id }: { run: ScheduleRun; id: string }) {
+function ScheduleRunDetail({
+  run,
+  id,
+  questionMessageId,
+}: {
+  run: ScheduleRun;
+  id: string;
+  questionMessageId: string | null;
+}) {
   const dateFormat = useDateFormat();
   const date = (value: string) => scheduleDate(value, run.timeZone, dateFormat);
   const text = run.messageText ?? run.messagePreview ?? '';
@@ -400,10 +414,23 @@ function ScheduleRunDetail({ run, id }: { run: ScheduleRun; id: string }) {
     >
       <div className="schedule-run-detail-heading">
         <time dateTime={run.scheduledFor}>{date(run.scheduledFor)}</time>
-        <span className="task-status" data-status={run.status}>
-          <StatusIcon status={run.status} />
-          {statusLabels[run.status]}
-        </span>
+        {questionMessageId ? (
+          <button
+            type="button"
+            className="task-status"
+            data-status={run.status}
+            aria-label={`Open the question for ${run.title}`}
+            onClick={() => focusMessage(questionMessageId)}
+          >
+            <StatusIcon status={run.status} />
+            {statusLabels[run.status]}
+          </button>
+        ) : (
+          <span className="task-status" data-status={run.status}>
+            <StatusIcon status={run.status} />
+            {statusLabels[run.status]}
+          </span>
+        )}
       </div>
       {facts.length > 0 && <p className="saved-plan-note">{facts.join(' · ')}</p>}
       {run.error && <p className="schedule-run-error">{run.error}</p>}
@@ -428,13 +455,7 @@ function ScheduleRunDetail({ run, id }: { run: ScheduleRun; id: string }) {
           variant="ghost"
           size="sm"
           className="schedule-run-files"
-          onClick={() =>
-            window.dispatchEvent(
-              new CustomEvent('nod:focus-message', {
-                detail: { messageId: run.attachmentMessageId },
-              }),
-            )
-          }
+          onClick={() => focusMessage(run.attachmentMessageId!)}
         >
           Show files in chat
         </Button>
@@ -443,7 +464,15 @@ function ScheduleRunDetail({ run, id }: { run: ScheduleRun; id: string }) {
   );
 }
 
-function ScheduleRuns({ schedule, resultTurnId }: { schedule: Schedule; resultTurnId?: string }) {
+function ScheduleRuns({
+  schedule,
+  resultTurnId,
+  questionMessageId,
+}: {
+  schedule: Schedule;
+  resultTurnId?: string;
+  questionMessageId: string | null;
+}) {
   const history = useScheduleHistory(schedule.id);
   const [selectedId, setSelectedId] = useState<string>();
   const detailId = useId();
@@ -454,6 +483,18 @@ function ScheduleRuns({ schedule, resultTurnId }: { schedule: Schedule; resultTu
     history.runs.find((run) => run.id === selectedId) ??
     history.runs.find((run) => run.turnId === resultTurnId) ??
     history.runs[0];
+  const waitingRun = questionMessageId
+    ? (history.runs.find(
+        (run) => run.status === 'waiting' && run.turnId === schedule.activeRun?.turnId,
+      ) ??
+      history.runs.find((run) => run.status === 'waiting' && run.messageId === questionMessageId) ??
+      history.runs.find(
+        (run) =>
+          run.status === 'waiting' &&
+          schedule.lastRun?.status === 'waiting' &&
+          run.id === schedule.lastRun.id,
+      ))
+    : undefined;
   return (
     <section className="schedule-runs" aria-label={`Runs for ${schedule.title}`}>
       <h3>Runs</h3>
@@ -499,7 +540,11 @@ function ScheduleRuns({ schedule, resultTurnId }: { schedule: Schedule; resultTu
               </Button>
             )}
           </div>
-          <ScheduleRunDetail run={selected} id={detailId} />
+          <ScheduleRunDetail
+            run={selected}
+            id={detailId}
+            questionMessageId={selected.id === waitingRun?.id ? questionMessageId : null}
+          />
         </div>
       )}
     </section>

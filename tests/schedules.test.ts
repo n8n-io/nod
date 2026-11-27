@@ -3227,6 +3227,348 @@ test('waiting scheduled runs open their pending question without starting anothe
   assert.equal(inactive.open, true);
 });
 
+test('expanded waiting schedule run detail opens its pending question in chat (LAB-1215)', async (t) => {
+  const { JSDOM } = await import('jsdom');
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    url: 'https://nod.example.test/tasks',
+    pretendToBeVisual: true,
+  });
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    navigator: dom.window.navigator,
+    HTMLElement: dom.window.HTMLElement,
+    Element: dom.window.Element,
+    Node: dom.window.Node,
+    Event: dom.window.Event,
+    CustomEvent: dom.window.CustomEvent,
+    MutationObserver: dom.window.MutationObserver,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const originals = new Map(
+    Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const { act, createElement } = await import('react');
+  const { createRoot } = await import('react-dom/client');
+  const { pageDataCache } = await import('../src/web/lib/page-data-cache.ts');
+  const { Scheduled } = await import('../src/web/pages/tasks.tsx');
+  const root = createRoot(dom.window.document.getElementById('root')!);
+  t.after(async () => {
+    await act(async () => root.unmount());
+    pageDataCache.clear();
+    dom.window.close();
+    for (const [key, value] of originals)
+      if (value) Object.defineProperty(globalThis, key, value);
+      else Reflect.deleteProperty(globalThis, key);
+  });
+  pageDataCache.clear();
+  const scheduleId = randomUUID();
+  const completed: ScheduleRun = {
+    id: randomUUID(),
+    scheduleId,
+    title: 'Synthetic morning brief',
+    turnId: randomUUID(),
+    scheduledFor: '2035-10-25T08:00:00.000Z',
+    timeZone: 'UTC',
+    createdAt: '2035-10-25T08:00:00.000Z',
+    status: 'succeeded',
+    error: null,
+    observation: null,
+    messageId: randomUUID(),
+    messagePreview: 'Synthetic brief completed.',
+    messageText: 'Synthetic brief completed.',
+    attachmentMessageId: null,
+    costUsd: 0.42,
+  };
+  const questionId = randomUUID();
+  const checkInText = 'This work has used $5.28 so far. How should I continue?';
+  const waiting: ScheduleRun = {
+    id: randomUUID(),
+    scheduleId,
+    title: completed.title,
+    turnId: randomUUID(),
+    scheduledFor: '2035-10-26T08:00:00.000Z',
+    timeZone: 'UTC',
+    createdAt: '2035-10-26T08:00:00.000Z',
+    status: 'waiting',
+    error: null,
+    observation: null,
+    messageId: questionId,
+    messagePreview: checkInText,
+    messageText: checkInText,
+    attachmentMessageId: null,
+    costUsd: 5.28,
+  };
+  let schedule: Schedule = {
+    id: scheduleId,
+    title: completed.title,
+    prompt:
+      'Read the synthetic morning sources at https://reports.example.test and summarize them.',
+    kind: 'recurring',
+    cron: '0 8 * * *',
+    runAt: null,
+    timeZone: 'UTC',
+    enabled: true,
+    revision: 1,
+    nextRun: '2035-10-27T08:00:00.000Z',
+    lastRun: waiting,
+    activeRun: { turnId: waiting.turnId, status: 'waiting', questionMessageId: questionId },
+    baselineObservation: null,
+    watch: null,
+    monthlyUsd: null,
+    model: null,
+  };
+  const historyPath = `/api/schedule-runs?scheduleId=${schedule.id}&limit=10`;
+  let history: ScheduleHistory = { runs: [waiting, completed], nextCursor: null };
+  const mutations: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, options?: RequestInit) => {
+    const path = String(input);
+    const method = options?.method ?? 'GET';
+    if (method !== 'GET') {
+      mutations.push(`${method} ${path}`);
+      return Response.json({ ok: true });
+    }
+    if (path === '/api/schedules') return Response.json([schedule]);
+    if (path === '/api/tasks') return Response.json([]);
+    if (path === '/api/apps') return Response.json([]);
+    if (path === '/api/schedules/ideas') return Response.json({ ideas: [] });
+    if (path === '/api/models')
+      return Response.json({ connections: [], selection: null, light: null, routes: {} });
+    if (path === '/api/usage/work') return Response.json({ schedules: {}, tasks: {} });
+    assert.equal(path, historyPath);
+    return Response.json(history);
+  });
+  const asked: string[] = [];
+  const focused: unknown[] = [];
+  dom.window.addEventListener('nod:focus-message', (event) =>
+    focused.push((event as CustomEvent).detail),
+  );
+  await act(async () =>
+    root.render(createElement(Scheduled, { onAsk: (text) => asked.push(text) })),
+  );
+  await act(async () => {
+    await pageDataCache.refresh('/api/schedules', true);
+    await pageDataCache.refresh(historyPath, true);
+  });
+
+  const detailStatus = () => {
+    const detail = dom.window.document.querySelector<HTMLElement>('.schedule-run-detail');
+    assert.ok(detail, 'Expanded schedule must render the selected run detail.');
+    const status = detail.querySelector<HTMLElement>('.schedule-run-detail-heading .task-status');
+    assert.ok(status, 'Expanded run detail must render its status control.');
+    return { detail, status };
+  };
+
+  const initial = detailStatus();
+  assert.equal(
+    initial.detail.querySelector('time')?.getAttribute('datetime'),
+    waiting.scheduledFor,
+  );
+  assert.equal(initial.status.dataset.status, 'waiting');
+  assert.equal(
+    initial.status.tagName,
+    'BUTTON',
+    'Expanded run detail for a waiting scheduled run must offer a clickable control to open its pending question in Chat.',
+  );
+  assert.equal((initial.status as HTMLButtonElement).disabled, false);
+  await act(async () => initial.status.click());
+  assert.deepEqual(
+    mutations,
+    [],
+    'Opening the waiting question from run detail must not start another run.',
+  );
+  assert.deepEqual(
+    asked,
+    [],
+    'Opening the waiting question from run detail must not post a new chat request.',
+  );
+  assert.deepEqual(
+    focused,
+    [{ messageId: questionId }],
+    'Expanded run detail must focus the waiting run’s pending question in Chat.',
+  );
+
+  const runLines = [
+    ...dom.window.document.querySelectorAll<HTMLButtonElement>('.schedule-run-line'),
+  ];
+  assert.equal(runLines.length, 2);
+  await act(async () => runLines[1]!.click());
+  const earlier = detailStatus();
+  assert.equal(
+    earlier.detail.querySelector('time')?.getAttribute('datetime'),
+    completed.scheduledFor,
+  );
+  assert.equal(earlier.status.dataset.status, 'succeeded');
+  assert.equal(
+    earlier.status.tagName,
+    'SPAN',
+    'Selecting an earlier finished run must keep its status badge non-interactive.',
+  );
+  assert.equal(earlier.detail.querySelector('button'), null);
+  await act(async () => earlier.status.click());
+  assert.deepEqual(
+    focused,
+    [{ messageId: questionId }],
+    'Selecting an earlier finished run must not open the active run’s pending question.',
+  );
+  await act(async () => runLines[0]!.click());
+
+  const resumedQuestionId = randomUUID();
+  const resumedQuestionText = 'Enter the synthetic verification code to finish the brief.';
+  const resumedWaiting: ScheduleRun = {
+    ...waiting,
+    messageId: resumedQuestionId,
+    messagePreview: resumedQuestionText,
+    messageText: resumedQuestionText,
+  };
+  schedule = {
+    ...schedule,
+    lastRun: resumedWaiting,
+    activeRun: {
+      turnId: randomUUID(),
+      status: 'waiting',
+      questionMessageId: resumedQuestionId,
+    },
+  };
+  await act(async () => {
+    await pageDataCache.refresh('/api/schedules', true);
+  });
+  const staleHistory = detailStatus();
+  assert.equal(staleHistory.status.dataset.status, 'waiting');
+  assert.equal(staleHistory.status.tagName, 'BUTTON');
+  assert.equal((staleHistory.status as HTMLButtonElement).disabled, false);
+  await act(async () => staleHistory.status.click());
+  assert.deepEqual(focused, [{ messageId: questionId }, { messageId: resumedQuestionId }]);
+
+  history = { runs: [resumedWaiting, completed], nextCursor: null };
+  await act(async () => {
+    await pageDataCache.refresh(historyPath, true);
+  });
+  const resumed = detailStatus();
+  assert.equal(resumed.status.dataset.status, 'waiting');
+  assert.equal(
+    resumed.status.tagName,
+    'BUTTON',
+    'Expanded run detail must still open the newer question after a resumed turn pauses again.',
+  );
+  assert.equal((resumed.status as HTMLButtonElement).disabled, false);
+  await act(async () => resumed.status.click());
+  assert.deepEqual(focused, [
+    { messageId: questionId },
+    { messageId: resumedQuestionId },
+    { messageId: resumedQuestionId },
+  ]);
+  assert.deepEqual(mutations, []);
+  assert.deepEqual(asked, []);
+
+  const newerQuestionId = randomUUID();
+  const newerWaiting: ScheduleRun = {
+    ...resumedWaiting,
+    id: randomUUID(),
+    turnId: randomUUID(),
+    scheduledFor: '2035-10-27T08:00:00.000Z',
+    createdAt: '2035-10-27T08:00:00.000Z',
+    messageId: newerQuestionId,
+  };
+  schedule = {
+    ...schedule,
+    lastRun: newerWaiting,
+    activeRun: {
+      turnId: newerWaiting.turnId,
+      status: 'waiting',
+      questionMessageId: newerQuestionId,
+    },
+  };
+  await act(async () => {
+    await pageDataCache.refresh('/api/schedules', true);
+  });
+  const unrelatedWaiting = detailStatus();
+  assert.equal(
+    unrelatedWaiting.detail.querySelector('time')?.getAttribute('datetime'),
+    resumedWaiting.scheduledFor,
+  );
+  assert.equal(unrelatedWaiting.status.dataset.status, 'waiting');
+  assert.equal(
+    unrelatedWaiting.status.tagName,
+    'SPAN',
+    'An unrelated historical waiting run must stay non-interactive instead of opening another run’s question.',
+  );
+  assert.equal(unrelatedWaiting.detail.querySelector('button'), null);
+  await act(async () => unrelatedWaiting.status.click());
+  assert.deepEqual(focused, [
+    { messageId: questionId },
+    { messageId: resumedQuestionId },
+    { messageId: resumedQuestionId },
+  ]);
+
+  schedule = {
+    ...schedule,
+    lastRun: waiting,
+    activeRun: {
+      turnId: waiting.turnId,
+      status: 'waiting',
+      questionMessageId: null,
+    },
+  };
+  history = {
+    runs: [{ ...waiting, messageId: null, messagePreview: null, messageText: null }, completed],
+    nextCursor: null,
+  };
+  await act(async () => {
+    await pageDataCache.refresh('/api/schedules', true);
+    await pageDataCache.refresh(historyPath, true);
+  });
+  const unavailable = detailStatus();
+  assert.equal(unavailable.status.dataset.status, 'waiting');
+  assert.equal(
+    unavailable.status.tagName,
+    'SPAN',
+    'Expanded run detail must render a non-interactive waiting badge when no pending question message exists.',
+  );
+  assert.equal(unavailable.detail.querySelector('button'), null);
+  await act(async () => unavailable.status.click());
+  assert.deepEqual(focused, [
+    { messageId: questionId },
+    { messageId: resumedQuestionId },
+    { messageId: resumedQuestionId },
+  ]);
+
+  const finished: ScheduleRun = {
+    ...waiting,
+    status: 'succeeded',
+    messageId: randomUUID(),
+    messagePreview: 'Stopped for today. Synthetic brief finished.',
+    messageText: 'Stopped for today. Synthetic brief finished.',
+  };
+  schedule = {
+    ...schedule,
+    lastRun: finished,
+    activeRun: null,
+  };
+  history = { runs: [finished, completed], nextCursor: null };
+  await act(async () => {
+    await pageDataCache.refresh('/api/schedules', true);
+    await pageDataCache.refresh(historyPath, true);
+  });
+  const finishedState = detailStatus();
+  assert.equal(finishedState.status.dataset.status, 'succeeded');
+  assert.equal(
+    finishedState.status.tagName,
+    'SPAN',
+    'Finished run detail must not expose a pending-question chat jump.',
+  );
+  assert.equal(finishedState.detail.querySelector('button'), null);
+  await act(async () => finishedState.status.click());
+  assert.deepEqual(focused, [
+    { messageId: questionId },
+    { messageId: resumedQuestionId },
+    { messageId: resumedQuestionId },
+  ]);
+});
+
 test(
   'schedule ideas read only the owner’s eligible messages and refresh at most once a day',
   { skip: !process.env.TEST_DATABASE_URL },

@@ -123,12 +123,7 @@
 }
 .schedule-row-when .task-status {
   padding: 1px 10px 1px 6px;
-  border: 0;
-  font-family: inherit;
   font-size: 12px;
-}
-.schedule-row-when button.task-status {
-  cursor: pointer;
 }
 .schedule-row-model {
   min-width: 0;
@@ -357,11 +352,24 @@
   font-size: var(--text-control);
   font-weight: 500;
 }
+button.task-status {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+button.task-status:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
 .task-status[data-status='needs_you'],
 .schedule-run-line > .task-status[data-status='waiting'],
 .schedule-run-detail-heading > .task-status[data-status='waiting'] {
   background: var(--accent-soft);
   color: var(--accent);
+}
+button.task-status[data-status='needs_you']:hover,
+.schedule-run-detail-heading > button.task-status[data-status='waiting']:hover {
+  background: color-mix(in srgb, var(--accent-soft), var(--accent) 8%);
 }
 .task-status[data-status='working'],
 .task-status[data-status='running'] {
