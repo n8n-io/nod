@@ -1483,6 +1483,9 @@ export function ModelPicker({
                         {source.provider === 'google' && item.id === 'gemini-4-argon' && (
                           <span className="model-option-detail">Requires paid API access</span>
                         )}
+                        {source.provider === 'google' && item.id === 'gemini-4-hydrogen' && (
+                          <span className="model-option-detail">Limited free access</span>
+                        )}
                         {source.provider === 'google' && item.id === 'gemini-3.8-flash' && (
                           <span className="model-option-detail">
                             Lower cost · Limited free access

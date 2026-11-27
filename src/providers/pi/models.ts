@@ -55,6 +55,7 @@ import { modelContext } from './context.ts';
 import { ModelServiceError, modelServiceError } from '../model-error.ts';
 import {
   antLingModel,
+  geminiHydrogenModel,
   nativeAudioModel,
   openAIModels,
   assistantModelId,
@@ -797,6 +798,8 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       let local = assistantModels(
         provider === 'ant-ling' ? [antLingModel] : (await runtime()).getModels(provider),
       );
+      if (provider === 'google' && !local.some(({ id }) => id === geminiHydrogenModel.id))
+        local.push(geminiHydrogenModel);
       if (provider === 'openai' && method === 'api_key') {
         const baseUrl = openAIBaseUrl(
           credential?.type === 'api_key' ? credential.region : undefined,

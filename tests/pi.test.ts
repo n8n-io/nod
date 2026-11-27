@@ -10239,6 +10239,10 @@ test('native provider discovery uses owned keys, bounded Google pagination and t
                     name: 'models/gemini-3.1-flash-live-preview',
                     supportedGenerationMethods: ['generateContent'],
                   },
+                  {
+                    name: 'models/gemini-4-hydrogen',
+                    supportedGenerationMethods: ['generateContent'],
+                  },
                   { name: 'models/gemini-4-argon', supportedGenerationMethods: ['countTokens'] },
                   {
                     name: 'models/../../evil.test?key=fixture-google-key',
@@ -10285,8 +10289,13 @@ test('native provider discovery uses owned keys, bounded Google pagination and t
   assert.deepEqual(google.map(({ choice }) => choice.id).sort(), [
     'gemini-2.5-flash',
     'gemini-2.5-pro',
+    'gemini-4-hydrogen',
   ]);
   assert.ok(google.every(({ spec }) => spec.api === 'google-generative-ai'));
+  const hydrogen = google.find(({ choice }) => choice.id === 'gemini-4-hydrogen')!;
+  assert.equal(hydrogen.choice.images, true);
+  assert.equal(hydrogen.choice.contextWindow, 1_048_576);
+  assert.equal(hydrogen.spec.provider, 'google');
   const mistral = await backend.catalog('mistral', 'api_key', {
     type: 'api_key',
     key: 'fixture-mistral-key',
@@ -13800,6 +13809,89 @@ test('model requests reach the provider and retain transport causes', async (t) 
     assert.match(failed.errorMessage ?? '', /transport cause: ECONNRESET/);
     assert.match(failed.errorMessage ?? '', /request phase: request/);
   }
+});
+
+test('native Gemini Hydrogen replays the signature from a streamed tool call', async (t) => {
+  const backend = createPiModelBackend({
+    fetch: async () =>
+      Response.json({
+        models: [
+          {
+            name: 'models/gemini-4-hydrogen',
+            supportedGenerationMethods: ['generateContent'],
+          },
+        ],
+      }),
+  });
+  const credential = { type: 'api_key' as const, key: 'fixture-google-key' };
+  const [definition] = await backend.catalog('google', 'api_key', credential);
+  const { runtime, model } = await createPiModelRuntime({
+    provider: 'google',
+    method: 'api_key',
+    definition,
+    effort: 'medium',
+    read: async () => credential,
+  });
+  const original = globalThis.fetch;
+  t.after(() => (globalThis.fetch = original));
+  const signature = Buffer.from('synthetic-thought-signature').toString('base64');
+  const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    requests.push({ url: request.url, body: await request.json() });
+    const parts =
+      requests.length === 1
+        ? [
+            {
+              functionCall: { id: 'fixture-call', name: 'read_fixture', args: {} },
+              thoughtSignature: signature,
+            },
+          ]
+        : [{ text: 'The synthetic task is complete.' }];
+    const chunk = {
+      candidates: [{ content: { role: 'model', parts }, finishReason: 'STOP' }],
+      usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 4, totalTokenCount: 14 },
+    };
+    return new Response(`data: ${JSON.stringify(chunk)}\n\n`, {
+      headers: { 'content-type': 'text/event-stream' },
+    });
+  };
+  const context: Context = {
+    messages: [{ role: 'user', content: 'Read the fixture.', timestamp: 1 }],
+    tools: [
+      {
+        name: 'read_fixture',
+        description: 'Read synthetic data.',
+        parameters: { type: 'object', properties: {} },
+      },
+    ],
+  };
+  const first = await runtime.completeSimple(model, context, {});
+  assert.equal(first.stopReason, 'toolUse');
+  const call = first.content.find((part) => part.type === 'toolCall');
+  assert.ok(call);
+  assert.equal(call.thoughtSignature, signature);
+  context.messages.push(first, {
+    role: 'toolResult',
+    toolCallId: call.id,
+    toolName: call.name,
+    content: [{ type: 'text', text: 'Synthetic data' }],
+    isError: false,
+    timestamp: 2,
+  });
+  const result = await runtime.completeSimple(model, context, {});
+  assert.equal(result.stopReason, 'stop');
+  assert.equal(requests.length, 2);
+  assert.match(requests[1].url, /models\/gemini-4-hydrogen:streamGenerateContent/);
+  const contents = requests[1].body.contents as Array<{
+    role: string;
+    parts: Array<{ functionCall?: { name: string }; thoughtSignature?: string }>;
+  }>;
+  const replayed = contents
+    .filter(({ role }) => role === 'model')
+    .flatMap(({ parts }) => parts)
+    .find(({ functionCall }) => functionCall?.name === 'read_fixture');
+  assert.equal(replayed?.thoughtSignature, signature);
 });
 
 test('Groq Qwen finishes a task through a tool call with supported message roles', async (t) => {

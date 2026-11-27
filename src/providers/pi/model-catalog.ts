@@ -96,6 +96,28 @@ export function openAIModels(region: OpenAIRegion = 'global'): Model<'openai-res
   }));
 }
 
+export const geminiHydrogenModel: Model<'google-generative-ai'> = {
+  id: 'gemini-4-hydrogen',
+  name: 'Gemini 4 Hydrogen',
+  provider: 'google',
+  api: 'google-generative-ai',
+  baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+  reasoning: true,
+  input: ['text', 'image'],
+  contextWindow: 1_048_576,
+  maxTokens: 65_536,
+  cost: { input: 1.5, output: 7.5, cacheRead: 0.075, cacheWrite: 0 },
+  thinkingLevelMap: {
+    off: null,
+    minimal: null,
+    low: 'low',
+    medium: 'medium',
+    high: 'high',
+    xhigh: null,
+    max: null,
+  },
+};
+
 export const nativeAudioModel: Model<'openai-completions'> = {
   id: 'gpt-audio-1.5',
   name: 'GPT Audio 1.5',
