@@ -1329,7 +1329,7 @@ export function createModelService(options: {
       textChoice(rows, choice);
       return choice;
     },
-    workModel(origin: WorkOrigin): WorkModel {
+    workModel(origin: WorkOrigin, callModelId?: string): WorkModel {
       const work = routeModel(
         { connections: rows, selection, routes, light: lightModel() },
         origin.kind,
@@ -1339,6 +1339,22 @@ export function createModelService(options: {
         throw new ConnectionError(
           `Open ${appPages['/settings/models']}. Connect a service and choose a model.`,
         );
+      if (callModelId && origin.kind === 'chat' && work.follows === 'chat') {
+        const connection = rows.find((row) => row.id === work.selection.connectionId);
+        const model = connection?.models.find(
+          ({ choice }) => choice.id === callModelId && !choice.audio,
+        );
+        if (connection?.status === 'connected' && model) {
+          return {
+            ...work,
+            selection: {
+              connectionId: connection.id,
+              modelId: model.choice.id,
+              effort: lightestEffort(model.choice.efforts) ?? defaultEffort(model.choice),
+            },
+          };
+        }
+      }
       if (work.follows === 'chat' || work.follows === 'light') return work;
       const row = rows.find((item) => item.id === work.selection.connectionId);
       const definition = row?.models.find((model) => model.choice.id === work.selection.modelId);

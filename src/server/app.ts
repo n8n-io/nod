@@ -783,6 +783,9 @@ export async function createApp(dependencies: AppDependencies = {}) {
       ),
       {
         channel: 'web',
+        ...(request.headers['x-nod-input-mode'] === 'voice-call'
+          ? { sourceId: `voice-call:${clientMessageId}` }
+          : {}),
         displayText: input.displayText,
         replyToMessageId: input.replyToMessageId,
         replyQuote: input.replyQuote,

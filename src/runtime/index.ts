@@ -1405,8 +1405,9 @@ export function createAgentRuntime(dependencies: {
       await context.emit('agent_start', 'Main agent', { execution });
       const opening = agent.open({
         ...execution,
+        ...(context.voiceCall ? { voiceCall: true } : {}),
         ...(context.model ? { model: context.model } : {}),
-        ...(!context.modelChosen && (context.taskContext || coordinator)
+        ...(context.voiceCall || (!context.modelChosen && (context.taskContext || coordinator))
           ? { lighterEffort: true }
           : {}),
         automatic: Boolean(context.automatic),
@@ -1622,7 +1623,14 @@ export function createAgentRuntime(dependencies: {
       const fallback =
         observer?.text ??
         scheduled?.text ??
-        instruct(firstInstruction(requestContext, resumed && !compact, omitted, analysis));
+        instruct(
+          firstInstruction(
+            requestContext,
+            resumed && !compact && !context.voiceCall,
+            omitted,
+            analysis,
+          ),
+        );
       const audio = nativeAudio(context.attachments, fallback);
       const nativeContext = audio
         ? {

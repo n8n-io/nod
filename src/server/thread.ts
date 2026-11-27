@@ -265,6 +265,7 @@ export interface ThreadDependencies {
   currentModel?: () => { provider: string; name: string; configured: boolean };
   workModel?: (
     turnId: string,
+    voiceCall?: boolean,
   ) => Promise<{ selection: ModelSelection; provider: string; name: string } | undefined>;
   modelAlternative?: () => string | undefined;
   desktopRuntime?: boolean;
@@ -1032,7 +1033,8 @@ export async function submitUserMessage(
       !options.questionAnswer &&
       !options.approvalAnswer &&
       sessionId === thread.id &&
-      !String(options.sourceId ?? '').startsWith('reaction-reply:');
+      !options.sourceId?.startsWith('voice-call:') &&
+      !options.sourceId?.startsWith('reaction-reply:');
     const startAfter = coalesce ? new Date(Date.now() + burstCoalesceMs) : null;
     await client.query(
       `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel,session_id,background,parent_turn_id,status,finished_at,withdrawn,start_after)
@@ -2236,10 +2238,11 @@ async function analyticsWork(turn: any) {
 async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   const startedAt = Date.now();
   const providerChannel = String(turn.channel).split(':')[0];
+  const voiceCall = turn.source === 'user' && turn.source_id?.startsWith('voice-call:') === true;
   let routed: Awaited<ReturnType<NonNullable<ThreadDependencies['workModel']>>>;
   let routeError: unknown;
   try {
-    routed = await dependencies.workModel?.(turn.id);
+    routed = await dependencies.workModel?.(turn.id, voiceCall);
   } catch (error) {
     routeError = error;
   }
@@ -2316,6 +2319,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   const ensureCurrent = () => current(async () => {});
   const intentLine =
     dependencies.activityLine &&
+    !voiceCall &&
     !turn.background &&
     turn.session_id === threadId &&
     providerChannel === 'web'
@@ -2738,6 +2742,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       sessionId: turn.session_id,
       resumed: turn.source === 'resume' || Boolean(turn.parent_turn_id),
       prompt: initialPrompt,
+      ...(voiceCall ? { voiceCall: true } : {}),
       background: turn.background,
       ...(scheduleCache ? { scheduleCache } : {}),
       ...(routed ? { model: routed.selection } : {}),
