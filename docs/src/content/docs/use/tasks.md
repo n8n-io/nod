@@ -23,7 +23,7 @@ Tasks share one [workspace](/use/workspace/#one-workspace-for-all-tasks) and own
 
 ## Scheduled work
 
-Open **Scheduled** to review tasks and upcoming schedules. Open tasks appear first, and a working task shows a live line of what it is doing. Expand **Finished** for tasks that are done or stopped, and **Inactive** for paused schedules. Select a schedule’s name for its runs. See [Schedules](/use/schedules/).
+Each chat lists its own schedules and tasks beside the chat. To see every chat's together, open **Scheduled** from search with Command/Ctrl+K. Open tasks appear first, and a working task shows a live line of what it is doing. Expand **Finished** for tasks that are done or stopped, and **Inactive** for paused schedules. Select a schedule’s name for its runs. See [Schedules](/use/schedules/).
 
 ![The Scheduled page with a working task and a task that needs you above two recurring schedules, each with its model, and three ideas for another schedule.](../../../assets/screens/scheduled-open-tasks.png)
 
