@@ -292,6 +292,8 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         headers,
         redirect: 'error',
         signal: AbortSignal.timeout(15000),
+      }).catch((error: unknown) => {
+        throw new Error(`Model discovery failed: ${discoveryCause(error, secrets)}.`);
       });
       const path = url === credential.url ? '/models' : '/v1/models';
       if (!response.ok) {

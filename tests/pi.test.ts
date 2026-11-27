@@ -10320,6 +10320,19 @@ test('model discovery names why it failed instead of a generic retry message', a
         error.message,
       ) && !/didn’t accept|fixture-xai-key/.test(error.message),
   );
+  await assert.rejects(
+    createPiModelBackend({
+      fetch: async () => {
+        throw refused();
+      },
+    }).catalog('compatible', 'api_key', {
+      type: 'endpoint',
+      url: 'http://fixture-server.invalid:8080/v1',
+    }),
+    (error: Error) =>
+      /Model discovery failed: the connection failed \(ECONNREFUSED\)\./.test(error.message) &&
+      !error.message.includes('fixture-server.invalid'),
+  );
 });
 
 test('Mistral model discovery preserves detail reasons and redacts the connection key', async () => {
