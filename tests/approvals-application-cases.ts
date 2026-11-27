@@ -529,7 +529,11 @@ export const approvalCases = inParts(
                     calls.map((call, index) => {
                       if (call.tool)
                         return tool(call.tool)
-                          .execute({ action: call.action, ...call.args })
+                          .execute(
+                            call.tool === 'sign_in'
+                              ? call.args
+                              : { action: call.action, ...call.args },
+                          )
                           .catch((error: Error) => batchErrors.push(error.message));
                       if (!planned.subagents) return tool('apps').execute(call);
                       const title = `${options.turnId}-${index}`;

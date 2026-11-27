@@ -25,7 +25,7 @@ import {
   type BrowserResponse,
 } from './protocol.ts';
 
-const viewFrameLine = 4 * 1024 * 1024 + 256;
+const viewFrameLine = 4 * 1024 * 1024 + 1024;
 const observationSchema = z
   .object({ text: z.string(), url: z.string(), unmet: z.literal(true).optional() })
   .strict();
@@ -839,8 +839,8 @@ export function createBridgeComputer(options: {
       z
         .object({
           origin: z.string().max(2048),
-          username: z.string().max(2048),
-          password: z.string().min(1).max(2048),
+          username: z.string().max(8192),
+          password: z.string().min(1).max(8192),
         })
         .strict()
         .nullable()

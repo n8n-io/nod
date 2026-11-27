@@ -1129,7 +1129,6 @@ export async function createApp(dependencies: AppDependencies = {}) {
     if (!body.success) return reply.code(400).send({ error: 'Choose a browser handoff.' });
     if (!dependencies.saveLogin) return reply.code(404).send({ error: 'Vault is unavailable.' });
     const login = savableLogins.get(body.data.turnId);
-    savableLogins.delete(body.data.turnId);
     if (!login)
       return reply.code(409).send({
         error:
@@ -1147,6 +1146,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
         return reply.code(error.statusCode).send({ error: error.message });
       throw error;
     }
+    savableLogins.delete(body.data.turnId);
     return { ok: true };
   });
   app.post('/api/browser-handoff/navigate', async (request, reply) => {

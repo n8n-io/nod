@@ -279,7 +279,7 @@ export function createSession(options: {
         await sleep(pageWaitMs);
       }
       const done = await post('/api/browser-handoff/done', { turnId }, [423]);
-      return { entered, savable: Boolean(done?.savableLogin) };
+      return { entered, closed: !done, savable: Boolean(done?.savableLogin) };
     } finally {
       view.abort();
       await frames;
@@ -299,6 +299,10 @@ export function createSession(options: {
     const at = Date.now();
     if (pending.kind === 'handoff') {
       const page = await enterOnPage(pending.turnId, pending.text);
+      if (page?.closed) {
+        interactions.push({ kind: 'unanswered', text: pending.text, at });
+        return false;
+      }
       if (page) {
         interactions.push({ kind: 'handoff', text: pending.text, entered: page.entered, at });
         if (page.savable && user.saveLogin)

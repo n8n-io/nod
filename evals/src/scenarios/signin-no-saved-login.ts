@@ -96,7 +96,7 @@ export default scenario({
   },
   evidence(run, world) {
     const s = world.state;
-    return `No Ryde login was saved in Vault. The points balance shown after sign-in is 12,840 points; the page also shows 1,200 points expiring on 31 December, 2,160 points to reach Platinum and a redemption of 1,500 points, none of which is the balance. The user entered the password privately ${privateEntries(run, 'password')} time(s); the password never went through chat. Successful sign-ins: ${s.logins}. Failed sign-ins: ${s.failures}. Points page views: ${s.balanceViews}.`;
+    return `At the start no Ryde login is saved in Vault; the user saves the login they typed when Nod offers it. The points balance shown after sign-in is 12,840 points; the page also shows 1,200 points expiring on 31 December, 2,160 points to reach Platinum and a redemption of 1,500 points, none of which is the balance. The user entered the password privately ${privateEntries(run, 'password')} time(s); the password never went through chat. Successful sign-ins: ${s.logins}. Failed sign-ins: ${s.failures}. Points page views: ${s.balanceViews}.`;
   },
   expect(world) {
     const s = world.state;
