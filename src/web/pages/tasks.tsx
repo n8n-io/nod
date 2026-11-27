@@ -379,7 +379,7 @@ export function TaskCard({ task, live }: { task: Task; live?: Activity }) {
   );
 }
 
-function LoadError({
+export function LoadError({
   what,
   refreshing,
   retry,
@@ -398,7 +398,7 @@ function LoadError({
   );
 }
 
-function Pending({ label }: { label: string }) {
+export function Pending({ label }: { label: string }) {
   return (
     <div role="status">
       <Loading label={label} />

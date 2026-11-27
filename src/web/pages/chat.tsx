@@ -10,8 +10,17 @@ import {
   type SetStateAction,
 } from 'react';
 import { createPortal, flushSync } from 'react-dom';
-import { ArrowDown, Check, CornerUpLeft, LoaderCircle, Repeat, Route } from '../components/icons';
+import {
+  ArrowDown,
+  Check,
+  CornerUpLeft,
+  ListChecks,
+  LoaderCircle,
+  Repeat,
+  Route,
+} from '../components/icons';
 import { TraceDrawer } from '../components/trace-drawer';
+import { SidePanel, sidePanelOpenByDefault } from '../components/side-panel';
 import { readUiPreference, writeUiPreference } from '../lib/ui-preferences';
 import type {
   Activity,
@@ -363,6 +372,13 @@ export function Chat({
   function toggleTrace(open: boolean) {
     setTraceOpen(open);
     writeUiPreference('nod.trace-open', String(open));
+  }
+  const [sideOpen, setSideOpen] = useState(sidePanelOpenByDefault);
+  const sideShown = sideOpen && !tracing;
+  function toggleSide(open: boolean) {
+    if (open && tracing) toggleTrace(false);
+    setSideOpen(open);
+    writeUiPreference('nod.side-open', String(open));
   }
   const { data: connections } = usePageData<Connection[]>('/api/apps');
   const { data: trust, refresh: refreshTrust } = usePageData<TrustView>('/api/trust');
@@ -2268,6 +2284,19 @@ export function Chat({
           </Button>
         </Tooltip>
       )}
+      <Tooltip content={sideShown ? 'Hide tasks' : 'Show tasks'}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="side-toggle"
+          data-nudge={!sideShown}
+          aria-label={sideShown ? 'Hide tasks' : 'Show tasks'}
+          aria-pressed={sideShown}
+          onClick={() => toggleSide(!sideShown)}
+        >
+          <ListChecks size={16} />
+        </Button>
+      </Tooltip>
       {onReset && <ResetChat onReset={() => onReset(threadId)} />}
       {onFeedback && (
         <FeedbackLauncher
@@ -2277,12 +2306,31 @@ export function Chat({
       )}
     </>
   );
+  const sendBlocked = !state.configuration.llmReady || welcoming || spendingPaused;
   return (
     <PrivateEntryWorkspace key={`${ownerId}.${threadId}`} active={visible}>
       <ArtifactWorkspace
         className="chat-page"
         files={files}
-        aside={tracing && <TraceDrawer changed={state.turns} onClose={() => toggleTrace(false)} />}
+        aside={
+          tracing ? (
+            <TraceDrawer changed={state.turns} onClose={() => toggleTrace(false)} />
+          ) : (
+            sideOpen &&
+            visible && (
+              <SidePanel
+                tasks={state.tasks ?? []}
+                activity={state.activity ?? []}
+                connections={connections}
+                disabled={sendBlocked}
+                onAsk={(text) => {
+                  if (!sendBlocked) void send(text, [], null, 'task_card');
+                }}
+                onClose={() => toggleSide(false)}
+              />
+            )
+          )
+        }
       >
         {toolbarActions || desktopSettingsAvailable() ? (
           <>

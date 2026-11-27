@@ -4,6 +4,9 @@ type UiPreference =
   | 'nod.artifact-width'
   | 'nod.trace-open'
   | 'nod.trace-width'
+  | 'nod.side-open'
+  | 'nod.side-skipped'
+  | 'nod.side-seen'
   | `nod.feedback.discovery.${string}`
   | `nod.feedback.report.${string}`;
 

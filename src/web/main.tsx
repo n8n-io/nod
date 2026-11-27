@@ -34,6 +34,7 @@ import './components/attachment-images.css';
 import './components/attachment-card.css';
 import './components/artifact-drawer.css';
 import './components/trace-drawer.css';
+import './components/side-panel.css';
 import './components/n8n-canvas.css';
 import './components/vault-details.css';
 import './pages/browser.css';
