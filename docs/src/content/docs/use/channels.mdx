@@ -107,6 +107,8 @@ To configure and pair the channel in the app, clear all its environment variable
 
 ## Files and voice messages
 
+A self-hosted voice client can identify a spoken turn by sending the header `X-Nod-Input-Mode: voice-call` with its authenticated text or audio message. Nod favors a lighter supported reasoning effort and uses local memory retrieval for that turn. An operator can set `NOD_FAST_CALL_MODEL` to a faster text model available on the same model connection. The assistant uses the usual tools and approvals for spoken requests. Ordinary text messages keep their selected settings.
+
 In Nod chat, audio has an inline player with a waveform, play and pause, seek, elapsed time and playback speed. The waveform is processed locally for Ogg Opus voice notes. Before decoding, Nod checks the stream, packet duration and page checksums. Long or unsupported audio can still play without a waveform.
 
 A sticker is a conversation message, not a request to review a file. Static and animated WebP stickers, Telegram TGS animations and WebM video stickers play inline. Animations pause outside the visible chat or when the app is hidden. The reduced-motion setting stops automatic playback. TGS playback uses a local canvas in a sandbox with no network access. Invalid or oversized animations keep their original download. Telegram's thumbnail can still help the model read a sticker; it does not appear as a second message card. A sticker sent as a reply stays linked to that message.

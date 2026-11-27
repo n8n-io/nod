@@ -4948,6 +4948,14 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     await owner.select(main);
     const light = owner.view().light!;
     assert.equal(light.modelId, 'gpt-6-luna');
+    assert.deepEqual(owner.workModel({ kind: 'chat' }, light.modelId).selection, {
+      connectionId,
+      modelId: light.modelId,
+      effort: 'off',
+    });
+    assert.deepEqual(owner.workModel({ kind: 'chat' }, 'unavailable').selection, main);
+    assert.deepEqual(owner.workModel({ kind: 'chat' }, 'gpt-audio-1.5').selection, main);
+    assert.deepEqual(owner.workModel({ kind: 'chat' }).selection, main);
     for (const kind of ['chat', 'schedule', 'background'] as const)
       assert.deepEqual(owner.workModel({ kind }), { selection: main, follows: 'chat' });
 

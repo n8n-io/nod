@@ -18,6 +18,25 @@ export const removedImage =
   'An earlier image was removed from context. Take a new screenshot or read the file again if you need it.';
 const requestEntry = 'nod-request';
 
+export function voiceHistory(
+  messages: ReturnType<SessionManager['buildSessionContext']>['messages'],
+  openedAt: number,
+) {
+  const current = messages.findIndex(
+    (message) => message.role === 'user' && message.timestamp >= openedAt,
+  );
+  if (current < 1) return messages;
+  let tokens = 0;
+  let from = current;
+  for (let index = current - 1; index >= 0; index--) {
+    const message = messages[index]!;
+    tokens += estimateTokens(message);
+    if (tokens <= 4_000 && message.role === 'user') from = index;
+    if (tokens > 12_000) return messages.slice(from);
+  }
+  return messages;
+}
+
 export function requestStart(manager: SessionManager) {
   const entry = manager
     .getBranch()

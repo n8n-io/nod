@@ -376,7 +376,10 @@ export function firstInstruction(
   imageAnalysis?: string,
 ) {
   const parts = requestParts(context, resumed, omittedImages, imageAnalysis);
-  return `${parts.preamble}${JSON.stringify({ ...parts.stable, ...parts.volatile })}${parts.guide}`;
+  const delivery = context.voiceCall
+    ? '\nThis is a live voice call. Lead with a short, natural answer. Keep routine replies brief and give more detail when asked. Older work is available through history_search and workspace files. Look up missing facts before using them. Verify actions and never repeat completed or uncertain work.'
+    : '';
+  return `${parts.preamble}${JSON.stringify({ ...parts.stable, ...parts.volatile })}${parts.guide}${delivery}`;
 }
 
 export function scheduledInstruction(

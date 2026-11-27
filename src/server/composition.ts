@@ -2474,10 +2474,13 @@ async function initializeApplication(
       currentModel: () => adapters.model,
       ...(adapters.models
         ? {
-            workModel: async (turnId: string) => {
+            workModel: async (turnId: string, voiceCall?: boolean) => {
               const origin = await workOrigin(turnId);
               if (!origin) return undefined;
-              const { selection } = adapters.models!.workModel(origin);
+              const { selection } = adapters.models!.workModel(
+                origin,
+                voiceCall ? process.env.NOD_FAST_CALL_MODEL : undefined,
+              );
               const { provider, name } = adapters.models!.describe(selection);
               return { selection, provider, name };
             },

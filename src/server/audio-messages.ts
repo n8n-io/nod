@@ -266,6 +266,9 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
           displayText,
           audioCaption: input.text,
           channel: 'web',
+          ...(request.headers['x-nod-input-mode'] === 'voice-call'
+            ? { sourceId: `voice-call:${input.clientMessageId}` }
+            : {}),
           stopSignal: arrival,
           prepareAttachments: async (client, threadId) => {
             signal.throwIfAborted();

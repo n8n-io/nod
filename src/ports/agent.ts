@@ -116,6 +116,7 @@ export interface RuntimeContext {
   scheduleCache?: 'short' | 'long';
   model?: ModelSelection;
   modelChosen?: boolean;
+  voiceCall?: boolean;
   delegateModel?: ModelSelection;
   channel?: string;
   runtimeHost?: 'desktop' | 'server';
@@ -366,6 +367,7 @@ export interface AgentToolOutcome {
 export interface AgentSessionOptions extends ExecutionScope {
   model?: ModelSelection;
   lighterEffort?: boolean;
+  voiceCall?: boolean;
   automatic?: boolean;
   restricted?: boolean;
   ephemeral?: boolean;

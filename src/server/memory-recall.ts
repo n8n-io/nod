@@ -92,9 +92,10 @@ export function createMemoryRecall(options: {
         return bounded;
       });
     if (!notes.length && !recent.length && !context.relatedConversation?.length) return;
+    const useCurator = options.curator.configured && !context.voiceCall;
     const planDeadline = AbortSignal.timeout(1_000);
     const parsed = planSchema.safeParse(
-      options.curator.configured && canContinue()
+      useCurator && canContinue()
         ? await ask(
             planInstructions,
             {
@@ -178,7 +179,7 @@ export function createMemoryRecall(options: {
     let candidates = [...messages.values()];
     const rankDeadline = AbortSignal.timeout(1_000);
     const ranked = rankSchema.safeParse(
-      options.curator.configured && canContinue() && (facts.length || candidates.length)
+      useCurator && canContinue() && (facts.length || candidates.length)
         ? await ask(
             rankInstructions,
             { request, mode: plan.mode, notes: facts, messages: candidates },

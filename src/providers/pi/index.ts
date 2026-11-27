@@ -52,6 +52,7 @@ import {
   openLocalSession,
   removedImage,
   recoveryContext,
+  voiceHistory,
   requestStart,
   startRequest,
 } from './checkpoint.ts';
@@ -656,6 +657,7 @@ export function createPiAgent(options: {
       const manager = ephemeral
         ? SessionManager.inMemory(directory)
         : openLocalSession(directory, input.contextRestart);
+      const callOpenedAt = input.voiceCall ? Date.now() : undefined;
       dropFailedInput(manager);
       closeInterruptedCalls(manager);
       const prior = manager.buildSessionContext().messages;
@@ -911,6 +913,15 @@ export function createPiAgent(options: {
               ]
             : []),
           earlierResults(requestStart(manager)),
+          ...(callOpenedAt !== undefined
+            ? [
+                (pi: ExtensionAPI) => {
+                  pi.on('context', ({ messages }) => ({
+                    messages: voiceHistory(messages, callOpenedAt),
+                  }));
+                },
+              ]
+            : []),
           recentImages,
           draft2020Tools,
           audioContext(manager, readsNativeAudio(model) && Boolean(input.readAudio)),

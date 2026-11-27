@@ -40,6 +40,7 @@ import {
   dropFailedInput,
   openLocalSession,
   readPiSessionEntries,
+  voiceHistory,
 } from '../src/providers/pi/checkpoint.ts';
 import { createPiAgent } from '../src/providers/pi/index.ts';
 import { createPiMemoryCurator } from '../src/providers/pi/memory-curator.ts';
@@ -14518,4 +14519,29 @@ test('Ollama discovery uses the loaded context for model registration and comple
   calls.length = 0;
   await backend.catalog('compatible', 'api_key', credential);
   assert.ok(!calls.includes('/api/ps'));
+});
+
+test('live calls bound old model exchanges and keep the complete current request including its tool results', () => {
+  const user = (content: string, timestamp: number): UserMessage => ({
+    role: 'user',
+    content,
+    timestamp,
+  });
+  const old = user('old context '.repeat(20_000), 1);
+  const recent = user('Earlier question', 2);
+  const current = user('Current question', 3);
+  const tool = {
+    role: 'toolResult' as const,
+    toolCallId: 'id',
+    toolName: 'lookup',
+    isError: false,
+    timestamp: 4,
+    content: [{ type: 'text' as const, text: 'result '.repeat(20_000) }],
+  };
+  const full = [old, recent, current, tool];
+  assert.deepEqual(voiceHistory(full, 3), [recent, current, tool]);
+  assert.deepEqual(full, [old, recent, current, tool]);
+  assert.equal(voiceHistory(full, 5), full);
+  const short = [recent, current, tool];
+  assert.equal(voiceHistory(short, 3), short);
 });
