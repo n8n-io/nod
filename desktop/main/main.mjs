@@ -2156,8 +2156,10 @@ function workNames(running) {
 }
 
 async function stoppedWork() {
+  if (!engine || !engineReady || remoteConnection) return '';
   const current = await checkWaiting();
-  if (!current) return '';
+  if (!current)
+    return 'Nod could not check its work. Turning off now may stop work in progress, and scheduled tasks won’t run until you open Nod again.';
   const work = workNames(current.running);
   const next =
     current.next && current.next.at.getTime() - Date.now() < 86_400_000
@@ -2219,7 +2221,12 @@ function appClosed() {
 }
 
 async function showKeptOnNotice() {
-  if (!Notification.isSupported() || (await settings.keptOnNoticeShown())) return;
+  if (
+    !preferences.notifications ||
+    !Notification.isSupported() ||
+    (await settings.keptOnNoticeShown())
+  )
+    return;
   await settings.saveKeptOnNotice();
   const notification = new Notification({
     title: 'Nod is still on',
@@ -2236,13 +2243,13 @@ async function showKeptOnNotice() {
   notification.show();
 }
 
-async function updateWhenIdle() {
+async function updateWhenIdle(current) {
   if (!updates?.ready || quitting || checkingUpdates || macInstallerBusy || openWindow()) return;
   if (
     !remoteConnection &&
-    (!waiting ||
-      waiting.running.length ||
-      (waiting.next && waiting.next.at.getTime() - Date.now() < 15 * 60_000))
+    (!current ||
+      current.running.length ||
+      (current.next && current.next.at.getTime() - Date.now() < 15 * 60_000))
   )
     return;
   void updateEvent('idle-restart', { version: updates.ready.version });

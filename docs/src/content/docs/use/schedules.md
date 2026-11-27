@@ -122,10 +122,10 @@ During quiet hours, Nod keeps checking new mail and app activity, but prepares o
 ## Keep Nod running
 
 :::caution[The assistant must stay running]
-A local desktop assistant runs schedules and background work only while Nod is open and your computer is awake. A [self-hosted server](/deploy/self-host/) keeps running after you close its web or desktop client, provided the server stays awake and connected.
+A local desktop assistant runs schedules and background work only while Nod is on and your computer is awake. A [self-hosted server](/deploy/self-host/) keeps running after you close its web or desktop client, provided the server stays awake and connected.
 :::
 
-For a local assistant, closing the window or pressing `Cmd+Q` keeps Nod on in the menu bar or tray, which shows the next scheduled task. **Turn Off Nod** stops it, and says first which task won't run. **Open at login** and **Keep this computer awake when plugged in** are on after setup; keep them on in **Settings → General** if you rely on schedules. See [Keep Nod running](/get-started/install-desktop/#keep-nod-running). Open at login starts Nod in the background when you sign in to your computer, not when the computer turns on, so after a restart or power cut nothing runs until you sign in. On a Mac with FileVault turned on, automatic login is off, so someone has to enter your password after every restart.
+For a local assistant, closing the window or pressing `Cmd+Q` keeps Nod on in the menu bar or tray, which shows the next scheduled task. **Turn Off Nod** stops it. If work is running, a task is due within a day, or Telegram or WhatsApp is connected, it first says what will stop. **Open at login** and **Keep this computer awake when plugged in** are on after setup; keep them on in **Settings → General** if you rely on schedules. See [Keep Nod running](/get-started/install-desktop/#keep-nod-running). Open at login starts Nod in the background when you sign in to your computer, not when the computer turns on, so after a restart or power cut nothing runs until you sign in. On a Mac with FileVault turned on, automatic login is off, so someone has to enter your password after every restart.
 
 If a run comes due while the assistant is stopped, it runs once when Nod is running again. If a run starts more than 10 minutes late, its instructions include the due time and start time. If later runs of a recurring schedule were skipped, the instructions also include that count. Counts of 100 or more are shown as "100 or more".
 

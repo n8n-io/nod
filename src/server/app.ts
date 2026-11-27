@@ -421,7 +421,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
         ? (
             await pool.query<{ title: string; at: Date }>(
               `SELECT title,next_run_at AS at FROM schedules
-               WHERE owner_id=$1 AND enabled AND next_run_at IS NOT NULL ORDER BY next_run_at LIMIT 1`,
+               WHERE owner_id=$1 AND enabled AND next_run_at > now() ORDER BY next_run_at LIMIT 1`,
               [ownerId],
             )
           ).rows[0]

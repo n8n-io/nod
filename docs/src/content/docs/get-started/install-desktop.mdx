@@ -141,7 +141,7 @@ Linux setup copies and verifies the guest image before it starts the private com
 
 ## Keep Nod running
 
-A local assistant is on or off, not open or closed. Closing the window, or pressing `Cmd+Q` on a Mac, closes the app and leaves Nod on in the menu bar on a Mac, or the tray on Windows and Linux. On a Mac, the Dock icon goes away until you open a window again. The first time you close the app, a notification says where Nod is. Linux tray support depends on your desktop.
+A local assistant is on or off, not open or closed. Closing the window, or pressing `Cmd+Q` on a Mac, closes the app and leaves Nod on in the menu bar on a Mac, or the tray on Windows and Linux. On a Mac, the Dock icon goes away until you open a window again. The first time you close the app, a notification says where Nod is, if notifications are on. Linux tray support depends on your desktop.
 
 The menu bar or tray shows whether Nod is on, working or needs attention, and when the next scheduled task runs. Choose **Open Nod** to bring the window back.
 
@@ -155,7 +155,7 @@ To stop Nod and its private computer, choose **Turn Off Nod** in the menu bar, t
 
 Nod tries to turn on **Open at login** when setup finishes. Nod then starts in the background when you sign in, without opening a window. If the operating system blocks this setting, setup still finishes. If you rely on scheduled tasks, keep it on in **Settings → General**.
 
-If Nod's background service stops unexpectedly, Nod restarts it after 2 seconds, then 15 seconds, then a minute. After a third restart within 10 minutes, it shows the error and waits for you to select **Try again**.
+If Nod's background service stops unexpectedly, Nod restarts it after 2 seconds, then 15 seconds, then a minute. If it stops a fourth time within 10 minutes, Nod shows the error and waits for you to select **Try again**.
 
 ### Keep your computer awake
 
@@ -197,7 +197,7 @@ On a Mac, Nod waits while its update installer is still running. If the installe
 
 Nod 0.8.4 and earlier on a Mac cancel the update when you open them while it installs, so Nod opens on the old version again. Select **Restart to update** once more and wait until Nod opens by itself. If it still opens on the old version, quit Nod and run the [Terminal installer](#install-nod). It keeps your profile, keys and data.
 
-A ready update installs by itself when Nod is idle: no window is open, nothing is running and no scheduled task is due within 15 minutes. Nod then starts again in the background without opening a window. A ready update also installs when you choose **Turn Off Nod**, and Nod stays off until you open it again. On Windows, the installer runs in the background after Nod stops. On a Mac, the native updater applies the downloaded update after exit. To use the update now, choose **Restart to update**. On Windows, this runs the installer in the background and opens Nod again when it finishes.
+For a local assistant, a ready update installs by itself when Nod is idle: no window is open, nothing is running and no scheduled task is due within 15 minutes. A desktop client connected to a server installs it when no window is open. Nod then starts again in the background without opening a window. A ready update also installs when you choose **Turn Off Nod**, and Nod stays off until you open it again. On Windows, the installer runs in the background after Nod stops. On a Mac, the native updater applies the downloaded update after exit. To use the update now, choose **Restart to update**. On Windows, this runs the installer in the background and opens Nod again when it finishes.
 
 Nod versions before 0.7.0 on Windows can't install their own updates. Restarting to update closes Nod without installing, and the next start offers the same update again. Quit Nod from the tray icon, then download and run the latest [Windows x64 installer](https://github.com/n8n-io/nod/releases/latest/download/nod-Setup-x64.exe). It installs over the old version and keeps your profile, keys and data. Later updates install from the app.
 

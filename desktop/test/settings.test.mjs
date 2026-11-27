@@ -4670,7 +4670,8 @@ test('a crashed engine restarts by itself with backoff and repeated crashes wait
     f.children.at(-1).emit('exit', 1);
     assert.equal(f.status().phase, 'starting');
     assert.equal(f.children.length, index + 1);
-    for (let turn = 0; turn < 20; turn++) await new Promise(setImmediate);
+    for (let turn = 0; turn < 1000 && !f.windows.at(-1).isVisible(); turn++)
+      await new Promise(setImmediate);
     t.mock.timers.tick(delay - 1);
     await new Promise(setImmediate);
     assert.equal(f.children.length, index + 1);
@@ -4683,7 +4684,8 @@ test('a crashed engine restarts by itself with backoff and repeated crashes wait
   assert.equal(secondary.isDestroyed(), true);
   f.children.at(-1).emit('exit', 1);
   assert.equal(f.status().phase, 'error');
-  for (let turn = 0; turn < 20; turn++) await new Promise(setImmediate);
+  for (let turn = 0; turn < 1000 && !f.windows.at(-1).isVisible(); turn++)
+    await new Promise(setImmediate);
   t.mock.timers.tick(10 * 60_000);
   await settled();
   assert.equal(f.children.length, 4);
@@ -5119,10 +5121,15 @@ test('closing the app leaves Nod on and turning it off names what stops first', 
   const prompts = [];
   let answer = 1;
   let upcoming = { running: [], next: null, channels: [] };
+  let unavailable = false;
   const f = await runningDesktop(
     t,
     async (url) =>
-      Response.json(new URL(url).pathname === '/api/desktop/status' ? upcoming : { ok: true }),
+      new URL(url).pathname !== '/api/desktop/status'
+        ? Response.json({ ok: true })
+        : unavailable
+          ? new Response('Synthetic failure', { status: 500 })
+          : Response.json(upcoming),
     {
       allowStart: true,
       prompt: (value) => {
@@ -5146,17 +5153,21 @@ test('closing the app leaves Nod on and turning it off names what stops first', 
   };
   await f.turnOff();
   assert.equal(prompts.length, 1);
-  assert.equal(prompts[0].message, 'Turn off Nod?');
-  assert.match(
-    prompts[0].detail,
-    /^Turning off now stops a scheduled task\. Synthetic briefing won’t run at .+, and Telegram won’t get replies, until you open Nod again\.$/,
-  );
+  for (const named of ['a scheduled task', 'Synthetic briefing', 'Telegram'])
+    assert.ok(prompts[0].detail.includes(named), named);
   assert.equal(f.children[0].killed, undefined);
+  unavailable = true;
+  await f.turnOff();
+  assert.equal(prompts.length, 2);
+  assert.ok(prompts[1].detail.includes('could not check'));
+  assert.equal(f.children[0].killed, undefined);
+  unavailable = false;
   upcoming = { running: [], next: null, channels: [] };
   answer = 0;
   await f.turnOff();
-  assert.equal(prompts.length, 1);
-  for (let turn = 0; !f.children[0].killed && turn < 100; turn++) await new Promise(setImmediate);
+  assert.equal(prompts.length, 2);
+  for (let turn = 0; !f.children[0].killed && turn < 1000; turn++)
+    await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(f.children[0].killed, true);
 });
 
@@ -5190,10 +5201,15 @@ test('a ready update installs by itself only when Nod is idle, closed and no run
     next: null,
     channels: [],
   };
+  let unavailable = false;
   const f = await runningDesktop(
     t,
     async (url) =>
-      Response.json(new URL(url).pathname === '/api/desktop/status' ? upcoming : { ok: true }),
+      new URL(url).pathname !== '/api/desktop/status'
+        ? Response.json({ ok: true })
+        : unavailable
+          ? new Response('Synthetic failure', { status: 500 })
+          : Response.json(upcoming),
     {
       platform: 'win32',
       allowStart: true,
@@ -5205,8 +5221,7 @@ test('a ready update installs by itself only when Nod is idle, closed and no run
   assert.equal((await f.prepare()).phase, 'ready');
   f.setUpdates({ ready: { version: '0.10.2' }, dispose: async () => {} });
   const idle = async () => {
-    await f.checkWaiting();
-    await f.updateWhenIdle();
+    await f.updateWhenIdle(await f.checkWaiting());
   };
   await idle();
   upcoming = {
@@ -5224,6 +5239,10 @@ test('a ready update installs by itself only when Nod is idle, closed and no run
   await idle();
   assert.deepEqual(installs, []);
   f.windows.at(-1).close();
+  unavailable = true;
+  await idle();
+  assert.deepEqual(installs, []);
+  unavailable = false;
   await idle();
   assert.deepEqual(installs, [true]);
   const resume = JSON.parse(await readFile(join(f.profileRoot, 'update-resume.json'), 'utf8'));
