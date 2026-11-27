@@ -613,7 +613,9 @@ export async function resumableDownload(
       }
       if (!response?.ok || !response.body || (response.status === 206 && !resumed)) {
         await response?.body?.cancel();
-        throw new Error('The Nod download is unavailable. Try again.');
+        throw Object.assign(new Error('The Nod download is unavailable. Try again.'), {
+          status: response?.status,
+        });
       }
       let skip = resumed ? 0 : start;
       for await (const chunk of response.body) {

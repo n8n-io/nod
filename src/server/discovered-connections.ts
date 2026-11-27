@@ -1154,15 +1154,7 @@ export async function createDiscoveredConnections(
       );
     }
   }
-  const refreshes = new Map<
-    string,
-    {
-      promise: Promise<string>;
-      controller: AbortController;
-      waiters: number;
-      settled: boolean;
-    }
-  >();
+  const refreshes = new Map<string, Promise<string>>();
   async function signInRequired(row: AccountRow, required: boolean) {
     const changed = await pool.query(
       'UPDATE discovered_connections SET reconnect_required=$3 WHERE id=$1 AND owner_id=$2 AND reconnect_required<>$3 AND account_id=$4 AND paths=$5::jsonb',
@@ -1271,85 +1263,76 @@ export async function createDiscoveredConnections(
     }
     if (!saved.expiresAt || saved.expiresAt > Date.now() + 60_000) return saved.tokens.access_token;
     const refreshKey = JSON.stringify([row.id, row.account_id, row.paths]);
-    let current = refreshes.get(refreshKey);
-    if (!current || current.controller.signal.aborted) {
-      const controller = new AbortController();
+    let refresh = refreshes.get(refreshKey);
+    if (!refresh) {
       const pending = (async () => {
         await assertBinding(row);
-        controller.signal.throwIfAborted();
         const next = await via(path)
-          .oauth.refresh(path.endpoint, saved, controller.signal)
+          .oauth.refresh(path.endpoint, saved, AbortSignal.timeout(30_000))
           .catch(async (cause: unknown) => {
+            logFailure('connected_sign_in_refresh_failed', cause);
             if (cause instanceof DiscoveredSignInRequired) await signInRequired(row, true);
             throw cause;
           });
-        if (!next.tokens?.access_token) throw new Error();
-        const token = await transaction(
-          async (client) => {
-            await assertBinding(row, undefined, client);
-            const changed = await options.grantVault.replace(
-              row.id,
-              grant.version,
-              JSON.stringify(next),
-              client,
-            );
-            if (changed) return next.tokens!.access_token!;
-            const latest = JSON.parse(
-              (await options.grantVault.read(row.id, client)).value,
-            ) as DiscoveredOAuthState;
-            if (!latest.tokens?.access_token || (latest.expiresAt ?? 0) <= Date.now())
-              throw new Error();
-            return latest.tokens.access_token;
-          },
-          pool,
-          controller.signal,
-        );
+        if (!next.tokens?.access_token) throw new Error('The service returned no access token.');
+        const token = await transaction(async (client) => {
+          await assertBinding(row, undefined, client);
+          const changed = await options.grantVault.replace(
+            row.id,
+            grant.version,
+            JSON.stringify(next),
+            client,
+          );
+          if (changed) return next.tokens!.access_token!;
+          const latest = JSON.parse(
+            (await options.grantVault.read(row.id, client)).value,
+          ) as DiscoveredOAuthState;
+          if (!latest.tokens?.access_token || (latest.expiresAt ?? 0) <= Date.now())
+            throw new Error('The saved sign-in changed during the refresh.');
+          return latest.tokens.access_token;
+        }, pool);
         await assertBinding(row);
         await signInRequired(row, false);
         return token;
       })();
-      const created = { promise: pending, controller, waiters: 0, settled: false };
-      refreshes.set(refreshKey, created);
+      refreshes.set(refreshKey, pending);
       void pending
         .finally(() => {
-          created.settled = true;
-          if (refreshes.get(refreshKey) === created) refreshes.delete(refreshKey);
+          if (refreshes.get(refreshKey) === pending) refreshes.delete(refreshKey);
         })
         .catch(() => {});
-      current = created;
+      refresh = pending;
     }
-    const refresh = current;
-    refresh.waiters++;
-    return new Promise((resolve, reject) => {
-      let finished = false;
-      const finish = (operation: () => void) => {
-        if (finished) return;
-        finished = true;
-        signal?.removeEventListener('abort', abort);
-        refresh.waiters--;
-        if (!refresh.waiters && !refresh.settled) refresh.controller.abort();
-        operation();
-      };
-      const abort = () => finish(() => reject(signal?.reason));
-      signal?.addEventListener('abort', abort, { once: true });
-      refresh.promise.then(
-        (value) => finish(() => resolve(value)),
-        (cause: unknown) =>
-          finish(() =>
-            reject(
-              cause instanceof DiscoveredConnectionError && 'notRun' in cause
-                ? cause
-                : Object.assign(error('Connect this account again.', 409), {
-                    reason:
-                      cause instanceof DiscoveredSignInRequired
-                        ? 'authentication'
-                        : serviceFailureReason(cause),
-                  }),
-            ),
-          ),
+    let abort = () => {};
+    try {
+      return await Promise.race([
+        refresh,
+        new Promise<never>((_resolve, reject) => {
+          abort = () => reject(signal?.reason);
+          signal?.addEventListener('abort', abort, { once: true });
+          if (signal?.aborted) abort();
+        }),
+      ]);
+    } catch (cause) {
+      if (
+        (signal?.aborted && cause === signal.reason) ||
+        cause instanceof DiscoveredConnectionError
+      )
+        throw cause;
+      const secrets = [saved.tokens.access_token, saved.tokens.refresh_token];
+      const message = secrets.reduce<string>(
+        (text, secret) => (secret ? String(redact(text, secret)) : text),
+        cause instanceof Error ? cause.message : String(cause),
       );
-      if (signal?.aborted) abort();
-    });
+      if (cause instanceof DiscoveredSignInRequired)
+        throw Object.assign(error(message, 409), { reason: 'authentication' });
+      throw Object.assign(
+        error(`Refreshing the sign-in failed, so nothing ran: ${message.slice(0, 4000)}`, 502),
+        { notRun: true, reason: serviceFailureReason(cause) },
+      );
+    } finally {
+      signal?.removeEventListener('abort', abort);
+    }
   }
   async function disconnect(connectionId: string, service: string) {
     const removed = await transaction(async (client) => {

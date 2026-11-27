@@ -5,6 +5,7 @@ import { dirname, isAbsolute, resolve } from 'node:path';
 
 const preferenceFields = ['launchAtLogin', 'notifications'];
 const onboardingPreferenceSteps = ['notifications', 'launchAtLogin', 'complete'];
+const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 export function desktopContentPolicy(posthogHost) {
   return `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; font-src 'self' data:; connect-src 'self' ${new URL(posthogHost).origin}; media-src 'self' https: data: blob:; frame-src 'self' blob: data: https://www.openstreetmap.org; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`;
@@ -139,6 +140,9 @@ export function createSettingsStore(path, encryption, platform = process.platfor
             resolve(value.computerDirectory) !== value.computerDirectory)) ||
         (value.onboardingPreferenceStep !== undefined &&
           !onboardingPreferenceSteps.includes(value.onboardingPreferenceStep)) ||
+        (value.announcedPackageVersion !== undefined &&
+          (typeof value.announcedPackageVersion !== 'string' ||
+            !versionPattern.test(value.announcedPackageVersion))) ||
         (value.serverUrl !== undefined &&
           (serverOrigin(value.serverUrl) !== value.serverUrl || !value.secrets.serverToken)) ||
         (value.welcome !== undefined &&
@@ -270,6 +274,16 @@ export function createSettingsStore(path, encryption, platform = process.platfor
     },
     computerDirectory() {
       return exclusive(async () => (await read()).computerDirectory);
+    },
+    announcedPackageVersion() {
+      return exclusive(async () => (await read()).announcedPackageVersion);
+    },
+    saveAnnouncedPackageVersion(version) {
+      return exclusive(async () => {
+        if (typeof version !== 'string' || !versionPattern.test(version))
+          throw new Error('The announced update version is invalid.');
+        await write({ ...(await read()), announcedPackageVersion: version });
+      });
     },
     hasSavedKeys() {
       return exclusive(async () => Object.keys((await read()).secrets).length > 0);

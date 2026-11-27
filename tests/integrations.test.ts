@@ -828,7 +828,7 @@ test(
 );
 
 test(
-  'API apps use standard OAuth with PKCE, registration or an owner client ID, refresh and issuer checks',
+  'API apps use standard OAuth with PKCE, registration or an owner client ID, refresh, refresh failures and issuer checks',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
     for (const registered of [false, true])
@@ -878,6 +878,7 @@ test(
         let reads = 0;
         let token = 'synthetic-oauth-access-token';
         let codeChallenge = '';
+        let failure: ((signal: AbortSignal) => Response | Promise<Response>) | undefined;
         const oauth = createDiscoveredOAuth(
           async (input, init) => {
             const request = new Request(input, init);
@@ -901,6 +902,8 @@ test(
               body.get('client_id'),
               registered ? 'synthetic-owner-client' : 'synthetic-dynamic-client',
             );
+            if (failure && body.get('grant_type') === 'refresh_token')
+              return failure(request.signal);
             if (body.get('grant_type') === 'authorization_code') {
               assert.equal(body.get('code'), 'synthetic-authorization-code');
               assert.equal(
@@ -1009,6 +1012,108 @@ test(
         assert(!JSON.stringify(result).includes(token));
         assert.equal(exchanges, 2);
         assert.equal(reads, 2);
+        const connectionId = saved.connectionId;
+        const expire = async () => {
+          const current = await grantVault.read(connectionId);
+          const value = JSON.parse(current.value);
+          value.expiresAt = Date.now() - 120_000;
+          await grantVault.replace(connectionId, current.version, JSON.stringify(value));
+        };
+        const read = (signal?: AbortSignal) =>
+          discovered.execute(
+            'CONNECTED_HTTP',
+            { connectionId: connectionId, pathId: access.id, method: 'GET', path: 'account' },
+            undefined,
+            signal,
+          );
+        const status = async () =>
+          (await discovered.list()).find((app) => app.connectionId === connectionId)?.status;
+        for (const [fail, reason] of [
+          [
+            () => {
+              throw new TypeError('fetch failed', {
+                cause: Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' }),
+              });
+            },
+            /fetch failed/,
+          ],
+          [() => new Response('down', { status: 503 }), /server_error: HTTP 503/],
+          [
+            () => Response.json({ error: 'temporarily_unavailable' }, { status: 503 }),
+            /temporarily_unavailable/,
+          ],
+          [
+            () => Response.json({ error: 'too_many_requests' }, { status: 429 }),
+            /too_many_requests/,
+          ],
+        ] as const) {
+          failure = fail;
+          await expire();
+          await assert.rejects(read(), (cause: Error) => {
+            assert.match(cause.message, /^Refreshing the sign-in failed, so nothing ran: /);
+            assert.match(cause.message, reason);
+            assert(!cause.message.includes('synthetic-oauth-refresh-token'));
+            return true;
+          });
+          assert.equal(await status(), 'connected');
+        }
+        let entered!: () => void;
+        let release!: () => void;
+        const reached = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+        const released = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        failure = async (signal) => {
+          entered();
+          await Promise.race([
+            released,
+            new Promise((_resolve, reject) =>
+              signal.addEventListener('abort', () => reject(signal.reason), { once: true }),
+            ),
+          ]);
+          failure = undefined;
+          token = 'synthetic-rotated-oauth-access-token';
+          return Response.json({
+            access_token: token,
+            refresh_token: 'synthetic-rotated-oauth-refresh-token',
+            token_type: 'Bearer',
+            expires_in: 3600,
+          });
+        };
+        await expire();
+        const stop = new AbortController();
+        const abandoned = read(stop.signal);
+        await reached;
+        stop.abort(new Error('synthetic_stop'));
+        await assert.rejects(abandoned, /synthetic_stop/);
+        release();
+        const rotated = async () =>
+          JSON.parse((await grantVault.read(connectionId)).value).tokens.refresh_token;
+        for (
+          let attempt = 0;
+          attempt < 100 && (await rotated()) !== 'synthetic-rotated-oauth-refresh-token';
+          attempt++
+        )
+          await delay(20);
+        assert.equal(await rotated(), 'synthetic-rotated-oauth-refresh-token');
+        const afterStop = reads;
+        await read();
+        assert.equal(reads, afterStop + 1);
+        assert.equal(await status(), 'connected');
+        failure = () =>
+          Response.json(
+            { error: 'invalid_grant', error_description: 'Refresh token revoked' },
+            { status: 400 },
+          );
+        await expire();
+        await assert.rejects(
+          read(),
+          /invalid_grant: Refresh token revoked\)\. Connect this account again\./,
+        );
+        assert.equal(await status(), 'disconnected');
+        failure = undefined;
         const reconnect = await discovered.reconnect(fixture.slug, saved.connectionId);
         const id = new URL(reconnect.url, 'http://localhost').searchParams.get('connect');
         const retry = await server.inject({

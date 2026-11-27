@@ -2,6 +2,7 @@ import {
   app,
   autoUpdater,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -21,6 +22,7 @@ import {
   Tray,
   utilityProcess,
 } from 'electron';
+import { spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { appendFile, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
@@ -54,10 +56,12 @@ import { createDesktopLifecycle, startupErrorDetails } from './lifecycle.mjs';
 import { createMacEncryption } from './mac-encryption.mjs';
 import {
   createDesktopUpdater,
+  createNoticeUpdater,
   createUpdateSource,
   macInstallerRunning,
   startDesktopUpdateChecks,
 } from './updates.mjs';
+import { connectFlatpakPortal, createFlatpakUpdater } from './flatpak-update.mjs';
 import { clearInstalledWindowsUpdates, startWindowsInstall } from './windows-update.mjs';
 import { appOpenPath } from './app-links.mjs';
 import { trustSystemCertificates } from './system-certificates.mjs';
@@ -1692,6 +1696,11 @@ function captureLocalSetup() {
     platform: ['darwin', 'win32', 'linux'].includes(process.platform) ? process.platform : 'other',
     ...(code && { failure_code: code }),
     ...(failure.step && { failure_step: failure.step }),
+    ...(failure.class && { failure_class: failure.class }),
+    ...(failure.exitCode !== undefined && { failure_exit_code: failure.exitCode }),
+    ...(failure.httpStatus && { failure_http_status: failure.httpStatus }),
+    ...(failure.signal && { failure_signal: failure.signal }),
+    ...(failure.syscall && { failure_syscall: failure.syscall }),
   };
   const key = JSON.stringify(properties);
   if (observation.previous === key) return;
@@ -2434,6 +2443,10 @@ async function checkForUpdates(manual = true, restartReady = false, confirmed = 
             await dialog.showMessageBox({ message: 'Nod is up to date.', buttons: ['OK'] });
           return;
         }
+        if (candidate.command) {
+          await announcePackageUpdate(candidate);
+          return;
+        }
         if (!updateRequestedManually) {
           if (candidate.version !== previousVersion) await notifyUpdate(candidate);
           if (!updateRequestedManually || quitting) return;
@@ -2493,43 +2506,64 @@ async function checkForUpdates(manual = true, restartReady = false, confirmed = 
   return checking;
 }
 
+async function announcePackageUpdate(candidate) {
+  if (updateRequestedManually) {
+    const { response } = await dialog.showMessageBox({
+      message: `Nod ${candidate.version} is available.`,
+      detail: `Update Nod from a terminal:\n\n${candidate.command}`,
+      buttons: ['Copy command', 'OK'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (response === 0) clipboard.writeText(candidate.command);
+    return;
+  }
+  if (candidate.version === (await settings.announcedPackageVersion())) return;
+  if ((await notifyUpdate(candidate)) === 'shown')
+    await settings.saveAnnouncedPackageVersion(candidate.version);
+}
+
 async function notifyUpdate(candidate) {
-  if (
-    !preferences.notifications ||
-    !Notification.isSupported() ||
-    quitting ||
-    focusedEngineWindow()
-  )
+  let { notifications } = await settings.get();
+  if (!notifications || !Notification.isSupported() || quitting || focusedEngineWindow())
     return false;
-  if (
-    isQuietTime((await appPreferences.get()).preferences) ||
-    !preferences.notifications ||
-    quitting ||
-    focusedEngineWindow()
-  )
-    return true;
+  const quietTime = isQuietTime((await appPreferences.get()).preferences);
+  ({ notifications } = await settings.get());
+  if (quietTime || !notifications || quitting || focusedEngineWindow()) return 'quiet';
   const notification = new Notification({
-    title: `Nod ${candidate.version} is ready`,
+    title: `Nod ${candidate.version} is ${candidate.command ? 'available' : 'ready'}`,
     icon: notificationIcon,
-    body: 'Restart Nod to use the new version.',
+    body: candidate.command
+      ? `Run ${candidate.command} in a terminal.`
+      : 'Restart Nod to use the new version.',
   });
   displayedNotifications.add(notification);
   notification.on('show', () => {
     if (
       !displayedNotifications.has(notification) ||
-      !preferences.notifications ||
+      !notifications ||
       quitting ||
       focusedEngineWindow()
     )
       notification.close();
   });
   notification.on('click', () => {
-    if (!quitting && (checkingUpdates || updates?.ready)) void checkForUpdates(true, true);
+    if (quitting) return;
+    if (candidate.command) {
+      const current = checkingUpdates;
+      void (current
+        ? current.then(
+            () => checkForUpdates(true),
+            () => checkForUpdates(true),
+          )
+        : checkForUpdates(true));
+    } else if (checkingUpdates || updates?.ready) void checkForUpdates(true, true);
   });
   notification.on('close', () => displayedNotifications.delete(notification));
   notification.on('failed', () => displayedNotifications.delete(notification));
   notification.show();
-  return true;
+  return 'shown';
 }
 
 async function preloadUpdateImages(assets, signal) {
@@ -2663,6 +2697,21 @@ async function installUpdate({ relaunch = true } = {}) {
       relaunch,
     });
     await updateEvent('installer-launched', { version });
+    installingUpdate = true;
+    app.exit();
+    return;
+  }
+  if (process.platform === 'linux') {
+    await updateEvent('install-started', { method: 'flatpak', version });
+    const child = spawn('flatpak-spawn', ['--latest-version', '--directory=/', 'nod'], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    await new Promise((resolve, reject) => {
+      child.once('spawn', resolve);
+      child.once('error', reject);
+    });
+    child.unref();
     installingUpdate = true;
     app.exit();
     return;
@@ -3309,6 +3358,42 @@ else {
           check: () => checkForUpdates(false),
           powerMonitor,
           defer: macInstallerBusy,
+        });
+      }
+      if (
+        app.isPackaged &&
+        !testInstall &&
+        process.platform === 'linux' &&
+        process.env.FLATPAK_ID === 'io.n8n.Nod'
+      ) {
+        updates = createFlatpakUpdater({
+          connect: connectFlatpakPortal,
+          source: createUpdateSource({ os: 'linux', fetch: chromiumFetch }),
+          currentVersion: app.getVersion(),
+          restart: restartForUpdate,
+          onStatus: reportUpdateStatus,
+        });
+        stopUpdateChecks = startDesktopUpdateChecks({
+          check: () => checkForUpdates(false),
+          powerMonitor,
+          interval: 30 * 60 * 1000,
+        });
+      }
+      if (
+        app.isPackaged &&
+        !testInstall &&
+        process.platform === 'linux' &&
+        process.env.NOD_PACKAGE === 'rpm'
+      ) {
+        updates = createNoticeUpdater({
+          source: createUpdateSource({ os: 'linux', packaging: 'rpm', fetch: chromiumFetch }),
+          currentVersion: app.getVersion(),
+          command: 'sudo dnf upgrade nod',
+          onStatus: reportUpdateStatus,
+        });
+        stopUpdateChecks = startDesktopUpdateChecks({
+          check: () => checkForUpdates(false),
+          powerMonitor,
         });
       }
       nativeTheme.on('updated', publishPreferences);

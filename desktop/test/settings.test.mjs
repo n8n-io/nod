@@ -110,9 +110,11 @@ test('external app links can only open named screens without action data', () =>
 });
 import {
   createDesktopUpdater,
+  createNoticeUpdater,
   createUpdateSource,
   startDesktopUpdateChecks,
 } from '../main/updates.mjs';
+import { createFlatpakUpdater } from '../main/flatpak-update.mjs';
 import { clearInstalledWindowsUpdates } from '../main/windows-update.mjs';
 import {
   protectWindowsProfile,
@@ -557,6 +559,7 @@ async function runningDesktop(
       senderFrame: window.webContents.mainFrame,
     });
   const notifications = [];
+  const clipboardText = [];
   const appEvents = new EventEmitter();
   const externalURLs = [];
   const trashed = [];
@@ -803,6 +806,7 @@ async function runningDesktop(
         this.emit('close');
       }
     },
+    clipboard: { writeText: (text) => clipboardText.push(text) },
     powerSaveBlocker: {
       start: (type) => {
         blockers.set(++blockerId, type);
@@ -1093,6 +1097,7 @@ async function runningDesktop(
     storage,
     handlers,
     notifications,
+    clipboardText,
     externalURLs,
     trashed,
     awake: () => [...blockers.values()],
@@ -1361,7 +1366,14 @@ test('native local setup observes early runtime failure and recovery without pri
               code: 'NOD_COMPUTER_REGISTRATION_MISSING',
             }),
           }),
-          { code: privateText, step: 'wsl' },
+          {
+            code: privateText,
+            step: 'wsl',
+            exitCode: 125,
+            statusCode: 503,
+            signal: 'SIGKILL',
+            syscall: 'open',
+          },
         );
       onStatus({ stage: privateText, message: privateText, progress: 0.2 });
       const runtime = { env: {} };
@@ -1394,6 +1406,11 @@ test('native local setup observes early runtime failure and recovery without pri
     assert.equal(observations()[0].properties.setup_available, false);
     assert.equal(observations()[0].properties.failure_code, 'NOD_COMPUTER_REGISTRATION_MISSING');
     assert.equal(observations()[0].properties.failure_step, 'wsl');
+    assert.equal(observations()[0].properties.failure_class, 'Error');
+    assert.equal(observations()[0].properties.failure_exit_code, 125);
+    assert.equal(observations()[0].properties.failure_http_status, 503);
+    assert.equal(observations()[0].properties.failure_signal, 'SIGKILL');
+    assert.equal(observations()[0].properties.failure_syscall, 'open');
     await f.handlers.get('nod:prepare')(event, { retry: true });
     assert.equal(f.status().engineReady, true, JSON.stringify(f.status()));
     await waitFor(() => assert.ok(observations().some((item) => item.properties.setup_available)), {
@@ -1439,7 +1456,19 @@ test('native local setup observes early runtime failure and recovery without pri
           )
           .sort(),
         [
-          ...(item.properties.runtime_status === 'failed' ? ['failure_code', 'failure_step'] : []),
+          ...(item.properties.runtime_status === 'failed'
+            ? [
+                'failure_class',
+                'failure_code',
+                'failure_exit_code',
+                'failure_http_status',
+                'failure_signal',
+                'failure_step',
+                'failure_syscall',
+              ]
+            : item.properties.startup_status === 'failed'
+              ? ['failure_exit_code']
+              : []),
           'platform',
           'runtime_status',
           'setup_available',
@@ -7247,6 +7276,264 @@ test('public GitHub metadata redirects resolve to verified Mac runtime and Windo
   manifest.runtime.bytes = 700;
   redirect = 'https://github.com/n8n-io/other/releases/download/nod-v0.5.2/release-win32-x64.json';
   await assert.rejects(windows.latest('0.5.0'), /latest desktop release is invalid/);
+});
+
+test('Linux updates read the public release manifest and carry its Flatpak commit', async () => {
+  const base = 'https://github.com/n8n-io/nod/releases';
+  const manifestUrl = `${base}/download/nod-v0.5.2/release-linux-x64.json`;
+  const manifest = {
+    version: '0.5.2',
+    platform: 'linux-x64',
+    source: 'a'.repeat(40),
+    commit: 'b'.repeat(64),
+  };
+  const linux = createUpdateSource({
+    os: 'linux',
+    fetch: async (url) => {
+      if (url === `${base}/latest/download/release-linux-x64.json`)
+        return new Response(null, { status: 302, headers: { location: manifestUrl } });
+      if (url === manifestUrl) return Response.json(manifest);
+      assert.fail(`Unexpected release request ${url}`);
+    },
+  });
+  assert.deepEqual(await linux.latest('0.5.0'), {
+    version: '0.5.2',
+    source: manifest.source,
+    commit: manifest.commit,
+  });
+  assert.equal(await linux.latest('0.5.2'), undefined);
+  manifest.commit = 'invalid';
+  await assert.rejects(linux.latest('0.5.0'), /metadata is incompatible/);
+});
+
+test('Flatpak updates install only the commit the public release describes and retry a failed install', async () => {
+  const commit = 'c'.repeat(64);
+  const installs = [];
+  const restarted = [];
+  let available;
+  let failInstall = true;
+  let closed = false;
+  let candidate = { version: '0.5.2', source: 'a'.repeat(40), commit: 'd'.repeat(64) };
+  const updater = createFlatpakUpdater({
+    connect: async () => ({
+      onAvailable: (handler) => (available = handler),
+      update: async () => {
+        installs.push(commit);
+        if (failInstall) throw new Error('Self update not supported');
+      },
+      close: () => (closed = true),
+    }),
+    source: { latest: async () => candidate },
+    currentVersion: '0.5.0',
+    restart: async (ready) => restarted.push(ready.version),
+  });
+  assert.equal(await updater.check(), undefined);
+  available({ 'remote-commit': commit });
+  assert.equal(await updater.check(), undefined);
+  assert.deepEqual(installs, []);
+  candidate = { ...candidate, commit };
+  await assert.rejects(updater.check(), /Self update not supported/);
+  assert.equal(updater.ready, undefined);
+  failInstall = false;
+  assert.equal((await updater.check()).version, '0.5.2');
+  await updater.check();
+  assert.deepEqual(installs, [commit, commit]);
+  await updater.restart();
+  assert.deepEqual(restarted, ['0.5.2']);
+  await updater.dispose();
+  assert.equal(closed, true);
+  await assert.rejects(updater.restart(), /No desktop update is ready/);
+});
+
+test('disposing a Flatpak updater rejects a stalled connection attempt instead of waiting out the install timeout', async () => {
+  const updater = createFlatpakUpdater({
+    connect: () => new Promise(() => {}),
+    source: { latest: async () => assert.fail('No source request is needed.') },
+    currentVersion: '0.5.0',
+    restart: async () => {},
+    installTimeout: 30 * 60 * 1000,
+  });
+  const checking = updater.check();
+  await new Promise(setImmediate);
+  await updater.dispose();
+  await assert.rejects(checking, /Nod is closing/);
+});
+
+test('a Flatpak update that finds nothing to install succeeds only when the deployed commit already matches the candidate', async () => {
+  const commit = 'c'.repeat(64);
+  for (const matches of [true, false]) {
+    let available;
+    const updater = createFlatpakUpdater({
+      connect: async () => ({
+        onAvailable: (handler) => (available = handler),
+        update: async () => {
+          throw Object.assign(new Error('The Flatpak portal found nothing to install.'), {
+            code: 'FLATPAK_UPDATE_EMPTY',
+          });
+        },
+        close: () => {},
+      }),
+      source: { latest: async () => ({ version: '0.5.2', source: 'a'.repeat(40), commit }) },
+      currentVersion: '0.5.0',
+      restart: async () => {},
+    });
+    assert.equal(await updater.check(), undefined);
+    available({ 'remote-commit': commit, 'local-commit': matches ? commit : 'd'.repeat(64) });
+    if (matches) assert.equal((await updater.check()).version, '0.5.2');
+    else await assert.rejects(updater.check(), /nothing to install/);
+    await updater.dispose();
+  }
+});
+
+test('a Flatpak install that waits on an unanswered desktop prompt stops after its timeout and can be retried', async () => {
+  const commit = 'c'.repeat(64);
+  let answered = false;
+  let available;
+  const updater = createFlatpakUpdater({
+    connect: async () => ({
+      onAvailable: (handler) => (available = handler),
+      update: () => (answered ? Promise.resolve() : new Promise(() => {})),
+      close: () => {},
+    }),
+    source: { latest: async () => ({ version: '0.5.2', source: 'a'.repeat(40), commit }) },
+    currentVersion: '0.5.0',
+    restart: async () => {},
+    installTimeout: 20,
+  });
+  const keepAlive = setInterval(() => {}, 10);
+  try {
+    await updater.check();
+    available({ 'remote-commit': commit });
+    await assert.rejects(updater.check(), /did not finish/);
+    answered = true;
+    assert.equal((await updater.check()).version, '0.5.2');
+  } finally {
+    clearInterval(keepAlive);
+  }
+});
+
+test('RPM updates read their own release manifest and carry no commit', async () => {
+  const base = 'https://github.com/n8n-io/nod/releases';
+  const manifestUrl = `${base}/download/nod-v0.5.2/release-linux-x64-rpm.json`;
+  const manifest = {
+    version: '0.5.2',
+    platform: 'linux-x64-rpm',
+    source: 'a'.repeat(40),
+    rpm: { file: 'nod-linux-x64.rpm', bytes: 100, sha256: 'b'.repeat(64) },
+  };
+  const rpm = createUpdateSource({
+    os: 'linux',
+    packaging: 'rpm',
+    fetch: async (url) => {
+      if (url === `${base}/latest/download/release-linux-x64-rpm.json`)
+        return new Response(null, { status: 302, headers: { location: manifestUrl } });
+      if (url === manifestUrl) return Response.json(manifest);
+      assert.fail(`Unexpected release request ${url}`);
+    },
+  });
+  assert.deepEqual(await rpm.latest('0.5.0'), { version: '0.5.2', source: manifest.source });
+  assert.equal(await rpm.latest('0.5.2'), undefined);
+  manifest.rpm.file = 'other.rpm';
+  await assert.rejects(rpm.latest('0.5.0'), /metadata is incompatible/);
+});
+
+test('the first automatic update check still notifies when saved notification preferences have not been applied in memory yet', async (t) => {
+  const profile = await fixture(t);
+  await profile.store.save({ notifications: true });
+  const updater = createNoticeUpdater({
+    source: { latest: async () => ({ version: '0.5.2', source: 'a'.repeat(40) }) },
+    currentVersion: '0.5.0',
+    command: 'sudo dnf upgrade nod',
+  });
+  t.after(() => updater.dispose());
+  const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+    notificationsSupported: true,
+    storedProfile: profile,
+  });
+  await f.checkUpdates(updater, false);
+  assert.equal(f.notifications.length, 1);
+  assert.equal(await f.storage.store.announcedPackageVersion(), '0.5.2');
+});
+
+test('an RPM install announces a newer release once across restarts, shows the package command, and never offers a restart', async (t) => {
+  const updater = createNoticeUpdater({
+    source: { latest: async () => ({ version: '0.5.2', source: 'a'.repeat(40) }) },
+    currentVersion: '0.5.0',
+    command: 'sudo dnf upgrade nod',
+  });
+  t.after(() => updater.dispose());
+  const prompts = [];
+  const f = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+    notificationsSupported: true,
+    prompt: (options) => {
+      prompts.push(options);
+      return { response: 0 };
+    },
+  });
+  await f.showSettings();
+  const window = f.windows.at(-1);
+  await f.handlers.get('nod:settings:save')(
+    { sender: window.webContents, senderFrame: window.webContents.mainFrame },
+    { notifications: true },
+  );
+  window.minimize();
+  const before = f.notifications.length;
+  await f.checkUpdates(updater, false);
+  await f.checkUpdates(updater, false);
+  assert.equal(f.notifications.length, before + 1);
+  assert.equal(prompts.length, 0);
+  await f.checkUpdates(updater);
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0].message, /0\.5\.2 is available/);
+  assert.match(prompts[0].detail, /sudo dnf upgrade nod/);
+  assert.deepEqual(f.clipboardText, ['sudo dnf upgrade nod']);
+  assert.equal(updater.ready, undefined);
+  assert.equal(f.restartMenu.enabled, false);
+  const restarted = await runningDesktop(t, () => assert.fail('No engine request is needed.'), {
+    notificationsSupported: true,
+    storedProfile: f.storage,
+  });
+  await restarted.showSettings();
+  const restartedWindow = restarted.windows.at(-1);
+  await restarted.handlers.get('nod:settings:save')(
+    { sender: restartedWindow.webContents, senderFrame: restartedWindow.webContents.mainFrame },
+    { notifications: true },
+  );
+  restartedWindow.minimize();
+  const restartedBefore = restarted.notifications.length;
+  const sameVersion = createNoticeUpdater({
+    source: { latest: async () => ({ version: '0.5.2', source: 'a'.repeat(40) }) },
+    currentVersion: '0.5.0',
+    command: 'sudo dnf upgrade nod',
+  });
+  t.after(() => sameVersion.dispose());
+  await restarted.checkUpdates(sameVersion, false);
+  assert.equal(restarted.notifications.length, restartedBefore);
+  const newerVersion = createNoticeUpdater({
+    source: { latest: async () => ({ version: '0.5.3', source: 'a'.repeat(40) }) },
+    currentVersion: '0.5.0',
+    command: 'sudo dnf upgrade nod',
+  });
+  t.after(() => newerVersion.dispose());
+  await restarted.checkUpdates(newerVersion, false);
+  assert.equal(restarted.notifications.length, restartedBefore + 1);
+});
+
+test('an RPM updater reports its checking and idle phases so the menu can show progress', async (t) => {
+  const latest = deferred();
+  const phases = [];
+  const updater = createNoticeUpdater({
+    source: { latest: () => latest.promise },
+    currentVersion: '0.5.0',
+    command: 'sudo dnf upgrade nod',
+    onStatus: (phase) => phases.push(phase),
+  });
+  t.after(() => updater.dispose());
+  const checking = updater.check();
+  assert.deepEqual(phases, ['checking']);
+  latest.resolve(undefined);
+  await checking;
+  assert.deepEqual(phases, ['checking', 'idle']);
 });
 
 test(

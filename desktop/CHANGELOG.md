@@ -2,6 +2,88 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.10.0 - 2026-11-26
+
+### Breaking changes
+
+- **browser:** One browser with a window for each session. [#1545](https://github.com/n8n-io/nod/pull/1545) (558caa0)
+
+### Features
+
+- **cards:** Select then send for card choices, flight journey timeline, compare links. [commit](https://github.com/n8n-io/nod/commit/0cc62532d99bfb78ba5d311148caf891fc5c0d83) (0cc6253)
+- **cards:** Add stored OpenStreetMap maps, compare and airline images to cards. [commit](https://github.com/n8n-io/nod/commit/38eb1975fc33cb032b8d5567c09d8b0d82e15fc1) (38eb197)
+- **cards:** Add card pattern library, tappable choices, and item images. [commit](https://github.com/n8n-io/nod/commit/13104443fb003d57b45e67b3ca45e71828014115) (1310444)
+- **chat:** Improve burst handling, task speed, and card UX. [commit](https://github.com/n8n-io/nod/commit/81c7004ed00700350116fdeafbd89d539ffdcf83) (81c7004)
+- **evals:** Add scenario sharding, shard merging, and parallel CI matrix. [commit](https://github.com/n8n-io/nod/commit/2a03ffd7915b8771c2696fb37d906a19fc251156) (2a03ffd)
+- **chat:** Steer structured replies to cards, refine card layout and update visual evals. [commit](https://github.com/n8n-io/nod/commit/fb91311878bdc4470b962624ef9d3a698dfa156e) (fb91311)
+- **chat:** Answer with list, schedule, details and comparison cards. [commit](https://github.com/n8n-io/nod/commit/e0f926da7cd9ddeeeeedc878b327cc573dc7682b) (e0f926d)
+- **apps:** Show what keeps you in control before app sign-in. [#1492](https://github.com/n8n-io/nod/pull/1492) (04b8b68)
+- **analytics:** Record a fixed failure class and HTTP status for failed model turns. [#1543](https://github.com/n8n-io/nod/pull/1543) (9e64bda)
+
+### Fixes
+
+- Address PR #1542 review findings across cards, runtime, tasks, and evals. [commit](https://github.com/n8n-io/nod/commit/1a382f644835f9fefb4cfdb6b72681f23368b9c4) (1a382f6)
+- Unify card picking state, restore runtime guards, and share background visibility SQL. [commit](https://github.com/n8n-io/nod/commit/797cc574192264ce3a80458259e8ac21d2c0afd2) (797cc57)
+- **channels:** Keep card chrome out of message attachments while delivering booking photos. [commit](https://github.com/n8n-io/nod/commit/ead857977147ddea36357ff3ff7a13532363dc8c) (ead8579)
+- **chat:** Only treat card replies matching a choice option as answered. [commit](https://github.com/n8n-io/nod/commit/6d1024b763155fdb4192d2ebe8a1100621e75830) (6d1024b)
+- Isolate map tile aborts, tighten reply/subagent/batch guards, and include parent turn in background context. [commit](https://github.com/n8n-io/nod/commit/7b24057825cc4c36e09bd94a17afaa60b4f94075) (7b24057)
+- **chat:** Make every short list and comparison card pickable by default. [commit](https://github.com/n8n-io/nod/commit/d7e35170fbe038dfebc253899bb2369a95f8895f) (d7e3517)
+- **chat:** Omit duplicate TaskMark spinner inside Working for routed tasks. [commit](https://github.com/n8n-io/nod/commit/f34314d9e69082a182a6228d794ba6917566b016) (f34314d)
+- Handle the remaining PR #1542 review findings. [commit](https://github.com/n8n-io/nod/commit/402c7935f836ae458d1d78f96f59e57c43ed513f) (402c793)
+- **trust:** Check at medium effort, else the model's first effort level. [commit](https://github.com/n8n-io/nod/commit/13e372a184bf9b379e5e499591e31c6bcd5c6520) (13e372a)
+- **approvals:** Read the owner's newer messages before a browser step asks for approval. [commit](https://github.com/n8n-io/nod/commit/b8d521136bcb968db7f018a91e03209ea4b80427) (b8d5211)
+- Address PR #1542 review findings across cards, turns, vault, and evals. [commit](https://github.com/n8n-io/nod/commit/21ba65f60ca4186254af08fb79b26c7a652dd949) (21ba65f)
+- **analytics:** Accept draft as an output presentation kind. [commit](https://github.com/n8n-io/nod/commit/d31d9ab73f3700b240c8ae187bdc6d2afe57d40f) (d31d9ab)
+- **chat:** Quote only explicitly named messages and add email draft cards. [commit](https://github.com/n8n-io/nod/commit/0d9a6ac32fa6d7e65872f4c84a13df0abd65e5fe) (0d9a6ac)
+- **server:** Record turn\_id on vault uses so saved-login sign-in can scope by session. [commit](https://github.com/n8n-io/nod/commit/42a63f7666870ca5f023ec65684dc14d1a75b4b6) (42a63f7)
+- **cards:** Keep a lone own-page picture and ask for product pages on compare columns. [commit](https://github.com/n8n-io/nod/commit/2c8af2c490e21b652fc569bded2fd4bf3c8fa91a) (2c8af2c)
+- **runtime,server:** Tighten scheduled-resume trust, tool normalization, ack dedup, and vault handoff. [commit](https://github.com/n8n-io/nod/commit/59800952fd40c1dee0fe1eac1e544e097ab82ae4) (5980095)
+- **runtime,server,evals:** Normalize presentation inputs, isolate background language, coalesce bursts, and tighten prompt guidance. [commit](https://github.com/n8n-io/nod/commit/87bc319f19ad17a14be22c69f3b64d9d1130c3a6) (87bc319)
+- **chat:** Refine burst replies, task updates, subagent bounds, and compare cards. [commit](https://github.com/n8n-io/nod/commit/f70741b3ded8eecc7fab4bd3e5ae7bda0ee5d93b) (f70741b)
+- **evals:** Set base model effort via model service instead of overriding session thinkingLevel. [commit](https://github.com/n8n-io/nod/commit/33cc11ddd78c863544f4979465de15445eed5399) (33cc11d)
+- **evals,runtime:** Read card text in traces, guard pick with final, and tighten trust/schedule guidance. [commit](https://github.com/n8n-io/nod/commit/f1c0eb75e35abbd404d730b277d5421d84c15b7c) (f1c0eb7)
+- **computer-use:** Type into fields that ignore accessibility focus. [#1524](https://github.com/n8n-io/nod/pull/1524) (f1298f0)
+- **models:** Offer the effort levels a compatible server publishes. [#1547](https://github.com/n8n-io/nod/pull/1547) (ddf1b58)
+- **codemode:** Give scripts the full app result instead of a preview …. [#1539](https://github.com/n8n-io/nod/pull/1539) (8b49db3)
+- **vault:** Ask for the sign-in fields the agent picked. [#1541](https://github.com/n8n-io/nod/pull/1541) (525008f)
+- **trust:** Check actions at medium reasoning effort. [#1538](https://github.com/n8n-io/nod/pull/1538) (67d21d1)
+- **apps:** Offer Channels when someone picks WhatsApp in Apps. [#1535](https://github.com/n8n-io/nod/pull/1535) (904f35d)
+- **trust:** Honour owner follow-ups in running tasks and keep saved schedule instructions after a stop. [#1534](https://github.com/n8n-io/nod/pull/1534) (ecdef85)
+- **desktop:** Retry apt fetches in runtime images and build jobs. [#1533](https://github.com/n8n-io/nod/pull/1533) (5fe9bc9)
+- **desktop:** Retry every failed runtime download, including an empty reply. [#1532](https://github.com/n8n-io/nod/pull/1532) (1cf8057)
+- **release:** Let a failed release prepare its unpublished version again. [#1531](https://github.com/n8n-io/nod/pull/1531) (66d99d1)
+- **memory:** Bound memory imports and de-duplicate them in one pass. [#1338](https://github.com/n8n-io/nod/pull/1338) (899f7fb)
+
+### Other changes
+
+- Remove leftover browserConnection references after rebasing onto #1545. [commit](https://github.com/n8n-io/nod/commit/9f42130f3a70254a2e9abd3bbc6f5f6e35010801) (9f42130)
+- Keep subagent findings over pre-tool narration when a tool fails or times out. [commit](https://github.com/n8n-io/nod/commit/5970afed7a964bcfff4a56ea290f808a6de2614a) (5970afe)
+- Straddlers. [commit](https://github.com/n8n-io/nod/commit/ed98c79bb44f16885cac87f830b44482136c2bfc) (ed98c79)
+- Address PR #1542 review feedback on chat, tasks, subagents and evals. [commit](https://github.com/n8n-io/nod/commit/3b4b0701e404c64652e8385a4b3f007e15321a08) (3b4b070)
+- Straddlers. [commit](https://github.com/n8n-io/nod/commit/8899cb55f2b7c0c77dd99abe1df34e51a427857b) (8899cb5)
+- Speed up the eval gate: skip reruns once blocked, rerun both sides in parallel and reuse the nightly baseline. [commit](https://github.com/n8n-io/nod/commit/7e9a4a72a027b4e5cc86ee01161d19b047a326a6) (7e9a4a7)
+- Use a muted border on closed card rows and keep closed radios in their normal colours. [commit](https://github.com/n8n-io/nod/commit/ddbb40dba5172f66860f566c964e0daf987665a5) (ddbb40d)
+- Dim closed card picks with dashed outlines so they read as no longer choosable. [commit](https://github.com/n8n-io/nod/commit/fc33343e3ec78f96bc5b8d353530112e44e197b4) (fc33343)
+- Keep closed card picks visible as read only and drop the on-card question send. [commit](https://github.com/n8n-io/nod/commit/9005f849b7c09d4b0c1809b868303ce96a47173f) (9005f84)
+- Straddlers. [commit](https://github.com/n8n-io/nod/commit/8b4b2481ac6042da5df8cf3349f8e1a1d637e929) (8b4b248)
+- Straddlers. [commit](https://github.com/n8n-io/nod/commit/a3a76833c31f2ffe5775355dd242e8ea1d402d6e) (a3a7683)
+- Straddlers. [commit](https://github.com/n8n-io/nod/commit/5c249fdcda1f6ef8191c72046a81ec17eed65996) (5c249fd)
+- Shrink browser observations and add batched browser steps. [commit](https://github.com/n8n-io/nod/commit/38643757c29978b9e3ffa413e59bede1cc35e2c9) (3864375)
+- Work in progress on riqwan/chat-burst-fixes. [commit](https://github.com/n8n-io/nod/commit/83c6a33698dd8497bc199a6b9cfef23744f6ea4b) (83c6a33)
+- Expect medium default effort and badge only Nod's onboarding recommendation. [commit](https://github.com/n8n-io/nod/commit/ead567e0c4a08251c0aca4b65dd4b4ae9bd67bec) (ead567e)
+- Fall back to high effort when a model has no medium. [commit](https://github.com/n8n-io/nod/commit/0cefd79d23d454e54650d3fbba23c275267a0ba6) (0cefd79)
+- Default reasoning effort to medium and badge the recommended model. [commit](https://github.com/n8n-io/nod/commit/dde7ba631b45510c0a6443fa45d068a9b2f75d41) (dde7ba6)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.9.8...cdde2d12e35d02963659196a2190c4d85414ab5b)
+
+<details>
+<summary>Build details</summary>
+
+Source: `cdde2d12e35d02963659196a2190c4d85414ab5b`
+Previous release: `nod-v0.9.8`
+
+</details>
+
 ## 0.9.8 - 2026-11-26
 
 ### Features

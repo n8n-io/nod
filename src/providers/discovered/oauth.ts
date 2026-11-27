@@ -1,6 +1,15 @@
-import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+import {
+  auth,
+  refreshAuthorization,
+  type OAuthClientProvider,
+} from '@modelcontextprotocol/sdk/client/auth.js';
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { OAuthError, ServerError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import {
+  OAuthError,
+  ServerError,
+  TemporarilyUnavailableError,
+  TooManyRequestsError,
+} from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import {
   DiscoveredSignInRequired,
   type DiscoveredOAuth,
@@ -14,6 +23,17 @@ export function createDiscoveredOAuth(
   fetchFn: FetchLike = safeRemoteFetch,
   signInLink: (link: string) => Promise<string> = publicSignIn,
 ): DiscoveredOAuth {
+  const bound =
+    (signal?: AbortSignal): FetchLike =>
+    (input, init) => {
+      signal?.throwIfAborted();
+      return fetchFn(input, {
+        ...init,
+        ...(signal
+          ? { signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal }
+          : {}),
+      });
+    };
   async function run(
     endpoint: string,
     saved: DiscoveredOAuthState,
@@ -62,15 +82,7 @@ export function createDiscoveredOAuth(
       serverUrl: endpoint,
       ...(options.code ? { authorizationCode: options.code } : {}),
       ...(saved.scope ? { scope: saved.scope } : {}),
-      fetchFn: (input, init) => {
-        signal?.throwIfAborted();
-        return fetchFn(input, {
-          ...init,
-          ...(signal
-            ? { signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal }
-            : {}),
-        });
-      },
+      fetchFn: bound(signal),
     });
     return { result, url };
   }
@@ -108,16 +120,32 @@ export function createDiscoveredOAuth(
         throw new Error('The service did not complete sign-in.');
       return saved;
     },
-    async refresh(endpoint, saved, signal) {
-      if (!saved.tokens?.refresh_token) throw new DiscoveredSignInRequired();
-      const result = await run(endpoint, saved, {}, signal).catch((cause: unknown) => {
-        throw cause instanceof OAuthError && !(cause instanceof ServerError)
-          ? new DiscoveredSignInRequired()
-          : cause;
+    async refresh(_endpoint, saved, signal) {
+      const refreshToken = saved.tokens?.refresh_token;
+      const { clientInformation, discovery } = saved;
+      if (!refreshToken || !clientInformation || !discovery) throw new DiscoveredSignInRequired();
+      signal?.throwIfAborted();
+      const tokens = await refreshAuthorization(discovery.authorizationServerUrl, {
+        metadata: discovery.authorizationServerMetadata,
+        clientInformation,
+        refreshToken,
+        resource: discovery.resourceMetadata?.resource,
+        fetchFn: bound(signal),
+      }).catch((cause: unknown) => {
+        if (!(cause instanceof OAuthError)) throw cause;
+        const reason = [cause.errorCode, cause.message].filter(Boolean).join(': ').slice(0, 500);
+        if (cause instanceof TooManyRequestsError)
+          throw Object.assign(new Error(reason), { reason: 'rate_limited' });
+        if (cause instanceof ServerError || cause instanceof TemporarilyUnavailableError)
+          throw Object.assign(new Error(reason), { reason: 'unavailable' });
+        throw new DiscoveredSignInRequired(reason);
       });
-      if (result.result !== 'AUTHORIZED' || !saved.tokens?.access_token)
-        throw new DiscoveredSignInRequired();
-      return saved;
+      return {
+        ...saved,
+        tokens: { ...saved.tokens, ...tokens },
+        expiresAt:
+          tokens.expires_in === undefined ? undefined : Date.now() + tokens.expires_in * 1000,
+      };
     },
   };
 }
