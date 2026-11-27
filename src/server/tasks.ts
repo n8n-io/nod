@@ -992,9 +992,7 @@ export function createTasks(options: {
         [id, ownerId],
       )
     ).rows;
-    const placeholders = new Set(
-      Object.values(codeTexts).flatMap((text) => [text.masked, text.pending]),
-    );
+    const placeholders = new Set([codeTexts.masked, codeTexts.pending]);
     const requests = messages.filter(
       (message) =>
         !placeholders.has(message.text) &&

@@ -96,7 +96,7 @@ The restore command restores file ownership and the original Vault key. It stops
 
 If configuration validation fails before data is restored, the command removes the newly created `.env` so you can correct the backup configuration and retry. A failure after restoration starts keeps the new project for inspection.
 
-Open Nod with the saved token. Check conversation history, workspace files, model settings, and channel status. Check a saved credential through the private form without sending its value to chat. Review schedules before leaving the server running.
+Open Nod with the saved token. Check conversation history, workspace files, model settings, and channel status. Open a saved login in **Vault** to check that it opens, without sending its value to chat. Review schedules before leaving the server running.
 
 A restore returns data to the backup's point in time. It does not undo messages or actions that happened afterwards.
 

@@ -1944,29 +1944,6 @@ export function createApps(
         .slice(0, 15)
         .map((mail) => ({ subject: mail.subject, snippet: mail.body.slice(0, 200) }));
     },
-    async verificationEmails(accountId, query) {
-      if (accounts.get(accountId)?.service !== 'gmail') return [];
-      return (world.gmail?.mails ?? [])
-        .filter(
-          (mail) =>
-            mail.labels.includes('INBOX') &&
-            mail.at >= query.after &&
-            mail.at <= query.before &&
-            addresses(mail.to).includes(query.recipient),
-        )
-        .map((mail) => {
-          const sender = addresses(mail.from)[0];
-          return {
-            id: mail.id,
-            receivedAt: mail.at,
-            sender,
-            recipients: addresses(mail.to),
-            authenticatedDomain: sender.split('@')[1] ?? '',
-            text: mail.body,
-          };
-        })
-        .filter((mail) => mail.authenticatedDomain.endsWith(query.senderDomain));
-    },
     async deleteSession() {},
     async inspectAccount(accountId) {
       const account = accounts.get(accountId);
@@ -1997,5 +1974,33 @@ export function createApps(
     },
     matchesSubscription: () => false,
   };
+  Object.assign(world.provider, {
+    async verificationEmails(
+      accountId: string,
+      query: { recipient: string; senderDomain: string; after: number; before: number },
+    ) {
+      if (accounts.get(accountId)?.service !== 'gmail') return [];
+      return (world.gmail?.mails ?? [])
+        .filter(
+          (mail) =>
+            mail.labels.includes('INBOX') &&
+            mail.at >= query.after &&
+            mail.at <= query.before &&
+            addresses(mail.to).includes(query.recipient),
+        )
+        .map((mail) => {
+          const sender = addresses(mail.from)[0];
+          return {
+            id: mail.id,
+            receivedAt: mail.at,
+            sender,
+            recipients: addresses(mail.to),
+            authenticatedDomain: sender.split('@')[1] ?? '',
+            text: mail.body,
+          };
+        })
+        .filter((mail) => mail.authenticatedDomain.endsWith(query.senderDomain));
+    },
+  });
   return world;
 }

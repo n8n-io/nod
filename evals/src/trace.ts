@@ -37,6 +37,7 @@ export interface ChatMessage {
   presentation?: unknown;
   answerChoices?: unknown;
   attachments?: Array<{ name: string; mimeType: string }>;
+  handoff?: boolean;
 }
 
 export interface Run {
@@ -402,13 +403,16 @@ export async function collect(options: {
   const usage = await collectUsage(stack.pool);
   const messages = (
     await stack.pool.query(
-      "SELECT role,text,turn_id,created_at,to_jsonb(messages)->'presentation' AS presentation,to_jsonb(messages)->'answer_choices' AS answer_choices,to_jsonb(messages)->'attachments' AS attachments FROM messages ORDER BY created_at, id",
+      `SELECT m.role,m.text,m.turn_id,m.created_at,to_jsonb(m)->'presentation' AS presentation,to_jsonb(m)->'answer_choices' AS answer_choices,to_jsonb(m)->'attachments' AS attachments,
+        m.role='assistant' AND m.id=(SELECT l.id FROM messages l JOIN turns u ON u.id=l.turn_id WHERE l.turn_id=m.turn_id AND l.role='assistant' AND u.handoff_browser_id IS NOT NULL ORDER BY l.created_at DESC,l.id DESC LIMIT 1) AS handoff
+       FROM messages m ORDER BY m.created_at, m.id`,
     )
   ).rows.map((row): ChatMessage => ({
     role: row.role,
     text: row.text ?? '',
     at: new Date(row.created_at).getTime(),
     turnId: row.turn_id,
+    ...(row.handoff ? { handoff: true } : {}),
     ...(row.presentation ? { presentation: row.presentation } : {}),
     ...(row.answer_choices ? { answerChoices: row.answer_choices } : {}),
     ...(Array.isArray(row.attachments) && row.attachments.length

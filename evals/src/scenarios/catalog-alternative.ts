@@ -45,7 +45,9 @@ export default scenario({
       check('alternative-no-setup', (run) => {
         const credentialSetup =
           run.tools.some((tool) => tool.name === 'sign_in') ||
-          run.interactions.some((interaction) => interaction.kind === 'secret');
+          run.interactions.some(
+            (interaction) => interaction.kind === 'secret' || interaction.kind === 'handoff',
+          );
         return {
           pass:
             !credentialSetup &&

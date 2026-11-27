@@ -7,7 +7,6 @@ import { integrationServices, type IntegrationServiceInfo } from '../../shared/i
 import { createComposioFiles } from './downloads.ts';
 import type { createComposioProxy } from './proxy.ts';
 import { readInboxSnippets, readInboxThreads, readSentEmails } from './sent-email.ts';
-import { readVerificationEmails } from './verification-email.ts';
 import {
   connectionCode,
   connectionReason,
@@ -746,8 +745,6 @@ export function createComposioProvider(options: {
       userId(ownerId);
       return options.proxy.connectionStatus(url, signal);
     },
-    verificationEmails: (accountId, query, signal) =>
-      readVerificationEmails(client.tools, accountId, query, signal),
     sentEmails: (accountId, signal) => readSentEmails(client.tools, accountId, signal),
     inboxSnippets: (accountId, signal) => readInboxSnippets(client.tools, accountId, signal),
     inboxThreads: (accountId, signal) => readInboxThreads(client.tools, accountId, signal),

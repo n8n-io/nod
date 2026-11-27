@@ -310,11 +310,6 @@ export interface ThreadDependencies {
     signal: AbortSignal,
   ) => Promise<{ prompt: string } | undefined>;
   stoppedOutcomes?: (turnId: string) => Promise<string[]>;
-  credentialRequestStatuses?: (
-    threadId: string,
-    sessionId: string,
-    turnIds: string[],
-  ) => Promise<NonNullable<RuntimeContext['credentialRequests']>>;
   bindVerificationQuestion?: (
     turnId: string,
     messageId: string,
@@ -1469,26 +1464,8 @@ export async function resumeTurn(
   return resumed;
 }
 
-export async function resumeAfterCredentials(turnId: string, client?: PoolClient) {
-  await resumeTurn(
-    turnId,
-    `credentials:${turnId}`,
-    'The secure credential step has completed. Inspect the current browser and continue the request you were working on. Do not repeat completed external actions.',
-    true,
-    client,
-  );
-}
-
 export async function resumeAfterPayment(turnId: string, prompt: string, client?: PoolClient) {
   await resumeTurn(turnId, `credentials:${turnId}`, prompt, true, client);
-}
-
-export async function retryCredentials(turnId: string) {
-  await resumeTurn(
-    turnId,
-    `credentials-retry:${turnId}`,
-    'The owner asked you to check the previous secure sign-in step. It may have reached the website. Inspect the current browser and check its result before you request a fresh link. Do not repeat a completed or uncertain external action.',
-  );
 }
 
 export const activeHandoffSql = `u.status='waiting' AND u.waiting_reason='question' AND u.handoff_browser_id IS NOT NULL
@@ -2161,21 +2138,12 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
     ),
   ]);
   const preference = preferences.rows[0];
-  const historyTurnIds = [
-    ...new Set<string>(
-      history.rows.flatMap((message) =>
-        message.role === 'assistant' && typeof message.turnId === 'string' ? [message.turnId] : [],
-      ),
-    ),
-  ];
-  const [related, credentialRequests] = await Promise.all([
+  const related =
     !turn.background && sourceMessageId && dependencies.recall
-      ? dependencies
+      ? await dependencies
           .recall(String(turn.prompt ?? ''), history.rows[0]?.createdAt, sourceMessageId)
           .catch(() => [])
-      : [],
-    dependencies.credentialRequestStatuses?.(threadId, turn.session_id, historyTurnIds) ?? [],
-  ]);
+      : [];
   const timeZone: string | undefined = preference?.time_zone || undefined;
   return {
     sourceMessageId,
@@ -2217,7 +2185,6 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
             })),
           }
         : {}),
-      ...(credentialRequests.length ? { credentialRequests } : {}),
       ...(related.length ? { relatedConversation: related } : {}),
       conversationLanguage: language,
       ...(learnedSkills?.length ? { learnedSkills } : {}),

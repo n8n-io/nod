@@ -1705,7 +1705,7 @@ test('a context restart drops old model input once and keeps later turns through
   assert.match(await localText(saved), /old context that must not return/);
 });
 
-test('real Pi sessions persist a credential pause and resume without replaying chat history', async (t) => {
+test('real Pi sessions persist a sign-in handoff and resume without replaying chat history', async (t) => {
   for (const kind of ['chat', 'background', 'task'] as const)
     await t.test(`${kind} session`, async () => {
       const background = kind !== 'chat';
@@ -1744,7 +1744,7 @@ test('real Pi sessions persist a credential pause and resume without replaying c
         publish: async () => {
           throw new Error('Not used');
         },
-        requestCredential: async () => ({ url: '/credentials/fixture' }),
+        requestCredential: async () => ({ handoff: true }),
         integration: async () => ({}),
         manage: async () => {
           managed += 1;
@@ -1778,11 +1778,9 @@ test('real Pi sessions persist a credential pause and resume without replaying c
                       name: 'sign_in',
                       arguments: {
                         origin: 'https://example.com',
-                        label: 'Example',
                         passwordSelector: '#password',
                         submitSelector: '#submit',
-                        message: 'Example needs your password.',
-                        action: 'Add password',
+                        message: 'Example needs you to sign in.',
                       },
                     },
                     {
@@ -1835,11 +1833,8 @@ test('real Pi sessions persist a credential pause and resume without replaying c
       });
       try {
         const paused = await runtime.runTurn(context);
-        assert.equal(paused.status, 'waiting_credentials');
-        assert.equal(
-          paused.message,
-          'Example needs your password. [Add password](/credentials/fixture)',
-        );
+        assert.equal(paused.status, 'waiting_user');
+        assert.equal(paused.message, 'Example needs you to sign in.');
         assert.deepEqual(replies, []);
         assert.equal(managed, 0);
         phase = 1;
@@ -2138,15 +2133,6 @@ test('fresh scheduled sessions put their stable first request on a one-hour Anth
       resumed: false,
       prompt: 'Scheduled task: synthetic status check ' + label,
       memory: 'about/name: The owner is Alex.',
-      credentialRequests: [
-        {
-          turnId: 'fixture-sign-in-turn',
-          origin: 'https://sign-in.fixture.test',
-          label: 'Synthetic sign-in',
-          kind: 'password',
-          status: label === 'FIRST-RUN' ? 'pending' : 'expired',
-        },
-      ],
       history: [
         { role: 'user', text: 'Earlier owner message', createdAt: new Date().toISOString() },
       ],
@@ -2179,17 +2165,9 @@ test('fresh scheduled sessions put their stable first request on a one-hour Anth
     stable[0].map((block: any) => block.text),
     stable[1].map((block: any) => block.text),
   );
-  assert.ok(
-    stable.every((blocks) =>
-      blocks.every((block: any) => !block.text.includes('sign-in.fixture.test')),
-    ),
-  );
   for (const [index, body] of bodies.entries()) {
     const tail = blocks(body).at(-1);
     assert.match(tail.text, index ? /SECOND-RUN/ : /FIRST-RUN/);
-    assert.match(JSON.stringify(body), /Only pending means open/);
-    const status = JSON.stringify(`"status":"${index ? 'expired' : 'pending'}"`).slice(1, -1);
-    assert.ok(tail.text.includes(status));
     assert.deepEqual(tail.cache_control, { type: 'ephemeral' });
     assert.equal('cache_control' in body.system[0], false);
     assert.ok(JSON.stringify(body).split('"cache_control"').length - 1 <= 4);
@@ -3217,9 +3195,7 @@ test('sign-in and payment approvals wait until queued messages are read', async 
           };
           const signIn = {
             origin: 'https://example.com',
-            label: 'Synthetic login',
             message: 'Sign in privately.',
-            action: 'Sign in',
           };
           await run('sign_in', signIn);
           await read();
@@ -14194,9 +14170,7 @@ test('invalid tool calls stop before another model request and a valid repair re
                             : toolName === 'sign_in'
                               ? {
                                   origin: 'https://signin.example.test',
-                                  label: 'Synthetic login',
                                   message: 'Sign in to the synthetic account.',
-                                  action: 'Sign in',
                                   kind: 'method',
                                 }
                               : valid
@@ -14247,7 +14221,7 @@ test('invalid tool calls stop before another model request and a valid repair re
               toolName === 'skills'
                 ? /expected one of \["list","read","save","patch"\]/
                 : toolName === 'sign_in'
-                  ? /\/methods:/
+                  ? /kind: expected "otp"/
                   : /\/doneWhen:/,
             );
             return true;

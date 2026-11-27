@@ -52,12 +52,7 @@ import {
 } from './integration-files.ts';
 import { fileBytes } from '../shared/files.ts';
 import { IntegrationError, verifyIntegrationCompletion } from './integration-connection.ts';
-import {
-  normalizedEmail,
-  verificationCode,
-  verificationSenderDomain,
-  type EmailCodeRequest,
-} from './email-code.ts';
+import { normalizedEmail } from './email-address.ts';
 import { logFailure } from './failure-log.ts';
 import { isLocalFilesAction, type LocalFiles } from './local-files.ts';
 
@@ -177,7 +172,6 @@ type IntegrationOptions = {
   browserAccounts?: (client?: PoolClient) => Promise<VaultLoginEntry[]>;
   icon?: (origin: string) => Promise<SiteIcon | null>;
   mailCheck?: MailCheck;
-  emailCodePollMs?: number;
   paused?(): Promise<boolean>;
 };
 
@@ -1988,104 +1982,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     }
   }
 
-  function gmailMailbox(value: string) {
-    const email = normalizedEmail(value);
-    if (!email) return;
-    const [local, domain] = email.split('@');
-    const name = local.split('+')[0];
-    if (!name) return;
-    const canonicalDomain = domain === 'googlemail.com' ? 'gmail.com' : domain;
-    return `${canonicalDomain === 'gmail.com' ? name.replaceAll('.', '') : name}@${canonicalDomain}`;
-  }
-
-  async function emailCode(ownerId: string, input: EmailCodeRequest, signal: AbortSignal) {
-    try {
-      assertOwner(ownerId);
-      signal.throwIfAborted();
-      const recipient = normalizedEmail(input.recipient);
-      const mailbox = recipient && gmailMailbox(recipient);
-      const senderDomain = verificationSenderDomain(input.origin);
-      const now = Date.now();
-      if (
-        !provider.verificationEmails ||
-        !recipient ||
-        !mailbox ||
-        !senderDomain ||
-        !Number.isFinite(input.after) ||
-        !Number.isFinite(input.before) ||
-        input.after < now - 6 * 60_000 ||
-        input.after > now ||
-        input.before < input.after ||
-        input.before > now + 30_000
-      )
-        return;
-      const matches = (await connectionRows(ownerId)).filter(
-        (row) =>
-          row.slug === 'gmail' &&
-          row.provider_id === providerId &&
-          configurationMatches(row) &&
-          row.account_id &&
-          row.account_active &&
-          !row.revoked &&
-          gmailMailbox(row.account_email ?? '') === mailbox,
-      );
-      if (matches.length !== 1) return;
-      const row = matches[0];
-      const primaryEmail = normalizedEmail(row.account_email ?? '');
-      const remote = await provider.inspectAccount(row.account_id!, ownerId);
-      signal.throwIfAborted();
-      if (
-        !remote.active ||
-        remote.service !== 'gmail' ||
-        normalizedEmail(remote.accountEmail ?? '') !== primaryEmail
-      )
-        return;
-      const current = async (database: Pick<PoolClient, 'query'> = pool) =>
-        (
-          await database.query(
-            `SELECT id FROM app_connections WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND account_active AND NOT revoked AND lower(trim(account_email))=$5
-             AND ($6::text IS NULL OR configuration_id=$6) FOR SHARE NOWAIT`,
-            [
-              row.id,
-              ownerId,
-              providerId,
-              row.account_id,
-              primaryEmail,
-              provider.configurationId ?? null,
-            ],
-          )
-        ).rowCount === 1;
-      if (!(await current())) return;
-      let before = input.before;
-      let messages = await provider.verificationEmails(
-        row.account_id!,
-        { recipient, senderDomain, after: input.after, before },
-        signal,
-      );
-      while (messages?.length === 0) {
-        await delay(options.emailCodePollMs ?? 5000, undefined, { signal });
-        before = Date.now();
-        messages = await provider.verificationEmails(
-          row.account_id!,
-          { recipient, senderDomain, after: input.after, before },
-          signal,
-        );
-      }
-      signal.throwIfAborted();
-      if (!messages || !(await current())) return;
-      const code = verificationCode(messages, { ...input, before, recipient });
-      return code
-        ? {
-            code,
-            current: async (database?: Pick<PoolClient, 'query'>) =>
-              !signal.aborted && (await current(database)),
-          }
-        : undefined;
-    } catch {
-      return;
-    }
-  }
-
   async function inboxSnippets(signal: AbortSignal) {
     const row = (await connectionRows(configuredOwner)).find(
       (item) =>
@@ -3025,7 +2921,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     executeApproved,
     serviceWait,
     prepare,
-    emailCode,
     inboxSnippets,
     list,
     catalog,

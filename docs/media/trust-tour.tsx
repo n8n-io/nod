@@ -3,7 +3,7 @@ import { BrandMark } from '../../src/web/components/brand';
 import { MessageBubble } from '../../src/web/components/message';
 import { Usage } from '../../src/web/pages/usage';
 import { Vault } from '../../src/web/pages/vault';
-import { Credentials, Payment } from '../../src/web/pages/credentials';
+import { Payment } from '../../src/web/pages/payment';
 import { pageDataCache } from '../../src/web/lib/page-data-cache';
 import '../../src/web/styles.css';
 import '../../src/web/theme.css';
@@ -19,7 +19,7 @@ export const scenes = [
   {
     title: 'Give Nod the task.',
     text: 'Give Nod the task. You stay in charge.',
-    points: ['Your request', 'Your private forms', 'Your record of the work'],
+    points: ['Your request', 'Your approvals', 'Your record of the work'],
   },
   {
     title: 'Your words. Your call.',
@@ -31,12 +31,6 @@ export const scenes = [
       ['user', 'No. Only a summary.'],
       ['assistant', 'I did not forward them.'],
     ],
-  },
-  {
-    title: 'Secrets take a private path.',
-    text: 'Passwords and codes belong in private forms.',
-    points: ['Enter passwords and codes privately.', 'Saved secrets stay out of the model.'],
-    view: 'code',
   },
   {
     title: 'Check it. Approve it.',
@@ -131,6 +125,7 @@ const fixtures: Record<string, unknown> = {
   '/api/trust': trust,
   '/api/vault': entries,
   '/api/vault/sessions': [],
+  '/api/models': { connections: [], selection: null, routes: {}, backups: [], light: null },
   '/api/vault/activity': {
     week: { signIns: 3, payments: 1, held: 1 },
     entries: [
@@ -155,15 +150,6 @@ const fixtures: Record<string, unknown> = {
     quietStart: '22:00',
     quietEnd: '08:00',
   },
-  '/api/credential-requests/demo': {
-    id: 'demo',
-    turnId: 'demo',
-    origin: 'https://example.com',
-    label: 'Example account',
-    kind: 'otp',
-    status: 'pending',
-  },
-  '/api/credential-requests/demo/status': { status: 'pending' },
   '/api/payment-requests/demo': {
     origin: 'https://shop.example',
     amount: '€42.00',
@@ -231,8 +217,6 @@ function Window({ scene }: { scene: (typeof scenes)[number] }) {
       <div className="tour-window-body">
         {scene.view === 'usage' ? (
           <Usage />
-        ) : scene.view === 'code' ? (
-          <Credentials id="demo" embedded />
         ) : scene.view === 'payment' ? (
           <Payment id="demo" embedded />
         ) : (
@@ -261,9 +245,7 @@ function render(index: number, kind = 'video') {
   document.body.dataset.kind = kind;
   const scene = scenes[index];
   root.render(
-    kind === 'code' ? (
-      <Credentials key={serial} id="demo" />
-    ) : kind === 'vault' ? (
+    kind === 'vault' ? (
       <Vault key={serial} />
     ) : kind.startsWith('usage') ? (
       <Usage key={serial} />

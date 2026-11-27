@@ -2282,7 +2282,6 @@ test('engine source includes startup reporting and documentation without site de
     'desktop/main/engine.mjs',
     'desktop/main/feedback.mjs',
     'desktop/main/system-certificates.mjs',
-    'desktop/main/onepassword.mjs',
     'desktop/runtime/index.mjs',
     'desktop/runtime/assets.mjs',
     'desktop/runtime/database.mjs',
@@ -2322,7 +2321,6 @@ test('engine source imports only production dependencies outside the development
     join(repository, 'desktop/main/engine.mjs'),
     join(repository, 'desktop/main/feedback.mjs'),
     join(repository, 'desktop/main/system-certificates.mjs'),
-    join(repository, 'desktop/main/onepassword.mjs'),
   ];
   const walk = async (directory) => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {

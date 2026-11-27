@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, KeyRound, Maximize2, Minimize2, RotateCw } from './icons';
+import { ArrowLeft, LockKeyhole, Maximize2, Minimize2, RotateCw } from './icons';
 import type { BrowserHandoffInput } from '../../shared/browser-handoff';
 import { ApiError, api, apiStream, errorMessage } from '../lib/api';
 import { browserFrames } from '../lib/browser-frames';
@@ -48,7 +48,15 @@ async function post<T = unknown>(path: string, body: unknown, signal?: AbortSign
   }
 }
 
-export function BrowserHandoff({ turnId, paused = false }: { turnId: string; paused?: boolean }) {
+export function BrowserHandoff({
+  turnId,
+  paused = false,
+  onKeep,
+}: {
+  turnId: string;
+  paused?: boolean;
+  onKeep?(keep: boolean): void;
+}) {
   const screen = useRef<HTMLDivElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
   const pending = useRef<BrowserHandoffInput[]>([]);
@@ -78,6 +86,11 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
   const [expanded, setExpanded] = useState(false);
   const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
   const [frame, setFrame] = useState('');
+  const [origin, setOrigin] = useState<string>();
+  const [savable, setSavable] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const unavailable = failures >= 3;
 
   function stopInput(controller: AbortController = lifetime.current) {
@@ -299,17 +312,37 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
     if (paused) return;
     const capture = analyticsForCurrentSession();
     setReturning(true);
+    onKeep?.(true);
     try {
       await flush();
-      await post('/api/browser-handoff/done', { turnId });
+      const result = await post<{ savableLogin?: { host: string } }>('/api/browser-handoff/done', {
+        turnId,
+      });
+      setSavable(Boolean(result.savableLogin));
+      onKeep?.(Boolean(result.savableLogin));
       capture('browser_handoff_action', { action: 'done' });
       setReturned(true);
       stopInput();
       setClosed(true);
     } catch (reason) {
+      onKeep?.(false);
       setError(errorMessage(reason));
     } finally {
       setReturning(false);
+    }
+  }
+
+  async function saveLogin() {
+    if (saving) return;
+    setSaving(true);
+    setSaveError('');
+    try {
+      await post('/api/browser-handoff/save-login', { turnId });
+      setSaved(true);
+    } catch (reason) {
+      setSaveError(errorMessage(reason));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -372,7 +405,12 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
             signal?.addEventListener('abort', abort, { once: true });
             setFrame(url);
           });
-          await post('/api/browser-handoff/frame-ack', { turnId, view: viewId }, signal);
+          const acknowledged = await post<{ origin?: string }>(
+            '/api/browser-handoff/frame-ack',
+            { turnId, view: viewId },
+            signal,
+          );
+          if (!signal?.aborted) setOrigin(acknowledged.origin);
         });
       },
     )
@@ -467,11 +505,23 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
 
   if (closed)
     return (
-      <p className="browser-handoff-feedback" role="status">
-        {returned
-          ? 'Control returned to Nod. It will check the page and continue.'
-          : 'This browser handoff has ended. Continue in chat.'}
-      </p>
+      <div className="browser-handoff-feedback">
+        <p role="status">
+          {returned
+            ? 'Control returned to Nod. It will check the page and continue.'
+            : 'This browser handoff has ended. Continue in chat.'}
+        </p>
+        {returned &&
+          savable &&
+          (saved ? (
+            <p role="status">Saved to Vault</p>
+          ) : (
+            <Button variant="ghost" size="sm" disabled={saving} onClick={() => void saveLogin()}>
+              Save login to Vault
+            </Button>
+          ))}
+        {saveError && <p role="alert">{saveError}</p>}
+      </div>
     );
   const busy = returning || loading !== null;
   const status = returning
@@ -510,7 +560,10 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
     >
       <div className="browser-handoff-header">
         <BrandMark small />
-        <span className="browser-handoff-title">Browser</span>
+        <span className="browser-handoff-title">
+          {origin?.startsWith('https:') && <LockKeyhole size={14} aria-hidden="true" />}
+          <span>{origin ? new URL(origin).host : 'Browser'}</span>
+        </span>
         <span className="browser-handoff-state" role="status" aria-live="polite">
           {status}
         </span>
@@ -612,18 +665,6 @@ export function BrowserHandoff({ turnId, paused = false }: { turnId: string; pau
             : 'Nod is paused while you use this page.'}
         </span>
         <div className="browser-handoff-actions">
-          <Button variant="ghost" size="sm" asChild>
-            <a
-              href="/vault?add=login"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Save login"
-              title="Save login"
-            >
-              <KeyRound size={16} aria-hidden="true" />
-              <span className="browser-handoff-save-label">Save login</span>
-            </a>
-          </Button>
           <Button
             onClick={() => void done()}
             disabled={busy || paused}

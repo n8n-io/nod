@@ -19,13 +19,13 @@ The code lives in [`src/server/thread.ts`](https://github.com/n8n-io/nod/blob/ma
 
 A turn is one run of the agent. Each turn is a row in the `turns` table with a `source` and a `session_id`, and it records its reply channel, so a Telegram message gets its answer on Telegram.
 
-| `source`   | Created by                                                                                                             | Session                                      |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| `user`     | A message from you, or a reaction that starts ordinary chat work                                                       | The chat, or the session selected by a reply |
-| `task`     | Chat dispatch or an addressed owner update                                                                             | The saved task session                       |
-| `schedule` | A schedule firing                                                                                                      | A new session                                |
-| `event`    | A source batch or observer task                                                                                        | The observer or the task                     |
-| `resume`   | A completed secure form, payment approval, app connection, or your reply or reaction confirming or declining an action | The session that asked                       |
+| `source`   | Created by                                                                                                                  | Session                                      |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `user`     | A message from you, or a reaction that starts ordinary chat work                                                            | The chat, or the session selected by a reply |
+| `task`     | Chat dispatch or an addressed owner update                                                                                  | The saved task session                       |
+| `schedule` | A schedule firing                                                                                                           | A new session                                |
+| `event`    | A source batch or observer task                                                                                             | The observer or the task                     |
+| `resume`   | A payment approval, **Return to Nod** from the live browser, an app connection, or your reply or reaction to a confirmation | The session that asked                       |
 
 A recurring schedule skips a firing while an earlier run is queued, running or still needs your answer. An earlier waiting turn no longer holds a firing after a later turn starts in that run's session. A schedule run can't create schedules.
 
@@ -91,17 +91,15 @@ A message from another channel stops the take. It and every message after it sta
 
 ## Waiting and resuming
 
-A question, an approval, or a credential request ends the turn as `waiting`. So does a card that asks you to pick, after the step that sent it; when another call in that step failed, Pi first gets the next step to deal with the failure. The message that asks, with any link to a secure form, payment, app connection or browser handoff, is saved in the same transaction that marks the turn `waiting`, so you never see a link before its step is open. A reply to any task message continues its saved session. This includes a question, a file or a completed result. A reply to another waiting question continues the session that asked. Unrelated messages continue the chat. A reply to a background question returns to that background session.
+A question, an approval, a payment request or a browser handoff ends the turn as `waiting`. So does a card that asks you to pick, after the step that sent it; when another call in that step failed, Pi first gets the next step to deal with the failure. The message that asks, with any link to a payment, app connection or browser handoff, is saved in the same transaction that marks the turn `waiting`, so you never see a link before its step is open. A reply to any task message continues its saved session. This includes a question, a file or a completed result. A reply to another waiting question continues the session that asked. Unrelated messages continue the chat. A reply to a background question returns to that background session.
 
-Some steps finish outside the Pi session: a completed secure form, a payment approval, a new app connection or your yes or no to a confirmation. Each of these queues a `resume` turn in the session that asked, so a background task's confirmation continues that task. A confirmed action runs once, in that resume turn. If Stop or a failure ends the resume turn before it finishes, each later turn of the session is told whether the approved action ran, may have run or did not run, until a turn of that session succeeds or waits for you. A resume turn records the turn it continues, so the trust check and approvals trace it back to the work that started it. A completed secure form or payment code queues its resume turn in the same transaction that records the entry.
+Some steps finish outside the Pi session: a payment approval, **Return to Nod** from the live browser, a new app connection or your yes or no to a confirmation. Each of these queues a `resume` turn in the session that asked, so a background task's confirmation continues that task. A confirmed action runs once, in that resume turn. If Stop or a failure ends the resume turn before it finishes, each later turn of the session is told whether the approved action ran, may have run or did not run, until a turn of that session succeeds or waits for you. A resume turn records the turn it continues, so the trust check and approvals trace it back to the work that started it. A payment code queues its resume turn in the same transaction that records the entry.
 
-A resume can leave the earlier turn with its `waiting` outcome. It no longer blocks a planned task check after a later turn starts in the same session. Queued turns and running turns block the check. So do questions, approvals and credential requests that still need an answer. Task checks, recurring schedules and secure forms use the same rule to identify a current waiting turn.
+A resume can leave the earlier turn with its `waiting` outcome. It no longer blocks a planned task check after a later turn starts in the same session. Queued turns and running turns block the check. So do questions, approvals and payment requests that still need an answer. Task checks, recurring schedules and payment forms use the same rule to identify a current waiting turn.
 
 A planned task check takes the thread lock before it reads the task and its session. It clears the planned time and queues the resume in one transaction. A Stop or owner update that completes first is read before the check starts. If the transaction fails, the planned time stays saved. The resume continues the last turn that started in the session; a later message absorbed by that turn does not replace it.
 
-A secure form closes when a newer turn starts in its session, and a payment request when you send a newer message there. A chat message is in the chat session, so it never closes a background task's form or payment.
-
-The next turn checks server status for sign-in forms referenced by its recent chat history in the same session. An old link in chat history does not establish that its form is still open.
+A payment request closes when you send a newer message in its session. A chat message is in the chat session, so it never closes a background task's payment.
 
 ## Sessions
 

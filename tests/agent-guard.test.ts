@@ -140,7 +140,7 @@ async function fixture(
     publish: async () => {
       throw new Error('Not used');
     },
-    requestCredential: async () => ({ url: '/credentials/fixture' }),
+    requestCredential: async () => ({ handoff: true }),
     integration: async () => ({}),
     manage: async () => ({}),
     ...overrides,
@@ -2334,77 +2334,31 @@ test('an app sign-in pauses only at a valid link', async () => {
   }
 });
 
-test('secure credential pause prevents subsequent tools in the same execution segment', async () => {
+test('a sign-in without a saved login hands over the real page and stops further work', async () => {
   for (const input of [
+    { origin: 'https://example.com', usernameSelector: '@username', submitSelector: '@submit' },
+    { origin: 'https://example.com', passwordSelector: '@password', submitSelector: '@submit' },
     {
       origin: 'https://example.com',
-      label: 'Example',
-      usernameSelector: '@username',
-      submitSelector: '@submit',
-    },
-    {
-      origin: 'https://example.com',
-      label: 'Example',
-      passwordSelector: '@password',
-      submitSelector: '@submit',
-    },
-    {
-      origin: 'https://example.com',
-      label: 'Example',
       kind: 'otp' as const,
       passwordSelector: '@verification',
       submitSelector: '@submit',
-      emailCode: true,
-    },
-    {
-      origin: 'https://example.com',
-      label: 'Example',
-      kind: 'method' as const,
-      methods: [{ label: 'Continue with Identity', selector: '#identity' }],
     },
   ]) {
     let managed = false;
     const requested: unknown[] = [];
+    const message = 'Example needs you to sign in.';
     const result = await taskFixture(
       async (tools) => {
         for (const invalid of [
-          { kind: 'method' },
-          { kind: 'method', methods: [] },
-          { kind: 'method', methods: [{ label: 'Continue with Identity' }] },
-          { kind: 'method', methods: [{ label: 'Continue with Identity', selector: '' }] },
-          {
-            kind: 'method',
-            methods: [{ label: 'Continue with Identity', selector: 'a'.repeat(2049) }],
-          },
-          {
-            kind: 'method',
-            methods: [{ label: 'Continue with Identity', selector: '#identity', extra: true }],
-          },
-          {
-            kind: 'method',
-            savedLoginId: '11111111-1111-4111-8111-111111111111',
-            methods: [{ label: 'Continue with Identity', selector: '#identity' }],
-          },
-          {
-            kind: 'password',
-            methods: [{ label: 'Continue with Identity', selector: '#identity' }],
-          },
+          { kind: 'method', methods: [{ label: 'Continue with Identity', selector: '#identity' }] },
+          { kind: 'password' },
         ])
           await assert.rejects(
-            call(tools, 'sign_in', {
-              origin: 'https://example.com',
-              label: 'Example',
-              message: 'Example needs this sign-in step.',
-              action: 'Open secure step',
-              ...invalid,
-            }),
+            call(tools, 'sign_in', { origin: 'https://example.com', message, ...invalid }),
           );
         assert.deepEqual(requested, []);
-        await call(tools, 'sign_in', {
-          ...input,
-          message: 'Example needs this sign-in step.',
-          action: 'Open secure step',
-        });
+        await call(tools, 'sign_in', { ...input, message });
         await assert.rejects(
           call(tools, 'nod', {
             action: 'schedule_create',
@@ -2415,7 +2369,7 @@ test('secure credential pause prevents subsequent tools in the same execution se
       {
         requestCredential: async (request) => {
           requested.push(request);
-          return { url: '/credentials/fixture' };
+          return { handoff: true };
         },
         manage: async () => {
           managed = true;
@@ -2423,7 +2377,10 @@ test('secure credential pause prevents subsequent tools in the same execution se
         },
       },
     );
-    assert.equal(result.result.status, 'waiting_credentials');
+    assert.equal(result.result.status, 'waiting_user');
+    assert.equal(result.result.waitingFor, 'question');
+    assert.ok(result.result.handoffBrowserId);
+    assert.equal(result.result.message, message);
     assert.equal(result.aborted, true);
     assert.equal(managed, false);
     assert.deepEqual(requested, [input]);
@@ -2818,9 +2775,7 @@ test('private entry returns page data once and stops before an observation after
         async (tools) => {
           const result = await call(tools, 'sign_in', {
             origin: 'https://example.com',
-            label: 'Synthetic login',
             message: 'Sign in.',
-            action: 'Continue',
             passwordSelector: '#password',
           });
           const text = result.content

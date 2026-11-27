@@ -102,7 +102,7 @@ In web chat, a task has a chip under its first message and a card that opens fro
 
 Telegram shows the task as messages Nod writes. If its first message arrives as one short text message, a quoted progress section in your language updates there without another notification, then is removed when work stops. Other message types keep typing status only; see [While Nod works](/use/channels/#while-nod-works). Each task keeps its own message and reply target. Its questions and result reply to that first message. `/tasks` sends a replyable status message for each open task. Reply with `/status` to inspect it or `/stop` to stop it. Native reply links for text parts and files select the same saved task in Telegram and WhatsApp.
 
-These are views of one task record and session. A pending approval remains bound to its exact question and action. An old status message cannot approve a later action. Private sign-in and payment steps remain in Nod's private forms.
+These are views of one task record and session. A pending approval remains bound to its exact question and action. An old status message cannot approve a later action. Website sign-in and payment steps remain in the Nod app.
 
 See [Track tasks](/use/tasks/) for controls and screenshots.
 

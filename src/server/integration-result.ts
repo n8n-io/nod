@@ -96,7 +96,7 @@ function fieldValue(record: Record<string, unknown>, names: string[]) {
 }
 
 const verificationHidden =
-  'Verification email content is private. Use sign_in with emailCode:true to retrieve and enter its code.';
+  'Verification email content is private. For a sign-in code, hand the page to the owner with browser handoff so they enter it there.';
 const uncheckedHidden =
   'Nod could not check whether this email is for signing in, so its content is private.';
 

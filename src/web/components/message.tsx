@@ -218,6 +218,7 @@ export const MessageText = memo(function MessageText({
   handoffTurnId?: string;
 }) {
   const content = useRef<HTMLDivElement>(null);
+  const [kept, setKept] = useState(false);
   const telegramUrl = useTelegramChatUrl(text);
   const origin = typeof window === 'undefined' ? 'http://localhost:4310' : window.location.origin;
   const actions = messageSetupLinks(text, origin);
@@ -270,8 +271,7 @@ export const MessageText = memo(function MessageText({
                       : '_blank'
                   }
                   rel={
-                    setup?.setup === 'vault' &&
-                    /^\/(?:vault|credentials)\/[A-Za-z0-9_-]+\/?$/.test(link.href)
+                    setup?.setup === 'vault' && link.href.startsWith('/payments/')
                       ? 'opener'
                       : 'noopener noreferrer'
                   }
@@ -293,8 +293,13 @@ export const MessageText = memo(function MessageText({
           {text}
         </Markdown>
         <SetupActions actions={actions.filter((action) => !connected(action.href))} />
-        {handoff && handoffTurnId && (
-          <BrowserHandoff key={handoffTurnId} turnId={handoffTurnId} paused={handoffPaused} />
+        {(handoff || kept) && handoffTurnId && (
+          <BrowserHandoff
+            key={handoffTurnId}
+            turnId={handoffTurnId}
+            paused={handoffPaused}
+            onKeep={setKept}
+          />
         )}
       </div>
       <MessageLinkTooltip content={content} text={text} />
@@ -392,7 +397,7 @@ export function MessageBubble({
   onApprove?(approved: boolean, label: string): Promise<boolean | 'unavailable'>;
   onStopTask?(): Promise<void>;
   taskStopped?: boolean;
-  codeRequest?: 'otp' | 'payment';
+  codeRequest?: boolean;
   handoff?: boolean;
   handoffPaused?: boolean;
 }) {
@@ -1195,9 +1200,7 @@ export function MessageBubble({
             />
           </ApprovalCard>
         )}
-        {message.role === 'assistant' && !streaming && codeRequest && (
-          <CodeRequestCard kind={codeRequest} />
-        )}
+        {message.role === 'assistant' && !streaming && codeRequest && <CodeRequestCard />}
         {quote &&
           onReply &&
           createPortal(

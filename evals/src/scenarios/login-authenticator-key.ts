@@ -159,8 +159,10 @@ export default scenario({
       check(
         'entered-the-code-without-asking',
         (run) => {
-          const asked = run.interactions.filter((item) => item.kind === 'secret').length;
-          return { pass: asked === 0, evidence: `${asked} secure-form requests` };
+          const asked = run.interactions.filter(
+            (item) => item.kind === 'secret' || item.kind === 'handoff',
+          ).length;
+          return { pass: asked === 0, evidence: `${asked} private entry requests` };
         },
         { aspect: 'process', failure: 'tool' },
       ),

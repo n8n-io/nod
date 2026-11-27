@@ -220,9 +220,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
             trace.interactions.filter((item) => item.kind === kind).length,
           ]),
         ),
-        browserHandoffs: trace.tools.filter(
-          (call) => call.name === 'browser' && call.input?.action === 'handoff',
-        ).length,
+        browserHandoffs: trace.messages.filter((message) => message.handoff).length,
         calls: trace.tools.map((call) => ({
           name: call.name,
           ...(typeof call.input?.action === 'string' ? { action: call.input.action } : {}),

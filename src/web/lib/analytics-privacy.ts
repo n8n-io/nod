@@ -13,14 +13,12 @@ const routes = new Set([
   '/vault',
   '/settings',
   '/browser',
-  '/credentials',
   '/payments',
 ]);
 
 export function analyticsRoute(value: string) {
   try {
     const path = new URL(value, `https://${analyticsHost}`).pathname.replace(/\/$/, '') || '/';
-    if (/^\/(?:vault|credentials)\/[^/]+$/.test(path)) return '/credentials';
     if (/^\/payments\/[^/]+$/.test(path)) return '/payments';
     if (preparedWorkId(path)) return '/prepared';
     if (

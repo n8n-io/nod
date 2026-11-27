@@ -53,7 +53,6 @@ export type ChannelPresentation =
       fileLimitMb?: number;
       languageMessage?: { at: string; text: string };
     }
-  | { kind: 'verification_failure'; verification: 'otp' }
   | { kind: 'paired'; channel: string }
   | {
       kind: 'command';
@@ -76,7 +75,6 @@ interface ChannelOptions {
       replyToMessageId?: string;
       receiptOnly?: boolean;
       persistOrdinary: (client: PoolClient) => Promise<void>;
-      persistVerification?: (client: PoolClient, response: SubmitMessageResponse) => Promise<void>;
     },
   ) => Promise<
     | {
@@ -975,7 +973,6 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       const acceptedMessageId = inboundMessageId(ownerId, sourceId);
       let verification: Awaited<ReturnType<NonNullable<ChannelOptions['acceptVerification']>>>;
       let ordinaryPersisted = false;
-      let verificationPersisted = false;
       const persist = async (database: PoolClient, strict = true) => {
         if (closed || replacing || receiveSignal.aborted || !permitted(identity)) {
           if (!strict) return false;
@@ -1065,75 +1062,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
               await persist(client);
               ordinaryPersisted = true;
             },
-            persistVerification: async (client, response) => {
-              verification = response;
-              verificationPersisted = true;
-              if (
-                closed ||
-                replacing ||
-                !permitted(identity) ||
-                response.messageId !== acceptedMessageId
-              )
-                return;
-              if (!(await currentConversation(client))) return;
-              const current = await client.query(
-                `SELECT 1 FROM messages m JOIN turns u ON u.id=m.turn_id JOIN threads th ON th.id=m.thread_id
-                 WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3 AND m.turn_id=$4
-                   AND u.owner_id=$2 AND u.thread_id=m.thread_id AND u.channel=$5
-                   AND th.owner_id=$2 AND th.archived_at IS NULL FOR SHARE OF th`,
-                [
-                  acceptedMessageId,
-                  ownerId,
-                  response.threadId,
-                  response.turnId,
-                  conversationChannel(identity),
-                ],
-              );
-              if (!current.rowCount) return;
-              await client.query('SAVEPOINT channel_verification_receipt');
-              const persisted = await persist(client, false);
-              if (
-                persisted &&
-                response.verificationStatus === 'unavailable' &&
-                !closed &&
-                !replacing &&
-                permitted(identity)
-              ) {
-                const noticeId = inboundMessageId(
-                  ownerId,
-                  `verification-failure:${acceptedMessageId}`,
-                );
-                await client.query(
-                  `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
-                   VALUES($1,$2,'assistant','',$3,$4) ON CONFLICT(id) DO NOTHING`,
-                  [noticeId, ownerId, response.threadId, response.turnId],
-                );
-                await client.query(
-                  `INSERT INTO channel_outbox(message_id,source_id,presentation)
-                   SELECT id,$2,$3 FROM messages WHERE id=$1 AND owner_id=$4 AND thread_id=$5 AND turn_id=$6
-                   ON CONFLICT(message_id) DO NOTHING`,
-                  [
-                    noticeId,
-                    sourceId,
-                    JSON.stringify({ kind: 'verification_failure', verification: 'otp' }),
-                    ownerId,
-                    response.threadId,
-                    response.turnId,
-                  ],
-                );
-              }
-              if (closed || replacing || !permitted(identity))
-                await client.query('ROLLBACK TO SAVEPOINT channel_verification_receipt');
-              await client.query('RELEASE SAVEPOINT channel_verification_receipt');
-            },
           });
-          if (!verification && !ordinaryPersisted && !recorded) {
-            if (hasMedia && (modelMissingAtIntake || options.modelConfigured?.() === false)) {
-              await requestModelSetup();
-              return;
-            }
-            throw new Error('Verification did not persist its receipt.');
-          }
         } catch (cause) {
           const conflict =
             cause instanceof Error && 'statusCode' in cause && cause.statusCode === 409;
@@ -1164,7 +1093,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         await requestModelSetup();
         return;
       }
-      if (!ordinaryPersisted && !verificationPersisted) await transaction(persist, pool);
+      if (!ordinaryPersisted) await transaction(persist, pool);
     } catch (cause) {
       logFailure('channel_accept_failed', cause);
       throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {

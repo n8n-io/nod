@@ -6798,30 +6798,30 @@ test('feedback activity keeps only bounded technical facts, expires locally and 
   });
   setRequestAccount('diagnostic-owner-one');
   t.after(() => setRequestAccount(null));
-  capturePageview('/vault/private-person?secret=private');
+  capturePageview('/payments/private-person?secret=private');
   captureAnalytics('ui_error', { area: 'chat', action: 'send' });
   assert.equal(requests, 0);
   await assert.rejects(api('/api/apps/private-account?secret=private'), /private person/);
   for (let index = 0; index < 110; index++)
-    capturePageview(`/vault/private-person-${index}?secret=private`);
+    capturePageview(`/payments/private-person-${index}?secret=private`);
   assert.deepEqual(
     feedbackActivitySnapshot().map((row) => row.properties),
     [
-      { screen: '/credentials' },
+      { screen: '/payments' },
       { area: 'chat', action: 'send' },
       { area: 'apps', method: 'GET', status: 503, reason: 'http' },
     ],
   );
   assert.ok(!JSON.stringify(feedbackActivitySnapshot()).includes('private'));
   capturePageview('/apps');
-  capturePageview('/vault/private-person');
+  capturePageview('/payments/private-person');
   assert.equal(feedbackActivitySnapshot().filter((row) => row.event === 'screen').length, 3);
   t.mock.timers.tick(1_800_001);
-  capturePageview('/vault/private-person');
+  capturePageview('/payments/private-person');
   assert.equal(feedbackActivitySnapshot().filter((row) => row.event === 'screen').length, 1);
   setRequestAccount('diagnostic-owner-two');
   assert.deepEqual(feedbackActivitySnapshot(), []);
-  capturePageview('/vault/private-person');
+  capturePageview('/payments/private-person');
   assert.equal(feedbackActivitySnapshot().length, 1);
   feedbackActivity.clear();
   for (const [path, area] of [
@@ -6829,7 +6829,6 @@ test('feedback activity keeps only bounded technical facts, expires locally and 
     ['/api/browser-handoff/private-session/complete', 'browser'],
     ['/api/channel-settings/private-channel', 'channels'],
     ['/api/schedule-runs?limit=20', 'tasks'],
-    ['/api/credential-requests/private-request', 'vault'],
     ['/api/payment-requests/private-request', 'vault'],
   ]) {
     await assert.rejects(api(path, { method: 'POST' }), /private person/);

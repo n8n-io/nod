@@ -627,13 +627,15 @@ Each scenario is one file in `evals/src/scenarios/`, named after its `id`. The s
 | `complexity`, `seconds`  | `simple`, `medium` or `complex`, and the time limit                                                                        |
 | `stance`                 | `regression` for a task that should keep passing, `gap` for a known limitation                                             |
 | `calibration: 'pending'` | Marks it as calibrating until you've calibrated it                                                                         |
-| `user`                   | Scripted answers, approvals, codes and a login for private sign-in forms, plus a persona for other questions               |
+| `user`                   | Scripted answers, approvals, codes and a login the owner types on a handed-over page, plus a persona for other questions   |
 | `world`                  | Fake apps, sites, saved logins and cards, built from the run clock                                                         |
 | `play`                   | What the simulated user says, and when schedules fire                                                                      |
 | `expect`                 | `check()` for state you can test, and one `judge()` criterion per judgement                                                |
 | `evidence`               | The exact end state the judge sees                                                                                         |
 
-`user.signInMethod` supplies the exact visible label of a sign-in method the simulated owner chooses. The harness selects its observed ID through the private form. A missing choice stays unanswered. It never turns that choice into a chat reply or a password submission.
+When Nod hands over a page, the simulated owner types like a person through the same handoff input the web panel sends. With `user.signIn` it selects all, types the account, presses Tab, types the password and presses Enter. It then types a fresh code from `user.secrets`, if one exists, and selects **Return to Nod**. `user.saveLogin` also saves the typed login to Vault. With nothing to type, it replies in chat with `user.signInReply` or the persona. The harness reads no page content, so fixture sign-in pages autofocus their first field.
+
+Baseline runs against older app code still answer the private sign-in form with the same login and `user.signInMethod`.
 
 Every attempt also checks that the last turn finished, unless the scenario defines its own `completion` check, and that no saved password or key-shaped string appears in Nod's messages.
 

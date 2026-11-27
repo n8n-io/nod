@@ -17,6 +17,8 @@ import type {
   CredentialSubmission,
   BrowserControl,
   BrowserPage,
+  BrowserViewFrame,
+  TypedLogin,
 } from '../../ports/computer.ts';
 import { BrowserActionError } from '../../ports/computer.ts';
 import { fileBytes } from '../../shared/files.ts';
@@ -26,7 +28,7 @@ import { threadIdentity } from '../../ports/thread-identity.ts';
 import { runProcess, serviceEnvironment } from '../process.ts';
 import { createBrowserProxy, browserUrl } from './network.ts';
 import { credentialFields } from './credentials.ts';
-import { openDevtools, type BoundSignInControl } from './devtools.ts';
+import { openDevtools } from './devtools.ts';
 import { watchBrowser } from './browser-watch.ts';
 import {
   createScreenStore,
@@ -56,9 +58,9 @@ interface BrowserState {
   secrets: Set<string>;
   refs: Map<string, BrowserControl>;
   refVersions: Map<string, number>;
-  typed?: { value: string; origin: string; field: number; fresh: boolean };
+  typed?: { value: string; origin: string; field: number; fresh: boolean; at: number };
+  accounts?: { value: string; origin: string; at: number }[];
   pageSize?: [number, number];
-  signInMethods?: { document: string; origin: string; controls: Map<string, BoundSignInControl> };
   privateDocument?: string;
   sealedDocument?: string;
   uploads: Set<string>;
@@ -92,6 +94,15 @@ const streamFrame = z.object({
     pageScaleFactor: z.number().positive().default(1),
   }),
 });
+
+function pageOrigin(url?: string) {
+  try {
+    const value = new URL(url ?? '');
+    return ['http:', 'https:'].includes(value.protocol) ? value.origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 const holdMs = 30 * 60_000;
 const snapshotChars = 40_000;
@@ -241,7 +252,6 @@ export function createAgentBrowserComputer(options: {
   platform?: NodeJS.Platform;
   headless?: boolean;
   submitReadyMs?: number;
-  clickReceiptMs?: number;
   viewport?: { width: number; height: number };
   run?: typeof runProcess;
   daemonCommand?: typeof existingDaemonCommand;
@@ -1733,7 +1743,7 @@ export function createAgentBrowserComputer(options: {
       .parse((await command(state, { action: 'tab_list' }, { signal })).tabs);
     const tab = tabs.find((item) => item.active);
     if (!tab) throw new Error('The checkout tab is no longer open.');
-    return openDevtools(cdpUrl, tab.targetId, signal, options.clickReceiptMs);
+    return openDevtools(cdpUrl, tab.targetId, signal);
   }
 
   async function focusField(
@@ -2112,143 +2122,6 @@ export function createAgentBrowserComputer(options: {
     });
   }
 
-  async function signInMethods(
-    id: string,
-    origin: string,
-    methods: { label: string; selector: string }[],
-    signal?: AbortSignal,
-  ) {
-    signal?.throwIfAborted();
-    if (browserUrl(origin).origin !== origin || !methods.length || methods.length > 10)
-      throw new BrowserActionError('browser_target_changed', undefined, 'invalid_request');
-    const state = await liveBrowser(id, signal);
-    if (!state?.started)
-      throw new BrowserActionError('browser_target_changed', undefined, 'browser_unavailable');
-    if (state.saved.navigationFailed)
-      throw new BrowserActionError('browser_target_changed', undefined, 'navigation_failed');
-    return serialize(state, async () => {
-      state.signInMethods = undefined;
-      signal?.throwIfAborted();
-      if (state.injecting || (await privateDocumentOpen(state, signal)))
-        throw new BrowserLockedError();
-      if (originOf(await currentUrl(state, signal)) !== origin)
-        throw new BrowserActionError('browser_target_changed', undefined, 'origin_changed');
-      const devtools = await inspector(state, signal);
-      try {
-        const document = await checkout(state, devtools);
-        const controls = new Map<string, BoundSignInControl>();
-        const choices: { id: string; label: string; page: BrowserPage }[] = [];
-        for (const [index, method] of methods.entries()) {
-          signal?.throwIfAborted();
-          const target = selector(method.selector);
-          const ref = referenceOf(target);
-          const observed = ref ? state.refs.get(ref) : undefined;
-          if (ref && !observed)
-            throw new BrowserActionError('browser_target_changed', undefined, 'reference_missing');
-          const refused = (guard: BrowserActionError['signInGuard']) =>
-            new BrowserActionError(
-              'browser_sign_in_choice',
-              `Choice ${index + 1} of ${methods.length}.`,
-              guard,
-            );
-          if (observed && observed.role !== 'button' && observed.role !== 'link')
-            throw refused('choice_ineligible');
-          const control = await (async () =>
-            devtools.signInControl(ref ? await pointOf(state, ref) : { selector: target }))().catch(
-            (error: unknown) => {
-              throw error instanceof BrowserActionError && error.code === 'browser_sign_in_choice'
-                ? refused(error.signInGuard)
-                : error;
-            },
-          );
-          if (control.origin !== origin) throw refused('choice_foreign_origin');
-          if (
-            [...controls.values()].some(
-              (previous) => previous.backendNodeId === control.backendNodeId,
-            )
-          )
-            throw new BrowserActionError('browser_target_changed', undefined, 'choice_duplicate');
-          const methodId = randomUUID();
-          controls.set(methodId, control);
-          const page: BrowserPage = {
-            origin,
-            url: redactBrowserUrl(control.url, state.secrets),
-            controls: control.controls.map((item) => ({
-              role: item.role,
-              name: redactBrowserText(item.name, state.secrets).slice(0, 300),
-            })),
-            ...(control.submits
-              ? {
-                  submits: {
-                    method: control.submits.method,
-                    to: redactBrowserUrl(control.submits.to, state.secrets),
-                  },
-                }
-              : {}),
-          };
-          const bound = page.controls![0]!;
-          if (observed && (observed.role !== bound.role || observed.name !== bound.name))
-            throw new BrowserActionError('browser_target_changed', undefined, 'control_changed');
-          choices.push({ id: methodId, label: bound.name, page });
-        }
-        if ((await devtools.document()) !== document)
-          throw new BrowserActionError('browser_target_changed', undefined, 'document_changed');
-        state.signInMethods = { document, origin, controls };
-        return { document, methods: choices };
-      } finally {
-        devtools.close();
-      }
-    });
-  }
-
-  async function selectSignInMethod(
-    id: string,
-    input: { origin: string; document: string; methodId: string },
-    signal?: AbortSignal,
-  ) {
-    signal?.throwIfAborted();
-    const state = browsers.get(threadIdentity(id));
-    if (!state?.started)
-      throw new BrowserActionError('browser_target_changed', undefined, 'browser_unavailable');
-    await serialize(state, async () => {
-      signal?.throwIfAborted();
-      const batch = state.signInMethods;
-      state.signInMethods = undefined;
-      const control = batch?.controls.get(input.methodId);
-      if (!batch)
-        throw new BrowserActionError('browser_target_changed', undefined, 'selection_missing');
-      if (!control)
-        throw new BrowserActionError('browser_target_changed', undefined, 'selection_unknown');
-      if (batch.origin !== input.origin)
-        throw new BrowserActionError(
-          'browser_target_changed',
-          undefined,
-          'selection_origin_changed',
-        );
-      if (batch.document !== input.document)
-        throw new BrowserActionError(
-          'browser_target_changed',
-          undefined,
-          'selection_document_changed',
-        );
-      if (state.saved.navigationFailed)
-        throw new BrowserActionError('browser_target_changed', undefined, 'navigation_failed');
-      if (state.injecting || (await privateDocumentOpen(state, signal)))
-        throw new BrowserLockedError();
-      const devtools = await inspector(state, signal);
-      try {
-        if ((await checkout(state, devtools)) !== batch.document)
-          throw new BrowserActionError('browser_target_changed', undefined, 'document_changed');
-        if (originOf(await currentUrl(state, signal)) !== batch.origin)
-          throw new BrowserActionError('browser_target_changed', undefined, 'origin_changed');
-        signal?.throwIfAborted();
-        await devtools.selectSignInControl(control);
-      } finally {
-        devtools.close();
-      }
-    });
-  }
-
   async function hold(id: string, held: boolean): Promise<void> {
     const state = browsers.get(threadIdentity(id));
     if (!state?.started) return;
@@ -2343,39 +2216,57 @@ export function createAgentBrowserComputer(options: {
           { action: 'wheel', deltaX: input.deltaX, deltaY: input.deltaY },
           signal,
         );
-      if (input.type === 'text') {
+      if (input.type === 'text')
         await requestDaemon(
           socket,
           { action: 'keyboard', subaction: 'type', text: input.text },
           signal,
         );
-        const typed = await evaluate(
-          state,
-          "(() => { const field = document.activeElement; return field instanceof HTMLInputElement && field.type === 'password' ? [field.value, [...document.querySelectorAll('input[type=\"password\"]')].indexOf(field)] : null; })()",
-          signal,
-        );
-        const [secret, field] = z.tuple([z.string(), z.number()]).catch(['', -1]).parse(typed);
-        if (secret) {
-          const origin = new URL(await currentUrl(state, signal)).origin;
-          const earlier = state.typed;
-          if (
-            earlier?.fresh &&
-            earlier.origin === origin &&
-            earlier.field === field &&
-            secret.startsWith(earlier.value)
-          )
-            state.secrets.delete(earlier.value);
-          state.typed = { value: secret, origin, field, fresh: !state.secrets.has(secret) };
-          state.secrets.add(secret);
-          await saveState(state);
-        }
-      }
       if (input.type === 'key')
         await requestDaemon(socket, { action: 'press', key: input.key }, signal);
+      if (input.type !== 'text' && input.type !== 'key') return;
+      const read = z
+        .tuple([z.string(), z.string(), z.number().nullable()])
+        .nullable()
+        .catch(null)
+        .parse(
+          await evaluate(
+            state,
+            "(() => { const field = document.activeElement; if (!(field instanceof HTMLInputElement)) return null; if (field.type === 'password') return [location.origin, field.value, [...document.querySelectorAll('input[type=\"password\"]')].indexOf(field)]; return ['email', 'text', 'tel'].includes(field.type) ? [location.origin, field.value, null] : null; })()",
+            signal,
+          ).catch(() => null),
+        );
+      if (!read?.[1]) return;
+      const [origin, value, field] = read;
+      if (field === null) {
+        state.accounts = [...(state.accounts ?? []), { value, origin, at: Date.now() }].slice(-5);
+        return;
+      }
+      const earlier = state.typed;
+      if (
+        earlier?.fresh &&
+        earlier.origin === origin &&
+        earlier.field === field &&
+        value.startsWith(earlier.value)
+      )
+        state.secrets.delete(earlier.value);
+      state.typed = { value, origin, field, fresh: !state.secrets.has(value), at: Date.now() };
+      state.secrets.add(value);
+      await saveState(state);
     });
   }
 
-  async function* view(id: string, signal: AbortSignal): AsyncGenerator<Buffer> {
+  async function typedLogin(id: string, since: number): Promise<TypedLogin | undefined> {
+    const state = browsers.get(threadIdentity(id));
+    const typed = state?.typed;
+    if (!typed || typed.at < since) return undefined;
+    const account = state.accounts?.findLast(
+      (entry) => entry.origin === typed.origin && entry.at >= since && entry.at <= typed.at,
+    );
+    return { origin: typed.origin, username: account?.value ?? '', password: typed.value };
+  }
+
+  async function* view(id: string, signal: AbortSignal): AsyncGenerator<BrowserViewFrame> {
     const state = await liveBrowser(id, signal);
     if (!state?.started) throw new Error('Open a page in this task browser first.');
     const { port } = z
@@ -2385,6 +2276,8 @@ export function createAgentBrowserComputer(options: {
       );
     const socket = new WebSocket(`ws://127.0.0.1:${port}/?pacing=ack&maxFps=30`);
     let latest: z.infer<typeof streamFrame> | undefined;
+    let origin: string | undefined;
+    let checked = 0;
     let open = true;
     let wake = () => {};
     const stop = () => {
@@ -2393,7 +2286,8 @@ export function createAgentBrowserComputer(options: {
     };
     socket.addEventListener('message', (event) => {
       try {
-        const frame = streamFrame.safeParse(JSON.parse(String(event.data)));
+        const message = JSON.parse(String(event.data));
+        const frame = streamFrame.safeParse(message);
         if (!frame.success) return;
         latest = frame.data;
         wake();
@@ -2416,8 +2310,12 @@ export function createAgentBrowserComputer(options: {
           frame.metadata.deviceWidth / frame.metadata.pageScaleFactor,
           frame.metadata.deviceHeight / frame.metadata.pageScaleFactor,
         ];
+        if (Date.now() - checked > 500) {
+          checked = Date.now();
+          origin = pageOrigin(await currentUrl(state, signal).catch(() => undefined));
+        }
         if (!state.injecting && !(await privateDocumentOpen(state, signal)))
-          yield Buffer.from(frame.data, 'base64');
+          yield { image: Buffer.from(frame.data, 'base64'), ...(origin ? { origin } : {}) };
         if (socket.readyState === WebSocket.OPEN)
           socket.send(JSON.stringify({ type: 'ack', seq: frame.seq }));
       }
@@ -2502,6 +2400,7 @@ export function createAgentBrowserComputer(options: {
     download: tracked(download),
     screenshot: tracked(getScreenshot),
     control: tracked(control),
+    typedLogin,
     view,
     screenStatus: (id) => screenStatuses.get(threadIdentity(id)) ?? { state: 'unavailable' },
     injectCredentials: tracked(injectCredentials),
@@ -2509,8 +2408,6 @@ export function createAgentBrowserComputer(options: {
     cardDestinations: tracked(cardDestinations),
     checkoutImage: tracked(checkoutImage),
     currentPage: tracked(currentPage),
-    signInMethods: tracked(signInMethods),
-    selectSignInMethod: tracked(selectSignInMethod),
     hold: tracked(hold),
     close: tracked(closeBrowser),
     clear: tracked(clear),

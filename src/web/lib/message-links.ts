@@ -24,7 +24,7 @@ const renamedPaths = new Map([
   ['/trust?add=login', '/vault?add=login'],
   ['/trust?add=card', '/vault?add=card'],
 ]);
-const localPath = /^\/(?:api\/artifacts|vault|credentials|payments)\/[A-Za-z0-9_-]+\/?$/;
+const localPath = /^\/(?:api\/artifacts|payments)\/[A-Za-z0-9_-]+\/?$/;
 const appLabel = /^Connect [\p{L}\p{N}][\p{L}\p{N} .&()+-]{0,79}$/u;
 
 export function setupLink(
