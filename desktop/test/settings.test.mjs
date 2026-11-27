@@ -6211,6 +6211,7 @@ app.whenReady().then(async () => {
     assert.deepEqual(restarted.preferences, {
       launchAtLogin: true,
       notifications: false,
+      notificationSound: false,
       theme: 'system',
       zoomFactor: 1,
       onboardingPreferenceStep: 'complete',
