@@ -1,0 +1,14 @@
+services:
+  browser:
+    tmpfs: !override
+      - /tmp:size=1g
+      - /home/node:size=256m,mode=700,U
+  workspace:
+    userns_mode: keep-id:uid=1000,gid=1000
+    volumes: !override
+      - type: bind
+        source: ${NOD_DATA_ROOT:-./.local}/workspaces
+        target: /workspace
+        bind:
+          selinux: Z
+      - workspace-tools:/home/node

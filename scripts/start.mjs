@@ -35,10 +35,24 @@ try {
   ]);
   if (wanted !== installed) await run('pnpm', ['install', '--frozen-lockfile', '--prod=false']);
   if (production) await run('pnpm', ['run', 'build']);
-  const { stdout } = await promisify(execFile)('docker', ['info', '--format', '{{.NCPU}}']);
-  const dockerCpus = Number(stdout.trim());
+  const { stdout } = await promisify(execFile)('docker', ['info', '--format', '{{json .}}']);
+  const info = JSON.parse(stdout);
+  const dockerCpus = Number(info.NCPU ?? info.host?.cpus);
   if (!Number.isInteger(dockerCpus) || dockerCpus < 1)
     throw new Error('Docker did not report a usable CPU count.');
+  const components = await promisify(execFile)('docker', [
+    'version',
+    '--format',
+    '{{json .Server.Components}}',
+  ]).then(
+    (result) => JSON.parse(result.stdout) ?? [],
+    () => [],
+  );
+  const podman =
+    info.host?.cpus !== undefined ||
+    info.BuildahVersion !== undefined ||
+    components.some((component) => component.Name === 'Podman Engine');
+  const compose = podman ? ['-f', 'compose.yaml', '-f', 'compose.podman.yaml'] : [];
   const environment = await withLocalDatabase(process.cwd(), async (database) => {
     const settings = parseEnv(await readFile('.env', 'utf8'));
     const cpuLimit = (name, fallback) => {
@@ -61,14 +75,45 @@ try {
       ...(appVersion !== undefined ? { NOD_APP_VERSION: appVersion } : {}),
     };
     await prepareLocalDirectories(environment.NOD_DATA_ROOT);
-    await run('docker', ['compose', 'up', '-d', '--wait', 'postgres'], environment);
+    await run('docker', ['compose', ...compose, 'up', '-d', '--wait', 'postgres'], environment);
     await rotateLocalDatabase(database, { environment });
     await verifyLocalDatabase(database);
-    await run(
-      'docker',
-      ['compose', 'up', '-d', '--build', '--wait', '--remove-orphans'],
-      environment,
-    );
+    await run('docker', ['compose', ...compose, 'build'], environment);
+    if (podman) {
+      const image = (
+        await promisify(execFile)('docker', [
+          'image',
+          'inspect',
+          'nod-local-workspace',
+          '--format',
+          '{{.Id}}',
+        ])
+      ).stdout.trim();
+      const running = await promisify(execFile)('docker', [
+        'inspect',
+        'nod-workspace',
+        '--format',
+        '{{.Image}}',
+      ])
+        .then((result) => result.stdout.trim())
+        .catch(() => undefined);
+      if (running !== undefined && running !== image)
+        await run('docker', ['compose', ...compose, 'rm', '-sf', 'workspace'], environment);
+    }
+    const up = () =>
+      run('docker', ['compose', ...compose, 'up', '-d', '--wait', '--remove-orphans'], environment);
+    try {
+      await up();
+    } catch (error) {
+      if (!podman) throw error;
+      console.error('The containers did not start. Removing the workspace containers to retry.');
+      await run(
+        'docker',
+        ['compose', ...compose, 'rm', '-sf', 'workspace', 'workspace-network'],
+        environment,
+      );
+      await up();
+    }
     return environment;
   });
   console.log('\nNod is starting. Open the link it prints when it is ready.\n');

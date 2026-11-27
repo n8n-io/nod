@@ -17,7 +17,7 @@ To run Nod on a VPS, cloud VM, or Mac mini and reach it from other devices, use 
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Node.js          | 24.21.0 or newer                                                                                                                                                     |
 | pnpm             | 10.34.5, enabled through Corepack                                                                                                                                    |
-| Docker           | With Compose v2 and the Buildx plugin, running. For a Docker VM such as Colima, start with two CPUs and 8 GB of memory.                                              |
+| Docker           | With Compose v2 and the Buildx plugin, running. For a Docker VM such as Colima, start with two CPUs and 8 GB of memory. On Linux, Podman works too.                  |
 | Git              | Any recent version                                                                                                                                                   |
 | Model connection | A [supported model service](/connect/models/) with its required credentials, a ChatGPT plan that supports sign-in, or a [local model](/connect/local-models/) server |
 
@@ -103,6 +103,28 @@ Keep the key with your backup; saved credentials can't be read without it. If en
 This source setup listens on your computer's loopback interface. For network access, follow [Host your own server](/deploy/self-host/) to configure a server token and HTTPS.
 :::
 
+## Run with Podman instead of Docker
+
+On Linux, you can run Nod with rootless Podman in place of Docker.
+
+1. Install Podman 5.8 or newer, its Docker command emulation and Compose. On Fedora:
+
+   ```sh title="Terminal"
+   sudo dnf install podman podman-docker docker-compose
+   ```
+
+   Package names differ on other distributions. Use the `docker-compose` provider; `podman-compose` is not supported.
+
+2. Keep the Podman socket running, so Compose can reach it:
+
+   ```sh title="Terminal"
+   systemctl --user enable --now podman.socket
+   ```
+
+3. Run `pnpm start` as usual.
+
+Nod detects Podman and merges `compose.podman.yaml` into the Compose setup. The workspace keeps your user's IDs, so rootless Podman can write to the workspace folder. The workspace firewall still blocks private-address egress, except DNS to its configured IPv4 nameservers. The browser and workspace CPU limits follow your machine's CPUs; the Docker VM check above doesn't apply.
+
 ## Run Nod day to day
 
 | To             | Do this                                                                                                                                                                                                 |
@@ -125,6 +147,7 @@ Settings live in `.env`, and you need to restart after you change them. See [Con
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Use Node.js 24.21.0 or newer.`        | Install a newer Node.js and run `pnpm start` again.                                                                                                                                                                                       |
 | Docker errors on start                 | Make sure Docker is running and `docker compose version` reports v2.                                                                                                                                                                      |
+| `looking up compose provider failed`   | You run Podman without a Compose provider. Install one, for example `sudo dnf install docker-compose` on Fedora, then run `pnpm start` again.                                                                                             |
 | `the --chmod option requires BuildKit` | Install the [Docker Buildx plugin](https://github.com/docker/buildx#installing) and check that `docker buildx version` works. If `DOCKER_BUILDKIT=0` is set in your environment, remove it or set it to `1`. Then run `pnpm start` again. |
 | A missing or unreadable Vault key      | Restore the original key and check its permissions. Don't generate a replacement for encrypted data. See [Vault configuration](/deploy/configuration/#vault).                                                                             |
 | The port is in use                     | Set another `PORT` in `.env`. The default is `4310`.                                                                                                                                                                                      |
