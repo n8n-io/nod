@@ -126,11 +126,11 @@ If setup needs more disk space, select a folder on another drive or free space. 
 
 On a Mac, setup keeps runtime files that passed their checks, even if a later download fails. **Try again** checks and reuses those files. It does not remove a verified image while the private computer loads it.
 
-On Windows, database errors show whether PostgreSQL stopped, reached a memory limit, or failed its TCP check inside WSL. If PostgreSQL answers inside WSL, the error names the Windows connection that failed. Open **Technical details** to read the original error, its code, its stack, and available native command output. These details also appear in the startup log. Saved secrets are removed.
+On Windows, database errors show whether PostgreSQL stopped, reached a memory limit, or failed its TCP check inside WSL. If PostgreSQL answers inside WSL, the error names the Windows connection that failed. Open **Details** to read the original error, its code, its stack, and available native command output. These details also appear in the startup log. Saved secrets are removed.
 
 During use, Nod waits up to 30 seconds for each query reply after it gets a database connection. The wait for a connection has a separate timeout. If the connection stops returning data, Nod closes it and reports the failure. Nod does not repeat the failed work. After the connection is restored, a new request can use a new connection. Check the result of an action before you ask Nod to do it again.
 
-**Technical details** and the startup log also show the cause of a runtime download failure, such as a connection error or a damaged archive. Downloads use the same network settings as the app window, including your system proxy. Select **Try again** after you restore the connection. If Nod can keep the saved part, an interrupted download resumes. Otherwise it starts again.
+**Details** and the startup log also show the cause of a runtime download failure, such as a connection error or a damaged archive. Downloads use the same network settings as the app window, including your system proxy. Select **Try again** after you restore the connection. If Nod can keep the saved part, an interrupted download resumes. Otherwise it starts again.
 
 Quit Nod and open it again. If the error continues, restart Windows. Keep your app data. WSL setup errors also include the original Windows error.
 
