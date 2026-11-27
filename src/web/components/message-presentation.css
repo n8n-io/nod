@@ -36,6 +36,11 @@
   border-radius: 22px;
   background: var(--message-background);
 }
+@media (max-width: 640px) {
+  .chat-page .message .message-bubble > .message-body:has(> .message-presentation) > .message-text {
+    padding: 10px 12px;
+  }
+}
 .chat-page .message .message-bubble > .message-body > .message-text + .message-presentation {
   margin-top: 8px;
 }
