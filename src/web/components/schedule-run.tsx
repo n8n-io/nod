@@ -23,7 +23,7 @@ function skippedText(run: ScheduleRunPresentation) {
   const stopped = run.skipped.filter((skip) => skip.reason === 'stopped').length;
   const paused = run.skipped.length - stopped;
   return [
-    stopped ? `${runs(stopped)} skipped while Nod wasn't running.` : '',
+    stopped ? `${runs(stopped)} skipped while Nod was off or this computer was asleep.` : '',
     paused ? `${runs(paused)} skipped while the model was paused after failed requests.` : '',
   ]
     .filter(Boolean)

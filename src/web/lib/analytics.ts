@@ -62,7 +62,7 @@ type AnalyticsEvents = {
   local_setting_changed:
     | { setting: 'theme'; value: 'light' | 'dark' | 'system' }
     | {
-        setting: 'launch_at_login' | 'desktop_notifications' | 'notification_sound';
+        setting: 'launch_at_login' | 'keep_awake' | 'desktop_notifications' | 'notification_sound';
         value: 'enabled' | 'disabled';
       }
     | { setting: 'browser_notifications'; value: 'enabled' | 'disabled' | 'dismissed' };
@@ -221,6 +221,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     setting: [
       'theme',
       'launch_at_login',
+      'keep_awake',
       'desktop_notifications',
       'notification_sound',
       'browser_notifications',

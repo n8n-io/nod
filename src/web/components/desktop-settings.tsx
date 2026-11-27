@@ -60,6 +60,7 @@ export function useDesktopSettings(enabled = true) {
           capture('local_setting_changed', { setting: 'theme', value: value.theme });
         for (const [key, setting] of [
           ['launchAtLogin', 'launch_at_login'],
+          ['keepAwake', 'keep_awake'],
           ['notifications', 'desktop_notifications'],
           ['notificationSound', 'notification_sound'],
         ] as const)

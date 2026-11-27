@@ -412,7 +412,33 @@ export async function createApp(dependencies: AppDependencies = {}) {
          FROM turns u WHERE u.owner_id=$1 AND u.status='running'`,
         [ownerId],
       );
-      return { running: result.rows };
+      const tables = (
+        await pool.query<{ schedules: boolean; channels: boolean }>(
+          `SELECT to_regclass('schedules') IS NOT NULL AS schedules,to_regclass('channel_settings') IS NOT NULL AS channels`,
+        )
+      ).rows[0]!;
+      const next = tables.schedules
+        ? (
+            await pool.query<{ title: string; at: Date }>(
+              `SELECT title,next_run_at AS at FROM schedules
+               WHERE owner_id=$1 AND enabled AND next_run_at IS NOT NULL ORDER BY next_run_at LIMIT 1`,
+              [ownerId],
+            )
+          ).rows[0]
+        : undefined;
+      const channels = tables.channels
+        ? (
+            await pool.query<{ provider: string }>(
+              'SELECT provider FROM channel_settings WHERE owner_id=$1 AND enabled ORDER BY provider',
+              [ownerId],
+            )
+          ).rows.map((row) => row.provider)
+        : [];
+      return {
+        running: result.rows,
+        next: next ? { title: next.title, at: next.at.toISOString() } : null,
+        channels,
+      };
     });
   const turnFields = `u.id,u.status,u.source,u.error,u.created_at AS "createdAt",u.finished_at AS "finishedAt",
     CASE WHEN ${activeHandoffSql}

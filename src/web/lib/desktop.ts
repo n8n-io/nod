@@ -7,6 +7,7 @@ export type DesktopPreferences = {
   notifications: boolean;
   notificationSound: boolean;
   launchAtLogin: boolean;
+  keepAwake: boolean;
 };
 
 export type DesktopSettings = DesktopPreferences;
@@ -65,7 +66,10 @@ export type DesktopUpdateStatus = {
 };
 
 export type DesktopSettingsChange = Partial<
-  Pick<DesktopPreferences, 'theme' | 'notifications' | 'notificationSound' | 'launchAtLogin'>
+  Pick<
+    DesktopPreferences,
+    'theme' | 'notifications' | 'notificationSound' | 'launchAtLogin' | 'keepAwake'
+  >
 >;
 
 type DesktopSettingsSection = 'general' | 'models' | 'preferences';

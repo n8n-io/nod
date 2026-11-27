@@ -133,7 +133,7 @@ During use, Nod waits up to 30 seconds for each query reply after it gets a data
 
 **Technical details** and the startup log also show the cause of a runtime download failure, such as a connection error or a damaged archive. Downloads use the same network settings as the app window, including your system proxy. Select **Try again** after you restore the connection. If Nod can keep the saved part, an interrupted download resumes. Otherwise it starts again.
 
-Quit Nod and open it again. If the error continues, restart Windows. Keep your app data. WSL setup errors also include the original Windows error.
+Choose **Turn Off Nod** in the tray and open Nod again. If the error continues, restart Windows. Keep your app data. WSL setup errors also include the original Windows error.
 
 To start over, select **Remove all data…** in the **Nod** menu. Nod deletes your profile and private computer, then restarts and opens setup. See [Remove Nod](/get-started/install-desktop/#remove-nod) for what it keeps.
 
@@ -219,7 +219,7 @@ The bot was set up with a webhook elsewhere. Remove that webhook to use local po
 
 ### A scheduled task didn't run
 
-For a local desktop assistant, scheduled tasks run only while Nod is open and your computer is awake. Closing the window keeps Nod running in the menu bar or tray, but **Quit Nod** stops it. **Open at login** is on after setup; keep it on in **Settings → General** if you rely on schedules. After a restart or power cut, Nod starts only once you sign in to your computer, and a Mac with FileVault turned on never signs in automatically. For a remote assistant, check that the server is running; closing a desktop client does not stop its schedules.
+For a local desktop assistant, scheduled tasks run only while Nod is on and your computer is awake. Closing the window or pressing `Cmd+Q` keeps Nod on in the menu bar or tray, but **Turn Off Nod** stops it. **Open at login** and **Keep this computer awake when plugged in** are on after setup; keep them on in **Settings → General** if you rely on schedules. Closing a laptop's lid still puts it to sleep. After a restart or power cut, Nod starts only once you sign in to your computer, and a Mac with FileVault turned on never signs in automatically. For a remote assistant, check that the server is running; closing a desktop client does not stop its schedules.
 
 A run that starts while the computer has no internet connection, such as right after it wakes, fails with "Nod couldn't reach Anthropic because this computer had no internet connection", naming your model provider, with the code (such as `ENOTFOUND`) beside it. The chat shows when the run was due, which runs were skipped and when Nod tried. OpenAI-compatible, Azure OpenAI and Amazon Bedrock connections keep their usual error, because their address or Region may be wrong, and so do providers that report no network code, such as Google. Nod doesn't run it again on its own; select **Run now** once you're online, or wait for the next run. To keep schedules running while your computer sleeps, [run Nod on a server](/deploy/self-host/).
 
@@ -246,7 +246,7 @@ Select **Report bug** in the chat. When something in Nod itself fails, Nod also 
 
 If the workspace crashes, use **Report bug** on the error screen before **Reload Nod** to include the captured error.
 
-In the desktop app, if Nod's background service or its window stops, Nod shows its error screen. Select **Report bug** there. A separate report form opens without restarting the failed service. The menu bar **Report bug…** entry opens the same form while startup has failed.
+In the desktop app, if Nod's background service stops after it was running, Nod restarts it by itself up to three times in 10 minutes. If it keeps stopping, or the window stops, Nod shows its error screen. Select **Report bug** there. A separate report form opens without restarting the failed service. The menu bar **Report bug…** entry opens the same form while startup has failed.
 
 Describe the failure, then select **Review**. The startup report contains only fixed startup states and steps, error classes and codes, exit codes, versions, counts and event ages. Nod omits startup prose, log text, paths, URLs, account details and message content. It keeps up to 100 technical events and 48 KB in memory. It does not read a log file or earlier disk history for the report. Unknown fields are omitted. The report reads error codes only from structured fields. The Windows runtime puts WSL error codes in a separate field. The report keeps the step that failed, the exit code, and values shaped like error codes or class names, such as `ENOSPC`, `NOD_WSL_REQUIRED`, `ERROR_FILE_EXISTS` or `TimeoutError`. It drops values with spaces, lowercase text, paths or other characters. A runtime command that runs out of time is marked as a timeout. The report also reads codes from an error's cause, such as the connection error behind a failed download. If cleanup fails after a startup failure, the report keeps the startup failure's code. Your description stays exactly as you wrote it. Review the exact attachment, then select **Send report**. You can untick **Include startup report** to send only your description. Keep the form open until you send it; the startup form does not save an unsent draft.
 

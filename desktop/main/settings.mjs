@@ -141,6 +141,8 @@ export function createSettingsStore(path, encryption, platform = process.platfor
             resolve(value.computerDirectory) !== value.computerDirectory)) ||
         (value.onboardingPreferenceStep !== undefined &&
           !onboardingPreferenceSteps.includes(value.onboardingPreferenceStep)) ||
+        (value.keepAwake !== undefined && typeof value.keepAwake !== 'boolean') ||
+        (value.keptOnNotice !== undefined && value.keptOnNotice !== true) ||
         (value.announcedPackageVersion !== undefined &&
           (typeof value.announcedPackageVersion !== 'string' ||
             !versionPattern.test(value.announcedPackageVersion))) ||
@@ -262,6 +264,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
       launchAtLogin: value.launchAtLogin,
       notifications: value.notifications,
       notificationSound: value.notificationSound === true,
+      keepAwake: value.keepAwake ?? true,
       theme: value.theme,
       zoomFactor: value.zoomFactor ?? 1,
       ...(value.serverUrl ? { serverUrl: value.serverUrl } : {}),
@@ -344,6 +347,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
                 'computerDirectory',
                 ...preferenceFields,
                 'notificationSound',
+                'keepAwake',
                 'onboardingPreferenceStep',
                 'welcome',
               ].includes(key),
@@ -398,6 +402,10 @@ export function createSettingsStore(path, encryption, platform = process.platfor
           if (typeof input[field] !== 'boolean') throw new Error('Check your preferences.');
           value[field] = input[field];
         }
+        if (input.keepAwake !== undefined) {
+          if (typeof input.keepAwake !== 'boolean') throw new Error('Check your preferences.');
+          value.keepAwake = input.keepAwake;
+        }
         if (input.onboardingPreferenceStep !== undefined) {
           if (input.onboardingPreferenceStep !== 'complete')
             throw new Error('Choose your desktop preference before continuing.');
@@ -406,6 +414,15 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         if (value.onboardingPreferenceStep === 'complete') delete value.welcome;
         await write(value);
         return redacted(value);
+      });
+    },
+    keptOnNoticeShown() {
+      return exclusive(async () => (await read()).keptOnNotice === true);
+    },
+    saveKeptOnNotice() {
+      return exclusive(async () => {
+        const value = await read();
+        if (!value.keptOnNotice) await write({ ...value, keptOnNotice: true });
       });
     },
     acknowledgeWelcome(expected) {

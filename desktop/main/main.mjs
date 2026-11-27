@@ -74,7 +74,13 @@ import { connectFlatpakPortal, createFlatpakUpdater } from './flatpak-update.mjs
 import { clearInstalledWindowsUpdates, startWindowsInstall } from './windows-update.mjs';
 import { appOpenPath } from './app-links.mjs';
 import { trustSystemCertificates } from './system-certificates.mjs';
-import { opensAtLogin, setOpenAtLogin } from './login-item.mjs';
+import {
+  launchedInBackground,
+  openedAtLogin,
+  opensAtLogin,
+  refreshLoginItem,
+  setOpenAtLogin,
+} from './login-item.mjs';
 import { createStartupFeedbackClient } from './feedback-client.mjs';
 
 trustSystemCertificates();
@@ -271,6 +277,13 @@ let engineBound = false;
 let authToken = '';
 let remoteConnection;
 let awakeBlocker;
+let engineWorking = false;
+let waiting;
+let waitingTimer;
+let trayKey;
+let openedInBackground = false;
+let resumeHidden = false;
+let engineRestarts = [];
 let connectionSettingsOpen = false;
 let onboardingSetupOpen = false;
 let connectionReturnsToOnboarding = false;
@@ -283,6 +296,7 @@ let preferences = {
   notifications: false,
   notificationSound: false,
   launchAtLogin: false,
+  keepAwake: true,
 };
 const displayedNotifications = new Set();
 let status = {
@@ -608,6 +622,7 @@ function update(value) {
   for (const window of [setupWindow, engineWindow])
     if (window && !window.isDestroyed()) window.webContents.send('nod:status', status);
   if (tray) tray.setToolTip(`Nod — ${status.phase === 'ready' ? 'Running' : status.message}`);
+  refreshTray();
   showDownloadProgress();
   updateReadinessNotice();
   captureLocalSetup();
@@ -670,11 +685,13 @@ function applyPreferences(saved) {
     notifications: saved.notifications,
     notificationSound: saved.notificationSound,
     launchAtLogin: saved.launchAtLogin,
+    keepAwake: saved.keepAwake,
   };
   nativeTheme.themeSource = saved.theme;
   publishPreferences();
   synchronizeNotifications();
   updateReadinessNotice();
+  holdAwake();
 }
 
 function persistZoomFactor(contents) {
@@ -1088,6 +1105,7 @@ async function openExternal(value) {
 
 function protectWindow(window, origin) {
   if (origin) trackZoomFactor(window);
+  window.on('close', () => window.once('closed', () => setTimeout(appClosed, 0)));
   window.on('focus', updateReadinessNotice);
   for (const event of ['blur', 'hide', 'closed'])
     window.on(event, () => setTimeout(updateReadinessNotice, 100));
@@ -1162,6 +1180,7 @@ function openingBounds(bounds) {
 
 function showSettings(section = 'general', loading = false) {
   if (quitting) return;
+  void app.dock?.show();
   if (!loading && onboardingCompleted && (engine || remoteConnection) && status.phase === 'ready') {
     showEngine();
     const window = engineWindow;
@@ -1273,6 +1292,7 @@ function showSettings(section = 'general', loading = false) {
 
 function showEngine({ focus = true } = {}) {
   if (quitting) return;
+  void app.dock?.show();
   if (startupFeedbackOpen && setupWindow && !setupWindow.isDestroyed()) {
     if (focus) {
       setupWindow.show();
@@ -1999,7 +2019,7 @@ async function startRemote(connection) {
     runtime: { phase: 'ready', message: 'Your server is ready.' },
   });
   synchronizeNotifications();
-  showEngine();
+  if (!openedInBackground || openWindow()) showEngine();
   if (connected.analyticsAllowed && !testInstall)
     void analyticsConfiguration()
       .then((analytics) => {
@@ -2044,16 +2064,186 @@ async function saveConnection(input) {
 }
 
 function stayAwake(working) {
-  if (working && awakeBlocker === undefined)
+  engineWorking = working;
+  holdAwake();
+  refreshTray();
+}
+
+function holdAwake() {
+  const hold =
+    !quitting &&
+    (engineWorking ||
+      (preferences.keepAwake &&
+        Boolean(waiting?.next || waiting?.channels.length) &&
+        !powerMonitor.isOnBatteryPower()));
+  if (hold && awakeBlocker === undefined)
     awakeBlocker = powerSaveBlocker.start('prevent-app-suspension');
-  if (!working && awakeBlocker !== undefined) {
+  if (!hold && awakeBlocker !== undefined) {
     powerSaveBlocker.stop(awakeBlocker);
     awakeBlocker = undefined;
   }
 }
 
+async function checkWaiting() {
+  const current = engine;
+  if (!current || !engineReady || remoteConnection || quitting) return;
+  try {
+    const response = await engineRequest('/api/desktop/status');
+    if (!response.ok) return;
+    const value = await response.json();
+    if (engine !== current || quitting) return;
+    waiting = {
+      running: Array.isArray(value.running) ? value.running : [],
+      next:
+        typeof value.next?.title === 'string' && Number.isFinite(Date.parse(value.next.at))
+          ? { title: value.next.title, at: new Date(value.next.at) }
+          : null,
+      channels: Array.isArray(value.channels)
+        ? value.channels.filter((name) => ['telegram', 'whatsapp'].includes(name))
+        : [],
+    };
+  } catch {
+    return;
+  }
+  holdAwake();
+  refreshTray();
+  return waiting;
+}
+
+function watchWaiting() {
+  clearTimeout(waitingTimer);
+  waitingTimer = setTimeout(() => {
+    void checkWaiting()
+      .then(updateWhenIdle)
+      .catch((error) => void writeDiagnostic(error.message).catch(() => {}))
+      .finally(() => {
+        if (!quitting) watchWaiting();
+      });
+  }, 60_000);
+  waitingTimer.unref?.();
+}
+
+function runTime(at) {
+  const time = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).format(at);
+  return at.toDateString() === new Date().toDateString()
+    ? `at ${time}`
+    : `on ${new Intl.DateTimeFormat(undefined, { weekday: 'long' }).format(at)} at ${time}`;
+}
+
+function workNames(running) {
+  return [
+    ...new Set(
+      running.map((turn) =>
+        turn?.task
+          ? 'a task'
+          : turn?.visible
+            ? 'a reply in your chat'
+            : turn?.source === 'schedule'
+              ? 'a scheduled task'
+              : 'a background check',
+      ),
+    ),
+  ];
+}
+
+async function stoppedWork() {
+  const current = await checkWaiting();
+  if (!current) return '';
+  const work = workNames(current.running);
+  const next =
+    current.next && current.next.at.getTime() - Date.now() < 86_400_000
+      ? `${current.next.title} won’t run ${runTime(current.next.at)}`
+      : '';
+  const channels = current.channels.length
+    ? `${new Intl.ListFormat('en').format(current.channels.map((name) => (name === 'telegram' ? 'Telegram' : 'WhatsApp')))} won’t get replies`
+    : '';
+  return [
+    work.length ? `Turning off now stops ${new Intl.ListFormat('en').format(work)}.` : '',
+    next && channels
+      ? `${next}, and ${channels}, until you open Nod again.`
+      : next || channels
+        ? `${next || channels} until you open Nod again.`
+        : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+async function turnOff() {
+  if (quitting) return;
+  const stopping = await stoppedWork();
+  if (stopping) {
+    const { response } = await dialog.showMessageBox({
+      type: 'warning',
+      message: 'Turn off Nod?',
+      detail: stopping,
+      buttons: ['Turn Off', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (response !== 0 || quitting) return;
+  }
+  app.quit();
+}
+
+function openWindow() {
+  return [setupWindow, ...engineWindows].some((window) => window && !window.isDestroyed());
+}
+
+function showStartupError() {
+  if (openedInBackground && status.phase === 'error' && !openWindow())
+    showSettings('general', true);
+}
+
+function closeApp() {
+  if (quitting) return;
+  if (!onboardingCompleted) return app.quit();
+  for (const window of [setupWindow, ...engineWindows])
+    if (window && !window.isDestroyed()) window.close();
+}
+
+function appClosed() {
+  if (quitting || !onboardingCompleted || openWindow()) return;
+  app.dock?.hide();
+  void showKeptOnNotice().catch(() => {});
+}
+
+async function showKeptOnNotice() {
+  if (!Notification.isSupported() || (await settings.keptOnNoticeShown())) return;
+  await settings.saveKeptOnNotice();
+  const notification = new Notification({
+    title: 'Nod is still on',
+    icon: notificationIcon,
+    body: `Open it or turn it off from the ${process.platform === 'darwin' ? 'menu bar' : 'tray'}.`,
+    silent: !preferences.notificationSound,
+  });
+  displayedNotifications.add(notification);
+  notification.on('click', () => {
+    if (!quitting) showEngine();
+  });
+  notification.on('close', () => displayedNotifications.delete(notification));
+  notification.on('failed', () => displayedNotifications.delete(notification));
+  notification.show();
+}
+
+async function updateWhenIdle() {
+  if (!updates?.ready || quitting || checkingUpdates || macInstallerBusy || openWindow()) return;
+  if (
+    !remoteConnection &&
+    (!waiting ||
+      waiting.running.length ||
+      (waiting.next && waiting.next.at.getTime() - Date.now() < 15 * 60_000))
+  )
+    return;
+  void updateEvent('idle-restart', { version: updates.ready.version });
+  await rememberState(undefined, true);
+  await quit(installUpdate, undefined, true);
+}
+
 async function stopEngine() {
   void computerHelper.cancel().catch(() => {});
+  waiting = undefined;
   stayAwake(false);
   enginePreferencesReady = false;
   engineReady = false;
@@ -2141,7 +2331,7 @@ async function transferWelcome() {
 async function saveRendererSettings(event, value) {
   if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
   if (quitting) throw new Error('Nod is closing.');
-  const allowed = ['theme', 'notifications', 'notificationSound', 'launchAtLogin'];
+  const allowed = ['theme', 'notifications', 'notificationSound', 'launchAtLogin', 'keepAwake'];
   if (isEngine(event) && value?.onboardingCompleted === true && Object.keys(value).length === 1) {
     if (!remoteConnection) await reconcileLocalSetup(true);
     else if (!(await accountSetupComplete()))
@@ -2261,6 +2451,7 @@ async function finishEnginePreparation() {
   }
   synchronizeNotifications();
   updateReadinessNotice();
+  void checkWaiting();
   return status;
 }
 
@@ -2431,9 +2622,8 @@ function waitForMacInstaller() {
   return waiting;
 }
 
-function refreshUpdateMenu() {
-  if (quitting) return;
-  const label = macInstallerBusy
+function updateMenuLabel() {
+  return macInstallerBusy
     ? 'Waiting for update installer…'
     : updatePhase === 'downloading' && updateProgress !== undefined
       ? `Downloading update… ${updateProgress}%`
@@ -2442,44 +2632,75 @@ function refreshUpdateMenu() {
           preparing: 'Preparing update…',
           downloading: 'Downloading update…',
         }[updatePhase] || (updateFailure ? 'Update Failed. Try Again…' : 'Check for Updates…');
+}
+
+function restartMenuLabel() {
+  return updates?.ready ? `Restart to update to ${updates.ready.version}…` : 'Restart to update…';
+}
+
+function trayStatus() {
+  if (remoteConnection) return 'Connected to your server';
+  if (status.phase === 'error') return 'Nod needs attention';
+  if (status.phase === 'updating') return 'Nod is updating';
+  if (status.phase !== 'ready' || !engineReady) return 'Nod is starting';
+  return engineWorking ? 'Nod is working' : 'Nod is on';
+}
+
+function refreshTray() {
+  if (!tray || quitting) return;
+  const items = [
+    { label: trayStatus(), enabled: false },
+    ...(waiting?.next
+      ? [
+          {
+            label: `Next: ${waiting.next.title.slice(0, 40)} ${runTime(waiting.next.at)}`,
+            enabled: false,
+          },
+        ]
+      : []),
+    { type: 'separator' },
+    { label: 'Open Nod', click: showEngine },
+    { label: 'Settings…', click: () => showSettings() },
+    { label: 'Report bug…', click: showFeedback },
+    {
+      label: updateMenuLabel(),
+      enabled: Boolean(updates) && !checkingUpdates && !macInstallerBusy,
+      click: () => void checkForUpdates(),
+    },
+    {
+      label: restartMenuLabel(),
+      visible: Boolean(updates?.ready),
+      enabled: Boolean(updates?.ready) && !checkingUpdates && !macInstallerBusy,
+      click: () => void checkForUpdates(true, true),
+    },
+    ...(process.platform === 'win32'
+      ? [{ label: 'Replay onboarding…', click: replayOnboarding }]
+      : []),
+    { type: 'separator' },
+    { label: 'Turn Off Nod', click: () => void turnOff() },
+  ];
+  const key = JSON.stringify(items.map(({ label, enabled, visible }) => [label, enabled, visible]));
+  if (key === trayKey) return;
+  trayKey = key;
+  tray.setContextMenu(Menu.buildFromTemplate(items));
+}
+
+function refreshUpdateMenu() {
+  if (quitting) return;
+  const label = updateMenuLabel();
   const item = Menu.getApplicationMenu?.()?.getMenuItemById('desktop-update');
   if (item) {
     item.label = label;
     item.enabled = Boolean(updates) && !checkingUpdates && !macInstallerBusy;
   }
-  const restartLabel = updates?.ready
-    ? `Restart to update to ${updates.ready.version}…`
-    : 'Restart to update…';
+  const restartLabel = restartMenuLabel();
   const restartItem = Menu.getApplicationMenu?.()?.getMenuItemById('desktop-restart');
   if (restartItem) {
     restartItem.label = restartLabel;
     restartItem.visible = Boolean(updates?.ready);
     restartItem.enabled = Boolean(updates?.ready) && !checkingUpdates && !macInstallerBusy;
   }
-  if (tray)
-    tray.setContextMenu(
-      Menu.buildFromTemplate([
-        { label: 'Open Nod', click: showEngine },
-        { label: 'Settings…', click: () => showSettings() },
-        { label: 'Report bug…', click: showFeedback },
-        {
-          label,
-          enabled: Boolean(updates) && !checkingUpdates && !macInstallerBusy,
-          click: () => void checkForUpdates(),
-        },
-        {
-          label: restartLabel,
-          visible: Boolean(updates?.ready),
-          enabled: Boolean(updates?.ready) && !checkingUpdates && !macInstallerBusy,
-          click: () => void checkForUpdates(true, true),
-        },
-        ...(process.platform === 'win32'
-          ? [{ label: 'Replay onboarding…', click: replayOnboarding }]
-          : []),
-        { type: 'separator' },
-        { label: 'Quit Nod', click: () => app.quit() },
-      ]),
-    );
+  refreshTray();
   publishUpdateStatus();
 }
 
@@ -2691,10 +2912,11 @@ async function restartForUpdate() {
   await quit(installUpdate, undefined, true);
 }
 
-async function rememberState(window) {
+async function rememberState(window, hidden = false) {
   session.fromPartition(clientPartition).flushStorageData();
   const state = JSON.stringify({
     version: updates?.ready?.version,
+    hidden,
     path: URL.parse(window?.webContents.getURL() ?? '')?.pathname,
     bounds: window?.getNormalBounds(),
     maximized: window?.isMaximized(),
@@ -2730,6 +2952,7 @@ async function resumeState() {
         running: app.getVersion(),
         applied: saved.version === app.getVersion(),
       });
+    resumeHidden = saved.hidden === true;
     pendingAppPath ||= appOpenPath(`nod://open${saved.path}`, appPages) || undefined;
     if (Number.isInteger(saved.port) && saved.port > 1023 && saved.port < 65536)
       resumePort = saved.port;
@@ -2758,21 +2981,7 @@ async function confirmRestart() {
     if (response.ok) running = (await response.json()).running;
   } catch {}
   if (Array.isArray(running) && !running.length) return true;
-  const work = Array.isArray(running)
-    ? [
-        ...new Set(
-          running.map((turn) =>
-            turn?.task
-              ? 'a task'
-              : turn?.visible
-                ? 'a reply in your chat'
-                : turn?.source === 'schedule'
-                  ? 'a scheduled task'
-                  : 'a background check',
-          ),
-        ),
-      ]
-    : [];
+  const work = Array.isArray(running) ? workNames(running) : [];
   const { response } = await dialog.showMessageBox({
     type: 'warning',
     message: work.length ? 'Nod is still working.' : 'Nod could not check its current work.',
@@ -3075,6 +3284,9 @@ async function startEngine({ database, signal }) {
   });
   child.on('exit', (code) => {
     if (engine !== child) return;
+    const crashed = enginePreferencesReady && onboardingCompleted && !closingEngine && !quitting;
+    const shown = [...engineWindows].some((window) => !window.isDestroyed() && window.isVisible());
+    waiting = undefined;
     stayAwake(false);
     if (!closingEngine)
       failure =
@@ -3107,6 +3319,7 @@ async function startEngine({ database, signal }) {
       engineWindows.clear();
     }
     if (!quitting && !closingEngine) {
+      if (crashed && restartEngine(shown)) return;
       engineFailure = failure;
       update({
         phase: 'error',
@@ -3162,6 +3375,26 @@ async function startEngine({ database, signal }) {
   }
   enginePreferencesReady = true;
   return finishEnginePreparation();
+}
+
+function restartEngine(shown) {
+  const now = Date.now();
+  engineRestarts = engineRestarts.filter((at) => now - at < 10 * 60_000);
+  if (engineRestarts.length >= 3) return false;
+  engineRestarts.push(now);
+  update({ phase: 'starting', message: 'Nod stopped unexpectedly. Restarting…' });
+  if (shown) showSettings('general', true);
+  const timer = setTimeout(
+    () => {
+      if (quitting || engine) return;
+      void prepare({ retry: true }).then(() => {
+        if (status.phase === 'error' && !openWindow()) showSettings('general', true);
+      });
+    },
+    [2_000, 15_000, 60_000][engineRestarts.length - 1],
+  );
+  timer.unref?.();
+  return true;
 }
 
 async function prepare(options = {}) {
@@ -3312,6 +3545,7 @@ else {
       installUpdateOnQuit = false;
       return void app.quit();
     }
+    if (launchedInBackground(argv)) return;
     const path = argv.map((value) => appOpenPath(value, appPages)).find(Boolean);
     if (path) pendingAppPath = path;
     showEngine();
@@ -3503,6 +3737,16 @@ else {
         });
       }
       nativeTheme.on('updated', publishPreferences);
+      for (const name of ['on-ac', 'on-battery']) powerMonitor.on(name, holdAwake);
+      powerMonitor.on('resume', () => void checkWaiting());
+      watchWaiting();
+      try {
+        refreshLoginItem();
+      } catch (error) {
+        void writeDiagnostic(`Open at login could not be refreshed. ${error.message}`).catch(
+          () => {},
+        );
+      }
       configureAppSession();
       const image = nativeImage.createFromPath(join(desktopRoot, 'main', 'trayTemplate.png'));
       image.setTemplateImage(true);
@@ -3540,7 +3784,8 @@ else {
               { role: 'hideOthers' },
               { role: 'unhide' },
               { type: 'separator' },
-              { role: 'quit' },
+              { label: 'Turn Off Nod', click: () => void turnOff() },
+              { label: 'Close Nod', accelerator: 'CmdOrCtrl+Q', click: closeApp },
             ],
           },
           { role: 'editMenu' },
@@ -3765,7 +4010,13 @@ else {
           Array.isArray(value) ||
           Object.keys(value).some(
             (key) =>
-              !['theme', 'notifications', 'notificationSound', 'launchAtLogin'].includes(key),
+              ![
+                'theme',
+                'notifications',
+                'notificationSound',
+                'launchAtLogin',
+                'keepAwake',
+              ].includes(key),
           )
         )
           throw new Error('These preferences are not supported.');
@@ -3890,9 +4141,13 @@ else {
         update({ remote: Boolean(saved.serverUrl) });
         applyPreferences(saved);
         guidedStartup = !saved.serverUrl && saved.onboardingPreferenceStep !== 'complete';
-        const presented = showSettings('general', true);
+        openedInBackground =
+          (resumeHidden || openedAtLogin()) &&
+          Boolean(saved.serverUrl || saved.onboardingPreferenceStep === 'complete');
+        if (openedInBackground) app.dock?.hide();
+        const presented = openedInBackground ? undefined : showSettings('general', true);
         if (saved.serverUrl || saved.onboardingPreferenceStep === 'complete' || saved.welcome)
-          void prepare();
+          void prepare().then(showStartupError);
         await presented;
       } catch (error) {
         showSettings('general', true);

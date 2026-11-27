@@ -50,7 +50,7 @@ You need macOS 14 or later, on Apple silicon or Intel. For a local assistant, th
 <details>
 <summary>Install from Terminal instead</summary>
 
-You can install the latest release on Apple silicon or Intel with one command. Quit Nod first, then paste this into Terminal:
+You can install the latest release on Apple silicon or Intel with one command. Choose **Turn Off Nod** in the menu bar first, then paste this into Terminal:
 
 ```sh title="Terminal"
 (
@@ -95,7 +95,7 @@ The install folder holds the app files. Your profile stays in Windows app data. 
 <details>
 <summary>Install from PowerShell instead</summary>
 
-Quit Nod, then run this command in Windows PowerShell 5.1 or PowerShell 7:
+Choose **Turn Off Nod** in the tray, then run this command in Windows PowerShell 5.1 or PowerShell 7:
 
 ```powershell title="PowerShell"
 irm https://raw.githubusercontent.com/n8n-io/nod/main/deployment/n8n/install.ps1 | iex
@@ -141,17 +141,29 @@ Linux setup copies and verifies the guest image before it starts the private com
 
 ## Keep Nod running
 
-For a local assistant, closing the window keeps Nod running in the menu bar on a Mac, or the tray on Windows and Linux. Linux tray support depends on your desktop. **Quit Nod** stops Nod and its private computer. On Windows, running the installer or uninstaller while Nod is open offers to quit it first.
+A local assistant is on or off, not open or closed. Closing the window, or pressing `Cmd+Q` on a Mac, closes the app and leaves Nod on in the menu bar on a Mac, or the tray on Windows and Linux. On a Mac, the Dock icon goes away until you open a window again. The first time you close the app, a notification says where Nod is. Linux tray support depends on your desktop.
 
-| Nod is                                  | What runs                                       |
-| --------------------------------------- | ----------------------------------------------- |
-| Open, or closed to the menu bar or tray | Chat, channels, schedules and background checks |
-| Quit, or your computer is asleep        | Nothing, until Nod is open and awake again      |
-| Your computer restarted or lost power   | Nothing, until you sign in and Nod opens        |
+The menu bar or tray shows whether Nod is on, working or needs attention, and when the next scheduled task runs. Choose **Open Nod** to bring the window back.
 
-Nod tries to turn on **Open at login** when setup finishes. If the operating system blocks this setting, setup still finishes. If you rely on scheduled tasks, keep it on in **Settings → General**.
+To stop Nod and its private computer, choose **Turn Off Nod** in the menu bar, the tray or the **Nod** menu. If Nod is working, a scheduled task is due within a day, or Telegram or WhatsApp is connected, Nod first says what will stop, for example "Daily briefing won't run at 08:00 until you open Nod again." On Windows, running the installer or uninstaller while Nod is on offers to turn it off first.
 
-When connected to a server, the server keeps your assistant, channels and schedules running after you quit the app or put your computer to sleep. The server must stay running and connected.
+| Nod is                                | What runs                                       |
+| ------------------------------------- | ----------------------------------------------- |
+| On, with or without a window          | Chat, channels, schedules and background checks |
+| Off, or your computer is asleep       | Nothing, until Nod is on and awake again        |
+| Your computer restarted or lost power | Nothing, until you sign in and Nod starts       |
+
+Nod tries to turn on **Open at login** when setup finishes. Nod then starts in the background when you sign in, without opening a window. If the operating system blocks this setting, setup still finishes. If you rely on scheduled tasks, keep it on in **Settings → General**.
+
+If Nod's background service stops unexpectedly, Nod restarts it after 2 seconds, then 15 seconds, then a minute. After a third restart within 10 minutes, it shows the error and waits for you to select **Try again**.
+
+### Keep your computer awake
+
+**Keep this computer awake when plugged in** is on by default in **Settings → General**. While your computer is plugged in and Nod has a scheduled task or a connected Telegram or WhatsApp channel, Nod stops it from going to sleep when it's left idle, so runs and replies still happen. The screen still turns off and locks. On battery, Nod keeps the computer awake only while it's working.
+
+Closing a laptop's lid or choosing **Sleep** still puts the computer to sleep. A Mac laptop keeps running with its lid closed only when it's plugged in with an external display. When the computer wakes, a missed run happens once, and the chat says it was late. To keep schedules running while your computer sleeps, [run Nod on a server](/deploy/self-host/).
+
+When connected to a server, the server keeps your assistant, channels and schedules running after you turn off the app or put your computer to sleep. The server must stay running and connected, and the keep-awake setting isn't shown.
 
 ## Change the app font size
 
@@ -161,7 +173,7 @@ These controls change the same app zoom as **View → Zoom Out** and **View → 
 
 ## Update Nod
 
-On Linux, a Flatpak installed from a Nod repository updates itself once such a repository is published; none is yet. The Flatpak portal checks the repository about every 30 minutes, and Nod checks every 30 minutes whether the portal found a new commit. When the commit matches the latest GitHub release, Nod asks the portal to install it in the background and shows **Restart to update**. The first time, your desktop asks whether Nod may update itself. If you deny it, Nod says that your desktop doesn't let it update itself until you allow it in your privacy settings or run `flatpak permission-reset io.n8n.Nod`. If the prompt stays unanswered for 30 minutes, the check stops with an error and the next check asks again. If a release adds permissions to the Flatpak, the portal refuses the update and Nod shows the reason; install that release with `flatpak install --user --reinstall io.n8n.Nod//stable` instead. **Check for Updates…** cannot force the portal to check sooner. A Flatpak installed from a bundle file has no repository, so quit Nod, then download, check and install the next bundle with the [Linux procedure](#linux). Your profile and private computer stay in place either way. `flatpak update` can update shared desktop runtimes. If the new version needs a different private computer runtime, Nod downloads it on the next local launch.
+On Linux, a Flatpak installed from a Nod repository updates itself once such a repository is published; none is yet. The Flatpak portal checks the repository about every 30 minutes, and Nod checks every 30 minutes whether the portal found a new commit. When the commit matches the latest GitHub release, Nod asks the portal to install it in the background and shows **Restart to update**. The first time, your desktop asks whether Nod may update itself. If you deny it, Nod says that your desktop doesn't let it update itself until you allow it in your privacy settings or run `flatpak permission-reset io.n8n.Nod`. If the prompt stays unanswered for 30 minutes, the check stops with an error and the next check asks again. If a release adds permissions to the Flatpak, the portal refuses the update and Nod shows the reason; install that release with `flatpak install --user --reinstall io.n8n.Nod//stable` instead. **Check for Updates…** cannot force the portal to check sooner. A Flatpak installed from a bundle file has no repository, so turn off Nod, then download, check and install the next bundle with the [Linux procedure](#linux). Your profile and private computer stay in place either way. `flatpak update` can update shared desktop runtimes. If the new version needs a different private computer runtime, Nod downloads it on the next local launch.
 
 On Linux, an RPM install cannot update itself, because the app lives in a folder only an administrator can change. Nod checks for a newer release every six hours and when you choose **Check for Updates…**. An automatic check shows a notice, a system notification that only appears when notifications are on in **Settings → General**, quiet hours allow it, and no engine window is focused; a manual check always shows a dialog with **Copy command**. Either way, the command is `sudo dnf upgrade nod`, which needs the Nod package repository added to `dnf`; no such repository is published yet, so the command currently finds nothing. The notice appears once for each new version. The rest of this section applies to Mac and Windows.
 
@@ -183,7 +195,7 @@ On a Mac, Nod waits while its update installer is still running. If the installe
 
 Nod 0.8.4 and earlier on a Mac cancel the update when you open them while it installs, so Nod opens on the old version again. Select **Restart to update** once more and wait until Nod opens by itself. If it still opens on the old version, quit Nod and run the [Terminal installer](#install-nod). It keeps your profile, keys and data.
 
-A ready update also installs when you choose **Quit Nod**. Nod stays closed until you open it again. On Windows, the installer runs in the background after Nod stops. On a Mac, the native updater applies the downloaded update after exit. Closing the window keeps Nod running and does not install an update. To use the update now, choose **Restart to update**. On Windows, this runs the installer in the background and opens Nod again when it finishes.
+A ready update installs by itself when Nod is idle: no window is open, nothing is running and no scheduled task is due within 15 minutes. Nod then starts again in the background without opening a window. A ready update also installs when you choose **Turn Off Nod**, and Nod stays off until you open it again. On Windows, the installer runs in the background after Nod stops. On a Mac, the native updater applies the downloaded update after exit. To use the update now, choose **Restart to update**. On Windows, this runs the installer in the background and opens Nod again when it finishes.
 
 Nod versions before 0.7.0 on Windows can't install their own updates. Restarting to update closes Nod without installing, and the next start offers the same update again. Quit Nod from the tray icon, then download and run the latest [Windows x64 installer](https://github.com/n8n-io/nod/releases/latest/download/nod-Setup-x64.exe). It installs over the old version and keeps your profile, keys and data. Later updates install from the app.
 
@@ -211,7 +223,7 @@ Moving Nod to the Trash or uninstalling it keeps your data, so a later install o
 
 1. Select **Remove all data** in **Settings → Privacy & data**. If Nod can't finish setup, select **Remove all data…** in the **Nod** menu instead.
 2. Review the warning, then confirm. It lists what Nod will delete and explains that you must complete setup again. Nod deletes your profile and private computer, then restarts and opens setup. The app stays installed.
-3. To remove the app too, quit Nod. Move it to the Trash on a Mac, uninstall it in **Settings → Apps** on Windows, or run `flatpak uninstall --delete-data io.n8n.Nod` on Linux.
+3. To remove the app too, choose **Turn Off Nod**. Move it to the Trash on a Mac, uninstall it in **Settings → Apps** on Windows, or run `flatpak uninstall --delete-data io.n8n.Nod` on Linux.
 
 On Linux, uninstalling the Flatpak alone leaves the private computer in `~/.nod-desktop` and keeps the runtime pack. Use **Remove all data** first to delete the private computer safely. `flatpak uninstall --delete-data io.n8n.Nod` removes the runtime pack too, along with the rest of the app's data directory.
 
@@ -231,13 +243,13 @@ If a setup error shows **Details**, select it to read more information.
 | Windows can't download the runtime                      | Put `nod-Runtime-win32-x64.tar.gz` from the same release next to `nod-Setup-x64.exe` and run the installer again.                                                                                                                                                      |
 | Windows downloads the same update again after a restart | Nod 0.6.2 and earlier can't install updates on Windows. Quit Nod from the tray icon, then download and run the [newest Windows installer](https://github.com/n8n-io/nod/releases/latest/download/nod-Setup-x64.exe) once. Your data stays in place.                    |
 | A Mac update opens the old version again                | Nod 0.8.4 and earlier cancel an update when you open them while it installs. Select **Restart to update** and wait until Nod opens by itself. If it still opens on the old version, quit Nod and run the [Terminal installer](#install-nod). Your data stays in place. |
-| A scheduled task didn't run                             | Check that the machine running your assistant was awake and Nod was running. For a remote assistant, check the server.                                                                                                                                                 |
+| A scheduled task didn't run                             | Check that the machine running your assistant was awake and Nod was on. Keep **Keep this computer awake when plugged in** on in **Settings → General**. For a remote assistant, check the server.                                                                      |
 
 ### A failed Mac update blocks a new install
 
 After a failed update, the ShipIt update job can stay loaded. A new copy of Nod can then fail to open. If macOS shows **“Nod” is damaged and can't be opened** after an update failed, remove the old update job before you install Nod again.
 
-1. Quit Nod. If it stays open, use **Activity Monitor** to stop it.
+1. Choose **Turn Off Nod** in the menu bar. If it stays open, use **Activity Monitor** to stop it.
 2. Open **Terminal** and run these commands as your normal user:
 
    ```sh title="Terminal"
