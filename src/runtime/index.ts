@@ -49,7 +49,7 @@ import {
 } from './prompt.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { currentUserTime, localResultTimes } from './time-context.ts';
-import { connectedTools, mcpNamespaces, nodTools } from './tools.ts';
+import { connectedTools, mcpNamespaces, nodTools, normalizePresentationInput } from './tools.ts';
 import type { ReplyDelivery, Turn } from './turn.ts';
 import type { ExecutionScope, WorkspaceCommandRecord } from '../shared/execution.ts';
 import type { MemoryBrief } from '../ports/memory-recall.ts';
@@ -972,7 +972,11 @@ export function createAgentRuntime(dependencies: {
                             NodProactiveIssue: proactiveUpdateSchema,
                           }[error.schema[Kind]];
                         if (schema) {
-                          const parsed = schema.safeParse(error.value);
+                          const parsed = schema.safeParse(
+                            error.schema[Kind] === 'NodPresentation'
+                              ? normalizePresentationInput(error.value)
+                              : error.value,
+                          );
                           const issue = !parsed.success ? parsed.error.issues[0] : undefined;
                           if (issue)
                             throw new Error(

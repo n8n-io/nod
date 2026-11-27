@@ -404,6 +404,13 @@ test('native visual replies need no filler and deduplicate only identical conten
         await assert.rejects(
           call(tools, 'send_message', { text: '', presentation: { ...visual, nodes: [] } }),
         );
+        await assert.rejects(
+          call(tools, 'send_message', {
+            text: '',
+            presentation: { ...visual, title: ` ${'x'.repeat(200)} `, nodes: [] },
+          }),
+          /presentation\/nodes/,
+        );
         const first = await call(tools, 'send_message', { text: '', presentation: visual });
         const repeated = await call(tools, 'send_message', { text: '  ', presentation: visual });
         for (const [result, delivered] of [

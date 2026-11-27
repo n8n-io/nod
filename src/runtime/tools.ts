@@ -289,7 +289,7 @@ const safeHttpsUrl = (value: unknown) =>
   typeof value === 'string' && Boolean(previewableUrl(value)?.startsWith('https://'))
     ? value
     : undefined;
-const normalizePresentationInput = (value: unknown) => {
+export const normalizePresentationInput = (value: unknown) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const record = { ...(value as Record<string, unknown>) };
   if (!('sources' in record)) record.sources = [];
