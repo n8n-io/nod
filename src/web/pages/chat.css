@@ -767,7 +767,7 @@ button.message-work:is(:hover, :focus-visible) {
 }
 .chat-page .message .message-text {
   font-size: var(--text-body);
-  line-height: 1.6;
+  line-height: 1.5;
   font-kerning: normal;
   font-variant-ligatures: common-ligatures;
 }
