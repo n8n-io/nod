@@ -1330,6 +1330,20 @@ test('trust decisions select only owner evidence and keep reply evidence separat
     assert.equal(trustBasis({ run: true, source, terms: [] }, owner)?.kind, kind, source);
   assert.equal(trustBasis({ run: false, source: 'message:0' }, owner), undefined);
   assert.equal(trustBasis({ run: true, source: 'message:0' }, owner)?.kind, 'message');
+  const emoji = `${'x'.repeat(299)}\u{1F600} and more`;
+  for (const [source, input] of [
+    [
+      'message:0',
+      withOwnerIds({ userMessages: [{ at: '2026-11-03T09:00:00Z', text: emoji }] }, ['m']),
+    ],
+    ['schedule:0', { scheduledInstructions: [{ at: '2026-11-14T00:00:00Z', text: emoji }] }],
+    ['standing', { standingInstruction: emoji }],
+    ['rules', { userRules: emoji }],
+  ] as const) {
+    const basis = trustBasis({ run: true, source, terms: [] }, input);
+    assert.equal(/\\ud[89a-f][0-9a-f]{2}/i.test(JSON.stringify(basis)), false, source);
+    assert.equal(basis && 'quote' in basis && basis.quote, 'x'.repeat(299), source);
+  }
   assert.equal(
     trustBasis(
       {

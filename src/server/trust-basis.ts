@@ -135,7 +135,7 @@ export function trustBasis(
           'action' in command &&
           command.action === 'upload')));
   const settings = ownSettings.has(name);
-  const quote = (text: string) => text.slice(0, 300);
+  const quote = (text: string) => text.slice(0, 300).replace(/[\uD800-\uDBFF]$/, '');
   if (cited === 'read') return opens || settings ? undefined : { kind: 'read' };
   if (cited === 'scheduleApproval')
     return !settings && words.scheduledApproval?.id

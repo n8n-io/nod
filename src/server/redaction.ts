@@ -304,7 +304,12 @@ export function createErrorRedactor(secrets: string[]) {
 export function createCommandRedactor(secrets: string[]) {
   const text = createTextRedactor(secrets);
   const structured = createErrorRedactor(secrets);
-  return (value: string) => structured(text(value).slice(-64_000));
+  return (value: string) =>
+    structured(
+      text(value)
+        .slice(-64_000)
+        .replace(/^[\uDC00-\uDFFF]/, ''),
+    );
 }
 
 export function withoutSecretKeys(value: unknown): unknown {

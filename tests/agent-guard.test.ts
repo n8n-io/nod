@@ -311,6 +311,14 @@ test('command output removes whole secrets before taking a bounded tail', async 
           content: [{ type: 'text', text }],
           exitCode: 0,
         }));
+      for (const [command, text] of [
+        [`${'x'.repeat(3999)}\u{1F600}y`, `${'a'.repeat(1000)}\u{1F600}${'b'.repeat(15_974)}`],
+        [`\u{1F600}${'z'.repeat(63_999)}`, 'ok'],
+      ] as const)
+        await options.runTool('bash', { command }, async () => ({
+          content: [{ type: 'text', text }],
+          exitCode: 0,
+        }));
       emit({ type: 'final', text: 'Done' });
     },
     {
@@ -326,6 +334,10 @@ test('command output removes whole secrets before taking a bounded tail', async 
   assert.match(records[3]!.output!, /\[redacted\]\nfinal-line$/);
   assert.equal(JSON.stringify(records).includes(secret.slice(-12)), false);
   assert.equal(records[5]?.output, '{"name":"password","value":"[redacted]"}');
+  assert.equal(records.length, 10);
+  assert.equal(/\\ud[89a-f][0-9a-f]{2}/i.test(JSON.stringify(records)), false);
+  assert.equal(records[6]?.command, 'x'.repeat(3999));
+  assert.equal(records[7]?.output, `[Earlier output omitted]\n${'b'.repeat(15_974)}`);
 });
 
 test('partial delivery continues across browser and app reads in chat and saved tasks', async () => {
