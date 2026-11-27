@@ -287,13 +287,14 @@ export function verdictMarkdown(
     skipped: string[];
     compared: boolean;
     resampled: boolean;
+    resampleSkipped?: boolean;
   },
 ) {
   const lines = [`### ${result.verdict} against \`${context.baseline}\``];
   if (context.compared)
     lines.push(
       '',
-      `Both sides ran in this job with \`${context.model}\` and judge \`${context.judge}\`. The verdict uses the gate scenarios${context.resampled ? ', counting the extra attempts for gate scenarios that needed more evidence' : ''}; the comparison below shows every scenario at the same number of attempts.`,
+      `Both sides ran with \`${context.model}\` and judge \`${context.judge}\`. The verdict uses the gate scenarios${context.resampled ? ', counting the extra attempts for gate scenarios that needed more evidence' : ''}; the comparison below shows every scenario at the same number of attempts.${context.resampleSkipped ? ' Suspect scenarios were not rerun, because the first attempts already block this change.' : ''}`,
     );
   const reasons = [...result.blocking, ...result.unclear];
   if (reasons.length) lines.push('', ...reasons.map((reason) => `- ${reason}`));

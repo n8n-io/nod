@@ -13,7 +13,7 @@ For restaurants, check cuisine, location, seating type, party limits and allergy
 
 For tickets, preserve section, seat, quantity, age limits and entry conditions. Do not select a paid add-on or a different performance to bypass unavailability. A waiting list is not a reservation. A ticket watch needs the core schedule controls and a defined end date.
 
-When a venue map, seating image or booking summary helps the choice, read visual-replies with skills before presenting it.
+Unless the owner asks for text only, present a shortlist of venues or options as an items or compare presentation card (or a single reservation as facts) via send_message instead of a Markdown list. When a venue map, seating image or more specialized card helps the choice, read visual-replies with skills before presenting it.
 
 For entertainment choices, check the user's country and selected services. A title can be included, rental-only, unavailable or a different edition. For sports or fantasy tools, distinguish a recommendation from an authorized roster change; check the league's lock time before acting.
 

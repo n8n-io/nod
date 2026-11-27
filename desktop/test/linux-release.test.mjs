@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
+import { createUpdateSource } from '../main/updates.mjs';
 import { linuxReleaseFiles, packageLinuxBundle } from '../scripts/linux-release.mjs';
 import { desktopBuildOptions } from '../scripts/release-tools.mjs';
+import { writeRpmManifest } from '../scripts/rpm-release.mjs';
 
 test('desktop release metadata keeps the trace token and release flag together', () => {
   const tracesToken = 'a'.repeat(64);
@@ -50,6 +52,41 @@ test('Linux release bundle is checked and rejects changed or unrelated files', a
   );
   await assert.rejects(linuxReleaseFiles(root, expected), /1900 MiB/);
   await writeFile(files[0], original);
+});
+
+test('RPM release manifest matches the bytes on disk and the fields the desktop updater requires', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-rpm-release-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const bytes = Buffer.from('Synthetic RPM payload.');
+  await writeFile(join(directory, 'nod-linux-x64.rpm'), bytes);
+  const version = '0.9.9';
+  const source = 'a'.repeat(40);
+  const manifest = await writeRpmManifest({ directory, version, source });
+  assert.deepEqual(
+    JSON.parse(await readFile(join(directory, 'release-linux-x64-rpm.json'), 'utf8')),
+    manifest,
+  );
+  assert.equal(manifest.platform, 'linux-x64-rpm');
+  assert.equal(manifest.rpm.file, 'nod-linux-x64.rpm');
+  assert.equal(manifest.rpm.bytes, bytes.length);
+  assert.equal(
+    manifest.rpm.sha256,
+    'b9e7c44623b3a7d31145b3dd7524d67cca5dde35d05ece9aacc813f54512cf3c',
+  );
+  const base = 'https://github.com/n8n-io/nod/releases';
+  const manifestUrl = `${base}/download/nod-v${version}/release-linux-x64-rpm.json`;
+  const rpm = createUpdateSource({
+    os: 'linux',
+    packaging: 'rpm',
+    fetch: async (url) => {
+      if (url === `${base}/latest/download/release-linux-x64-rpm.json`)
+        return new Response(null, { status: 302, headers: { location: manifestUrl } });
+      if (url === manifestUrl) return Response.json(manifest);
+      assert.fail(`Unexpected release request ${url}`);
+    },
+  });
+  assert.deepEqual(await rpm.latest('0.0.1'), { version, source });
+  await assert.rejects(writeRpmManifest({ directory, version: '01.0.0', source }));
 });
 
 test('Linux download links lead supported desktops to installation instructions', async () => {

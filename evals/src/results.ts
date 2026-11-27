@@ -34,6 +34,7 @@ export interface AttemptResult {
   stance: 'regression' | 'gap';
   fingerprint: string;
   attempt: number;
+  effort?: import('../../src/shared/models.ts').ModelEffort;
   task: string;
   status: 'pass' | 'fail' | 'incomplete';
   blame?: Blame;
@@ -91,6 +92,7 @@ export interface RunManifest {
   judge: string;
   repeat: number;
   scenarioIds?: string[];
+  shard?: { index: number; total: number; scenarioIds: string[] };
   k: number;
   provenance: Record<string, string>;
 }

@@ -23,6 +23,7 @@ on:
       - 'desktop/rpm/**'
       - 'desktop/assets/**'
       - 'desktop/scripts/*linux*.mjs'
+      - 'desktop/scripts/rpm-release.mjs'
       - 'desktop/scripts/*linux*.py'
       - 'desktop/scripts/runtime-pack.mjs'
       - 'desktop/scripts/runtime-inputs.mjs'

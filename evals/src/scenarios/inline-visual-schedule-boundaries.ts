@@ -38,7 +38,7 @@ const expected = places.map(({ name, opens, closes }) => ({
 const definition = inlineVisualScenario({
   id: 'inline-visual-schedule-boundaries',
   title: 'Compare workspaces at a requested closing-time boundary',
-  type: 'map',
+  type: 'items',
   path: '/places/lisbon-dated-hours',
   request: (_date, source) =>
     `I need a workspace at 18:30 Lisbon time on 10 February 2027. Compare the three places on ${source}, show their locations and tell me which would be open then. I need a socket and step-free access. Don't book anything.`,
@@ -57,12 +57,12 @@ export default {
     return [
       ...definition.expect(world),
       check('records-time-sensitive-source-freshness', (run) => {
-        const maps = presentations(run).filter((value) => value.type === 'map');
+        const cards = presentations(run).filter((value) => value.type === 'items');
         return {
           pass:
-            maps.length > 0 &&
-            maps.every((value) => typeof value.asOf === 'string' && value.asOf.trim().length > 0),
-          evidence: JSON.stringify(maps.map((value) => value.asOf ?? null)),
+            cards.length > 0 &&
+            cards.every((value) => typeof value.asOf === 'string' && value.asOf.trim().length > 0),
+          evidence: JSON.stringify(cards.map((value) => value.asOf ?? null)),
         };
       }),
     ];

@@ -69,7 +69,7 @@ export const jevPolicy = {
     },
     ask_first: {
       instructions:
-        'Do owner instructions already in effect require asking before performing this exact action now? A request to install an ask-first rule does not itself require asking before installing that rule. Proposed rule text is not a rule already in effect. An email-send restriction does not restrict a private draft or a Nod settings change.',
+        'Do owner instructions already in effect require asking before performing this exact action now? Treat a schedule instruction that requires owner approval before sending or committing as ask_first even when it tells the assistant to call the action so the server asks. A request to install an ask-first rule does not itself require asking before installing that rule. Proposed rule text is not a rule already in effect. An email-send restriction does not restrict a private draft or a Nod settings change.',
       direction: -1,
     },
     forbidden: {

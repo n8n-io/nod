@@ -1087,14 +1087,26 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     kind: string,
     itemId: string | null,
     since?: number,
+    sessionId?: string,
   ) {
-    const lock = `nod-vault-automatic:${owner}:${rootTurnId}:${origin}:${kind}`;
+    const lock = `nod-vault-automatic:${owner}:${rootTurnId}:${sessionId ?? ''}:${origin}:${kind}`;
     await lockKey(database, lock);
     await database.query('DELETE FROM nod_locks WHERE key=$1', [lock]);
     const { rowCount } = await database.query(
-      `SELECT 1 FROM vault_uses WHERE owner_id=$1 AND root_turn_id=$2 AND origin=$3 AND kind=$4
-       AND (item_id IS NULL OR item_id=$5) AND ($6::timestamptz IS NULL OR created_at>=$6) LIMIT 1`,
-      [owner, rootTurnId, origin, kind, itemId, since === undefined ? null : new Date(since)],
+      `SELECT 1 FROM vault_uses v
+       LEFT JOIN turns u ON u.id=v.turn_id AND u.owner_id=v.owner_id
+       WHERE v.owner_id=$1 AND v.root_turn_id=$2 AND v.origin=$3 AND v.kind=$4
+       AND (v.item_id IS NULL OR v.item_id=$5) AND ($6::timestamptz IS NULL OR v.created_at>=$6)
+       AND ($7::uuid IS NULL OR v.turn_id IS NULL OR u.session_id=$7::uuid) LIMIT 1`,
+      [
+        owner,
+        rootTurnId,
+        origin,
+        kind,
+        itemId,
+        since === undefined ? null : new Date(since),
+        sessionId ?? null,
+      ],
     );
     return Boolean(rowCount);
   }
@@ -1771,7 +1783,15 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           if (
             !request &&
             !(input.kind === 'identifier' && selected?.kind === 'identifier') &&
-            (await automaticUse(client, root, input.origin, input.kind, use.itemId ?? null))
+            (await automaticUse(
+              client,
+              root,
+              input.origin,
+              input.kind,
+              use.itemId ?? null,
+              undefined,
+              browserOf(turn),
+            ))
           )
             return false;
         }

@@ -274,6 +274,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   } finally {
     await release();
     if (result && stack) {
+      if (stack.effort) result.effort = stack.effort;
       const usage = stack.finalUsage;
       result.costUsd = usage?.costUsd ?? null;
       if (usage?.budgetCostUsd !== undefined) result.budgetCostUsd = usage.budgetCostUsd;

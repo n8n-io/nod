@@ -27,12 +27,12 @@ flowchart TD
 
 Each release is named **Nod v0.x.x** and links these installers:
 
-| Platform          | Installer               | Updates                 |
-| ----------------- | ----------------------- | ----------------------- |
-| Mac Apple silicon | `nod-arm64.dmg`         | Automatic               |
-| Mac Intel         | `nod-x64.dmg`           | Automatic               |
-| Windows x64       | `nod-Setup-x64.exe`     | Automatic               |
-| Linux x64 preview | `nod-linux-x64.flatpak` | Install the next bundle |
+| Platform          | Installer               | Updates                                                           |
+| ----------------- | ----------------------- | ----------------------------------------------------------------- |
+| Mac Apple silicon | `nod-arm64.dmg`         | Automatic                                                         |
+| Mac Intel         | `nod-x64.dmg`           | Automatic                                                         |
+| Windows x64       | `nod-Setup-x64.exe`     | Automatic                                                         |
+| Linux x64 preview | `nod-linux-x64.flatpak` | Repository install updates itself; bundle install the next bundle |
 
 Mac ZIP files, Mac and Linux runtime packs, checksums, the public certificate, update metadata and the Terminal and PowerShell install scripts stay on the same release as supporting assets.
 
@@ -268,7 +268,7 @@ The Mac build logs show separate times for signing, notarization, ZIP creation, 
 
 Drafts are never offered to the installer or the updater.
 
-- Mac and Windows apps check at startup, even when their runtime fails to start, every six hours while open, and after waking if a check is due. **Check for Updates…** checks right away. Linux users install the next bundle; Nod's own update checks are off there.
+- Mac and Windows apps check at startup, even when their runtime fails to start, every six hours while open, and after waking if a check is due. **Check for Updates…** checks right away. A Linux Flatpak installed from a repository checks every 30 minutes whether the Flatpak portal found a new commit. Linux bundle installs have no repository, so their users install the next bundle.
 - After a failed automatic check, Nod retries after one minute, doubling up to 15 minutes, and the menu shows **Update Failed. Try Again…**. Waking the computer retries a failed check at once.
 - Existing private-service builds try up to three newer releases and offer the first complete one. Public GitHub builds use the latest regular release and fail closed if its platform files are incomplete. The publisher checks all four bundles before publication and returns a release to draft if public asset delivery fails.
 - A Mac app outside Applications offers to move itself there at startup, because it can update itself only from Applications.
@@ -336,7 +336,7 @@ This is an ad-hoc signed local app, not a release. It reuses the cached workspac
 
 ## Build a Linux Flatpak
 
-The Linux app is a Flatpak preview, and this workflow also builds a Fedora RPM. As on a Mac and Windows, local setup downloads a matching runtime pack from the release; the Flatpak itself does not include it. **Build Linux desktop** builds and checks the x64 package. The desktop release workflow calls it and includes its files in the release. You can also run it separately from **Actions** to get the `desktop-linux-x64` and `desktop-linux-x64-rpm` artifacts. On pull requests, this check runs only for `desktop/flatpak/**`, `desktop/rpm/**`, `desktop/assets/**`, `desktop/scripts/*linux*.mjs`, `desktop/scripts/*linux*.py`, `desktop/scripts/runtime-pack.mjs`, `desktop/scripts/runtime-inputs.mjs`, `desktop/scripts/release-tools.mjs`, `desktop/scripts/runtime-build-lock.json`, `desktop/runtime/assets.mjs`, `desktop/test/*linux*.test.mjs`, and `desktop/test/runtime-assets.test.mjs`. Other shared build files use standard CI. Run the package workflow from **Actions** when those changes need a Linux package check.
+The Linux app is a Flatpak preview, and this workflow also builds a Fedora RPM. As on a Mac and Windows, local setup downloads a matching runtime pack from the release; the Flatpak itself does not include it. **Build Linux desktop** builds and checks the x64 package. The desktop release workflow calls it and includes its files in the release. You can also run it separately from **Actions** to get the `desktop-linux-x64` and `desktop-linux-x64-rpm` artifacts. On pull requests, this check runs only for `desktop/flatpak/**`, `desktop/rpm/**`, `desktop/assets/**`, `desktop/scripts/*linux*.mjs`, `desktop/scripts/rpm-release.mjs`, `desktop/scripts/*linux*.py`, `desktop/scripts/runtime-pack.mjs`, `desktop/scripts/runtime-inputs.mjs`, `desktop/scripts/release-tools.mjs`, `desktop/scripts/runtime-build-lock.json`, `desktop/runtime/assets.mjs`, `desktop/test/*linux*.test.mjs`, and `desktop/test/runtime-assets.test.mjs`. Other shared build files use standard CI. Run the package workflow from **Actions** when those changes need a Linux package check.
 
 CI installs Flatpak and `flatpak-builder` from the Ubuntu package archive. It does not need an extra package source. The manifest installs Meson libraries in `/app/lib` so QEMU can find its local dependencies.
 
@@ -363,7 +363,9 @@ Release builds export a `stable` Flatpak bundle with Flathub as its desktop runt
 
 Official Linux builds use the `release` environment on `main`. Like Mac and Windows builds, they include its `NOD_TRACES_TOKEN` for opt-in conversation traces and mark the build as a release. Pull request and manual preview builds use the separate `linux-preview` environment. Their build metadata keeps usage data in the development environment.
 
-The published bundles have no Nod update repository and are not on Flathub. Users install the next bundle to update Nod. `flatpak update` can update the shared desktop runtime, but it does not fetch new Nod bundles.
+The release bundles are not on Flathub and carry no repository address. An installed Flatpak updates itself only when its origin is a remote that serves an OSTree repository with the same app ID and `stable` branch, signed with a key the remote trusts. Static deltas must be generated after the commit is signed, or installs fail with "GPG verification enabled, but no signatures found". Nod reads `release-linux-x64.json` from the latest GitHub release and installs the portal's new commit only when its Flatpak `commit` matches that manifest. A release that adds Flatpak permissions needs `flatpak install --user --reinstall io.n8n.Nod//stable` once. A bundle install has no repository, so install the next bundle with the [Linux installation](/get-started/install-desktop/#linux) procedure.
+
+`node desktop/scripts/linux-repo.mjs <repository>` turns a checked bundle in `dist/desktop/linux-x64` into that repository. It imports the bundle, checks that the repository's `stable` commit equals the manifest's `commit`, signs the commit and generates pruned static deltas. Set `NOD_FLATPAK_REPO_KEY` to the GPG key ID, `NOD_FLATPAK_GPG_HOME` to its keyring if it is not the default, and `NOD_DESKTOP_VERSION` and `NOD_RELEASE_SOURCE` as for `linux-release.mjs`. Run it on the same repository directory for every release, so each new commit gets a delta from the previous one, then sync the directory to the host. Where that host is and who holds the key is not decided yet.
 
 ## Build a Fedora RPM
 
@@ -372,6 +374,8 @@ The published bundles have no Nod update repository and are not on Flathub. User
 The RPM installs the app in `/usr/lib/nod` and depends on Fedora's own `qemu-system-x86-core`, `qemu-img` and `openssh-clients` instead of bundling them, so Lima uses Fedora's QEMU. Like the Flatpak, the RPM does not include the runtime pack; local setup downloads it from the release. Fedora 45 ships QEMU 11.1.2. Fedora 44 ships 10.2.2, which CI does not test. The check does not start the VM, because the runner has no KVM, so start a local assistant on a Fedora desktop before distributing it. Open at login writes an autostart entry that runs `nod`.
 
 To build locally, package the app as for the Flatpak, then run `NOD_DESKTOP_VERSION=<version> desktop/rpm/build-rpm.sh` as root in a Fedora container with the repository mounted.
+
+An RPM install shows a notice when a newer release exists. Nod reads `release-linux-x64-rpm.json` from the latest GitHub release: `platform` `linux-x64-rpm`, `version`, `source`, and `rpm` with `file` `nod-linux-x64.rpm`, `bytes` and `sha256`. `node desktop/scripts/rpm-release.mjs [directory]` writes it next to the RPM, using `NOD_DESKTOP_VERSION` and `NOD_RELEASE_SOURCE`. The release must also carry the RPM, and a `dnf` repository must serve it, or the notice's command finds nothing. The RPM is not yet a release asset, so builds that check before one is published retry quietly and show nothing.
 
 ## Signing limits
 

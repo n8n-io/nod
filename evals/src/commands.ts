@@ -16,9 +16,17 @@ import { choice, has, number, text, whole, type Args } from './options.ts';
 import { compareTable, html, markdown, runsTable, terminal } from './report.ts';
 import { rejudge } from './rejudge.ts';
 import { reviewRun } from './review.ts';
-import { promote, runGate } from './gate.ts';
+import { evaluateGate, promote, runGate } from './gate.ts';
 import { fallbackLlm } from './judge.ts';
-import { defaultJudge, defaultModel, runSuite, slug, type RunOptions } from './run.ts';
+import {
+  defaultJudge,
+  defaultModel,
+  mergeRuns,
+  parseShard,
+  runSuite,
+  slug,
+  type RunOptions,
+} from './run.ts';
 import { scenarios } from './scenarios/index.ts';
 import { loadEnvironment, parseModel } from './stack.ts';
 import { listRuns, loadRun, resultsRoot, saveRun } from './store.ts';
@@ -48,7 +56,9 @@ const help = `Nod capability evals
     gate --baseline <git ref>  run the suite on this code and on <ref> in one job and show them side by side, with
                                a GO, NO-GO or INCONCLUSIVE verdict from the proven gate scenarios; gate
                                scenarios where this code did worse get 7 more attempts on both sides
-                               (--resample 7, --enforce exits with an error unless GO)
+                               (--resample 7, --enforce exits with an error unless GO, or --baseline-label and
+                               --candidate-label to score already-merged runs, resampled at their saved commits)
+    merge <label>... --label <name>  combine sharded runs into one saved run and rebuild its HTML report
     promote <label>...         give calibrated scenarios that passed all of at least 5 attempts a place in the
                                gate, and remove the ones that did not (writes evals/gate.json)
     runs                       list saved runs
@@ -76,6 +86,7 @@ const help = `Nod capability evals
                                pending cases; pr is the small suite; release adds the release suite;
                                live also runs the open web cases
     --scenario a,b             only these scenarios       --capability browser   only this capability
+    --shard 1/4                run only shard 1 of 4 (combine shards later with "merge")
     --include-pending          include pending cases in the small pr suite
     --repeat 3                 attempts per scenario      --k 3                  k for pass@k and pass^k
     --concurrency 2            attempts at once           --budget 20            stop after about this many dollars
@@ -117,6 +128,7 @@ function runOptions(args: Args): RunOptions {
     tier: choice(args, 'tier', ['pr', 'full', 'release', 'live'], 'full'),
     scenarioIds: text(args, 'scenario')?.split(','),
     capability: text(args, 'capability'),
+    shard: parseShard(text(args, 'shard')),
     label: text(args, 'label'),
     ref: text(args, 'ref'),
     resume: has(args, 'resume'),
@@ -292,17 +304,43 @@ export async function main(args: Args) {
       });
       return;
     }
+    case 'merge': {
+      const target = text(args, 'label');
+      const labels = [...new Set([first, ...others].filter(Boolean))];
+      if (!labels.length || !target)
+        throw new Error('Usage: merge <label> [<label>...] --label <new-label>');
+      const merged = await mergeRuns({ root, labels, label: target });
+      console.log(terminal(merged.summary, merged.attempts));
+      console.log(`Saved ${join(merged.directory, 'report.html')}`);
+      return;
+    }
     case 'gate': {
       const baseline = text(args, 'baseline');
-      if (!baseline) throw new Error('Usage: gate --baseline <git ref> [run options]');
+      const baselineLabel = text(args, 'baseline-label');
+      const candidateLabel = text(args, 'candidate-label');
       const options = runOptions(args);
-      const result = await runGate({
-        ...options,
-        baseline,
-        resample: Math.trunc(number(args, 'resample', 0, 20) ?? 7),
-        label:
-          options.label ?? `gate-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}`,
-      });
+      if (options.shard)
+        throw new Error('The gate scores every scenario, so it does not take --shard.');
+      const resample = Math.trunc(number(args, 'resample', 0, 20) ?? 7);
+      const label =
+        options.label ?? `gate-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}`;
+      let result: Awaited<ReturnType<typeof runGate>>;
+      if (baselineLabel || candidateLabel) {
+        if (!baselineLabel || !candidateLabel)
+          throw new Error('Pass both --baseline-label and --candidate-label.');
+        result = await evaluateGate({
+          root,
+          baselineLabel,
+          candidateLabel,
+          baselineName: baseline ?? baselineLabel,
+          label,
+          resample,
+          runOptions: resample > 0 ? options : undefined,
+        });
+      } else {
+        if (!baseline) throw new Error('Usage: gate --baseline <git ref> [run options]');
+        result = await runGate({ ...options, baseline, resample, label });
+      }
       console.log(result.report);
       if (has(args, 'enforce') && result.verdict !== 'GO') process.exitCode = 1;
       return;

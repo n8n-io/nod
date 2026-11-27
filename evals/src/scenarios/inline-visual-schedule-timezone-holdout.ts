@@ -38,7 +38,7 @@ const expected = places.map(({ name, opens, closes }) => ({
 const definition = inlineVisualScenario({
   id: 'inline-visual-schedule-timezone-holdout',
   title: 'Compare overnight workspaces at an arrival time in another time zone',
-  type: 'map',
+  type: 'items',
   path: '/places/toronto-overnight-hours',
   request: (_date, source) =>
     `My itinerary puts me in Toronto at 05:30 UTC on 15 January 2027. Compare the three workspaces on ${source} and show which would be open when I arrive, with their locations. I need a socket and step-free access. Don't reserve anything.`,
@@ -57,12 +57,12 @@ export default {
     return [
       ...definition.expect(world),
       check('records-time-sensitive-source-freshness', (run) => {
-        const maps = presentations(run).filter((value) => value.type === 'map');
+        const cards = presentations(run).filter((value) => value.type === 'items');
         return {
           pass:
-            maps.length > 0 &&
-            maps.every((value) => typeof value.asOf === 'string' && value.asOf.trim().length > 0),
-          evidence: JSON.stringify(maps.map((value) => value.asOf ?? null)),
+            cards.length > 0 &&
+            cards.every((value) => typeof value.asOf === 'string' && value.asOf.trim().length > 0),
+          evidence: JSON.stringify(cards.map((value) => value.asOf ?? null)),
         };
       }),
     ];

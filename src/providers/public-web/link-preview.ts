@@ -2,7 +2,7 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
 import { parse } from 'parse5';
-import type { LinkPreviewProvider, SiteIcon } from '../../ports/link-preview.ts';
+import type { LinkPreviewProvider, PreviewImage, SiteIcon } from '../../ports/link-preview.ts';
 import { publicUrl, type AddressResolver } from '../agent-browser/network.ts';
 import { rasterImageType } from '../raster-image.ts';
 
@@ -59,6 +59,10 @@ export const requestPublicPreview: PreviewRequest = ({
           ]),
         );
         const status = response.statusCode ?? 0;
+        const head =
+          metadata &&
+          /^(?:text\/html|application\/xhtml\+xml)(?:;|$)/i.test(headers['content-type'] ?? '');
+        const limit = head ? Math.min(maxBytes, 512 * 1024) : maxBytes;
         if ([301, 302, 303, 307, 308].includes(status)) {
           response.destroy();
           resolve({ status, headers, body: new Uint8Array() });
@@ -66,7 +70,7 @@ export const requestPublicPreview: PreviewRequest = ({
         }
         if (
           (headers['content-encoding'] && headers['content-encoding'] !== 'identity') ||
-          (!metadata && Number(headers['content-length']) > maxBytes)
+          (!head && Number(headers['content-length']) > maxBytes)
         ) {
           response.destroy();
           reject(new Error('Preview response is not supported.'));
@@ -75,17 +79,14 @@ export const requestPublicPreview: PreviewRequest = ({
         const chunks: Buffer[] = [];
         let length = 0;
         response.on('data', (chunk: Buffer) => {
-          const remaining = maxBytes - length;
+          const remaining = limit - length;
           length += chunk.length;
-          if (length > maxBytes && !metadata) {
+          if (length > limit && !head) {
             response.destroy(new Error('Preview response is too large.'));
             return;
           }
           chunks.push(chunk.subarray(0, remaining));
-          if (
-            metadata &&
-            (length >= maxBytes || Buffer.concat(chunks).includes(Buffer.from('</head>')))
-          ) {
+          if (head && (length >= limit || Buffer.concat(chunks).includes(Buffer.from('</head>')))) {
             response.destroy();
             resolve({ status, headers, body: Buffer.concat(chunks) });
           }
@@ -148,10 +149,34 @@ function iconLinks(html: string) {
   return [...links];
 }
 
+function pageImage(html: string) {
+  const document = parse(html);
+  const root = document.childNodes.find((node) => node.nodeName === 'html');
+  const head =
+    root && 'childNodes' in root ? root.childNodes.find((node) => node.nodeName === 'head') : null;
+  const found = new Map<string, string>();
+  for (const node of head && 'childNodes' in head ? head.childNodes : []) {
+    if (node.nodeName !== 'meta' || !('attrs' in node)) continue;
+    const attrs = new Map(node.attrs.map((attr) => [attr.name.toLowerCase(), attr.value]));
+    const key = (attrs.get('property') ?? attrs.get('name') ?? '').toLowerCase();
+    const content = attrs.get('content')?.trim();
+    if (content && !found.has(key)) found.set(key, content);
+  }
+  return (
+    found.get('og:image:secure_url') ??
+    found.get('og:image') ??
+    found.get('og:image:url') ??
+    found.get('twitter:image') ??
+    found.get('twitter:image:src') ??
+    null
+  );
+}
+
 export function createPublicLinkPreviewProvider(
   options: { resolver?: AddressResolver; request?: PreviewRequest; timeoutMs?: number } = {},
 ): LinkPreviewProvider {
   const request = options.request ?? requestPublicPreview;
+  const tiles = new Map<string, { expiresAt: number; value: Promise<PreviewImage | null> }>();
   async function fetchPublic(
     value: string,
     maxBytes: number,
@@ -205,6 +230,67 @@ export function createPublicLinkPreviewProvider(
     throw new Error('Too many preview redirects.');
   }
   return {
+    async image(value, stop) {
+      const timeout = AbortSignal.timeout(Math.min(6000, options.timeoutMs ?? 6000));
+      const signal = stop ? AbortSignal.any([stop, timeout]) : timeout;
+      const imageMax = 3 * 1024 * 1024;
+      const raster = (body: Uint8Array): PreviewImage | null => {
+        const mimeType = rasterImageType(body);
+        return mimeType ? { bytes: body, mimeType } : null;
+      };
+      try {
+        const first = await fetchPublic(value, imageMax, true, signal);
+        if (/^image\//i.test(first.headers['content-type'] ?? '')) return raster(first.body);
+        if (
+          !/^(?:text\/html|application\/xhtml\+xml)(?:;|$)/i.test(
+            first.headers['content-type'] ?? '',
+          )
+        )
+          return null;
+        const href = pageImage(Buffer.from(first.body.subarray(0, 512 * 1024)).toString('utf8'));
+        if (!href || /^data:/i.test(href) || /\.svgz?(?:[?#]|$)/i.test(href)) return null;
+        const image = await fetchPublic(new URL(href, first.url).href, imageMax, false, signal);
+        return raster(image.body);
+      } catch {
+        return null;
+      }
+    },
+    mapTile(zoom, x, y, stop) {
+      if (stop?.aborted) return Promise.resolve(null);
+      const key = `${zoom}/${((x % 2 ** zoom) + 2 ** zoom) % 2 ** zoom}/${y}`;
+      let entry = tiles.get(key);
+      if (!entry || entry.expiresAt <= Date.now()) {
+        tiles.delete(key);
+        const timeout = AbortSignal.timeout(Math.min(6000, options.timeoutMs ?? 6000));
+        const value = fetchPublic(
+          `https://tile.openstreetmap.org/${key}.png`,
+          512 * 1024,
+          false,
+          timeout,
+        )
+          .then((tile) => {
+            const mimeType = rasterImageType(tile.body);
+            return mimeType ? { bytes: tile.body, mimeType } : null;
+          })
+          .catch(() => null)
+          .then((tile) => {
+            if (!tile && tiles.get(key)?.value === value) tiles.delete(key);
+            return tile;
+          });
+        entry = { expiresAt: Date.now() + 7 * 86_400_000, value };
+        tiles.set(key, entry);
+        while (tiles.size > 256) tiles.delete(tiles.keys().next().value!);
+      }
+      if (!stop) return entry.value;
+      return new Promise<PreviewImage | null>((resolve) => {
+        const onAbort = () => resolve(null);
+        stop.addEventListener('abort', onAbort, { once: true });
+        entry.value.then((tile) => {
+          stop.removeEventListener('abort', onAbort);
+          resolve(stop.aborted ? null : tile);
+        });
+      });
+    },
     async icon(origin) {
       const signal = AbortSignal.timeout(Math.min(8000, options.timeoutMs ?? 8000));
       const fetchIcon = async (url: string): Promise<SiteIcon | null> => {

@@ -348,6 +348,14 @@
     transform: none;
   }
 }
+.message-content > .message-presentation:not(.presentation-apps) {
+  max-width: min(calc(100% - var(--message-action-space, 0px)), 680px);
+  margin: 8px 0 0;
+}
+.message-content > .message-presentation:not(.presentation-apps):first-child,
+.message-content > .message-row[hidden] + .message-presentation:not(.presentation-apps) {
+  margin-top: 0;
+}
 .message-presentation.presentation-apps {
   max-width: 640px;
   margin: 8px 0 0;

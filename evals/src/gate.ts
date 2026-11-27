@@ -1,9 +1,9 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fisherLower, holm, pairedChange } from './aggregate.ts';
+import { fisherLower, holm, pairedChange, summarize } from './aggregate.ts';
 import { markdown, verdictMarkdown } from './report.ts';
 import type { AttemptResult, RunManifest } from './results.ts';
-import { runSuite, slug, type RunOptions } from './run.ts';
+import { git, runSuite, slug, type RunOptions } from './run.ts';
 import { fingerprint, scenarios } from './scenarios/index.ts';
 import { repository } from './stack.ts';
 import { readAttempts } from './store.ts';
@@ -185,9 +185,31 @@ export async function promote(root: string, labels: string[], file = gateFile) {
   return sorted;
 }
 
-export async function runGate(
-  options: RunOptions & { baseline: string; resample: number; label: string },
-) {
+function checkLabel(label: string) {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,74}$/.test(label))
+    throw new Error('Gate labels must be simple file names of at most 75 characters.');
+}
+
+function resampleRef(manifest: RunManifest) {
+  if (!manifest.dirty) return manifest.commit;
+  if (git('rev-parse', 'HEAD') !== manifest.commit)
+    throw new Error(
+      `Run ${manifest.label} scored uncommitted changes on ${manifest.commit.slice(0, 7)}, which is not checked out, so its scenarios cannot be resampled.`,
+    );
+  return undefined;
+}
+
+export async function evaluateGate(options: {
+  root: string;
+  baselineLabel: string;
+  candidateLabel: string;
+  baselineName: string;
+  label: string;
+  resample?: number;
+  runOptions?: RunOptions;
+  failure?: unknown;
+}) {
+  checkLabel(options.label);
   const members = await readMembers();
   const current = Object.fromEntries(
     Object.entries(members).filter(
@@ -196,20 +218,24 @@ export async function runGate(
     ),
   );
   const skipped = Object.keys(members).filter((id) => !(id in current));
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,74}$/.test(options.label))
-    throw new Error('Gate labels must be simple file names of at most 75 characters.');
-  const label = options.label;
-  const named = `${slug(options.baseline)}-for-${label}`.slice(0, 75);
-  const side = (label: string, ref: string | undefined, extra: Partial<RunOptions> = {}) =>
-    runSuite({ ...options, label, ref, resume: false, ...extra });
+  const readSide = async (name: string) => {
+    const dir = join(options.root, name);
+    const manifest = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8')) as RunManifest;
+    if (manifest.provenance.missingShards)
+      throw new Error(`Run ${name} is missing shards ${manifest.provenance.missingShards}.`);
+    const attempts = await readAttempts(dir);
+    return { manifest, attempts, summary: summarize(manifest, attempts) };
+  };
   let result: GateResult;
   let comparison = '';
   let resampled = false;
-  let model = options.model ?? '';
-  let judge = options.judge ?? '';
+  let resampleSkipped = false;
+  let model = options.runOptions?.model ?? '';
+  let judge = options.runOptions?.judge ?? '';
   try {
-    const candidate = await side(label, undefined);
-    const baseline = await side(named, options.baseline);
+    if (options.failure) throw options.failure;
+    const candidate = await readSide(options.candidateLabel);
+    const baseline = await readSide(options.baselineLabel);
     model = candidate.manifest.model;
     judge = candidate.manifest.judge;
     comparison = markdown([baseline, candidate]);
@@ -217,15 +243,41 @@ export async function runGate(
       Object.entries(current).filter(([id]) => candidate.manifest.scenarioIds?.includes(id)),
     );
     result = decide(measured, baseline, candidate);
-    if (options.resample && result.suspects.length) {
+    resampleSkipped = Boolean(options.resample && result.suspects.length && result.blocking.length);
+    if (
+      options.resample &&
+      options.runOptions &&
+      result.suspects.length &&
+      !result.blocking.length
+    ) {
+      const side = (label: string, manifest: RunManifest, extra: Partial<RunOptions>) =>
+        runSuite({
+          ...options.runOptions!,
+          label,
+          ref: resampleRef(manifest),
+          resume: false,
+          shard: undefined,
+          quiet: true,
+          model: manifest.model,
+          backgroundModel: manifest.backgroundModel,
+          effort: manifest.effort,
+          judge: manifest.judge,
+          ...extra,
+        });
       const extra = {
         scenarioIds: result.suspects,
         repeat: options.resample,
         k: options.resample,
         canary: false,
       };
-      const more = await side(`${label}-more`, undefined, extra);
-      const less = await side(`${named}-more`, options.baseline, extra);
+      const runs = await Promise.allSettled([
+        side(`${options.label}-more`, candidate.manifest, extra),
+        side(`${options.baselineLabel}-more`, baseline.manifest, extra),
+      ]);
+      const [more, less] = runs.map((run) => {
+        if (run.status === 'rejected') throw run.reason;
+        return run.value;
+      });
       resampled = true;
       result = decide(
         measured,
@@ -247,19 +299,20 @@ export async function runGate(
     verdictMarkdown(result, {
       model,
       judge,
-      baseline: options.baseline,
+      baseline: options.baselineName,
       skipped,
       compared: Boolean(comparison),
       resampled,
+      resampleSkipped,
     }),
     comparison,
   ]
     .filter(Boolean)
     .join('\n\n');
   await mkdir(options.root, { recursive: true });
-  await writeFile(join(options.root, `${label}-gate.md`), `${report}\n`);
+  await writeFile(join(options.root, `${options.label}-gate.md`), `${report}\n`);
   await writeFile(
-    join(options.root, `${label}-gate.json`),
+    join(options.root, `${options.label}-gate.json`),
     JSON.stringify(
       { verdict: result.verdict, blocking: result.blocking, unclear: result.unclear },
       null,
@@ -267,4 +320,31 @@ export async function runGate(
     ),
   );
   return { ...result, report };
+}
+
+export async function runGate(
+  options: RunOptions & { baseline: string; resample: number; label: string },
+) {
+  checkLabel(options.label);
+  const label = options.label;
+  const named = `${slug(options.baseline)}-for-${label}`.slice(0, 75);
+  const side = (name: string, ref: string | undefined) =>
+    runSuite({ ...options, label: name, ref, resume: false });
+  let failure: unknown;
+  try {
+    await side(label, undefined);
+    await side(named, options.baseline);
+  } catch (error) {
+    failure = error;
+  }
+  return evaluateGate({
+    root: options.root,
+    baselineLabel: named,
+    candidateLabel: label,
+    baselineName: options.baseline,
+    label,
+    resample: options.resample,
+    runOptions: options,
+    failure,
+  });
 }

@@ -1,10 +1,10 @@
 {
-  "version": "0.9.8",
-  "previousTag": "nod-v0.9.7",
-  "source": "052d1ac1681ccd85dc28a0c66f4c5416612e16d3",
-  "highlights": "## Nod reaches you on Telegram and WhatsApp 📱\n\nSchedule results, nudges and other messages Nod starts on its own now also go to Telegram or WhatsApp. They go to the one you wrote from last. Everything still shows in the Nod app.\n\nLinking now checks that it's really you. On Telegram, you press **Start** in your bot's chat. On WhatsApp, you write in **Message yourself** on the linked phone. To write from another phone, select **Write from another phone** and send the message that opens.\n\n**Channels** shows when your last message arrived. When you ask Nod why a channel is quiet, it can now check that channel instead of guessing.\n\nIf Telegram or WhatsApp stopped answering you, link again in **Channels**. On Telegram, open **Manage Telegram**, select **Link another account** and press **Start**. On WhatsApp, write in **Message yourself**, or select **Write from another phone**.\n\n## Fixed in this release\n\n- **Remembering:** When you ask Nod to remember something, it now saves it in any language. Before, it often saved nothing.\n- **Computer clock:** Telegram and WhatsApp messages no longer go missing when your computer's clock is wrong.",
+  "version": "0.10.0",
+  "previousTag": "nod-v0.9.8",
+  "source": "cdde2d12e35d02963659196a2190c4d85414ab5b",
+  "highlights": "After updating, sign in to websites again in Nod's browser. This release replaces the old saved browser sessions.\n\n## Answers you can use\n\nNod can now show lists, schedules, comparisons and message drafts as cards. Open a row for its details. Select an option to reply, or type your own answer. Lists of places can include a map. Draft messages show their recipients and text before you send them.\n\nTry asking: “Compare three places for our team lunch.”\n\n## New architecture: one browser for your work\n\nNod now uses one browser that keeps your website sign-ins. Each chat, task and scheduled run gets its own tab. Sign in once, then later tasks can use that sign-in. Tabs stay open while their jobs wait for you.\n\nJobs on the same website share its sign-in and shopping cart.\n\n## Give Nod several jobs\n\nSend several messages while Nod works. Nod reads them together and is guided to answer them in one reply. Separate requests can start separate tasks that run at the same time. Follow-up instructions count when Nod checks permission for the next action.\n\n## Also in this release\n\n- **Models:** New model selections start at medium reasoning effort. A badge marks the recommended model.\n- **App connections:** Before sign-in, see how your data travels and which services can read it.\n- **Schedules:** A saved schedule keeps its instructions after you stop the request that created it.\n- **Sign-in:** Nod asks for the fields needed by the selected sign-in method.",
   "video": {
-    "url": "https://github.com/user-attachments/assets/d0bd1801-f9e5-4df6-bcfe-096fcdf6bc3a",
-    "releaseSha256": "b50eee980604ad1801c7f9826a321d80b9724652f4f6c66751392d5462d1b33a"
+    "url": "https://github.com/user-attachments/assets/8d2022a3-619a-4029-a2f6-2f12de06d612",
+    "releaseSha256": "d235d1080ea6ba3f7c127697c867a9ae9ed4a893e4ea7ddb7d23b5c9e49671ee"
   }
 }

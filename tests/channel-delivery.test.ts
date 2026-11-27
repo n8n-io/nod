@@ -4669,6 +4669,35 @@ test(
       ])
         assert.ok(deliveredVenue.includes(detail), detail);
       assert.doesNotMatch(deliveredVenue, /artifactId|"photos"|api\/artifacts/);
+      const itemsWithChrome: Presentation = {
+        version: 1,
+        type: 'items',
+        title: 'Synthetic places',
+        sources: [],
+        items: [
+          {
+            title: 'Harbour',
+            image: { artifactId: image.id, alt: 'Harbour thumbnail' },
+            location: { latitude: -33.865, longitude: 151.209 },
+          },
+          {
+            title: 'Annex',
+            location: { latitude: -33.868, longitude: 151.211 },
+          },
+        ],
+        map: {
+          zoom: 14,
+          x: 15069,
+          y: 9830,
+          columns: 1,
+          tiles: [{ artifactId: image.id, alt: 'Map tile' }],
+        },
+      };
+      const itemsReply = await addReply(turnId, [], 'Compare these two places.', itemsWithChrome);
+      const beforeItems = sent.length;
+      await channels.drain();
+      assert.equal((await state(itemsReply)).state, 'sent');
+      assert.equal(sent.length, beforeItems);
       const chart: Presentation = {
         version: 1,
         type: 'chart',

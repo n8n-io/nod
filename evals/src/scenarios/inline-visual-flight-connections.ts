@@ -5,7 +5,7 @@ import { inlineVisualScenario, presentations } from '../world/inline-visuals.ts'
 const definition = inlineVisualScenario({
   id: 'inline-visual-flight-connections',
   title: 'Compare connecting flights without hiding transfer risks',
-  type: 'flights',
+  type: 'items',
   path: '/flights/lis-prg/connections',
   request: (date, source) =>
     `Compare the Lisbon to Prague options leaving on ${date} at ${source}. I need a cabin bag, want to arrive before noon the following day, and can spend €350 on flights. I prefer not to change airports or collect and recheck bags. Show the whole journey for each option here, including every flight and stop, and explain which you recommend and what is still uncertain. Don't book anything.`,
@@ -27,7 +27,7 @@ const definition = inlineVisualScenario({
 <p>Option B has a 3-hour overnight connection at AMS on one ticket, no airport change and no self-transfer. Total scheduled journey: 7h30. The source provides no minimum connection-time or immigration assessment. Search results are not guaranteed or booked.</p>`;
   },
   criterion:
-    'Preserve both options in native flight presentations and in a useful text comparison. Option A costs €260 for flights, has AV101 LIS–CDG, AV501 CDG–FRA operated by Alpine Regional with a 45-minute ZRH technical stop on the same aircraft, then CB210 HHN–PRG. It has two connections, not three; the technical stop remains inside AV501. Preserve the overnight 2h30 CDG connection and the 4-hour FRA-to-HHN airport change/self-transfer with separate final ticket. Ground transfer cost and connection feasibility are unknown; do not claim the whole trip is within €350, protected, safe or booked. Option B is €340, CA220 LIS–AMS then CA330 AMS–PRG, 3-hour overnight same-airport connection, one ticket and no self-transfer; recommend it as matching the stated preferences, without inventing a minimum-connection-time or visa check. Both arrive before noon the next day and include a cabin bag but no checked bag. Preserve the source dates, local times, time zones, operating carrier and distinct equipment per segment. A single route summary, prose-only hidden connections, or one shared aircraft for all legs fails. Do not invent terminals, availability, guaranteed fares or reservations.',
+    'Preserve both options as item cards whose journey timeline lists every flight as its own leg, and in a useful text comparison. Option A costs €260 for flights, has AV101 LIS–CDG, AV501 CDG–FRA operated by Alpine Regional with a 45-minute ZRH technical stop on the same aircraft, then CB210 HHN–PRG. It has two connections, not three; the technical stop remains inside AV501. Preserve the overnight 2h30 CDG connection and the 4-hour FRA-to-HHN airport change/self-transfer with separate final ticket. Ground transfer cost and connection feasibility are unknown; do not claim the whole trip is within €350, protected, safe or booked. Option B is €340, CA220 LIS–AMS then CA330 AMS–PRG, 3-hour overnight same-airport connection, one ticket and no self-transfer; recommend it as matching the stated preferences, without inventing a minimum-connection-time or visa check. Both arrive before noon the next day and include a cabin bag but no checked bag. Preserve the source dates, local times, time zones, operating carrier and distinct equipment per segment. A single route summary, prose-only hidden connections, or one shared aircraft for all legs fails. Do not invent terminals, availability, guaranteed fares or reservations.',
 });
 
 export default {
@@ -38,32 +38,29 @@ export default {
       check(
         'keeps-connections-and-technical-stops-in-their-segments',
         (run) => {
-          const visuals = presentations(run).filter((value) => value.type === 'flights') as Array<
-            Extract<Presentation, { type: 'flights' }>
+          const visuals = presentations(run).filter((value) => value.type === 'items') as Array<
+            Extract<Presentation, { type: 'items' }>
           >;
           const journeys = visuals.flatMap((value) =>
-            value.options.flatMap((option) => option.journeys ?? []),
+            value.items.flatMap((item) => item.journeys ?? []),
           );
           const journey = journeys.find(
             (value) =>
-              value.segments.length === 3 &&
-              value.segments
-                .map((segment) => segment.flightNumber?.replace(/\s+/g, '').toUpperCase())
-                .join('|') === 'AV101|AV501|CB210',
+              value.legs.length === 3 &&
+              value.legs
+                .map((leg) => leg.name.match(/\b[A-Z]{2}\s*\d+\b/i)?.[0].replace(/\s+/g, ''))
+                .join('|')
+                .toUpperCase() === 'AV101|AV501|CB210',
           );
-          const first = journey?.segments[0];
-          const middle = journey?.segments[1];
-          const last = journey?.segments[2];
+          const [first, middle, last] = journey?.legs ?? [];
           return {
             pass: Boolean(
-              first?.connectionAfter?.airportChange === 'no' &&
-              first.connectionAfter.selfTransfer === 'no' &&
-              middle?.technicalStops?.some((stop) => /\bZRH\b/i.test(stop.airport)) &&
-              middle.connectionAfter?.airportChange === 'yes' &&
-              middle.connectionAfter.selfTransfer === 'yes' &&
-              /\bFRA\b/i.test(middle.arrival.airport) &&
-              last &&
-              /\bHHN\b/i.test(last.departure.airport),
+              first &&
+              !/airport change|self[- ]?transfer/i.test(first.after ?? '') &&
+              /\bZRH\b/i.test(`${middle?.detail ?? ''} ${middle?.to.note ?? ''}`) &&
+              /\bFRA\b/i.test(middle?.to.place ?? '') &&
+              /airport|self[- ]?transfer|separate/i.test(middle?.after ?? '') &&
+              /\bHHN\b/i.test(last?.from.place ?? ''),
             ),
             evidence: JSON.stringify(journey ?? { journeys: journeys.length }),
           };

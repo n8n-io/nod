@@ -3,7 +3,7 @@ import { inlineVisualScenario } from '../world/inline-visuals.ts';
 export default inlineVisualScenario({
   id: 'inline-visual-flights',
   title: 'Compare flights with the cabin-bag cost included',
-  type: 'flights',
+  type: 'items',
   path: '/flights/lis-par',
   request: (date, source) =>
     `Compare the LIS to Paris flights for ${date} at ${source} in this chat. I need a cabin bag and want to arrive before 14:00 local time for under €180. Make the time and price trade-offs easy to compare and recommend one. Don't book.`,

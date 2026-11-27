@@ -169,30 +169,6 @@
 .choice-card-input input::placeholder {
   color: var(--muted-foreground);
 }
-.choice-card-send {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  color: var(--primary-foreground);
-  background: var(--primary);
-  cursor: pointer;
-}
-.choice-card-send[data-idle] {
-  visibility: hidden;
-}
-.choice-card-send[aria-disabled='true'] {
-  opacity: 0.45;
-  cursor: default;
-}
-.choice-card-send:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
 .choice-card-written {
   flex: 1;
   min-width: 0;

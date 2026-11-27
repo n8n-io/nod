@@ -120,14 +120,17 @@ export function createUpdateSource({
   repository = defaultRepository,
   os = process.platform === 'win32' ? 'win32' : 'darwin',
   arch = process.platform === 'darwin' ? process.arch : 'arm64',
+  packaging = 'flatpak',
   fetch: request = fetch,
 } = {}) {
   if (!/^[A-Za-z0-9-]+\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(repository))
     throw new Error('The desktop update repository is invalid.');
   if (os === 'darwin' && !['arm64', 'x64'].includes(arch))
     throw new Error('Unsupported Mac update architecture.');
-  if (!['darwin', 'win32'].includes(os)) throw new Error('Unsupported desktop update platform.');
-  const platform = os === 'win32' ? 'win32-x64' : `darwin-${arch}`;
+  if (!['darwin', 'linux', 'win32'].includes(os))
+    throw new Error('Unsupported desktop update platform.');
+  if (os === 'linux' && sourceUrl) throw new Error('Linux updates use the public GitHub release.');
+  const platform = { linux: 'linux-x64', win32: 'win32-x64' }[os] ?? `darwin-${arch}`;
   const metadataName = (name) => (arch === 'arm64' ? `${name}.json` : `${name}-darwin-x64.json`);
   const direct = (tag, name) =>
     `https://github.com/${repository}/releases/download/${tag}/${encodeURIComponent(name)}`;
@@ -143,6 +146,35 @@ export function createUpdateSource({
         manifest: await json(direct(tag, name), request, signal, 'application/octet-stream'),
       };
     };
+    if (os === 'linux') {
+      const rpm = packaging === 'rpm';
+      return {
+        async latest(currentVersion, signal) {
+          const found = await latestManifest(
+            rpm ? 'release-linux-x64-rpm.json' : 'release-linux-x64.json',
+            currentVersion,
+            signal,
+          );
+          if (!found) return undefined;
+          const { version, manifest } = found;
+          if (
+            manifest.version !== version ||
+            manifest.platform !== (rpm ? 'linux-x64-rpm' : platform) ||
+            !sourceHash.test(manifest.source) ||
+            (rpm
+              ? manifest.rpm?.file !== 'nod-linux-x64.rpm' ||
+                !hash.test(manifest.rpm.sha256) ||
+                !Number.isSafeInteger(manifest.rpm.bytes) ||
+                manifest.rpm.bytes < 1
+              : !hash.test(manifest.commit))
+          )
+            throw new Error('The desktop update metadata is incompatible.');
+          return rpm
+            ? { version, source: manifest.source }
+            : { version, source: manifest.source, commit: manifest.commit };
+        },
+      };
+    }
     if (os === 'win32')
       return {
         async runtimeDownloadUrl(runtime) {
@@ -493,6 +525,33 @@ export function createDesktopUpdater({
       });
       return restarting;
     },
+    dispose() {
+      disposed = true;
+      controller.abort();
+      return checking?.catch(() => {});
+    },
+  };
+}
+
+export function createNoticeUpdater({ source, currentVersion, command, onStatus = () => {} }) {
+  const controller = new AbortController();
+  let checking;
+  let disposed = false;
+  return {
+    ready: undefined,
+    check() {
+      if (disposed) return Promise.reject(new Error('Nod is closing.'));
+      if (!checking) onStatus('checking');
+      checking ??= source
+        .latest(currentVersion, controller.signal)
+        .then((candidate) => candidate && { ...candidate, command })
+        .finally(() => {
+          checking = undefined;
+          onStatus('idle');
+        });
+      return checking;
+    },
+    restart: () => Promise.reject(new Error(`Update Nod with your package manager: ${command}`)),
     dispose() {
       disposed = true;
       controller.abort();

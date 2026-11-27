@@ -77,6 +77,7 @@ export async function createVaultUses(
     created_at timestamptz NOT NULL DEFAULT now()
   );
   ALTER TABLE vault_uses ADD COLUMN IF NOT EXISTS root_turn_id uuid;
+  ALTER TABLE vault_uses ADD COLUMN IF NOT EXISTS turn_id uuid;
   CREATE INDEX IF NOT EXISTS vault_uses_owner ON vault_uses(owner_id,created_at DESC);`);
   await pool.query(
     'CREATE INDEX IF NOT EXISTS vault_uses_root ON vault_uses(owner_id,root_turn_id,origin,kind,item_id)',
@@ -145,9 +146,17 @@ export async function createVaultUses(
         if (prepared === false) return false;
         claimStarted = true;
         const claimed = await client.query(
-          `INSERT INTO vault_uses(id,owner_id,root_turn_id,origin,kind,item_id,status)
-         VALUES($1,$2,$3,$4,$5,$6,'running') ON CONFLICT DO NOTHING RETURNING id`,
-          [id, use.ownerId, use.rootTurnId ?? null, use.origin, use.kind, use.itemId ?? null],
+          `INSERT INTO vault_uses(id,owner_id,root_turn_id,turn_id,origin,kind,item_id,status)
+         VALUES($1,$2,$3,$4,$5,$6,$7,'running') ON CONFLICT DO NOTHING RETURNING id`,
+          [
+            id,
+            use.ownerId,
+            use.rootTurnId ?? null,
+            use.turnId,
+            use.origin,
+            use.kind,
+            use.itemId ?? null,
+          ],
         );
         if (!claimed.rowCount)
           throw new VaultUseError(

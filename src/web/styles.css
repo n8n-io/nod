@@ -7,6 +7,7 @@
 @import './components/presentation-travel.css';
 @import './components/presentation-places.css';
 @import './components/presentation-chart.css';
+@import './components/presentation-cards.css';
 
 @font-face {
   font-family: 'Geist';

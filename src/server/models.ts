@@ -37,6 +37,7 @@ import {
   bedrockRegionPattern,
   cloudflareAccountPattern,
   cloudflareGatewayPattern,
+  lighterEffort,
   lightestEffort,
   modelSource,
   openAIRegions,
@@ -749,7 +750,7 @@ export function createModelService(options: {
     return {
       connectionId: row.id,
       modelId: definition.choice.id,
-      effort: defaultEffort(definition.choice),
+      effort: lighterEffort(definition.choice.efforts, defaultEffort(definition.choice)),
     };
   }
   function textChoice(

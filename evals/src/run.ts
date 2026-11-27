@@ -18,6 +18,33 @@ import { createSpend, mergeAttemptCosts } from './spend.ts';
 
 export const defaultJudge = 'anthropic/claude-sonnet-5-5';
 
+export interface Shard {
+  index: number;
+  total: number;
+}
+
+export function parseShard(value: string | undefined): Shard | undefined {
+  if (value === undefined) return undefined;
+  const match = /^(\d+)\/(\d+)$/.exec(value.trim());
+  if (!match) throw new Error('--shard must be <index>/<total>, e.g. 1/4.');
+  const index = Number(match[1]);
+  const total = Number(match[2]);
+  if (
+    !Number.isInteger(index) ||
+    !Number.isInteger(total) ||
+    total < 1 ||
+    index < 1 ||
+    index > total
+  )
+    throw new Error('--shard must have 1 <= index <= total.');
+  return { index, total };
+}
+
+export function sliceShard<T>(items: T[], shard?: Shard) {
+  if (!shard || shard.total === 1) return items;
+  return items.filter((_, position) => position % shard.total === shard.index - 1);
+}
+
 export interface RunOptions {
   root: string;
   model?: string;
@@ -30,6 +57,7 @@ export interface RunOptions {
   tier: string;
   scenarioIds?: string[];
   capability?: string;
+  shard?: Shard;
   label?: string;
   ref?: string;
   resume: boolean;
@@ -42,7 +70,7 @@ export interface RunOptions {
   quiet?: boolean;
 }
 
-const git = (...parts: string[]) =>
+export const git = (...parts: string[]) =>
   execFileSync('git', parts, { cwd: repository, encoding: 'utf8' }).trim();
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 export const slug = (value: string) =>
@@ -50,6 +78,92 @@ export const slug = (value: string) =>
     .replace(/[^a-zA-Z0-9.]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 40);
+
+export async function mergeRuns(options: {
+  root: string;
+  labels: string[];
+  label: string;
+  overwrite?: boolean;
+}) {
+  const { root, labels, label } = options;
+  if (!labels.length) throw new Error('Give at least one run label to merge.');
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(label))
+    throw new Error('Labels must be simple file names.');
+  const directory = join(root, label);
+  const existing = await readdir(join(directory, 'attempts')).catch(() => [] as string[]);
+  if (existing.length && !options.overwrite)
+    throw new Error(`Run ${label} already exists. Choose another --label.`);
+  const runs = await Promise.all(
+    labels.map(async (name) => {
+      const dir = join(root, name);
+      const manifest = JSON.parse(
+        await readFile(join(dir, 'manifest.json'), 'utf8').catch(() => {
+          throw new Error(`No saved run called ${name}. Use "runs" to list them.`);
+        }),
+      ) as RunManifest;
+      return { manifest, attempts: await readAttempts(dir) };
+    }),
+  );
+  const first = runs[0].manifest;
+  const mismatch = (field: string, value: (manifest: RunManifest) => unknown) => {
+    const expected = value(first);
+    if (runs.some((run) => value(run.manifest) !== expected))
+      throw new Error(`Cannot merge runs with different ${field}.`);
+  };
+  mismatch('model', (manifest) => manifest.model);
+  mismatch('backgroundModel', (manifest) => manifest.backgroundModel ?? '');
+  const efforts = [...new Set(runs.map((run) => run.manifest.effort).filter(Boolean))];
+  if (efforts.length > 1) throw new Error('Cannot merge runs with different effort.');
+  mismatch('judge', (manifest) => manifest.judge);
+  mismatch('commit', (manifest) => manifest.commit);
+  mismatch('repeat', (manifest) => manifest.repeat);
+  mismatch('k', (manifest) => manifest.k);
+  mismatch('shard count', (manifest) => manifest.shard?.total ?? 0);
+  const seen = new Set<string>();
+  const attempts: AttemptResult[] = [];
+  for (const run of runs) {
+    for (const attempt of run.attempts) {
+      const slot = `${attempt.scenario}.${attempt.attempt}`;
+      if (seen.has(slot)) throw new Error(`Duplicate attempt ${slot} across merged runs.`);
+      seen.add(slot);
+      attempts.push(attempt);
+    }
+  }
+  attempts.sort((a, b) => a.scenario.localeCompare(b.scenario) || a.attempt - b.attempt);
+  const scenarioIds = [
+    ...new Set(
+      runs.flatMap((run) => run.manifest.shard?.scenarioIds ?? run.manifest.scenarioIds ?? []),
+    ),
+  ].sort();
+  const present = new Set(runs.map((run) => run.manifest.shard?.index));
+  const absentShards = Array.from({ length: first.shard?.total ?? 0 }, (_, i) => i + 1).filter(
+    (index) => !present.has(index),
+  );
+  const startedAt = runs.map((run) => run.manifest.startedAt).sort()[0];
+  const manifest: RunManifest = {
+    ...first,
+    ...(efforts[0] ? { effort: efforts[0] } : {}),
+    shard: undefined,
+    label,
+    startedAt,
+    dirty: runs.some((run) => run.manifest.dirty),
+    scenarioIds,
+    provenance: {
+      ...Object.fromEntries(
+        Object.keys(first.provenance).map((key) => [
+          key,
+          [...new Set(runs.map((run) => run.manifest.provenance[key]))].join(','),
+        ]),
+      ),
+      mergedFrom: labels.join(','),
+      ...(absentShards.length ? { missingShards: absentShards.join(',') } : {}),
+    },
+  };
+  const summary = summarize(manifest, attempts);
+  await saveRun(directory, manifest, attempts, summary);
+  await writeFile(join(directory, 'report.html'), html(summary, attempts));
+  return { label, directory, manifest, attempts, summary };
+}
 
 export function defaultModel(environment: Record<string, string | undefined>) {
   const provider = (environment.LLM_PROVIDER ||
@@ -74,7 +188,7 @@ export async function prepare(root: string) {
 export function select(
   options: Pick<
     RunOptions,
-    'tier' | 'scenarioIds' | 'capability' | 'ignoreWindow' | 'includePending'
+    'tier' | 'scenarioIds' | 'capability' | 'shard' | 'ignoreWindow' | 'includePending'
   >,
 ) {
   let chosen = scenarios.filter(
@@ -122,9 +236,9 @@ export function select(
     console.log(
       `Skipping ${outside.map((item) => item.id).join(', ')}: they depend on the time of day. Pass --ignore-window to run them anyway.`,
     );
-    return chosen.filter((item) => !outside.includes(item));
+    chosen = chosen.filter((item) => !outside.includes(item));
   }
-  return chosen;
+  return sliceShard(chosen, options.shard);
 }
 
 async function attemptOnce(options: {
@@ -133,9 +247,10 @@ async function attemptOnce(options: {
   backgroundModel?: string;
   effort?: ModelEffort;
   judge: string;
+  source?: string;
   task: { item: (typeof scenarios)[number]; attempt: number };
 }) {
-  const { directory, model, backgroundModel, effort, judge, task } = options;
+  const { directory, model, backgroundModel, effort, judge, source, task } = options;
   const file = join(directory, 'attempts', `${task.item.id}.${task.attempt}.json`);
   const specPath = join(tmpdir(), `nod-eval-${randomUUID()}.json`);
   await writeFile(
@@ -153,7 +268,11 @@ async function attemptOnce(options: {
   const child = spawn(
     process.execPath,
     ['--import', 'tsx', join(repository, 'evals/src/attempt.ts'), specPath],
-    { cwd: repository, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] },
+    {
+      cwd: repository,
+      env: { ...process.env, NOD_EVAL_SOURCE: source ?? '' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
   );
   let captured = '';
   for (const stream of [child.stdout, child.stderr])
@@ -204,7 +323,13 @@ async function attemptOnce(options: {
     });
 }
 
-async function checkHarness(model: string, judge: string, backgroundModel?: string) {
+async function checkHarness(
+  model: string,
+  judge: string,
+  backgroundModel?: string,
+  effort?: ModelEffort,
+  source?: string,
+) {
   const item = scenarios.find((entry) => entry.id === 'harness-canary')!;
   const directory = join(tmpdir(), `nod-eval-canary-${randomUUID()}`);
   await mkdir(join(directory, 'attempts'), { recursive: true });
@@ -217,7 +342,9 @@ async function checkHarness(model: string, judge: string, backgroundModel?: stri
       directory,
       model,
       backgroundModel,
+      effort,
       judge,
+      source,
       task: { item, attempt },
     });
     if (result.status === 'incomplete' && result.blame === 'infra' && faults < 2) {
@@ -247,28 +374,29 @@ export async function runSuite(options: RunOptions) {
   parseModel(judge, environment);
   const k = options.k ?? options.repeat;
   if (k > options.repeat) throw new Error('--k cannot exceed --repeat.');
-  const selected = select(options);
+  const planned = select({ ...options, shard: undefined });
+  const selected = sliceShard(planned, options.shard);
   const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
   const label = options.label ?? `${slug(model.split('/').pop()!)}-${stamp}`;
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(label))
     throw new Error('Labels must be simple file names.');
   const directory = join(options.root, label);
   const existing = await readdir(join(directory, 'attempts')).catch(() => [] as string[]);
+  let effort = options.effort;
   if (existing.length && !options.resume)
     throw new Error(`Run ${label} already exists. Choose another --label or pass --resume.`);
   if (existing.length) {
     const saved = JSON.parse(
       await readFile(join(directory, 'manifest.json'), 'utf8'),
     ) as Partial<RunManifest>;
-    const wanted = {
-      model,
-      backgroundModel: options.backgroundModel,
-      effort: options.effort ?? 'high',
-      judge,
-    };
-    const changed = (Object.keys(wanted) as Array<keyof typeof wanted>).filter(
-      (key) => (saved[key] ?? (key === 'effort' ? 'high' : undefined)) !== wanted[key],
+    const wanted = { model, backgroundModel: options.backgroundModel, judge };
+    const changed: string[] = (Object.keys(wanted) as Array<keyof typeof wanted>).filter(
+      (key) => saved[key] !== wanted[key],
     );
+    if (effort && effort !== saved.effort) changed.push('effort');
+    effort ??= saved.effort;
+    const shard = (value?: Shard) => (value ? `${value.index}/${value.total}` : '');
+    if (shard(saved.shard) !== shard(options.shard)) changed.push('shard');
     if (changed.length)
       throw new Error(
         `Run ${label} was saved with a different ${changed.join(', ')}. Resume it with the same options or choose another --label.`,
@@ -283,11 +411,11 @@ export async function runSuite(options: RunOptions) {
     source = join(tmpdir(), `nod-eval-ref-${refCommit.slice(0, 10)}-${randomUUID().slice(0, 6)}`);
     git('worktree', 'add', '--detach', source, refCommit);
     await symlink(join(repository, 'node_modules'), join(source, 'node_modules'));
-    process.env.NOD_EVAL_SOURCE = source;
-  } else delete process.env.NOD_EVAL_SOURCE;
+  }
+  const refSource = options.ref ? source : undefined;
   try {
     if (options.canary !== false && selected.some((item) => item.tier !== 'canary'))
-      await checkHarness(model, judge, options.backgroundModel);
+      await checkHarness(model, judge, options.backgroundModel, effort, refSource);
     const digest = async (image: string) =>
       (await runProcess('docker', ['image', 'inspect', image, '--format', '{{.Id}}'])).stdout
         .trim()
@@ -303,10 +431,13 @@ export async function runSuite(options: RunOptions) {
       ...(options.ref ? { ref: options.ref } : {}),
       model,
       ...(options.backgroundModel ? { backgroundModel: options.backgroundModel } : {}),
-      effort: options.effort ?? 'high',
+      ...(effort ? { effort } : {}),
       judge,
       repeat: options.repeat,
       scenarioIds: selected.map((item) => item.id),
+      ...(options.shard
+        ? { shard: { ...options.shard, scenarioIds: planned.map((item) => item.id) } }
+        : {}),
       k,
       provenance: {
         workspaceImage: await digest(environment.NOD_EVAL_WORKSPACE_IMAGE!),
@@ -371,8 +502,9 @@ export async function runSuite(options: RunOptions) {
             directory,
             model,
             ...(options.backgroundModel ? { backgroundModel: options.backgroundModel } : {}),
-            effort: options.effort ?? 'high',
+            effort,
             judge,
+            source: refSource,
             task,
           });
           attempted = true;
@@ -394,6 +526,10 @@ export async function runSuite(options: RunOptions) {
             await sleep(Math.min(30_000 * 3 ** tries, 90_000));
           } else accounting.add(result);
         }
+        if (!manifest.effort && result?.effort) {
+          manifest.effort = result.effort;
+          await saveRun(directory, manifest, []);
+        }
         if (discarded.length && attempted) {
           result = mergeAttemptCosts([...discarded, ...(result ? [result] : [])]);
           await writeFile(file, JSON.stringify(result, null, 2));
@@ -413,7 +549,7 @@ export async function runSuite(options: RunOptions) {
       }
     }
     console.log(
-      `Running ${tasks.length} attempts (${selected.length} scenarios × ${options.repeat}) with ${model}, judge ${judge}, concurrency ${options.concurrency}${options.ref ? `, code at ${options.ref}` : ''}`,
+      `Running ${tasks.length} attempts (${selected.length} scenarios × ${options.repeat}${options.shard ? `, shard ${options.shard.index}/${options.shard.total}` : ''}) with ${model}, judge ${judge}, concurrency ${options.concurrency}${options.ref ? `, code at ${options.ref}` : ''}`,
     );
     await Promise.all(Array.from({ length: Math.min(options.concurrency, tasks.length) }, worker));
     await pruneAttempts(

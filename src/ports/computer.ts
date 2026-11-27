@@ -73,6 +73,7 @@ export interface BrowserControl {
 export interface BrowserObservation {
   text: string;
   url: string;
+  unmet?: true;
 }
 export const browserRequestBytes = 16 * 1024 * 1024;
 export interface BrowserDownloadInput {

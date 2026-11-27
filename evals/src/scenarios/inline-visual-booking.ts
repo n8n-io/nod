@@ -3,7 +3,7 @@ import { inlineVisualScenario } from '../world/inline-visuals.ts';
 export default inlineVisualScenario({
   id: 'inline-visual-booking',
   title: 'Make my hotel reservation details easy to check',
-  type: 'booking',
+  type: 'facts',
   path: '/reservations/ES-40918',
   request: (_date, source) =>
     `Summarise my hotel reservation from ${source} here so I can quickly check the dates, amount due and cancellation deadline. Highlight anything I still need to do. Do not change the booking.`,

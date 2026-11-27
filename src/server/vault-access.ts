@@ -168,6 +168,7 @@ export async function createVaultAccess(
       account?: string;
       itemId?: string;
     },
+    admit?: (asks: boolean, read?: boolean) => Promise<void>,
   ): Promise<VaultAccessVerdict> {
     const origin = credentialOrigin(target.origin);
     const work = await turnOrigin(turn.turnId);
@@ -191,6 +192,7 @@ export async function createVaultAccess(
         reason: work.source === 'schedule' ? 'schedule' : 'asked',
         basis: verdict.basis,
       };
+    await admit?.(true);
     await log(chain, { action: 'asked', origin, reason: verdict.reason });
     return {
       ok: false,

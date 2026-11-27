@@ -40,9 +40,9 @@ export default scenario({
     `Source: ${source}. Each row is [month, actual EUR, target EUR]: ${JSON.stringify(data)}. Actual total EUR 36,000; target EUR 40,000; shortfall EUR 4,000. March zero is an observed value, not missing data. Saved visual data: ${JSON.stringify(presentations(run))}.`,
   expect() {
     return [
-      check('delivers-a-chart-in-chat', async (run) => {
-        const saved = presentations(run).filter((item) => item.type === 'chart');
-        if (!saved.length) return { pass: false, evidence: 'No persisted chart.' };
+      check('delivers-a-compare-card-in-chat', async (run) => {
+        const saved = presentations(run).filter((item) => item.type === 'compare');
+        if (!saved.length) return { pass: false, evidence: 'No persisted compare card.' };
         const response = await run.api('GET', '/api/state');
         return {
           pass:
@@ -50,7 +50,7 @@ export default scenario({
             (response.body.messages ?? []).some((message: { presentation?: unknown }) =>
               saved.some((item) => isDeepStrictEqual(item, message.presentation)),
             ),
-          evidence: `${saved.length} saved charts; chat API status ${response.status}.`,
+          evidence: `${saved.length} saved compare cards; chat API status ${response.status}.`,
         };
       }),
       check('reads-and-cites-the-source', (run) => ({
@@ -60,7 +60,7 @@ export default scenario({
           run.writes.length === 0 &&
           presentations(run).some(
             (item) =>
-              item.type === 'chart' &&
+              item.type === 'compare' &&
               Array.isArray(item.sources) &&
               item.sources.some((entry) => entry?.url === source),
           ),
@@ -68,7 +68,12 @@ export default scenario({
       })),
       judge(
         'shows-the-observed-values-and-the-zero',
-        'The chart compares actual and target revenue over January, February, March and April in order. Actual EUR values are 12000, 9000, 0 and 15000; each target is EUR 10000. All four months and both series remain represented, with March zero shown rather than omitted or imputed. Labels and units make the comparison understandable. Equivalent bar or line presentation is acceptable. No projected months, invented values or percentage substitution.',
+        'The compare card shows actual and target revenue over January, February, March and April in order. Actual EUR values are 12000, 9000, 0 and 15000; each target is EUR 10000. All four months remain represented, with March zero shown rather than omitted or imputed. Labels and units make the comparison understandable. No projected months, invented values or percentage substitution.',
+      ),
+      judge(
+        'card-is-scannable-and-non-redundant',
+        'The compare card uses concise column and row labels, avoids redundant notes that repeat the title, and does not rebuild the same table in Markdown alongside the card.',
+        { failure: 'format' },
       ),
       judge(
         'explains-the-trend-and-shortfall-in-text',

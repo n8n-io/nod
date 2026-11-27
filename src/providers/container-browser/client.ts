@@ -29,7 +29,9 @@ import {
 } from './protocol.ts';
 
 const viewFrameLine = 4 * 1024 * 1024 + 256;
-const observationSchema = z.object({ text: z.string(), url: z.string() }).strict();
+const observationSchema = z
+  .object({ text: z.string(), url: z.string(), unmet: z.literal(true).optional() })
+  .strict();
 const controls = z
   .array(z.object({ role: z.string().max(100), name: z.string().max(300) }).strict())
   .max(3);

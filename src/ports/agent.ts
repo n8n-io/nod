@@ -116,6 +116,8 @@ export interface RuntimeContext {
   background?: boolean;
   scheduleCache?: 'short' | 'long';
   model?: ModelSelection;
+  modelChosen?: boolean;
+  delegateModel?: ModelSelection;
   channel?: string;
   runtimeHost?: 'desktop' | 'server';
   timeZone?: string;
@@ -169,6 +171,7 @@ export interface RuntimeContext {
   previousFailure?: string;
   withdrawnRequest?: 'stopped' | 'failed';
   confirmedActions?: string[];
+  approvals?: Array<{ title: string; status: string; createdAt: string }>;
   credentialRequests?: Array<
     Pick<CredentialRequest, 'turnId' | 'origin' | 'label' | 'kind' | 'status' | 'notEntered'>
   >;
@@ -195,7 +198,7 @@ export interface RuntimeContext {
   reply(
     text: string,
     streamId?: string,
-    replyToMessageId?: string,
+    replyToMessageId?: string | null,
     presentation?: Presentation,
     handoff?: boolean,
   ): Promise<void>;
@@ -213,6 +216,7 @@ export interface RuntimeContext {
   ): Promise<unknown>;
   browserStep?(
     request: BrowserStep,
+    admit?: (asks: boolean, read?: boolean) => Promise<void>,
   ): Promise<
     | 'run'
     | 'refused'
@@ -250,8 +254,12 @@ export interface RuntimeContext {
           methods: { label: string; selector: string }[];
         }
     ),
+    admit?: (asks: boolean, read?: boolean) => Promise<void>,
   ): Promise<{ url: string } | { filled: true } | { [appConfirmation]: string }>;
-  requestPayment?(input: unknown): Promise<{ question: string; action: string; url?: string }>;
+  requestPayment?(
+    input: unknown,
+    admit?: (asks: boolean, read?: boolean) => Promise<void>,
+  ): Promise<{ question: string; action: string; url?: string }>;
   integration(
     action: string,
     args: Record<string, unknown>,
@@ -275,11 +283,13 @@ export interface RuntimeContext {
       attachments: RuntimeContext['attachments'];
     }>
   >;
+  hasQueuedMessages?(): Promise<boolean>;
 }
 export interface RuntimeResult {
   status: 'succeeded' | 'waiting_credentials' | 'waiting_user';
   waitingFor?: 'question' | 'approval' | 'credentials';
   message?: string;
+  replyToMessageId?: string | null;
   answerChoices?: AnswerChoices;
   handoffBrowserId?: string;
   result?: string;
@@ -308,6 +318,7 @@ export interface AgentToolMetadata {
 }
 export interface AgentTool extends AgentToolMetadata {
   parallel?: boolean;
+  early?: boolean;
   execute(args: Record<string, unknown>, options?: { nested?: boolean }): Promise<AgentToolResult>;
 }
 export interface SkillLibrary {
@@ -337,6 +348,7 @@ export type AgentEvent =
       type: 'message_end';
       status?: 'succeeded' | 'failed' | 'cancelled' | 'incomplete';
       contextExhausted?: boolean;
+      beforeTool?: string;
     }
   | { type: 'text_delta'; text: string }
   | { type: 'thinking'; title: string }
@@ -359,6 +371,7 @@ export interface AgentToolOutcome {
 }
 export interface AgentSessionOptions extends ExecutionScope {
   model?: ModelSelection;
+  lighterEffort?: boolean;
   automatic?: boolean;
   restricted?: boolean;
   ephemeral?: boolean;

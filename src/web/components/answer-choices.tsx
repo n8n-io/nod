@@ -7,7 +7,7 @@ import {
 import type { Message } from '../../shared/contracts';
 import { errorMessage } from '../lib/api';
 import { analyticsForCurrentSession, observeAnalyticsView } from '../lib/analytics';
-import { ArrowUp, Check, PenLine } from './icons';
+import { Check, PenLine } from './icons';
 
 export interface AnswerChoicesProps {
   choices: AnswerChoicesValue;
@@ -64,7 +64,7 @@ export function AnswerChoices({
   const { multiple, options } = choices;
   const locked = disabled || busy;
   const typed = text.trim();
-  const picked = options.filter((option) => selected.includes(option.id));
+  const picked = options.filter((option) => selected.includes(option.id) && (multiple || !typed));
   const count = picked.length + (typed ? 1 : 0);
 
   useEffect(() => {
@@ -132,7 +132,7 @@ export function AnswerChoices({
   }
 
   function finish() {
-    void answer(multiple ? picked : [], typed);
+    void answer(picked, typed);
   }
 
   if (submitted === 'unavailable' || !options.length) return <>{title}</>;
@@ -157,22 +157,30 @@ export function AnswerChoices({
           </p>
         )}
       </div>
-      <div className="choice-card-list" role="group" aria-labelledby={`${id}-question`}>
+      <div
+        className="choice-card-list"
+        role={multiple ? 'group' : 'radiogroup'}
+        aria-labelledby={`${id}-question`}
+      >
         {options.map((option, index) => {
-          const on = selected.includes(option.id);
+          const on = picked.includes(option);
           return (
             <button
               key={option.id}
               type="button"
               className="answer-choice choice-card-row"
-              aria-pressed={multiple ? on : undefined}
+              {...(multiple ? { 'aria-pressed': on } : { role: 'radio', 'aria-checked': on })}
               aria-disabled={locked}
               onClick={() => {
                 if (unavailable.current || pending.current) return;
                 setError('');
-                if (!multiple) return void answer([option], '');
+                if (!multiple) setText('');
                 setSelected((current) =>
-                  on ? current.filter((value) => value !== option.id) : [...current, option.id],
+                  !multiple
+                    ? [option.id]
+                    : on
+                      ? current.filter((value) => value !== option.id)
+                      : [...current, option.id],
                 );
               }}
             >
@@ -184,7 +192,7 @@ export function AnswerChoices({
           );
         })}
         <div className="choice-card-row choice-card-input">
-          <ChoiceBadge on={multiple && Boolean(typed)}>
+          <ChoiceBadge on={Boolean(typed)}>
             <PenLine size={14} />
           </ChoiceBadge>
           <input
@@ -204,41 +212,23 @@ export function AnswerChoices({
               finish();
             }}
           />
-          {!multiple && (
-            <button
-              type="button"
-              className="answer-choices-send choice-card-send"
-              aria-label="Send answer"
-              aria-hidden={!typed || undefined}
-              tabIndex={typed ? undefined : -1}
-              data-idle={!typed || undefined}
-              aria-disabled={locked}
-              onClick={finish}
-            >
-              <ArrowUp size={16} />
-            </button>
-          )}
         </div>
       </div>
-      {(multiple || error) && (
-        <div className="choice-card-footer">
-          {error && (
-            <p className="choice-card-error" role="alert">
-              {error}
-            </p>
-          )}
-          {multiple && (
-            <button
-              type="button"
-              className="answer-choices-done choice-card-done"
-              aria-disabled={locked || !count}
-              onClick={finish}
-            >
-              Done
-            </button>
-          )}
-        </div>
-      )}
+      <div className="choice-card-footer">
+        {error && (
+          <p className="choice-card-error" role="alert">
+            {error}
+          </p>
+        )}
+        <button
+          type="button"
+          className="answer-choices-done choice-card-done"
+          aria-disabled={locked || !count}
+          onClick={finish}
+        >
+          Send
+        </button>
+      </div>
     </section>
   );
 }

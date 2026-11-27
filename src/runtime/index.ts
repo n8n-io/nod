@@ -2,6 +2,7 @@ import type { FlightSearch } from '../ports/flights.ts';
 import { presentationInputSchema, type Presentation } from '../shared/presentation.ts';
 import { proactiveUpdateSchema, sourceReadSchema } from '../shared/proactivity.ts';
 import { appPages } from '../shared/app-links.ts';
+import { splitQuestion } from '../shared/answer-choices.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
@@ -17,6 +18,7 @@ import type {
   AgentTool,
   AgentToolOutcome,
   AgentToolResult,
+  BrowserStep,
   Documentation,
   ModelFailure,
   RuntimeContext,
@@ -46,7 +48,6 @@ import {
   systemPrompt,
 } from './prompt.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
-import { repeatsTaskStart } from '../shared/task-ack.ts';
 import { currentUserTime, localResultTimes } from './time-context.ts';
 import { connectedTools, mcpNamespaces, nodTools } from './tools.ts';
 import type { ReplyDelivery, Turn } from './turn.ts';
@@ -278,6 +279,7 @@ export function createAgentRuntime(dependencies: {
     const progress = toolProgress();
     let completed = false;
     let lastReply = '';
+    let lastReplyTo: string | null | undefined;
     let lastPresentation = '';
     let fallbackNoted: string | undefined;
     let checkInSpent = context.checkIn?.spentUsd ?? 0;
@@ -313,13 +315,16 @@ export function createAgentRuntime(dependencies: {
     let streamedText = '';
     let streamSubmitted = false;
     let speakNext = !context.taskContext;
-    let replyOwed = false;
+    let owed: string[] = [];
+    let owedRefused = false;
+    let spoke = false;
+    let waitingReplyTo: string | undefined;
     let answered = false;
     let lastNote = '';
     let reported = false;
     let finalDelivered = false;
     let requestRevision = 0;
-    let taskStart: { revision: number; message: string; previousReply: string } | undefined;
+    let taskStartRevision: number | undefined;
     const activeToolCalls = new Set<Promise<unknown>>();
     const observe = (event: RuntimeObservation) => {
       if (signal.aborted && !(event.type === 'tool_end' && event.status === 'cancelled')) return;
@@ -345,33 +350,81 @@ export function createAgentRuntime(dependencies: {
     let taskResult = '';
     let screened = false;
     const speaks = !context.proactivity && (!context.background || Boolean(context.taskContext));
+    const stripToolMarkup = (text: string) =>
+      text
+        .replace(/<invoke\b[\s\S]*?(?:<\/invoke>|$)/gi, '')
+        .replace(/<\/?(?:invoke|parameter|function_calls|antml:[a-z_]+)\b[^>]*>/gi, '')
+        .replace(/[\u200b\ufeff]+$/g, '')
+        .trim();
+    const words = (text: string) => new Set(text.match(/[\p{L}\p{N}]+/gu) ?? []);
+    const restates = (text: string, earlier: string) => {
+      if (text === earlier) return true;
+      if (!earlier) return false;
+      const lower = (set: Set<string>) => new Set([...set].map((word) => word.toLowerCase()));
+      const [a, b] = [lower(words(text)), lower(words(earlier))];
+      if (a.size < 6 || !b.size) return false;
+      for (const word of a) if (!b.has(word)) return false;
+      return true;
+    };
     const deliverReply = async (
       text: string,
       id?: string,
-      replyToMessageId?: string,
+      replyToMessageId?: string | null,
       presentation?: Presentation,
       handoff?: boolean,
     ): Promise<ReplyDelivery> => {
       signal.throwIfAborted();
-      const trimmed = text.trim();
+      const trimmed = stripToolMarkup(text);
       const visual = presentation ? JSON.stringify(presentation) : '';
       const outcome: ReplyDelivery['presentation'] = presentation ? 'original' : 'none';
+      const sameTarget = !replyToMessageId || !lastReplyTo || replyToMessageId === lastReplyTo;
       if (
         (!trimmed && !visual) ||
-        (trimmed === lastReply && (!visual || visual === lastPresentation))
+        (sameTarget && restates(trimmed, lastReply) && (!visual || visual === lastPresentation))
       )
         return { delivered: false, presentation: outcome };
       if (handoff) await context.reply(trimmed, id, replyToMessageId, presentation, true);
       else await context.reply(trimmed, id, replyToMessageId, presentation);
       lastPresentation = visual;
+      lastReplyTo = replyToMessageId;
       if (id) persistedStreams.add(id);
       lastReply = trimmed;
-      replyOwed = false;
       return { delivered: true, presentation: outcome };
     };
     const reply = deliverReply;
+    const answerFirst = (question = false) => {
+      if (!owed.length || owedRefused || !speaks) return;
+      owedRefused = true;
+      throw new Error(
+        `Not run, and no question was asked: the owner's latest messages have no answer yet. ${question ? 'Put the answer to anything else they asked first, as its own paragraph, then the question alone, and call this again. If the question is all the answer they need, call it again unchanged' : 'Answer them in text now, then call this again'}.`,
+      );
+    };
+    let unreadRefused = -1;
+    const unread = async () =>
+      speaks && Boolean(context.hasQueuedMessages) && (await context.hasQueuedMessages!());
+    const readFirst = async () => {
+      if (unreadRefused === requestRevision || !(await unread())) return;
+      unreadRefused = requestRevision;
+      throw new Error(
+        'Not run, and no question was asked: the owner sent new messages you have not read yet. They follow this result; read them, then ask only if you still need to.',
+      );
+    };
     let handoffBrowserId: string | undefined;
-    const pause: Turn['pause'] = async (reason, message, choices) => {
+    let deferredPause:
+      | {
+          reason: Parameters<Turn['pause']>[0];
+          message?: string;
+          choices?: Parameters<Turn['pause']>[2];
+          replyToMessageId?: string;
+        }
+      | undefined;
+    let pausePromise: Promise<void> | undefined;
+    const commitPause = async (
+      reason: Parameters<Turn['pause']>[0],
+      message?: string,
+      choices?: Parameters<Turn['pause']>[2],
+      replyToMessageId?: string,
+    ) => {
       if (browsed) {
         const hold = computer.hold(browserId, true);
         if (reason === 'browser') await hold;
@@ -380,10 +433,30 @@ export function createAgentRuntime(dependencies: {
       status = reason === 'credentials' ? 'waiting_credentials' : 'waiting_user';
       waitingFor = reason === 'browser' ? 'question' : reason;
       waitingMessage = message;
+      waitingReplyTo = reason === 'question' ? replyToMessageId : undefined;
       answerChoices = reason === 'question' ? choices : undefined;
       if (reason === 'browser') handoffBrowserId = browserId;
       stopped = true;
       abortSession();
+    };
+    const pause: Turn['pause'] = async (reason, message, choices, options) => {
+      if (reason === 'question') {
+        if (!options?.answered && !splitQuestion(message ?? '').lead) answerFirst(true);
+        if (options?.answered && options.deferred && (await unread())) return false;
+        await readFirst();
+      }
+      if (options?.deferred) {
+        deferredPause = {
+          reason,
+          message,
+          choices,
+          replyToMessageId: options.replyToMessageId,
+        };
+        return true;
+      }
+      deferredPause = undefined;
+      await commitPause(reason, message, choices, options?.replyToMessageId);
+      return true;
     };
     const confirm = async (result: unknown) => {
       if (!(result && typeof result === 'object' && appConfirmation in result)) return result;
@@ -395,7 +468,7 @@ export function createAgentRuntime(dependencies: {
 
     const flushText = () => {
       if (bufferedText && !stopped && speaks) {
-        if ((speakNext || replyOwed) && (taskStart?.revision !== requestRevision || replyOwed))
+        if ((speakNext || owed.length) && (taskStartRevision !== requestRevision || owed.length))
           context.delta(bufferedText, (streamId ??= randomUUID()));
         streamedText += bufferedText;
       }
@@ -403,6 +476,9 @@ export function createAgentRuntime(dependencies: {
     };
     const queueStreamReply = (text: string, id: string) => {
       streamSubmitted = true;
+      if (!context.taskContext) {
+        spoke = true;
+      }
       pendingReplies = pendingReplies
         .then(async () => {
           await reply(text, id);
@@ -604,15 +680,18 @@ export function createAgentRuntime(dependencies: {
           if (
             name === 'send_message' ||
             name === 'create_audio' ||
-            (name === 'task' && (params as { action?: unknown } | null)?.action === 'start')
+            (name === 'task' &&
+              ['start', 'reply'].includes(String((params as { action?: unknown } | null)?.action)))
           )
             reported = true;
-          if (name === 'task' && (params as { action?: unknown } | null)?.action === 'start')
-            taskStart = {
-              revision,
-              message: String((params as { message?: unknown }).message ?? ''),
-              previousReply: lastReply,
-            };
+          if (
+            name === 'task' &&
+            ['start', 'reply'].includes(String((params as { action?: unknown } | null)?.action))
+          ) {
+            taskStartRevision = revision;
+            const request = (params as { request?: unknown }).request;
+            owed = owed.filter((owedId) => owedId !== request);
+          }
           const { commandOutput: fullOutput, ...toolResult } = isToolResult(output)
             ? output
             : textResult(output);
@@ -634,9 +713,17 @@ export function createAgentRuntime(dependencies: {
                 },
               ),
             );
+          const notice =
+            output === confirmationNotice ||
+            (name === 'browser' &&
+              (params as { action?: unknown })?.action === 'steps' &&
+              typeof output === 'object' &&
+              output !== null &&
+              Object.keys(output).join() === 'steps,stopped,result' &&
+              (output as { result?: unknown }).result === confirmationNotice);
           if (
             !nested &&
-            output !== confirmationNotice &&
+            !notice &&
             (delimitedTools.has(name) || name.startsWith('mcp__') || catalogResult)
           )
             result = delimit(
@@ -651,7 +738,7 @@ export function createAgentRuntime(dependencies: {
                 ? context.timeZone
                 : undefined,
             );
-          else if (!nested && output !== confirmationNotice) {
+          else if (!nested && !notice) {
             const times = localResultTimes(
               result.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])),
               context.timeZone,
@@ -782,6 +869,10 @@ export function createAgentRuntime(dependencies: {
         const gate = {
           asked: false,
           admit: async (asks: boolean, read = false) => {
+            if (asks) {
+              answerFirst();
+              await readFirst();
+            }
             if (!asks) decide(false);
             if (!read && (await earlier))
               throw new Error(
@@ -857,6 +948,7 @@ export function createAgentRuntime(dependencies: {
               ...(tool.companions ? { companions: tool.companions } : {}),
               ...(deferred ? { deferred } : {}),
               parallel: Boolean(deferred) || parallelTools.has(name),
+              ...(name === 'send_message' ? { early: true } : {}),
               execute: async (params, options) => {
                 assertActive();
                 if (browserTools.has(name)) await take();
@@ -913,9 +1005,23 @@ export function createAgentRuntime(dependencies: {
           ),
         ownerContext: compactOwnerContext(context),
       };
+      const ownerGate = () =>
+        admissions.getStore()?.admit ??
+        (async (asks: boolean) => {
+          if (!asks) return;
+          answerFirst();
+          await readFirst();
+        });
       const shared = {
         context: {
           ...context,
+          requestCredential: (input: Parameters<RuntimeContext['requestCredential']>[0]) =>
+            context.requestCredential(input, ownerGate()),
+          ...(context.requestPayment
+            ? {
+                requestPayment: (input: unknown) => context.requestPayment!(input, ownerGate()),
+              }
+            : {}),
           integration: (
             action: string,
             args: Record<string, unknown>,
@@ -943,6 +1049,11 @@ export function createAgentRuntime(dependencies: {
               context.memoryBrief = undefined;
             return result;
           },
+          ...(context.browserStep
+            ? {
+                browserStep: (request: BrowserStep) => context.browserStep!(request, ownerGate()),
+              }
+            : {}),
         },
         computer: browser,
         reply: async (
@@ -951,8 +1062,20 @@ export function createAgentRuntime(dependencies: {
           replyToMessageId?: string,
           presentation?: Presentation,
           handoff?: boolean,
+          partial?: boolean,
         ) => {
-          return reply(text, id, replyToMessageId, presentation, handoff);
+          const chat = !context.taskContext && !handoff;
+          const delivery = await reply(text, id, replyToMessageId, presentation, handoff);
+          if (delivery.delivered && chat && !partial) {
+            spoke = true;
+          }
+          if (delivery.delivered && !handoff)
+            owed = replyToMessageId
+              ? owed.filter((owedId) => owedId !== replyToMessageId)
+              : partial
+                ? owed
+                : [];
+          return delivery;
         },
         pause,
         checkInCost: () =>
@@ -984,16 +1107,64 @@ export function createAgentRuntime(dependencies: {
         assertActive();
         let browsed = false;
         let answer = '';
+        let partialAnswer = '';
+        let draftText = '';
+        let partialFresh = false;
+        let draftFresh = false;
+        const childFindings: string[] = [];
         let failure: string | undefined;
         let incomplete = false;
         let completed = false;
         const childProgress = toolProgress();
+        let childSteps = 0;
+        let capped = false;
+        const maxChildSteps = 6;
+        const spent = () =>
+          Promise.reject(new Error('No tool steps are left. Answer now with what you found.'));
+        const recordFinding = (name: string, output: unknown) => {
+          partialFresh = false;
+          draftFresh = false;
+          const text = isToolResult(output)
+            ? output.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n')
+            : typeof output === 'string'
+              ? output
+              : JSON.stringify(output);
+          const compact = text.trim();
+          if (!compact) return;
+          const limit = 1_500;
+          childFindings.push(
+            `${name}: ${compact.length > limit ? `${compact.slice(0, limit)}…` : compact}`,
+          );
+          if (childFindings.length > maxChildSteps) childFindings.shift();
+        };
+        const collectedAnswer = () =>
+          answer.trim() ||
+          (draftFresh && draftText.trim()) ||
+          (partialFresh && partialAnswer.trim()) ||
+          (childFindings.length
+            ? `Partial findings before stopping:\n${childFindings.join('\n\n')}`
+            : '') ||
+          partialAnswer.trim() ||
+          draftText.trim();
+        const childTool = sandboxTool(source, childPath);
+        const childTimeoutMs = 45_000;
+        let childTimedOut = false;
+        const childTimer = setTimeout(() => {
+          childTimedOut = true;
+          void Promise.resolve()
+            .then(() => child?.abort())
+            .catch(() => {});
+        }, childTimeoutMs);
+        childTimer.unref?.();
         await context.emit('agent_start', title, { execution: source });
         let child: AgentSession | undefined;
         try {
           child = await agent.open({
             ...source,
-            ...(context.model ? { model: context.model } : {}),
+            ...((context.delegateModel ?? context.model)
+              ? { model: context.delegateModel ?? context.model }
+              : {}),
+            ...(context.modelChosen ? {} : { lighterEffort: true }),
             automatic: Boolean(context.automatic),
             ephemeral: true,
             systemPrompt: system,
@@ -1001,16 +1172,55 @@ export function createAgentRuntime(dependencies: {
             compactInstructions,
             tools: bind({ ...shared, execution: source }, async () => {
               browsed = true;
-            }).filter((tool) => !parentTools.has(tool.name)),
+            })
+              .filter((tool) => !parentTools.has(tool.name))
+              .map((tool) => ({
+                ...tool,
+                execute: async (params, options) => {
+                  if (capped) return spent();
+                  partialFresh = false;
+                  draftFresh = false;
+                  const result = await tool.execute(params, options);
+                  recordFinding(tool.name, result);
+                  return result;
+                },
+              })),
             workspace: { ...workspace, path: childPath },
             timeZone: context.timeZone,
-            runTool: sandboxTool(source, childPath),
-            shouldStop: (results) => stopped || overBudget() || childProgress.stopped(results),
+            runTool: async (name, params, run, options) => {
+              if (capped) return spent();
+              partialFresh = false;
+              draftFresh = false;
+              const result = await childTool(name, params, run, options);
+              recordFinding(name, result);
+              return result;
+            },
+            shouldStop: (results) => {
+              if (stopped || overBudget() || childProgress.stopped(results) || capped) return true;
+              capped = ++childSteps >= maxChildSteps;
+              return false;
+            },
             onEvent: (event) => {
               countUsage(event);
-              if (event.type === 'final') answer = event.text;
+              if (event.type === 'message_start') {
+                draftText = '';
+                draftFresh = true;
+              }
+              if (event.type === 'text_delta') draftText += event.text;
+              if (event.type === 'message_end') {
+                if (draftText.trim()) {
+                  partialAnswer = draftText.trim();
+                  partialFresh = draftFresh && !event.beforeTool;
+                }
+                draftText = '';
+                draftFresh = false;
+                if (event.status === 'incomplete') incomplete = true;
+              }
+              if (event.type === 'final') {
+                answer = event.text;
+                draftText = '';
+              }
               if (event.type === 'error') failure = event.message;
-              if (event.type === 'message_end' && event.status === 'incomplete') incomplete = true;
               if (
                 event.type === 'final' ||
                 (event.type === 'message_end' && event.status === 'succeeded')
@@ -1023,16 +1233,24 @@ export function createAgentRuntime(dependencies: {
           children.add(child);
           assertActive();
           await child.prompt(
-            `${currentUserTime(context.timeZone)}\nYou are a subagent doing one part of the owner's request: ${title}\n${instruction}\nYour working directory is ${childPath}. Write new files there. The shared workspace is ${workspace.path}. Give complete file paths in your answer. Return any question or browser blocker to the parent agent. Do not hand your browser to the owner. Your final answer goes back to the parent agent, so include every result it needs.`,
+            `${currentUserTime(context.timeZone)}\nYou are a subagent doing one part of the owner's request: ${title}\n${instruction}\nBe fast and focused: you have at most ${maxChildSteps} tool steps and ${Math.round(childTimeoutMs / 1000)} seconds. Use web_search, fetch_content or a few targeted browser steps; if a site blocks you or takes more than 2–3 tries, report what you found so far instead of looping. Your working directory is ${childPath}. Write new files there. The shared workspace is ${workspace.path}. Give complete file paths in your answer. Return any question or browser blocker to the parent agent. Do not hand your browser to the owner. Your final answer goes back to the parent agent, so include every result it needs.`,
             [],
           );
           if (childProgress.error)
             throw new ToolFailureError((dependencies.redactError ?? String)(childProgress.error));
+          if (childTimedOut && !stopped) {
+            completed = true;
+            return (
+              collectedAnswer() ||
+              `Timed out after ${Math.round(childTimeoutMs / 1000)}s while working on "${title}". Use what other subagents found or try one quick lookup.`
+            );
+          }
           if (failure) throw new Error(`The subagent model request failed: ${failure}`);
           if (incomplete) throw new Error('The subagent response was incomplete.');
           assertActive();
           completed = true;
         } finally {
+          clearTimeout(childTimer);
           if (child) children.delete(child);
           await Promise.resolve()
             .then(() => child?.dispose())
@@ -1047,7 +1265,7 @@ export function createAgentRuntime(dependencies: {
             .catch(() => {});
         }
         signal.throwIfAborted();
-        return answer || 'The subagent finished without an answer.';
+        return collectedAnswer() || 'The subagent finished without an answer.';
       };
       const tools = bind(
         {
@@ -1150,6 +1368,7 @@ export function createAgentRuntime(dependencies: {
       const opening = agent.open({
         ...execution,
         ...(context.model ? { model: context.model } : {}),
+        ...(context.taskContext && !context.modelChosen ? { lighterEffort: true } : {}),
         automatic: Boolean(context.automatic),
         contextRestart: context.contextRestart,
         ...(context.proactivity ? { restricted: true } : {}),
@@ -1167,6 +1386,17 @@ export function createAgentRuntime(dependencies: {
         timeZone: context.timeZone,
         runTool: sandboxTool(execution, workspace.path),
         shouldStop: (results) => {
+          if (deferredPause && !results?.some((result) => result.error !== undefined)) {
+            const pending = deferredPause;
+            deferredPause = undefined;
+            pausePromise = commitPause(
+              pending.reason,
+              pending.message,
+              pending.choices,
+              pending.replyToMessageId,
+            );
+            return true;
+          }
           if (stopped || finalDelivered) return true;
           if (progress.stopped(results)) return true;
           if (checkInBlocked) checkInStrikes++;
@@ -1184,15 +1414,17 @@ export function createAgentRuntime(dependencies: {
               finalDelivered = false;
               context.memoryBrief = undefined;
               checkInSpent = checkInPlan = checkInStrikes = 0;
-              replyOwed = true;
+              owed = [...owed, ...incoming.map((message) => message.id)];
+              owedRefused = false;
             }
-            for (const message of incoming) {
+            for (const [index, message] of incoming.entries()) {
+              const batch = { index, total: incoming.length };
               const { images, omitted, analysis } = await inline(
                 message.attachments,
                 message.text,
                 budget,
               );
-              const fallback = instruct(steeredInstruction(message, omitted, analysis));
+              const fallback = instruct(steeredInstruction(message, omitted, analysis, batch));
               const audio = nativeAudio(message.attachments, fallback);
               messages.push({
                 text: audio
@@ -1201,6 +1433,7 @@ export function createAgentRuntime(dependencies: {
                         { ...message, text: message.audioCaption ?? message.text },
                         omitted,
                         analysis,
+                        batch,
                       ),
                     )
                   : fallback,
@@ -1259,16 +1492,20 @@ export function createAgentRuntime(dependencies: {
             if (event.status === 'incomplete')
               modelIncomplete = event.contextExhausted ? 'context' : 'output';
             flushText();
-            const text = streamSubmitted || stopped ? '' : streamedText.trim();
+            const handsOff =
+              !context.taskContext &&
+              !owed.length &&
+              (event.beforeTool === 'task' || (event.beforeTool === 'skills' && !spoke));
+            const text = streamSubmitted || stopped || handsOff ? '' : streamedText.trim();
             if (
               text &&
               !modelError &&
               (event.status === undefined || event.status === 'succeeded')
             ) {
-              if (speakNext || replyOwed) {
+              if (speakNext || owed.length) {
                 queueStreamReply(text, streamId ?? randomUUID());
                 lastNote = '';
-                replyOwed = false;
+                owed = [];
               } else {
                 lastNote = text;
                 const step = (dependencies.redactError ?? String)(text.split('\n')[0]!).replace(
@@ -1305,14 +1542,7 @@ export function createAgentRuntime(dependencies: {
             pendingReplies = pendingReplies.then(() =>
               context.emit('final', '', { execution }).catch(() => {}),
             );
-            if (
-              taskStart?.revision === requestRevision &&
-              !replyOwed &&
-              [taskStart.message, taskStart.previousReply].some((message) =>
-                repeatsTaskStart(event.text, message),
-              )
-            )
-              streamSubmitted = true;
+            if (taskStartRevision === requestRevision && !owed.length) streamSubmitted = true;
             else queueStreamReply(event.text, streamId ?? randomUUID());
           }
         },
@@ -1369,6 +1599,17 @@ export function createAgentRuntime(dependencies: {
         audio ? undefined : (observer?.stable ?? scheduled?.stable),
       );
       await pendingReplies;
+      await pausePromise;
+      if (deferredPause && !stopped) {
+        const pending = deferredPause;
+        deferredPause = undefined;
+        await commitPause(
+          pending.reason,
+          pending.message,
+          pending.choices,
+          pending.replyToMessageId,
+        );
+      }
       signal.throwIfAborted();
       if (progress.error)
         throw new ToolFailureError((dependencies.redactError ?? String)(progress.error));
@@ -1394,6 +1635,7 @@ export function createAgentRuntime(dependencies: {
         status = 'waiting_user';
         waitingFor = 'question';
         waitingMessage = paused();
+        waitingReplyTo = undefined;
       }
       if (!context.proactivity && status === 'succeeded' && !answered && !reported && lastNote)
         await deliverReply(lastNote);
@@ -1417,6 +1659,7 @@ export function createAgentRuntime(dependencies: {
         ...(answer ? { completed: answer } : {}),
         ...(waitingFor ? { waitingFor } : {}),
         ...(waitingMessage ? { message: waitingMessage } : {}),
+        ...(waitingMessage && waitingReplyTo ? { replyToMessageId: waitingReplyTo } : {}),
         ...(answerChoices ? { answerChoices } : {}),
         ...(handoffBrowserId ? { handoffBrowserId } : {}),
       };

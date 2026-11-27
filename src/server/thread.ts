@@ -1,9 +1,14 @@
 import {
+  mapFrame,
+  pictureAlt,
+  pictureSlots,
+  presentationAttachments,
   presentationImages,
   presentationSchema,
   presentationText,
   type Presentation,
   type ScheduleRunPresentation,
+  withPictures,
 } from '../shared/presentation.ts';
 import {
   answerChoicesSchema,
@@ -21,7 +26,7 @@ import { appPages } from '../shared/app-links.ts';
 import { errorCode } from '../shared/error-code.ts';
 import { loopbackHost } from '../shared/loopback.ts';
 import { pendingAnswerChoicesSql } from './answer-choices.ts';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { basename, join, posix } from 'node:path';
@@ -47,6 +52,7 @@ import {
 } from './artifacts.ts';
 import type { SpeechService } from './speech.ts';
 import type { GeneratedAudio } from '../ports/speech.ts';
+import type { PreviewImage } from '../ports/link-preview.ts';
 import type { Artifact, MessageReaction, SpeechReplyMode } from '../shared/contracts.ts';
 import type { BrowserStep, RuntimeContext, RuntimeResult } from '../ports/agent.ts';
 import {
@@ -77,7 +83,7 @@ import type { ExecutionEvent } from '../shared/execution.ts';
 import { modelProviderNames, type ModelSelection, type WorkKind } from '../shared/models.ts';
 import { lockKey } from './locks.ts';
 import { redactSecretText } from './redaction.ts';
-import { loadConversationLanguage } from './communication.ts';
+import { backgroundVisibilitySql, loadConversationLanguage } from './communication.ts';
 import { resemblesTaskAcknowledgement } from '../shared/task-ack.ts';
 
 const queue = 'thread-drain';
@@ -94,6 +100,60 @@ export const boss = new PgBoss({
   schema: process.env.PGBOSS_SCHEMA || 'pgboss',
   max: 10,
 });
+async function cardPictures(
+  presentation: Presentation | undefined,
+  fetchImage: ((url: string, signal: AbortSignal) => Promise<PreviewImage | null>) | undefined,
+  signal: AbortSignal,
+): Promise<Array<PreviewImage | null>> {
+  if (!fetchImage) return [];
+  const wanted = pictureSlots(presentation);
+  if (!wanted.some(Boolean)) return [];
+  const deadline = new Promise<null>((resolve) => setTimeout(resolve, 5000, null).unref());
+  const stop = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
+  const fetched = await Promise.all(
+    wanted.map((want) =>
+      want ? Promise.race([fetchImage(want.url, stop).catch(() => null), deadline]) : null,
+    ),
+  );
+  const keys = fetched.map((picture) =>
+    picture ? createHash('sha256').update(picture.bytes).digest('hex') : '',
+  );
+  const repeated = (key: string) => keys.filter((other) => other === key).length > 1;
+  return fetched.map((picture, index) =>
+    picture && !(wanted[index]?.fallback && repeated(keys[index]!)) ? picture : null,
+  );
+}
+
+async function cardMap(
+  presentation: Presentation | undefined,
+  fetchTile:
+    | ((zoom: number, x: number, y: number, signal: AbortSignal) => Promise<PreviewImage | null>)
+    | undefined,
+  signal: AbortSignal,
+) {
+  if (presentation?.type !== 'items' || !fetchTile || presentation.items.length < 2) return null;
+  const locations = presentation.items.map((item) => item.location);
+  if (!locations.every((location) => location)) return null;
+  const frame = mapFrame(locations as Array<NonNullable<(typeof locations)[number]>>);
+  if (!frame) return null;
+  const deadline = new Promise<null>((resolve) => setTimeout(resolve, 5000, null).unref());
+  const stop = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
+  const tiles = await Promise.all(
+    Array.from({ length: frame.columns * frame.rows }, (_, index) =>
+      Promise.race([
+        fetchTile(
+          frame.zoom,
+          frame.x + (index % frame.columns),
+          frame.y + Math.floor(index / frame.columns),
+          stop,
+        ).catch(() => null),
+        deadline,
+      ]),
+    ),
+  );
+  return tiles.every((tile) => tile) ? { frame, tiles: tiles as PreviewImage[] } : null;
+}
+
 const running = new Map<string, AbortController>();
 const inflight = new Set<Promise<void>>();
 let stopping = false;
@@ -105,6 +165,20 @@ export const stopSignal = () => {
   chatIntakes.set(signal, chatStop.signal);
   return signal;
 };
+
+const burstCoalesceMs = (() => {
+  const raw = process.env.NOD_BURST_COALESCE_MS;
+  if (raw !== undefined) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed >= 0) return Math.min(parsed, 5000);
+  }
+  return process.env.NODE_ENV === 'test' ||
+    process.env.NODE_TEST_CONTEXT !== undefined ||
+    process.execArgv.includes('--test') ||
+    process.argv.some((arg) => /(?:^|\/)tests\//.test(arg) || arg.endsWith('.test.ts'))
+    ? 0
+    : 900;
+})();
 
 export type TurnSource = 'user' | 'schedule' | 'event' | 'resume' | 'task';
 export const ownerStarted = (turn = 'u') => `${turn}.source IN ('user','task','resume')`;
@@ -176,6 +250,8 @@ export interface ThreadDependencies {
     input:
       | { kind: 'interrupted'; work?: string; outsideAction: boolean }
       | { kind: 'failed'; error: string; work?: string },
+    signal?: AbortSignal,
+    turnId?: string,
   ) => Promise<string>;
   observeTurn?: (
     turnId: string,
@@ -198,6 +274,13 @@ export interface ThreadDependencies {
     signal?: AbortSignal,
   ) => Promise<void>;
   readArtifact?: (threadId: string, path: string, maxBytes: number) => Promise<Uint8Array>;
+  cardImage?: (url: string, signal: AbortSignal) => Promise<PreviewImage | null>;
+  mapTile?: (
+    zoom: number,
+    x: number,
+    y: number,
+    signal: AbortSignal,
+  ) => Promise<PreviewImage | null>;
   mailCheck?: MailCheck;
   executeConfirmation?: (
     turnId: string,
@@ -236,6 +319,7 @@ export interface ThreadDependencies {
     sourceMessageId: string | null,
     priorMessageId?: string,
     priorHandoff?: boolean,
+    sourcePrompt?: string,
   ) => Promise<unknown>;
   taskContext?: (turn: TurnRef) => Promise<RuntimeContext['taskContext']>;
   settleTask?: (turn: TurnRef, result: string) => Promise<void>;
@@ -247,11 +331,13 @@ export interface ThreadDependencies {
   requestCredential: (
     turn: TurnRef,
     input: Parameters<RuntimeContext['requestCredential']>[0],
+    admit?: (asks: boolean, read?: boolean) => Promise<void>,
   ) => ReturnType<RuntimeContext['requestCredential']>;
   requestPayment?: (
     turn: TurnRef,
     input: unknown,
     show: (image: Uint8Array) => Promise<void>,
+    admit?: (asks: boolean, read?: boolean) => Promise<void>,
   ) => ReturnType<NonNullable<RuntimeContext['requestPayment']>>;
   integration: (
     turn: TurnRef,
@@ -272,6 +358,7 @@ export interface ThreadDependencies {
     turn: TurnRef,
     request: BrowserStep,
     signal: AbortSignal,
+    admit?: (asks: boolean, read?: boolean) => Promise<void>,
   ) => ReturnType<NonNullable<RuntimeContext['browserStep']>>;
   reactToMessage?: (
     input: AgentReactionInput,
@@ -470,7 +557,7 @@ export async function insertAssistantMessage(
   text: string,
   attachments: Artifact[] = [],
   streamId?: string,
-  replyToMessageId?: string,
+  replyToMessageId?: string | null,
   presentation?: Presentation,
   answerChoices?: AnswerChoices,
   analytics?: CaptureAnalytics,
@@ -513,25 +600,18 @@ export async function insertAssistantMessage(
       image.artifactId = stored.id;
     }
     const attached = new Map(attachments.map((item) => [item.id, item]));
-    for (const row of rows)
+    const sharedIds = new Set(presentationAttachments(visual!).map((image) => image.artifactId));
+    for (const row of rows) {
+      if (!sharedIds.has(row.id)) continue;
       attached.set(row.id, {
         ...artifactView(row),
         ...(attached.get(row.id)?.source ? { source: attached.get(row.id)!.source } : {}),
       });
+    }
     attachments = [...attached.values()];
   }
-  replyToMessageId ??=
-    turn.taskMessageId ??
-    (
-      await client.query<{ id: string }>(
-        `SELECT a.id FROM (SELECT id,created_at FROM messages WHERE owner_id=$1 AND thread_id=$2 AND turn_id=$3
-           AND role='user' ORDER BY created_at DESC,id DESC LIMIT 1) a
-         WHERE EXISTS (SELECT 1 FROM messages m WHERE m.owner_id=$1 AND m.thread_id=$2
-           AND (m.created_at,m.id)>(a.created_at,a.id) AND m.turn_id IS DISTINCT FROM $3)`,
-        [ownerId, turn.threadId, turn.turnId],
-      )
-    ).rows[0]?.id;
-  await assertReplyTarget(client, turn.threadId, replyToMessageId);
+  if (replyToMessageId === undefined) replyToMessageId = turn.taskMessageId ?? null;
+  await assertReplyTarget(client, turn.threadId, replyToMessageId ?? undefined);
   const id = randomUUID();
   await client.query(
     'INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,attachments,stream_id,reply_to_message_id,presentation,answer_choices) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
@@ -920,9 +1000,19 @@ export async function submitUserMessage(
           )
         ).rows[0]
       : undefined;
+    const sessionId = question?.session_id ?? thread.id;
+    const coalesce =
+      live &&
+      burstCoalesceMs > 0 &&
+      !question &&
+      !options.questionAnswer &&
+      !options.approvalAnswer &&
+      sessionId === thread.id &&
+      !String(options.sourceId ?? '').startsWith('reaction-reply:');
+    const startAfter = coalesce ? new Date(Date.now() + burstCoalesceMs) : null;
     await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel,session_id,background,parent_turn_id,status,finished_at,withdrawn)
-       VALUES($1,$2,$3,'user',$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $11='cancelled' THEN now() END,$11='cancelled')`,
+      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel,session_id,background,parent_turn_id,status,finished_at,withdrawn,start_after)
+       VALUES($1,$2,$3,'user',$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $11='cancelled' THEN now() END,$11='cancelled',$12)`,
       [
         turnId,
         ownerId,
@@ -931,14 +1021,15 @@ export async function submitUserMessage(
         messageId,
         options.prompt ?? text,
         channel,
-        question?.session_id ?? thread.id,
+        sessionId,
         question?.background ?? false,
         question?.id ?? null,
         live ? 'queued' : 'cancelled',
+        startAfter,
       ],
     );
     if (taskTarget) await taskTarget.record(turnId);
-    if (live) await confirmAction?.close(client, question?.session_id ?? thread.id, turnId);
+    if (live) await confirmAction?.close(client, sessionId, turnId);
     const prepared = (await options.prepareAttachments?.(client, thread.id)) ?? [];
     await client.query(
       "INSERT INTO messages(id,owner_id,role,text,display_text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote,audio_caption,question_answer) VALUES($1,$2,'user',$3,$4,$5,$6,$7,$8,$9,$10,$11)",
@@ -956,7 +1047,7 @@ export async function submitUserMessage(
         options.questionAnswer ? JSON.stringify(options.questionAnswer) : null,
       ],
     );
-    if (live) await sendDrain(client, thread.id);
+    if (live) await sendDrain(client, thread.id, startAfter ?? undefined);
     markInserted();
     return { threadId: thread.id, turnId, messageId };
   };
@@ -1667,6 +1758,8 @@ async function failTurn(
         error === interrupted
           ? { kind: 'interrupted', outsideAction: turn.outside_action, ...(work ? { work } : {}) }
           : { kind: 'failed', error, ...(work ? { work } : {}) },
+        undefined,
+        turnId,
       ).catch(() => undefined);
   const body =
     typeof presented === 'string' && presented.trim()
@@ -1796,15 +1889,12 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
       [thread.id, ownerId, turnId, sessionId],
     );
     if (!rows.some((row) => row.id === turnId && row.status === 'running')) throw turnStopped();
-    const next = rows.find((row) => row.status === 'queued');
-    if (
-      !next ||
-      !['user', 'task'].includes(next.source) ||
-      next.channel !== channel ||
-      !next.message_id
-    )
-      return [];
-    const taken = [next];
+    const queued = rows.filter((row) => row.status === 'queued');
+    const end = queued.findIndex(
+      (row) => !['user', 'task'].includes(row.source) || row.channel !== channel || !row.message_id,
+    );
+    const taken = end < 0 ? queued : queued.slice(0, end);
+    if (!taken.length) return [];
     const ids = taken.map((row) => row.id);
     await client.query(
       'UPDATE messages SET turn_id=$1 WHERE turn_id=ANY($2::uuid[]) AND owner_id=$3',
@@ -1822,8 +1912,24 @@ async function takeQueuedMessages(turnId: string, sessionId: string, channel: st
           [row.task_id, row.task_revision, ownerId, ids, turnId],
         );
     }
-    return taken.map((row) => ({ id: row.message_id as string, text: row.prompt as string }));
+    return taken.map((row) => ({
+      id: row.message_id as string,
+      text: row.prompt as string,
+    }));
   }, pool);
+}
+
+async function hasQueuedMessages(sessionId: string, channel: string) {
+  const { rows } = await pool.query<{ source: string; channel: string; message_id: string | null }>(
+    `SELECT u.source,u.channel,u.message_id FROM turns u
+     WHERE u.owner_id=$1 AND u.session_id=$2 AND u.status='queued'
+     ORDER BY u.created_at,u.id LIMIT 1`,
+    [ownerId, sessionId],
+  );
+  const next = rows[0];
+  return Boolean(
+    next && ['user', 'task'].includes(next.source) && next.channel === channel && next.message_id,
+  );
 }
 
 async function drainThread(threadId: string, dependencies: ThreadDependencies) {
@@ -1925,12 +2031,13 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
     confirmedActions,
     restarted,
     language,
+    approvals,
   ] = await Promise.all([
     loadMessage(sourceMessageId),
     pool.query(
       `WITH seen AS (SELECT max(started_at) AS at FROM turns
          WHERE owner_id=$1 AND thread_id=$2 AND session_id=$6 AND id<>$4),
-       boundary AS (SELECT created_at AS at FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$4)
+       boundary AS (SELECT created_at AS at,parent_turn_id,message_id FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$4)
        SELECT role,text,audio_caption AS "audioCaption",created_at AS "createdAt",reaction,attachments,presentation,answer_choices AS "answerChoices",unseen,turn_id AS "turnId" FROM (
        SELECT m.role,m.text,m.audio_caption,m.created_at,m.id,m.reaction,m.attachments,m.presentation,m.answer_choices,m.turn_id,
        COALESCE(u.background AND m.created_at > COALESCE(seen.at,'-infinity'),false) AS unseen
@@ -1938,10 +2045,9 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
        LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
        WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.hidden_at IS NULL AND m.id IS DISTINCT FROM $3::uuid
        AND m.approval_answer IS NULL AND NOT (m.role='user' AND ${withdrawnSql('m')})
+       AND NOT (m.role='user' AND u.status='queued')
        AND ($6::uuid<>$2::uuid OR m.created_at>COALESCE(th.chat_restarted_at,'-infinity'))
-       AND (NOT $5::boolean OR (m.created_at<=boundary.at AND
-         (u.id IS NULL OR u.session_id=$6
-          OR (u.status IN ('succeeded','failed','cancelled') AND u.finished_at<=boundary.at))))
+       AND (NOT $5::boolean OR ${backgroundVisibilitySql('$6')})
        ORDER BY m.created_at DESC,m.id DESC LIMIT 30) m ORDER BY created_at,id`,
       [ownerId, threadId, sourceMessageId, turn.id, Boolean(turn.background), turn.session_id],
     ),
@@ -1969,7 +2075,19 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
           [threadId, ownerId],
         )
       : undefined,
-    loadConversationLanguage(pool, ownerId, threadId),
+    loadConversationLanguage(
+      pool,
+      ownerId,
+      threadId,
+      undefined,
+      turn.background ? { turnId: turn.id, sessionId: turn.session_id } : undefined,
+    ),
+    pool.query<{ title: string; status: string; createdAt: Date }>(
+      `SELECT COALESCE(title,action) AS title,status,created_at AS "createdAt" FROM approvals
+         WHERE owner_id=$1 AND thread_id=$2 AND created_at>now()-interval '24 hours'
+         ORDER BY created_at DESC,id DESC LIMIT 10`,
+      [ownerId, threadId],
+    ),
   ]);
   const preference = preferences.rows[0];
   const historyTurnIds = [
@@ -2019,6 +2137,15 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
           }
         : {}),
       ...(confirmedActions?.length ? { confirmedActions } : {}),
+      ...(approvals.rows.length
+        ? {
+            approvals: approvals.rows.map(({ title, status, createdAt }) => ({
+              title,
+              status,
+              createdAt: createdAt.toISOString(),
+            })),
+          }
+        : {}),
       ...(credentialRequests.length ? { credentialRequests } : {}),
       ...(related.length ? { relatedConversation: related } : {}),
       conversationLanguage: language,
@@ -2147,15 +2274,17 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   const published = new Map<string, Artifact>();
   let sourceMessageId: string | null = null;
   const ownerMessageIds: string[] = [];
+  const burst: string[] = [];
+  const merged = (id: string) => (burst.includes(id) ? burst.at(-1)! : id);
   const ownerRequest = (request: unknown) => {
     if (request !== undefined) {
       if (typeof request !== 'string' || !ownerMessageIds.includes(request))
         throw new Error(
           'request must be currentMessageId or the messageId of an owner message sent while you worked.',
         );
-      return request;
+      return merged(request);
     }
-    if (ownerMessageIds.length > 1)
+    if (new Set(ownerMessageIds.map(merged)).size > 1)
       throw new Error(
         'The owner sent several messages during this turn. Set request to the messageId of the one this work serves.',
       );
@@ -2171,7 +2300,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     text: string,
     attachments: Artifact[] = [],
     streamId?: string,
-    replyToMessageId?: string,
+    replyToMessageId?: string | null,
     presentation?: Presentation,
     handoff = false,
   ) => {
@@ -2181,11 +2310,62 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     const created = new Map<string, Artifact>();
     const cleanup: Array<() => Promise<void>> = [];
     let rolledBack = false;
+    const [pictures, map] = await Promise.all([
+      cardPictures(presentation, dependencies.cardImage, signal),
+      cardMap(presentation, dependencies.mapTile, signal),
+    ]);
     try {
       const id = await current(async (client) => {
         afterRollback(client, () => {
           rolledBack = true;
         });
+        if (presentation) {
+          const stored = [];
+          for (const [index, picture] of pictures.entries()) {
+            if (!picture) {
+              stored.push(null);
+              continue;
+            }
+            const alt = pictureAlt(presentation, index);
+            const artifact = await artifacts.storeArtifact(
+              Buffer.from(picture.bytes),
+              `${alt}.${picture.mimeType.split('/')[1]}`,
+              picture.mimeType,
+              threadId,
+              client,
+              (remove) => cleanup.push(remove),
+            );
+            stored.push({ artifactId: artifact.id, alt });
+          }
+          presentation = withPictures(presentation, stored);
+        }
+        if (presentation?.type === 'items') {
+          const { map: _map, ...card } = presentation;
+          const tiles = [];
+          for (const [index, tile] of (map?.tiles ?? []).entries()) {
+            const stored = await artifacts.storeArtifact(
+              Buffer.from(tile.bytes),
+              `map-tile-${index + 1}.${tile.mimeType.split('/')[1]}`,
+              tile.mimeType,
+              threadId,
+              client,
+              (remove) => cleanup.push(remove),
+            );
+            tiles.push({ artifactId: stored.id, alt: 'Map tile' });
+          }
+          presentation = {
+            ...card,
+            ...(map && {
+              map: {
+                zoom: map.frame.zoom,
+                x: map.frame.x,
+                y: map.frame.y,
+                columns: map.frame.columns,
+                tiles,
+              },
+            }),
+          };
+        }
         const files = new Map(attachments.map((file) => [file.id, file]));
         const references = replyFileReferences(text);
         const replacements: Array<{ start: number; end: number; artifact: Artifact }> = [];
@@ -2308,7 +2488,38 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     const loaded = await loadTurnContext(turn, dependencies);
     const proactivity = await dependencies.proactivity?.(ref, signal);
     sourceMessageId = loaded.sourceMessageId;
-    if (sourceMessageId) ownerMessageIds.push(sourceMessageId);
+    if (sourceMessageId) {
+      ownerMessageIds.push(sourceMessageId);
+      burst.push(sourceMessageId);
+    }
+    let initialPrompt = String(turn.prompt ?? '');
+    if (
+      burstCoalesceMs > 0 &&
+      turn.source === 'user' &&
+      !turn.background &&
+      turn.session_id === threadId
+    ) {
+      const extra = await takeQueuedMessages(turnId, turn.session_id, turn.channel);
+      if (extra.length) {
+        sourceMessageId = extra.at(-1)!.id;
+        ownerMessageIds.push(...extra.map((message) => message.id));
+        burst.push(...extra.map((message) => message.id));
+        const parts = [{ text: initialPrompt, audioCaption: loaded.audioCaption }];
+        for (const message of extra) {
+          const loadedExtra = await loadMessage(message.id);
+          loaded.uploads.push(...loadedExtra.uploads);
+          loaded.inputAttachments.push(...loadedExtra.inputAttachments);
+          loaded.voice ||= loadedExtra.voice;
+          loaded.replyTo ??= loadedExtra.replyTo;
+          parts.push({ text: message.text, audioCaption: loadedExtra.audioCaption });
+        }
+        const join = (lines: string[]) => lines.filter((part) => part.trim()).join('\n');
+        initialPrompt = join(parts.map((part) => part.text));
+        if (parts.some((part) => part.audioCaption !== undefined))
+          loaded.audioCaption = join(parts.map((part) => part.audioCaption ?? part.text));
+        refresh();
+      }
+    }
     let voice = loaded.voice;
     let ownerMessage = turn.source === 'user';
     const stagedFiles = new Map<string, string>();
@@ -2453,7 +2664,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       turnId,
       sessionId: turn.session_id,
       resumed: turn.source === 'resume' || Boolean(turn.parent_turn_id),
-      prompt: turn.prompt,
+      prompt: initialPrompt,
       background: turn.background,
       ...(scheduleCache ? { scheduleCache } : {}),
       ...(routed ? { model: routed.selection } : {}),
@@ -2465,7 +2676,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       tasks,
       ...(checkIn ? { checkIn } : {}),
       ...(limit ? { spendingLimitReached: { monthlyUsd: limit.monthlyUsd } } : {}),
-      currentMessageId: loaded.sourceMessageId ?? undefined,
+      currentMessageId: burst.at(-1),
       automatic:
         !loaded.sourceMessageId &&
         (turn.source !== 'resume' || String(turn.source_id).startsWith('task-check:')),
@@ -2519,32 +2730,49 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         fenced((action, service, proposal, newAccount, query, connectionId) =>
           connections(action, service, ref, proposal, newAccount, query, connectionId),
         ),
-      requestCredential: fenced((input) => dependencies.requestCredential(ref, input)),
-      browserStep: fenced((request: BrowserStep) =>
-        dependencies.browserStep(
-          ref,
-          request.step.action === 'upload' && taskContext
-            ? {
-                ...request,
-                step: {
-                  ...request.step,
-                  path: posix.resolve(
-                    `/workspace/${threadId}/tasks/${taskContext.id}`,
-                    request.step.path,
-                  ),
-                },
-              }
-            : request,
-          signal,
-        ),
+      requestCredential: fenced((input, admit) =>
+        dependencies.requestCredential(ref, input, admit),
+      ),
+      browserStep: fenced(
+        (request: BrowserStep, admit?: (asks: boolean, read?: boolean) => Promise<void>) =>
+          dependencies.browserStep(
+            ref,
+            request.step.action === 'upload' && taskContext
+              ? {
+                  ...request,
+                  step: {
+                    ...request.step,
+                    path: posix.resolve(
+                      `/workspace/${threadId}/tasks/${taskContext.id}`,
+                      request.step.path,
+                    ),
+                  },
+                }
+              : request,
+            signal,
+            admit,
+          ),
       ),
       ...(dependencies.requestPayment
         ? {
-            requestPayment: fenced((input: unknown) =>
-              dependencies.requestPayment!(ref, input, async (image) => {
-                if (turn.channel === 'web')
-                  await attach(image, 'checkout.jpg', 'image/jpeg', '', true, 'browser_screenshot');
-              }),
+            requestPayment: fenced(
+              (input: unknown, admit?: (asks: boolean, read?: boolean) => Promise<void>) =>
+                dependencies.requestPayment!(
+                  ref,
+                  input,
+                  async (image) => {
+                    if (turn.channel === 'web')
+                      await attach(
+                        image,
+                        'checkout.jpg',
+                        'image/jpeg',
+                        '',
+                        true,
+                        'browser_screenshot',
+                      );
+                  },
+                  admit,
+                ),
             ),
           }
         : {}),
@@ -2570,11 +2798,13 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       ),
       task:
         dependencies.task &&
-        fenced((raw) => {
+        fenced(async (raw) => {
           const { request, ...input } = (raw ?? {}) as {
             request?: unknown;
             action?: unknown;
             message?: string;
+            now?: string;
+            title?: string;
           };
           const bound =
             input.action === 'start' || input.action === 'reply'
@@ -2585,10 +2815,16 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
               ? plainReplies.findLast(
                   (reply) =>
                     reply.sourceMessageId === bound &&
-                    resemblesTaskAcknowledgement(reply.text, input.message ?? '', reply.handoff),
+                    resemblesTaskAcknowledgement(
+                      reply.text,
+                      String(input.message ?? input.now ?? input.title ?? ''),
+                      reply.handoff,
+                    ),
                 )
               : undefined;
-          return dependencies.task!(ref, input, bound, prior?.id, prior?.handoff);
+          const sourcePrompt =
+            bound && burst.length > 1 && bound === burst.at(-1) ? initialPrompt : undefined;
+          return dependencies.task!(ref, input, bound, prior?.id, prior?.handoff, sourcePrompt);
         }),
       takeMessages:
         turn.background && !taskContext
@@ -2640,6 +2876,12 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
               }
               return messages;
             },
+      hasQueuedMessages:
+        turn.background && !taskContext
+          ? undefined
+          : async () =>
+              !(await Promise.resolve(dependencies.spendingLimit?.()).catch(() => true)) &&
+              hasQueuedMessages(turn.session_id, turn.channel),
       createAudio: async (text) => {
         explicitAudio = true;
         const audio = await fenced(() => dependencies.speech.synthesize(text, signal))();
@@ -2796,7 +3038,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           result.message,
           shared.splice(0),
           undefined,
-          undefined,
+          result.replyToMessageId,
           undefined,
           answerChoices,
           dependencies.analytics,

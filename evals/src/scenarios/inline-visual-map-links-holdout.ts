@@ -3,7 +3,7 @@ import { inlineVisualScenario } from '../world/inline-visuals.ts';
 export default inlineVisualScenario({
   id: 'inline-visual-map-links-holdout',
   title: 'Choose a study space with accessible entrance map links',
-  type: 'map',
+  type: 'items',
   path: '/places/edinburgh-study-spaces',
   request: (_date, source) =>
     `I'm choosing somewhere to work until 17:00 before an evening workshop. Compare the three study spaces at ${source}, put a pin and a visible map link beside each option, and recommend one. I need step-free access and a charging socket. Don't book anything.`,

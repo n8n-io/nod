@@ -29,6 +29,7 @@ type AnalyticsEvents = {
     login_item?: 'registered' | 'not_registered' | 'unknown';
     since_boot?: 'under_5m' | 'under_1h' | 'over_1h';
   };
+  login_item_observed: { login_item: 'registered' | 'not_registered' };
   onboarding_step_viewed: {
     step: OnboardingStep;
     direction: 'forward' | 'back';
@@ -153,6 +154,11 @@ const presentationKinds = [
   'chart',
   'apps',
   'diagram',
+  'items',
+  'schedule',
+  'facts',
+  'compare',
+  'draft',
 ];
 const artifactKinds = [
   'image',
@@ -178,6 +184,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     login_item: ['registered', 'not_registered', 'unknown'],
     since_boot: ['under_5m', 'under_1h', 'over_1h'],
   },
+  login_item_observed: { login_item: ['registered', 'not_registered'] },
   onboarding_step_viewed: {
     step: onboardingSteps,
     direction: ['forward', 'back'],
@@ -492,6 +499,7 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
     (event.event === 'answer_choices_viewed' ||
       event.event === 'answer_choices_selected' ||
       event.event === 'chat_message_sent' ||
+      event.event === 'login_item_observed' ||
       event.event === 'presentation_action') &&
     Object.entries(allowed).some(([key, values]) => !values.includes(event.properties[key]))
   )

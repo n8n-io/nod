@@ -95,6 +95,7 @@ const streamFrame = z.object({
 
 const holdMs = 30 * 60_000;
 const snapshotChars = 40_000;
+const actionChars = 10_000;
 
 const withoutPasskeys = `(() => {
   const container = window.CredentialsContainer && CredentialsContainer.prototype;
@@ -946,9 +947,9 @@ export function createAgentBrowserComputer(options: {
         text: 'The page opened a new tab that has not loaded. Take a snapshot again.',
         url,
       };
-    const scope =
-      input?.action === 'snapshot' && input.selector ? selector(input.selector) : undefined;
-    const offset = input?.action === 'snapshot' ? (input.offset ?? 0) : 0;
+    const full = input?.action === 'snapshot';
+    const scope = full && input.selector ? selector(input.selector) : undefined;
+    const offset = full ? (input.offset ?? 0) : 0;
     if (!Number.isInteger(offset) || offset < 0)
       throw new Error('Choose a non-negative page offset.');
     const snapshot = async () => {
@@ -957,7 +958,11 @@ export function createAgentBrowserComputer(options: {
         await devtools?.mask(true, [], false, true);
         return await observationCommand(
           state,
-          { action: 'snapshot', urls: true, ...(scope ? { selector: scope } : {}) },
+          {
+            action: 'snapshot',
+            ...(full ? { urls: true } : {}),
+            ...(scope ? { selector: scope } : {}),
+          },
           { signal },
         );
       } finally {
@@ -990,9 +995,14 @@ export function createAgentBrowserComputer(options: {
         });
       }
     const page = redactBrowserText(String(data.snapshot ?? ''), state.secrets);
-    const end = Math.min(page.length, offset + snapshotChars);
+    const end = Math.min(page.length, offset + (full ? snapshotChars : actionChars));
+    const more = full
+      ? end < page.length
+        ? `; snapshot with offset ${end} continues`
+        : ''
+      : `, links without addresses; snapshot ${end < page.length ? 'reads more of the page with them' : 'adds them'}`;
     return {
-      text: `Page (${offset}-${end} of ${page.length} characters${end < page.length ? `; snapshot with offset ${end} continues` : ''}):\n${page.slice(offset, end)}`,
+      text: `Page (${offset}-${end} of ${page.length} characters${more}):\n${page.slice(offset, end)}`,
       url: redactBrowserUrl(url, state.secrets),
     };
   }
@@ -1270,6 +1280,7 @@ export function createAgentBrowserComputer(options: {
             return {
               ...observation,
               text: `The wait condition was not met.\n${observation.text}`,
+              unmet: true as const,
             };
           }
         }

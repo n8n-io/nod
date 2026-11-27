@@ -15,12 +15,14 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
-import { splitQuestion } from '../../shared/answer-choices';
+import { choiceAnswerText, splitQuestion } from '../../shared/answer-choices';
 import type { Activity, Message } from '../../shared/contracts';
 import { LiveLine } from './live-line';
 import { reactionEmoji } from '../../shared/emoji';
 import {
+  presentationChoices,
   presentationImages,
+  presentationPick,
   presentationSchema,
   presentationText,
 } from '../../shared/presentation';
@@ -56,6 +58,7 @@ import { MessageLinkTooltip } from './message-link-tooltip';
 import { Tooltip } from './tooltip';
 import type { ImagePreview } from './attachment-images';
 import { MessagePresentation } from './message-presentation';
+import { CardPickContext, type CardPick } from './presentation-cards';
 import { BugReportCard } from './bug-report-card';
 import { ScheduleRunTrack } from './schedule-run';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
@@ -311,14 +314,15 @@ export interface MessageWork {
   onOpen?(): void;
 }
 
-export function WorkLabel({ work }: { work: MessageWork }) {
+export function WorkLabel({ work, mark = true }: { work: MessageWork; mark?: boolean }) {
   const content = (
     <>
-      {work.status !== 'idle' ? (
-        <TaskMark status={work.status} size={22} />
-      ) : (
-        work.done && <TaskMark status="done" size={22} />
-      )}
+      {mark &&
+        (work.status !== 'idle' ? (
+          <TaskMark status={work.status} size={22} />
+        ) : (
+          work.done && <TaskMark status="done" size={22} />
+        ))}
       <span className="message-work-title">{work.title}</span>
       {work.status === 'working' && (
         <span className="message-work-step">
@@ -363,8 +367,16 @@ export function MessageBubble({
   handoffPaused,
   work,
   task,
+  pickQuestion,
+  choicesOnCard = false,
+  onChoose,
+  chosenText,
 }: {
   message: Message;
+  pickQuestion?: Message;
+  choicesOnCard?: boolean;
+  onChoose?(text: string): Promise<boolean>;
+  chosenText?: string;
   work?: MessageWork;
   task?: ReactNode;
   pendingAudio?: ImagePreview;
@@ -398,13 +410,23 @@ export function MessageBubble({
         ? 'approval'
         : !message.answerChoices
           ? null
-          : message.answerChoicesPending
-            ? onAnswer
-              ? 'choices'
-              : null
-            : message.choiceAnswer
-              ? 'answered'
-              : null;
+          : choicesOnCard
+            ? null
+            : message.answerChoicesPending
+              ? onAnswer
+                ? 'choices'
+                : null
+              : message.choiceAnswer
+                ? 'answered'
+                : null;
+  const outsideCard =
+    message.role === 'assistant' &&
+    !streaming &&
+    (message.presentation?.type === 'items' ||
+      message.presentation?.type === 'schedule' ||
+      message.presentation?.type === 'facts' ||
+      message.presentation?.type === 'compare' ||
+      message.presentation?.type === 'draft');
   const cardText = card ? splitQuestion(visibleText) : null;
   const shownText =
     message.role === 'assistant' && message.approval?.fields && message.approval.cardQuestion
@@ -420,7 +442,147 @@ export function MessageBubble({
     message.replyTo && !(message.role === 'assistant' && message.replyTo.role === 'assistant')
       ? message.replyTo
       : null;
+  const hasBubbleText = Boolean(
+    visibleReply ||
+    cardText?.lead ||
+    pendingAudio ||
+    (message.role === 'user' && message.attachments.length > 0) ||
+    card ||
+    shownText ||
+    (message.role === 'assistant' &&
+      !streaming &&
+      message.presentation &&
+      !outsideCard &&
+      message.presentation.type !== 'apps' &&
+      message.presentation.type !== 'schedule-run') ||
+    (message.role === 'assistant' &&
+      message.attachments.some(
+        (attachment) =>
+          !message.presentation ||
+          !presentationImages(message.presentation).some(
+            (image) => image.artifactId === attachment.id,
+          ),
+      )),
+  );
+  const cardInRow = outsideCard && !hasBubbleText;
+  const hasBubbleContent = hasBubbleText || cardInRow;
   const [error, setError] = useState('');
+  const [picked, setPicked] = useState<number[]>([]);
+  const [written, setWritten] = useState('');
+  const [sending, setSending] = useState(false);
+  const [gone, setGone] = useState(false);
+  const pickOptions = pickQuestion?.answerChoices?.options;
+  const multiple = pickQuestion?.answerChoices?.multiple === true;
+  const answeredIds = pickQuestion?.choiceAnswer?.choiceIds;
+  const openChoices =
+    !pickOptions &&
+    onChoose &&
+    message.role === 'assistant' &&
+    !streaming &&
+    message.presentation &&
+    !presentationPick(message.presentation)
+      ? presentationChoices(message.presentation).map((choice, index) => ({
+          ...choice,
+          id: String(index),
+        }))
+      : [];
+  const openChosen = openChoices.findIndex(
+    (choice) => chosenText !== undefined && choiceAnswerText([choice]) === chosenText,
+  );
+  const openAnswered = openChosen >= 0;
+  const pickChoices = openChoices.length ? openChoices : (pickOptions ?? []);
+  const answered = openChoices.length
+    ? openChosen >= 0
+      ? [openChosen]
+      : []
+    : pickOptions && answeredIds
+      ? pickOptions.flatMap((option, index) => (answeredIds.includes(option.id) ? [index] : []))
+      : [];
+  const pickedChoices = picked.map((index) => pickChoices[index]!);
+  const pickedChoice = picked.length === 1 ? pickedChoices[0] : undefined;
+  const cardPick: CardPick | null = pickChoices.length
+    ? {
+        chosen: answered.length ? answered : picked,
+        written,
+        multiple,
+        sent: answered.length > 0 || openAnswered || Boolean(pickQuestion?.choiceAnswer),
+        closed:
+          gone ||
+          (!openChoices.length &&
+            !pickQuestion!.answerChoicesPending &&
+            !pickQuestion!.choiceAnswer &&
+            !sending),
+        disabled: openChoices.length
+          ? answersDisabled === true || sending || openAnswered
+          : gone ||
+            !pickQuestion!.answerChoicesPending ||
+            !onAnswer ||
+            answersDisabled === true ||
+            sending,
+        label:
+          pickedChoice &&
+          (pickedChoice.description &&
+          pickChoices.filter((choice) => choice.label === pickedChoice.label).length > 1
+            ? `${pickedChoice.label} ${pickedChoice.description.split(' · ')[0]}`
+            : pickedChoice.label),
+        choose(index) {
+          if (sending || openAnswered) return;
+          setPicked((current) =>
+            !multiple
+              ? [index]
+              : current.includes(index)
+                ? current.filter((value) => value !== index)
+                : [...current, index].sort((a, b) => a - b),
+          );
+          if (!multiple) setWritten('');
+          setError('');
+        },
+        write(next) {
+          if (sending || openAnswered) return;
+          setWritten(next);
+          if (!multiple && next.trim()) setPicked([]);
+          setError('');
+        },
+        send(fallback) {
+          if (sending || openAnswered || gone) return;
+          const note = (written.trim() || fallback?.trim() || '').trim();
+          const chosen = multiple || !note ? pickedChoices : [];
+          if (!note && !chosen.length) return;
+          const text = [choiceAnswerText(chosen), note].filter(Boolean).join('\n');
+          const choiceIds = chosen.map((choice) => choice.id);
+          const outcome = openChoices.length
+            ? onChoose?.(text)
+            : onAnswer?.(
+                text,
+                !choiceIds.length
+                  ? { custom: true }
+                  : note
+                    ? { choiceIds, custom: true }
+                    : { choiceIds },
+              );
+          if (!outcome) return;
+          setSending(true);
+          setError('');
+          void outcome.then(
+            (result) => {
+              setSending(false);
+              if (result === true) {
+                setWritten('');
+                if (!chosen.length) setPicked([]);
+              } else if (result === 'unavailable') {
+                setGone(true);
+              } else if (result === false) {
+                setError('Your choice could not be sent. Try again.');
+              }
+            },
+            (cause) => {
+              setSending(false);
+              setError(errorMessage(cause));
+            },
+          );
+        },
+      }
+    : null;
   const [copied, setCopied] = useState(false);
   const [quote, setQuote] = useState('');
   const [quotePoint, setQuotePoint] = useState({ left: 0, top: 0 });
@@ -728,7 +890,7 @@ export function MessageBubble({
       <div className="message-content">
         {work && <WorkLabel work={work} />}
         {run && <ScheduleRunTrack run={run} />}
-        <div className="message-row" hidden={run?.outcome === 'failed'}>
+        <div className="message-row" hidden={run?.outcome === 'failed' || !hasBubbleContent}>
           <div className={`message-bubble${!streaming && shownReaction ? ' has-reaction' : ''}`}>
             <div
               className="message-body"
@@ -835,6 +997,7 @@ export function MessageBubble({
               {message.role === 'assistant' &&
                 !streaming &&
                 message.presentation &&
+                (!outsideCard || cardInRow) &&
                 message.presentation.type !== 'apps' &&
                 message.presentation.type !== 'schedule-run' &&
                 (message.presentation.type === 'bug-report' ? (
@@ -845,7 +1008,9 @@ export function MessageBubble({
                     summary={message.presentation.summary}
                   />
                 ) : (
-                  <MessagePresentation value={message.presentation} messageId={message.id} />
+                  <CardPickContext.Provider value={cardPick}>
+                    <MessagePresentation value={message.presentation} messageId={message.id} />
+                  </CardPickContext.Provider>
                 ))}
               {message.role === 'assistant' && message.attachments.length > 0 && (
                 <MessageAttachments
@@ -981,9 +1146,14 @@ export function MessageBubble({
           </div>
         </div>
         {task && <div className="message-task">{task}</div>}
-        {message.role === 'assistant' && !streaming && message.presentation?.type === 'apps' && (
-          <MessagePresentation value={message.presentation} messageId={message.id} />
-        )}
+        {message.role === 'assistant' &&
+          !streaming &&
+          message.presentation &&
+          ((outsideCard && !cardInRow) || message.presentation.type === 'apps') && (
+            <CardPickContext.Provider value={cardPick}>
+              <MessagePresentation value={message.presentation} messageId={message.id} />
+            </CardPickContext.Provider>
+          )}
         {message.role === 'assistant' && !streaming && message.approval?.fields && (
           <ApprovalCard approval={message.approval} disabled={answersDisabled} onAnswer={onApprove}>
             <ApprovalFields

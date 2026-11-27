@@ -177,13 +177,15 @@ export function backgroundCalendar(input: {
         check(
           'pending-request-excluded-from-background-context',
           (run) => {
+            const turn = run.turns?.find((item) => item.id === world.state.backgroundTurnId);
             const prompts =
               run.prompts?.filter((prompt) => prompt.turnId === world.state.backgroundTurnId) ?? [];
+            const screened = Boolean(turn?.screened && turn.agentStarted === false);
             return {
               pass:
-                prompts.length > 0 &&
+                (prompts.length > 0 || screened) &&
                 prompts.every((prompt) => !prompt.instruction.includes(world.prompt)),
-              evidence: `${prompts.length} background prompt snapshots; pending request present: ${prompts.some((prompt) => prompt.instruction.includes(world.prompt))}`,
+              evidence: `${prompts.length} background prompt snapshots (screened: ${screened}); pending request present: ${prompts.some((prompt) => prompt.instruction.includes(world.prompt))}`,
             };
           },
           { aspect: 'process', failure: 'scope' },

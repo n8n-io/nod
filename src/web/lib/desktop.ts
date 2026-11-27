@@ -10,7 +10,7 @@ export type DesktopPreferences = {
 
 export type DesktopSettings = DesktopPreferences;
 
-type LocalSetup = { preferenceStep: 'launchAtLogin' | 'complete' };
+type LocalSetup = { preferenceStep: 'launchAtLogin' | 'complete'; launchAtLogin?: boolean };
 
 type LocalRuntime = {
   status(): Promise<DesktopStatus>;
@@ -170,7 +170,7 @@ export function clientPlatform(): ClientPlatform {
         });
         if (saved.onboardingPreferenceStep !== 'complete')
           throw new Error('Nod could not finish device setup. Try again.');
-        return { preferenceStep: 'complete' };
+        return { preferenceStep: 'complete', launchAtLogin: saved.launchAtLogin };
       },
       reconcileSetup: async () => {
         await bridge.saveSettings({ onboardingCompleted: true });

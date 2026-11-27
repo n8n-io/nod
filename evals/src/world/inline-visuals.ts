@@ -24,7 +24,7 @@ export function presentations(run: Run): Visual[] {
 interface Case {
   id: string;
   title: string;
-  type: 'image' | 'map' | 'flights' | 'seats' | 'booking' | 'diagram';
+  type: 'image' | 'items' | 'schedule' | 'facts' | 'compare' | 'seats' | 'diagram';
   path: string;
   request(date: string, source: string): string;
   body(date: string): string;
@@ -132,13 +132,13 @@ export function inlineVisualScenario(definition: Case) {
                         ?.join(' ') ?? ''
                     } `;
                   const found = presentations(run)
-                    .filter((value) => value.type === 'map')
+                    .filter((value) => value.type === 'items')
                     .map((value) =>
-                      Array.isArray(value.places)
-                        ? value.places.map((place) => ({
-                            name: place?.name,
-                            latitude: place?.latitude,
-                            longitude: place?.longitude,
+                      Array.isArray(value.items)
+                        ? value.items.map((item) => ({
+                            name: item?.title,
+                            latitude: item?.location?.latitude,
+                            longitude: item?.location?.longitude,
                           }))
                         : [],
                     );
@@ -199,6 +199,18 @@ export function inlineVisualScenario(definition: Case) {
             ]
           : []),
         judge('helps-with-the-decision-without-inventing-facts', definition.criterion),
+        ...(definition.type === 'items' ||
+        definition.type === 'schedule' ||
+        definition.type === 'facts' ||
+        definition.type === 'compare'
+          ? [
+              judge(
+                'card-is-scannable-and-non-redundant',
+                'The card fields are concise and scannable: short titles and right-side values, no raw lists or slot dumps crammed into detail, and note (if present) adds new context rather than repeating the card title. The reply does not rebuild the same list or table in Markdown alongside the card.',
+                { failure: 'format' },
+              ),
+            ]
+          : []),
         judge(
           'answer-still-works-as-text',
           'The assistant text itself includes the answer and its material caveats, so a person receiving this over a plain-text messaging channel can understand it without the visual. Merely saying to see a card, map, picture, diagram or attachment fails. Raw presentation JSON or HTML must not appear in the normal answer text.',

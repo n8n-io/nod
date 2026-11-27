@@ -2979,6 +2979,16 @@ test('a turn posts its opening line and final reply, shows the lines between as 
         ['Reading the synthetic comments.'],
       ],
       [
+        'Summarize the synthetic comments while the owner steers in chat',
+        undefined,
+        [
+          'Reading the synthetic comments.',
+          'Found three synthetic threads.\nAll of them mention pricing.',
+          'The synthetic summary is ready.',
+        ],
+        [],
+      ],
+      [
         'Summarize the synthetic comments while the owner steers quietly',
         task,
         [
@@ -2995,8 +3005,10 @@ test('a turn posts its opening line and final reply, shows the lines between as 
       ],
     ] as const) {
       const posted: string[] = [];
+      const postedTargets: Array<string | null | undefined> = [];
       const events: Array<[string, string]> = [];
       let steered = false;
+      const steeredId = randomUUID();
       continued = [];
       const result = await runtime.runTurn({
         ...context(directory),
@@ -3009,18 +3021,22 @@ test('a turn posts its opening line and final reply, shows the lines between as 
                 steered
                   ? []
                   : ((steered = true),
-                    [{ id: randomUUID(), text: 'Also count them', attachments: [] }]),
+                    [{ id: steeredId, text: 'Also count them', attachments: [] }]),
             }
           : {}),
         emit: async (type, summary) => {
           events.push([type, summary]);
         },
-        reply: async (text) => {
+        reply: async (text, _id, replyToMessageId) => {
           posted.push(text);
+          postedTargets.push(replyToMessageId);
         },
       });
       assert.equal(result.status, 'succeeded');
       assert.deepEqual(posted, replies);
+      if (/in chat/.test(prompt))
+        assert.deepEqual(postedTargets, [undefined, undefined, undefined]);
+      if (taskContext) assert.ok(postedTargets.every((target) => target === undefined));
       assert.deepEqual(
         events.filter(([type]) => type === 'step').map(([, summary]) => summary),
         steps,
@@ -3044,7 +3060,241 @@ test('a turn posts its opening line and final reply, shows the lines between as 
   }
 });
 
-test('task handoff does not repeat acknowledgements and keeps independent final answers and steered requests', async (t) => {
+test('a question waits until a message sent mid-turn has its answer', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-answer-first-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const steeredId = randomUUID();
+  const asks: string[] = [];
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (input) => ({
+        resumed: false,
+        abort() {},
+        dispose() {},
+        prompt: async () => {
+          input.onEvent({ type: 'message_start' });
+          input.onEvent({ type: 'text_delta', text: 'Drafting the synthetic email.' });
+          input.onEvent({ type: 'message_end', status: 'succeeded' });
+          await input.nextMessages!();
+          await input.tools
+            .find((tool) => tool.name === 'send_message')!
+            .execute({ text: 'Starting the synthetic task.', intent: 'handoff' });
+          const ask = input.tools.find((tool) => tool.name === 'ask_user')!;
+          const question = { question: 'Which synthetic address?' };
+          asks.push(String(await ask.execute(question).catch((error) => error.message)));
+          input.onEvent({ type: 'message_start' });
+          input.onEvent({ type: 'text_delta', text: 'It is 391.' });
+          input.onEvent({ type: 'message_end', status: 'succeeded' });
+          asks.push(JSON.stringify(await ask.execute(question)));
+        },
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  t.after(() => runtime.dispose());
+  const posted: Array<[string, string | null | undefined]> = [];
+  let taken = false;
+  const result = await runtime.runTurn({
+    ...context(directory),
+    turnId: randomUUID(),
+    prompt: 'Draft the synthetic email',
+    takeMessages: async () =>
+      taken
+        ? []
+        : ((taken = true), [{ id: steeredId, text: 'What is 17 times 23?', attachments: [] }]),
+    reply: async (text, _id, replyToMessageId) => {
+      posted.push([text, replyToMessageId]);
+    },
+  });
+  assert.match(asks[0]!, /Not run, and no question was asked/);
+  assert.match(asks[1]!, /Waiting for the user to reply/);
+  assert.deepEqual(posted, [
+    ['Drafting the synthetic email.', undefined],
+    ['Starting the synthetic task.', undefined],
+    ['It is 391.', undefined],
+  ]);
+  assert.equal(result.status, 'waiting_user');
+  assert.equal(result.replyToMessageId, undefined);
+});
+
+test('a question waits until messages queued during the step are read', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-read-first-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const steeredId = randomUUID();
+  const asks: string[] = [];
+  let queued = true;
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (input) => ({
+        resumed: false,
+        abort() {},
+        dispose() {},
+        prompt: async () => {
+          const ask = input.tools.find((tool) => tool.name === 'ask_user')!;
+          const question = { question: 'Which synthetic sweets?' };
+          asks.push(String(await ask.execute(question).catch((error) => error.message)));
+          await input.nextMessages!();
+          await input.tools
+            .find((tool) => tool.name === 'send_message')!
+            .execute({ text: 'Synthetic sweets noted.', replyToMessageId: steeredId });
+          asks.push(JSON.stringify(await ask.execute(question)));
+        },
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  t.after(() => runtime.dispose());
+  const result = await runtime.runTurn({
+    ...context(directory),
+    turnId: randomUUID(),
+    prompt: 'Buy synthetic sweets',
+    hasQueuedMessages: async () => queued,
+    takeMessages: async () =>
+      queued
+        ? ((queued = false), [{ id: steeredId, text: 'Synthetic brand', attachments: [] }])
+        : [],
+    reply: async () => {},
+  });
+  assert.match(asks[0]!, /new messages you have not read yet/);
+  assert.match(asks[1]!, /Waiting for the user to reply/);
+  assert.equal(result.status, 'waiting_user');
+});
+
+test('sign-in and payment approvals wait until queued messages are read', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-read-first-sign-in-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const outputs: string[] = [];
+  const steered: string[] = [];
+  let queued = 2;
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (input) => ({
+        resumed: false,
+        abort() {},
+        dispose() {},
+        prompt: async () => {
+          const tool = (name: string) => input.tools.find((candidate) => candidate.name === name)!;
+          const run = async (name: string, params: Record<string, unknown>) =>
+            outputs.push(
+              JSON.stringify(
+                await tool(name)
+                  .execute(params)
+                  .catch((error) => error.message),
+              ),
+            );
+          const read = async () => {
+            await input.nextMessages!();
+            await tool('send_message').execute({
+              text: `Synthetic update ${steered.length} noted.`,
+              replyToMessageId: steered.at(-1),
+            });
+          };
+          const signIn = {
+            origin: 'https://example.com',
+            label: 'Synthetic login',
+            message: 'Sign in privately.',
+            action: 'Sign in',
+          };
+          await run('sign_in', signIn);
+          await read();
+          await run('pay', {
+            amount: '10.00',
+            currency: 'EUR',
+            submitSelector: '#pay',
+            fields: { number: '#card-num', securityCode: '#card-cvc', expiry: '#card-exp' },
+          });
+          await read();
+          await run('sign_in', signIn);
+        },
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  t.after(() => runtime.dispose());
+  const result = await runtime.runTurn({
+    ...context(directory),
+    turnId: randomUUID(),
+    prompt: 'Open the synthetic account',
+    hasQueuedMessages: async () => queued > 0,
+    takeMessages: async () => {
+      if (!queued) return [];
+      queued--;
+      steered.push(randomUUID());
+      return [{ id: steered.at(-1)!, text: 'Synthetic update', attachments: [] }];
+    },
+    requestCredential: async (_input, admit) => {
+      await admit?.(true);
+      return { [appConfirmation]: 'Sign in to the synthetic site?' };
+    },
+    requestPayment: async (_input, admit) => {
+      await admit?.(true);
+      return { question: 'Approve the synthetic payment?', action: 'Pay' };
+    },
+    reply: async () => {},
+  });
+  assert.match(outputs[0]!, /new messages you have not read yet/);
+  assert.match(outputs[1]!, /new messages you have not read yet/);
+  assert.match(outputs[2]!, /confirmation question is in chat/);
+  assert.equal(result.status, 'waiting_user');
+  assert.equal(result.waitingFor, 'approval');
+});
+
+test('a reply quotes only the owner message it names, never a guessed one', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-own-answer-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const steeredId = randomUUID();
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (input) => ({
+        resumed: false,
+        abort() {},
+        dispose() {},
+        prompt: async () => {
+          await input.nextMessages!();
+          const send = input.tools.find((tool) => tool.name === 'send_message')!;
+          await send.execute({ text: 'The synthetic flight leaves at nine.' });
+          await send.execute({
+            text: 'The synthetic café is next door.',
+            replyToMessageId: steeredId,
+          });
+          await send.execute({ text: 'Both are booked for the synthetic trip.' });
+        },
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  t.after(() => runtime.dispose());
+  const posted: Array<[string, string | null | undefined]> = [];
+  let taken = false;
+  await runtime.runTurn({
+    ...context(directory),
+    turnId: randomUUID(),
+    prompt: 'Find the next synthetic flight',
+    takeMessages: async () =>
+      taken
+        ? []
+        : ((taken = true),
+          [{ id: steeredId, text: 'Where is the synthetic café?', attachments: [] }]),
+    reply: async (text, _id, replyToMessageId) => {
+      posted.push([text, replyToMessageId]);
+    },
+  });
+  assert.deepEqual(posted, [
+    ['The synthetic flight leaves at nine.', undefined],
+    ['The synthetic café is next door.', steeredId],
+    ['Both are booked for the synthetic trip.', undefined],
+  ]);
+});
+
+test('task handoff shows only the start message unless a steered request needs an answer', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-task-handoff-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const acknowledgement =
@@ -3061,84 +3311,11 @@ test('task handoff does not repeat acknowledgements and keeps independent final 
       expected: [acknowledgement],
     },
     {
-      name: 'task start alone',
+      name: 'reworded closing text',
       earlyUpdate: false,
       steer: false,
-      final:
-        "I've started reviewing your synthetic inbox. I'll flag urgent email and save draft replies. Nothing gets sent without your OK.",
+      final: 'I restarted the synthetic inbox review and will report back when it is done.',
       expected: [],
-    },
-    {
-      name: 'Spanish task start alone',
-      earlyUpdate: false,
-      steer: false,
-      start:
-        'Ya he empezado a revisar tu buzón y preparar borradores de respuesta. No enviaré nada sin tu aprobación.',
-      final:
-        'Ya he empezado a revisar tu buzón y preparando borradores de respuesta. No enviaré nada sin tu aprobación.',
-      expected: [],
-    },
-    {
-      name: 'independent answer',
-      earlyUpdate: true,
-      steer: false,
-      final: 'The synthetic invoice is due Friday for €450. I flagged it for review.',
-      expected: [
-        acknowledgement,
-        'The synthetic invoice is due Friday for €450. I flagged it for review.',
-      ],
-    },
-    {
-      name: 'new finding after the task starts',
-      earlyUpdate: true,
-      steer: false,
-      final:
-        "I've started reviewing your synthetic inbox. I'll flag urgent email and save draft replies. Nothing gets sent without your OK. I found 3 urgent messages.",
-      expected: [
-        acknowledgement,
-        "I've started reviewing your synthetic inbox. I'll flag urgent email and save draft replies. Nothing gets sent without your OK. I found 3 urgent messages.",
-      ],
-    },
-    {
-      name: 'negated finding after task start',
-      earlyUpdate: false,
-      steer: false,
-      start: "I've started checking the synthetic invoices. Every invoice is approved.",
-      final: "I've started checking the synthetic invoices. Every invoice is not approved.",
-      expected: ["I've started checking the synthetic invoices. Every invoice is not approved."],
-    },
-    {
-      name: 'removed negation after task start',
-      earlyUpdate: false,
-      steer: false,
-      start: "I've started checking the synthetic invoices. No invoice is approved.",
-      final: "I've started checking the synthetic invoices. Every invoice is approved.",
-      expected: ["I've started checking the synthetic invoices. Every invoice is approved."],
-    },
-    {
-      name: 'changed count after task start',
-      earlyUpdate: false,
-      steer: false,
-      start: "I've started checking all 12 synthetic invoices for overdue items.",
-      final: "I've started checking all 2 synthetic invoices for overdue items.",
-      expected: ["I've started checking all 2 synthetic invoices for overdue items."],
-    },
-    {
-      name: 'qualitative finding after task start',
-      earlyUpdate: false,
-      steer: false,
-      start: "I've started reviewing your synthetic inbox and will flag urgent messages.",
-      final: "I've started reviewing your synthetic inbox and will flag fraudulent messages.",
-      expected: ["I've started reviewing your synthetic inbox and will flag fraudulent messages."],
-    },
-    {
-      name: 'finding borrowed from the owner request',
-      earlyUpdate: false,
-      steer: false,
-      prompt: 'Check the synthetic invoices and tell me which are rejected.',
-      start: "I've started checking the synthetic invoices. Every invoice is approved.",
-      final: "I've started checking the synthetic invoices. Every invoice is rejected.",
-      expected: ["I've started checking the synthetic invoices. Every invoice is rejected."],
     },
     {
       name: 'steered answer',
@@ -3162,11 +3339,29 @@ test('task handoff does not repeat acknowledgements and keeps independent final 
         "I've started reviewing your synthetic Gmail inbox. I'll flag urgent email and save draft replies. Nothing gets sent without your OK.",
       ],
     },
+    {
+      name: 'steered request that starts its own task',
+      earlyUpdate: false,
+      steer: true,
+      steerBefore: true,
+      startsSteered: true,
+      final: 'I started two synthetic jobs and each reports back when done.',
+      expected: [],
+    },
+    {
+      name: 'correction forwarded to a running task',
+      earlyUpdate: false,
+      steer: false,
+      forward: true,
+      final: 'Done, the synthetic review now covers both inboxes.',
+      expected: [],
+    },
   ] as const;
   for (const scenario of cases)
     await t.test(scenario.name, async () => {
       const posted: string[] = [];
       const incoming: string[] = [];
+      const steeredId = randomUUID();
       const runtime = createAgentRuntime({
         agent: {
           open: async (input) => ({
@@ -3180,15 +3375,27 @@ test('task handoff does not repeat acknowledgements and keeps independent final 
                   .execute({ text: acknowledgement, intent: 'update' });
               if ('steerBefore' in scenario && scenario.steerBefore)
                 incoming.push(...((await input.nextMessages?.()) ?? []).map((item) => item.text));
-              await input.tools
-                .find((tool) => tool.name === 'task')!
-                .execute({
-                  action: 'start',
-                  title: 'Review synthetic inbox',
-                  doneWhen: 'Urgent messages identified and draft replies saved',
-                  now: 'Reviewing synthetic inbox',
-                  message: 'start' in scenario ? scenario.start : startMessage,
+              if ('forward' in scenario) {
+                input.onEvent({ type: 'message_start' });
+                input.onEvent({
+                  type: 'text_delta',
+                  text: 'This refers to the inbox review. Forward it to that task.',
                 });
+                input.onEvent({ type: 'message_end', beforeTool: 'task' });
+                await input.tools
+                  .find((tool) => tool.name === 'task')!
+                  .execute({ action: 'reply', ids: [randomUUID()] });
+              } else
+                await input.tools
+                  .find((tool) => tool.name === 'task')!
+                  .execute({
+                    action: 'start',
+                    title: 'Review synthetic inbox',
+                    doneWhen: 'Urgent messages identified and draft replies saved',
+                    now: 'Reviewing synthetic inbox',
+                    message: startMessage,
+                    ...('startsSteered' in scenario ? { request: steeredId } : {}),
+                  });
               if (!('steerBefore' in scenario && scenario.steerBefore))
                 incoming.push(...((await input.nextMessages?.()) ?? []).map((item) => item.text));
               input.onEvent({ type: 'message_start' });
@@ -3207,10 +3414,7 @@ test('task handoff does not repeat acknowledgements and keeps independent final 
         const result = await runtime.runTurn({
           ...context(directory),
           turnId: randomUUID(),
-          prompt:
-            'prompt' in scenario
-              ? scenario.prompt
-              : 'Review my synthetic inbox and report urgent messages.',
+          prompt: 'Review my synthetic inbox and report urgent messages.',
           task: async () => ({ id: randomUUID() }),
           reply: async (text) => {
             posted.push(text);
@@ -3223,7 +3427,7 @@ test('task handoff does not repeat acknowledgements and keeps independent final 
                     : ((steered = true),
                       [
                         {
-                          id: randomUUID(),
+                          id: steeredId,
                           text: 'Use the synthetic account I selected.',
                           attachments: [],
                         },
@@ -3314,6 +3518,58 @@ test('a paused turn cannot start a subagent still preparing and failed children 
     release();
     await runtime.dispose();
   }
+});
+
+test('a subagent returns partial findings when capped at its step limit', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'nod-delegate-cap-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let delegated = '';
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (input) => {
+        const child = Boolean(input.ephemeral);
+        return {
+          resumed: false,
+          abort() {},
+          dispose() {},
+          prompt: async () => {
+            if (!child) {
+              const delegate = input.tools.find((tool) => tool.name === 'delegate')!;
+              const result = await delegate.execute({
+                title: 'Collect synthetic facts',
+                instruction: 'Gather facts and report back.',
+              });
+              delegated = result.content.find((part) => part.type === 'text')!.text;
+              return;
+            }
+            const browser = input.tools.find((tool) => tool.name === 'browser')!;
+            for (let step = 1; step <= 6; step++) {
+              await browser.execute({ action: 'open', url: `https://example.com/step-${step}` });
+              assert.equal(input.shouldStop([{ name: 'browser' }]), false);
+            }
+            await assert.rejects(
+              browser.execute({ action: 'open', url: 'https://example.com/step-7' }),
+              /No tool steps are left/,
+            );
+            assert.equal(input.shouldStop([{ name: 'browser', error: 'spent' }]), true);
+          },
+        };
+      },
+      dispose() {},
+    },
+    computer: fakeComputer({
+      act: async (_id, step) => ({
+        url: step.url ?? 'https://example.com',
+        text: `Synthetic finding from ${step.url}`,
+      }),
+    }),
+    workspace: fakeWorkspace(),
+  });
+  t.after(() => runtime.dispose());
+  const result = await runtime.runTurn({ ...context(directory), turnId: randomUUID() });
+  assert.equal(result.status, 'succeeded');
+  assert.match(delegated, /Partial findings before stopping/);
+  assert.match(delegated, /Synthetic finding from https:\/\/example\.com\/step-6/);
 });
 
 test('runtime shutdown drains tasks and releases every capability after adapter failures', async (t) => {
@@ -3845,6 +4101,13 @@ test('send_message validates structured visuals and delivers each distinct prese
       },
     ],
   };
+  const items: Presentation = {
+    version: 1,
+    type: 'items',
+    title: 'Synthetic list',
+    sources: [],
+    items: [{ title: 'Synthetic row' }],
+  };
   for (const text of ['The request reaches the answer.', ''])
     await t.test(text ? 'with accompanying text' : 'visual only', async (t) => {
       const replies: Array<Parameters<RuntimeContext['reply']>> = [];
@@ -3864,15 +4127,28 @@ test('send_message validates structured visuals and delivers each distinct prese
               assert.equal(exposed.Check(presentation), true);
               assert.equal(exposed.Check({ ...presentation, version: 2 }), false);
               assert.equal(exposed.Check(legacyFlight), false);
+              assert.equal(
+                exposed.Check({
+                  ...legacyFlight,
+                  options: [{ ...legacyFlight.options[0], status: 'booked' }],
+                }),
+                false,
+              );
               const send = input.tools.find((tool) => tool.name === 'send_message')!;
               await assert.rejects(
-                send.execute({ text: '', presentation: legacyFlight }),
+                send.execute({
+                  text: '',
+                  presentation: {
+                    ...items,
+                    items: [{ title: 'Synthetic', status: { label: 'Odd', tone: 'unverified' } }],
+                  },
+                }),
                 (error: unknown) => {
                   assert.ok(error instanceof Error);
-                  assert.match(error.message, /\/presentation\/options\/0\/status/);
-                  for (const status of ['booked', 'option', 'unknown'])
-                    assert.ok(error.message.includes(status));
-                  assert.ok(!error.message.includes(legacyFlight.title));
+                  assert.match(error.message, /\/presentation\/items\/0\/status\/tone/);
+                  for (const tone of ['new', 'waiting', 'done', 'failed'])
+                    assert.ok(error.message.includes(tone));
+                  assert.ok(!error.message.includes(items.title));
                   return true;
                 },
               );
@@ -3882,7 +4158,7 @@ test('send_message validates structured visuals and delivers each distinct prese
                   text: '',
                   presentation: {
                     ...legacyFlight,
-                    options: [{ ...legacyFlight.options[0], status: 'unverified' }],
+                    options: [{ ...legacyFlight.options[0], status: 'booked' }],
                   },
                 },
                 {
@@ -3893,13 +4169,13 @@ test('send_message validates structured visuals and delivers each distinct prese
               ])
                 await assert.rejects(send.execute(value));
               assert.equal(replies.length, 0);
-              for (const status of ['booked', 'option', 'unknown'] as const) {
-                const flight: Presentation = {
-                  ...legacyFlight,
-                  options: [{ ...legacyFlight.options[0], status }],
+              for (const tone of ['new', 'waiting', 'done'] as const) {
+                const card: Presentation = {
+                  ...items,
+                  items: [{ title: 'Synthetic row', status: { label: tone, tone } }],
                 };
-                assert.equal(exposed.Check(flight), true);
-                await send.execute({ text: '', presentation: flight });
+                assert.equal(exposed.Check(card), true);
+                await send.execute({ text: '', presentation: card });
               }
               const value = {
                 text,
@@ -3935,12 +4211,477 @@ test('send_message validates structured visuals and delivers each distinct prese
       assert.equal(replies[4][3]?.title, 'Updated synthetic delivery');
       assert.deepEqual(
         replies.slice(0, 3).map((reply) => {
-          assert.equal(reply[3]?.type, 'flights');
-          return reply[3]?.type === 'flights' ? reply[3].options[0].status : undefined;
+          assert.equal(reply[3]?.type, 'items');
+          return reply[3]?.type === 'items' ? reply[3].items[0]?.status?.tone : undefined;
         }),
-        ['booked', 'option', 'unknown'],
+        ['new', 'waiting', 'done'],
       );
     });
+  await t.test('closing text that restates a sent answer is not posted again', async (t) => {
+    const sent =
+      'Synthetic total is about 2,286 units. These use the latest synthetic reference figures from yesterday, and two other feeds agree within a small margin. Your provider will add its own markup, so expect a little less.';
+    for (const [restated, posted] of [
+      [
+        'Synthetic total is about 2,286 units. These use the latest synthetic reference figures from yesterday.',
+        [sent],
+      ],
+      [sent.replace('agree', 'disagree'), [sent, sent.replace('agree', 'disagree')]],
+      [sent.replace('2,286', '2,296'), [sent, sent.replace('2,286', '2,296')]],
+    ] as const) {
+      const replies: Array<Parameters<RuntimeContext['reply']>> = [];
+      const runtime = createAgentRuntime({
+        agent: {
+          open: async (input) => ({
+            resumed: false,
+            abort() {},
+            dispose() {},
+            prompt: async () => {
+              const send = input.tools.find((tool) => tool.name === 'send_message')!;
+              await send.execute({ text: sent });
+              input.onEvent({ type: 'final', text: restated });
+            },
+          }),
+          dispose() {},
+        },
+        computer: fakeComputer(),
+        workspace: fakeWorkspace(),
+      });
+      t.after(() => runtime.dispose());
+      const result = await runtime.runTurn({
+        ...context(directory),
+        turnId: randomUUID(),
+        reply: async (...args) => {
+          replies.push(args);
+        },
+      });
+      assert.equal(result.status, 'succeeded');
+      assert.deepEqual(
+        replies.map((reply) => reply[0]),
+        posted,
+      );
+    }
+  });
+  await t.test('a card to pick from asks with its rows as answer choices', async (t) => {
+    const replies: Array<Parameters<RuntimeContext['reply']>> = [];
+    const row = (index: number) => ({ title: `Option ${index}`, value: `€${index}0` });
+    const runtime = createAgentRuntime({
+      agent: {
+        open: async (input) => ({
+          resumed: false,
+          abort() {},
+          dispose() {},
+          prompt: async () => {
+            const send = input.tools.find((tool) => tool.name === 'send_message')!;
+            const pick = { question: 'Which one?' };
+            await assert.rejects(
+              send.execute({
+                text: '',
+                presentation: { ...items, pick, items: [1, 2, 3, 4, 5, 6, 7].map(row) },
+              }),
+            );
+            await assert.rejects(
+              send.execute({
+                text: '',
+                intent: 'final',
+                presentation: { ...items, pick, items: [1, 2].map(row) },
+              }),
+              /cannot use intent "final"/,
+            );
+            assert.equal(replies.length, 0);
+            await send.execute({
+              text: '',
+              presentation: {
+                ...items,
+                pick,
+                items: [
+                  { ...row(1), status: 'Overdue', url: 'http://127.0.0.1/private' },
+                  { ...row(2), status: 'Paid', detail: 'd'.repeat(400) },
+                ],
+                note: 'a'.repeat(250),
+                sources: [
+                  { label: 'Public', url: 'https://news.ycombinator.com/item?id=1' },
+                  { label: 'Local', url: 'http://localhost:3000/tasks' },
+                  { label: 'Relative', url: '/tasks' },
+                ],
+              },
+            });
+          },
+        }),
+        dispose() {},
+      },
+      computer: fakeComputer(),
+      workspace: fakeWorkspace(),
+    });
+    t.after(() => runtime.dispose());
+    const result = await runtime.runTurn({
+      ...context(directory),
+      turnId: randomUUID(),
+      reply: async (...args) => {
+        replies.push(args);
+      },
+    });
+    assert.equal(replies.length, 1);
+    assert.equal(replies[0][3]?.type, 'items');
+    assert.equal(replies[0][3]?.note?.length, 220);
+    if (replies[0][3]?.type === 'items') {
+      assert.deepEqual(replies[0][3].items[0]?.status, { label: 'Overdue', tone: 'failed' });
+      assert.equal(replies[0][3].items[0]?.url, undefined);
+      assert.deepEqual(replies[0][3].items[1]?.status, { label: 'Paid', tone: 'done' });
+      assert.equal(replies[0][3].items[1]?.detail?.length, 360);
+    }
+    assert.deepEqual(replies[0][3]?.sources, [
+      { label: 'Public', url: 'https://news.ycombinator.com/item?id=1' },
+    ]);
+    assert.equal(result.status, 'waiting_user');
+    assert.equal(result.message, 'Which one?');
+    assert.deepEqual(
+      result.answerChoices?.options.map(({ label, description }) => [label, description]),
+      [
+        ['Option 1', '€10'],
+        ['Option 2', '€20'],
+      ],
+    );
+    assert.equal(result.answerChoices?.multiple, false);
+  });
+
+  await t.test('a card with pick waits after a sibling tool failure is retried', async (t) => {
+    const replies: Array<Parameters<RuntimeContext['reply']>> = [];
+    const row = (index: number) => ({ title: `Option ${index}`, value: `€${index}0` });
+    let continued = false;
+    let stopped = false;
+    const runtime = createAgentRuntime({
+      agent: {
+        open: async (input) => ({
+          resumed: false,
+          abort() {},
+          dispose() {},
+          prompt: async () => {
+            const send = input.tools.find((tool) => tool.name === 'send_message')!;
+            await send.execute({
+              text: '',
+              intent: 'update',
+              presentation: { ...items, pick: { question: 'Which one?' }, items: [1, 2].map(row) },
+            });
+            continued = !input.shouldStop([
+              { name: 'task', error: 'Invalid task input' },
+              { name: 'send_message' },
+            ]);
+            stopped = input.shouldStop([{ name: 'task' }]);
+          },
+        }),
+        dispose() {},
+      },
+      computer: fakeComputer(),
+      workspace: fakeWorkspace(),
+    });
+    t.after(() => runtime.dispose());
+    const result = await runtime.runTurn({
+      ...context(directory),
+      turnId: randomUUID(),
+      reply: async (...args) => {
+        replies.push(args);
+      },
+    });
+    assert.equal(continued, true);
+    assert.equal(stopped, true);
+    assert.equal(replies.length, 1);
+    assert.equal(result.status, 'waiting_user');
+    assert.equal(result.message, 'Which one?');
+    assert.equal(result.answerChoices?.options.length, 2);
+  });
+
+  await t.test('normalization keeps a draft status and coerces a facts status', async (t) => {
+    const replies: Array<Parameters<RuntimeContext['reply']>> = [];
+    const runtime = createAgentRuntime({
+      agent: {
+        open: async (input) => ({
+          resumed: false,
+          abort() {},
+          dispose() {},
+          prompt: async () => {
+            const send = input.tools.find((tool) => tool.name === 'send_message')!;
+            await send.execute({
+              text: '',
+              presentation: {
+                version: 1,
+                type: 'draft',
+                title: 'Draft reply',
+                to: ['sam@example.test'],
+                subject: 'Schedule update',
+                body: 'Synthetic draft body.',
+                status: 'draft',
+              },
+            });
+            await send.execute({
+              text: '',
+              presentation: {
+                version: 1,
+                type: 'facts',
+                title: 'Synthetic invoice',
+                caption: 'c'.repeat(500),
+                status: 'Pending approval',
+                items: [{ label: 'Total', value: '€10' }],
+              },
+            });
+          },
+        }),
+        dispose() {},
+      },
+      computer: fakeComputer(),
+      workspace: fakeWorkspace(),
+    });
+    t.after(() => runtime.dispose());
+    const result = await runtime.runTurn({
+      ...context(directory),
+      turnId: randomUUID(),
+      reply: async (...args) => {
+        replies.push(args);
+      },
+    });
+    assert.equal(result.status, 'succeeded');
+    assert.equal(replies.length, 2);
+    assert.equal(replies[0][3]?.type, 'draft');
+    if (replies[0][3]?.type === 'draft') {
+      assert.equal(replies[0][3].status, 'draft');
+    }
+    assert.equal(replies[1][3]?.type, 'facts');
+    if (replies[1][3]?.type === 'facts') {
+      assert.deepEqual(replies[1][3].status, { label: 'Pending approval', tone: 'waiting' });
+      assert.equal(replies[1][3].caption?.length, 500);
+    }
+  });
+
+  await t.test(
+    'a card with pick awaits browser hold before finishing the turn',
+    { timeout: 3000 },
+    async (t) => {
+      const replies: Array<Parameters<RuntimeContext['reply']>> = [];
+      let releaseHold!: () => void;
+      const holdGate = new Promise<void>((resolve) => {
+        releaseHold = resolve;
+      });
+      let holding!: () => void;
+      const held = new Promise<void>((resolve) => {
+        holding = resolve;
+      });
+      const runtime = createAgentRuntime({
+        agent: {
+          open: async (input) => ({
+            resumed: false,
+            abort() {},
+            dispose() {},
+            prompt: async () => {
+              const browser = input.tools.find((tool) => tool.name === 'browser')!;
+              const send = input.tools.find((tool) => tool.name === 'send_message')!;
+              await browser.execute({ action: 'open', url: 'https://example.com' });
+              await send.execute({
+                text: '',
+                intent: 'update',
+                presentation: {
+                  ...items,
+                  pick: { question: 'Which option?' },
+                  items: [{ title: 'Option 1' }, { title: 'Option 2' }],
+                },
+              });
+              assert.equal(input.shouldStop([{ name: 'send_message' }]), true);
+            },
+          }),
+          dispose() {},
+        },
+        computer: fakeComputer({
+          act: async () => ({ url: 'https://example.com', text: 'Synthetic page' }),
+          hold: async (_sessionId, keep) => {
+            if (!keep) return;
+            holding();
+            await holdGate;
+          },
+        }),
+        workspace: fakeWorkspace(),
+      });
+      t.after(() => runtime.dispose());
+      let finished = false;
+      const running = runtime
+        .runTurn({
+          ...context(directory),
+          turnId: randomUUID(),
+          reply: async (...args) => {
+            replies.push(args);
+          },
+        })
+        .finally(() => {
+          finished = true;
+        });
+      await held;
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(finished, false);
+      releaseHold();
+      const result = await running;
+      assert.equal(replies.length, 1);
+      assert.equal(result.status, 'waiting_user');
+      assert.equal(result.message, 'Which option?');
+      assert.equal(result.answerChoices?.options.length, 2);
+    },
+  );
+
+  await t.test('a delivered card with pick is not refused when messages are queued', async (t) => {
+    const replies: Array<Parameters<RuntimeContext['reply']>> = [];
+    let sent = '';
+    const runtime = createAgentRuntime({
+      agent: {
+        open: async (input) => ({
+          resumed: false,
+          abort() {},
+          dispose() {},
+          prompt: async () => {
+            const send = input.tools.find((tool) => tool.name === 'send_message')!;
+            sent = JSON.stringify(
+              await send.execute({
+                text: 'Synthetic fares.',
+                presentation: {
+                  ...items,
+                  pick: { question: 'Which one?' },
+                  items: [{ title: 'Option 1' }, { title: 'Option 2' }],
+                },
+              }),
+            );
+          },
+        }),
+        dispose() {},
+      },
+      computer: fakeComputer(),
+      workspace: fakeWorkspace(),
+    });
+    t.after(() => runtime.dispose());
+    const result = await runtime.runTurn({
+      ...context(directory),
+      turnId: randomUUID(),
+      prompt: 'Find synthetic fares',
+      hasQueuedMessages: async () => true,
+      takeMessages: async () => [],
+      reply: async (...args) => {
+        replies.push(args);
+      },
+    });
+    assert.equal(replies.length, 1);
+    assert.doesNotMatch(sent, /Not run/);
+    assert.match(sent, /without sending this card again/);
+    assert.equal(result.status, 'succeeded');
+  });
+
+  await t.test(
+    'an unquoted burst reply clears owed messages and waiting reply targets stay scoped to picks',
+    async (t) => {
+      const firstId = randomUUID();
+      const secondId = randomUUID();
+      let taken = false;
+      const runtime = createAgentRuntime({
+        agent: {
+          open: async (input) => ({
+            resumed: false,
+            abort() {},
+            dispose() {},
+            prompt: async () => {
+              await input.nextMessages!();
+              const send = input.tools.find((tool) => tool.name === 'send_message')!;
+              await send.execute({ text: 'Answered both synthetic updates together.' });
+              await input.tools
+                .find((tool) => tool.name === 'ask_user')!
+                .execute({ question: 'Which synthetic slot?' });
+            },
+          }),
+          dispose() {},
+        },
+        computer: fakeComputer(),
+        workspace: fakeWorkspace(),
+      });
+      t.after(() => runtime.dispose());
+      const burstResult = await runtime.runTurn({
+        ...context(directory),
+        turnId: randomUUID(),
+        prompt: 'Plan the synthetic meeting',
+        takeMessages: async () =>
+          taken
+            ? []
+            : ((taken = true),
+              [
+                { id: firstId, text: 'Make it Tuesday', attachments: [] },
+                { id: secondId, text: 'Actually Wednesday', attachments: [] },
+              ]),
+        reply: async () => {},
+      });
+      assert.equal(burstResult.status, 'waiting_user');
+      assert.equal(burstResult.message, 'Which synthetic slot?');
+      assert.equal(burstResult.replyToMessageId, undefined);
+
+      const pickTarget = randomUUID();
+      const pickRuntime = createAgentRuntime({
+        agent: {
+          open: async (input) => ({
+            resumed: false,
+            abort() {},
+            dispose() {},
+            prompt: async () => {
+              const send = input.tools.find((tool) => tool.name === 'send_message')!;
+              await send.execute({
+                text: 'Synthetic options.',
+                intent: 'update',
+                replyToMessageId: pickTarget,
+                presentation: {
+                  ...items,
+                  pick: { question: 'Which one?' },
+                  items: [{ title: 'Option 1' }, { title: 'Option 2' }],
+                },
+              });
+              input.shouldStop([{ name: 'send_message' }]);
+            },
+          }),
+          dispose() {},
+        },
+        computer: fakeComputer(),
+        workspace: fakeWorkspace(),
+      });
+      t.after(() => pickRuntime.dispose());
+      const pickResult = await pickRuntime.runTurn({
+        ...context(directory),
+        turnId: randomUUID(),
+        reply: async () => {},
+      });
+      assert.equal(pickResult.status, 'waiting_user');
+      assert.equal(pickResult.replyToMessageId, pickTarget);
+
+      const unrelatedTarget = randomUUID();
+      const unrelatedRuntime = createAgentRuntime({
+        agent: {
+          open: async (input) => ({
+            resumed: false,
+            abort() {},
+            dispose() {},
+            prompt: async () => {
+              const send = input.tools.find((tool) => tool.name === 'send_message')!;
+              await send.execute({
+                text: 'Answered the earlier message.',
+                replyToMessageId: unrelatedTarget,
+              });
+              await input.tools
+                .find((tool) => tool.name === 'ask_user')!
+                .execute({ question: 'Need another detail?' });
+            },
+          }),
+          dispose() {},
+        },
+        computer: fakeComputer(),
+        workspace: fakeWorkspace(),
+      });
+      t.after(() => unrelatedRuntime.dispose());
+      const unrelatedResult = await unrelatedRuntime.runTurn({
+        ...context(directory),
+        turnId: randomUUID(),
+        reply: async () => {},
+      });
+      assert.equal(unrelatedResult.status, 'waiting_user');
+      assert.equal(unrelatedResult.replyToMessageId, undefined);
+    },
+  );
 });
 
 const chatgptHostId = '6f1c2f4e-3b8a-4d2e-9c51-0a7e2b9d4f10';
@@ -8208,6 +8949,340 @@ test('the live line shows a model retry and the text before a tool call while th
   assert.equal(requests, 4);
   assert.equal(exposedTools.has('set_status'), false);
   assert.ok(emitted.find(([type]) => type === 'retry')?.[1].includes(definition.choice.name));
+});
+
+test('a chat answer posts as soon as its call is written, before the rest of the step streams', async (t) => {
+  const { createServer } = await import('node:http');
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-early-reply-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let replied!: () => void;
+  const posted = new Promise<'reply'>((resolve) => (replied = () => resolve('reply')));
+  let released: 'reply' | 'timeout' | undefined;
+  let requests = 0;
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on('end', async () => {
+      const send = (...events: Array<Record<string, unknown>>) =>
+        response.write(
+          events
+            .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+            .join(''),
+        );
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      send({
+        type: 'message_start',
+        message: {
+          id: `synthetic-early-${++requests}`,
+          type: 'message',
+          role: 'assistant',
+          model: 'fixture-anthropic',
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 10, output_tokens: 0 },
+        },
+      });
+      const tool = (index: number, id: string, name: string, input: object) => [
+        {
+          type: 'content_block_start',
+          index,
+          content_block: { type: 'tool_use', id, name, input: {} },
+        },
+        {
+          type: 'content_block_delta',
+          index,
+          delta: { type: 'input_json_delta', partial_json: JSON.stringify(input) },
+        },
+        { type: 'content_block_stop', index },
+      ];
+      const end = (reason: string) => {
+        send(
+          {
+            type: 'message_delta',
+            delta: { stop_reason: reason, stop_sequence: null },
+            usage: { output_tokens: 2 },
+          },
+          { type: 'message_stop' },
+        );
+        response.end();
+      };
+      if (requests > 1) {
+        send(
+          { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+          {
+            type: 'content_block_delta',
+            index: 0,
+            delta: { type: 'text_delta', text: 'The plan is saved.' },
+          },
+          { type: 'content_block_stop', index: 0 },
+        );
+        return end('end_turn');
+      }
+      send(
+        ...tool(0, 'toolu_answer', 'send_message', {
+          text: 'There are 604,800 seconds in a week.',
+        }),
+      );
+      let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+      released = await Promise.race([
+        posted,
+        new Promise<'timeout'>(
+          (resolve) => (timer = globalThis.setTimeout(() => resolve('timeout'), 5000)),
+        ),
+      ]);
+      clearTimeout(timer);
+      send(...tool(1, 'toolu_plan', 'bash', { command: 'fixture-write-plan' }));
+      end('tool_use');
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const url = 'http://127.0.0.1:' + (server.address() as import('node:net').AddressInfo).port;
+  const access = smallContextAccess('compatible', 'fixture-anthropic', 200_000);
+  access.provider = 'anthropic';
+  access.read = async () => ({ type: 'api_key', key: 'synthetic-key' });
+  access.definition.spec = {
+    ...access.definition.spec,
+    provider: 'anthropic',
+    api: 'anthropic-messages',
+    baseUrl: url,
+  };
+  const agent = createPiAgent({
+    provider: 'anthropic',
+    sessionRoot: join(directory, 'sessions'),
+    resolve: async () => access,
+  });
+  const { workspace, scripts } = recordingWorkspace();
+  const runtime = createAgentRuntime({
+    agent,
+    computer: fakeComputer(),
+    workspace: fakeWorkspace({ open: () => workspace }),
+  });
+  t.after(() => runtime.dispose());
+  const replies: string[] = [];
+  let writtenBeforeReply = true;
+  const result = await runtime.runTurn({
+    ...context(directory),
+    sessionId: 'fixture-early-reply',
+    turnId: randomUUID(),
+    prompt: 'Plan my mornings, and how many seconds are in a week?',
+    reply: async (text) => {
+      if (!replies.length)
+        writtenBeforeReply = scripts.some((script) => script.includes('fixture-write-plan'));
+      replies.push(text);
+      replied();
+    },
+  });
+  assert.equal(result.status, 'succeeded');
+  assert.equal(released, 'reply');
+  assert.equal(writtenBeforeReply, false);
+  assert.deepEqual(replies, ['There are 604,800 seconds in a week.', 'The plan is saved.']);
+  assert.equal(scripts.filter((script) => script.includes('fixture-write-plan')).length, 1);
+});
+
+test('consecutive early send_message calls execute sequentially in order', async (t) => {
+  const { createServer } = await import('node:http');
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-early-order-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let requests = 0;
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on('end', () => {
+      requests++;
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      const send = (...events: Array<Record<string, unknown>>) => {
+        for (const event of events)
+          response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      };
+      const tool = (index: number, id: string, name: string, input: Record<string, unknown>) => [
+        {
+          type: 'content_block_start',
+          index,
+          content_block: { type: 'tool_use', id, name, input: {} },
+        },
+        {
+          type: 'content_block_delta',
+          index,
+          delta: { type: 'input_json_delta', partial_json: JSON.stringify(input) },
+        },
+        { type: 'content_block_stop', index },
+      ];
+      send({
+        type: 'message_start',
+        message: {
+          id: `msg_${requests}`,
+          type: 'message',
+          role: 'assistant',
+          content: [],
+          model: 'fixture-anthropic',
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 100, output_tokens: 0 },
+        },
+      });
+      if (requests === 1) {
+        send(
+          ...tool(0, 'toolu_first', 'send_message', { text: 'First early answer.' }),
+          ...tool(1, 'toolu_second', 'send_message', { text: 'Second early answer.' }),
+        );
+        send(
+          {
+            type: 'message_delta',
+            delta: { stop_reason: 'tool_use', stop_sequence: null },
+            usage: { output_tokens: 40 },
+          },
+          { type: 'message_stop' },
+        );
+      } else {
+        send(
+          {
+            type: 'message_delta',
+            delta: { stop_reason: 'end_turn', stop_sequence: null },
+            usage: { output_tokens: 1 },
+          },
+          { type: 'message_stop' },
+        );
+      }
+      response.end();
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const url = 'http://127.0.0.1:' + (server.address() as import('node:net').AddressInfo).port;
+  const access = smallContextAccess('compatible', 'fixture-anthropic', 200_000);
+  access.provider = 'anthropic';
+  access.read = async () => ({ type: 'api_key', key: 'synthetic-key' });
+  access.definition.spec = {
+    ...access.definition.spec,
+    provider: 'anthropic',
+    api: 'anthropic-messages',
+    baseUrl: url,
+  };
+  const agent = createPiAgent({
+    provider: 'anthropic',
+    sessionRoot: join(directory, 'sessions'),
+    resolve: async () => access,
+  });
+  const runtime = createAgentRuntime({
+    agent,
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  t.after(() => runtime.dispose());
+  const events: string[] = [];
+  let inFlight = 0;
+  let maxConcurrent = 0;
+  const result = await runtime.runTurn({
+    ...context(directory),
+    sessionId: 'fixture-early-order',
+    turnId: randomUUID(),
+    prompt: 'Send two quick answers.',
+    reply: async (text) => {
+      inFlight++;
+      maxConcurrent = Math.max(maxConcurrent, inFlight);
+      events.push(`start:${text}`);
+      await setTimeout(text.includes('First') ? 30 : 5);
+      events.push(`end:${text}`);
+      inFlight--;
+    },
+  });
+  assert.equal(result.status, 'succeeded');
+  assert.equal(maxConcurrent, 1);
+  assert.deepEqual(events, [
+    'start:First early answer.',
+    'end:First early answer.',
+    'start:Second early answer.',
+    'end:Second early answer.',
+  ]);
+});
+
+test('a chat answer posted before its model request fails is not sent again by a retry', async (t) => {
+  const { createServer } = await import('node:http');
+  const directory = await mkdtemp(join(tmpdir(), 'nod-pi-early-failure-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let requests = 0;
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on('end', () => {
+      requests++;
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.end(
+        [
+          {
+            type: 'message_start',
+            message: {
+              id: `synthetic-early-failure-${requests}`,
+              type: 'message',
+              role: 'assistant',
+              model: 'fixture-anthropic',
+              content: [],
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 10, output_tokens: 0 },
+            },
+          },
+          {
+            type: 'content_block_start',
+            index: 0,
+            content_block: {
+              type: 'tool_use',
+              id: 'toolu_answer',
+              name: 'send_message',
+              input: {},
+            },
+          },
+          {
+            type: 'content_block_delta',
+            index: 0,
+            delta: {
+              type: 'input_json_delta',
+              partial_json: JSON.stringify({ text: 'There are 604,800 seconds in a week.' }),
+            },
+          },
+          { type: 'content_block_stop', index: 0 },
+          { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } },
+        ]
+          .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+          .join(''),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const url = 'http://127.0.0.1:' + (server.address() as import('node:net').AddressInfo).port;
+  const access = smallContextAccess('compatible', 'fixture-anthropic', 200_000);
+  access.provider = 'anthropic';
+  access.read = async () => ({ type: 'api_key', key: 'synthetic-key' });
+  access.definition.spec = {
+    ...access.definition.spec,
+    provider: 'anthropic',
+    api: 'anthropic-messages',
+    baseUrl: url,
+  };
+  const runtime = createAgentRuntime({
+    agent: createPiAgent({
+      provider: 'anthropic',
+      sessionRoot: join(directory, 'sessions'),
+      resolve: async () => access,
+    }),
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  t.after(() => runtime.dispose());
+  const replies: string[] = [];
+  await runtime
+    .runTurn({
+      ...context(directory),
+      sessionId: 'fixture-early-failure',
+      turnId: randomUUID(),
+      prompt: 'How many seconds are in a week?',
+      reply: async (text) => {
+        replies.push(text);
+      },
+    })
+    .catch(() => undefined);
+  assert.equal(requests, 1);
+  assert.deepEqual(replies, ['There are 604,800 seconds in a week.']);
 });
 
 test('OpenAI cache boundaries cover shared instructions and keep task paths outside them', async () => {

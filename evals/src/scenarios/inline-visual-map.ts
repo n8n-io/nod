@@ -3,7 +3,7 @@ import { inlineVisualScenario } from '../world/inline-visuals.ts';
 export default inlineVisualScenario({
   id: 'inline-visual-map',
   title: 'Show the café options around my meeting',
-  type: 'map',
+  type: 'items',
   path: '/places/meeting-cafes',
   request: (_date, source) =>
     `I need somewhere quiet to work before my meeting. Compare the three cafés and meeting location at ${source}, showing where they are relative to each other here in the chat. Wi-Fi and opening before 09:00 matter more than the cheapest coffee. Recommend one; don't make a booking.`,

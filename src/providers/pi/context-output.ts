@@ -31,11 +31,7 @@ export function toolOutputReference(
   );
 }
 
-export function createContextOutput(
-  workspace: WorkspaceSession,
-  shouldStop: () => boolean,
-  ownerHeader?: string,
-) {
+export function createContextOutput(workspace: WorkspaceSession, ownerHeader?: string) {
   const files = new Map<string, string>();
   const save = async (
     content: Array<TextContent | ImageContent>,
@@ -43,7 +39,6 @@ export function createContextOutput(
     signal?: AbortSignal,
   ) => {
     signal?.throwIfAborted();
-    if (shouldStop()) throw new Error('The turn was stopped.');
     const text = content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n');
     const key = createHash('sha256').update(JSON.stringify(content)).digest('hex');
     let file = files.get(key);

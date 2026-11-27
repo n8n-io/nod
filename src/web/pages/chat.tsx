@@ -25,10 +25,10 @@ import type {
 import type { SuggestedTask, TaskSuggestions } from '../../shared/onboarding';
 import type { TrustView } from '../../shared/trust';
 import { appPages } from '../../shared/app-links';
-import type { QuestionAnswer } from '../../shared/answer-choices';
+import { choiceAnswerText, type QuestionAnswer } from '../../shared/answer-choices';
 import { integrationMetadata, integrationServices } from '../../shared/integrations';
 import { moreIdeasLine } from '../../shared/sender-apps';
-import { presentationText } from '../../shared/presentation';
+import { presentationChoices, presentationPick, presentationText } from '../../shared/presentation';
 import { classifyVerificationReply, securityCodeIn } from '../../shared/verification-code';
 import { ChatTools } from '../components/chat-tools';
 import { ServiceLogo } from '../components/service-logo';
@@ -147,7 +147,7 @@ function Working({
   const found = items.find((item) => !item.background && !item.taskId);
   const chat = found?.doing === 'queued' ? undefined : found;
   const thinking = !writing && (Boolean(found) || sending);
-  const receipt = items.some((item) => !item.background && item.received)
+  const receipt = items.some((item) => !item.background && !item.taskId && item.received)
     ? 'Got your message. I’ll read it after this step.'
     : null;
   if (!thinking && !label && !receipt && routed)
@@ -155,7 +155,7 @@ function Working({
       <div className="thinking">
         <NodGlyph size={28} mode="thinking" />
         <div className="working-details">
-          <WorkLabel work={routed} />
+          <WorkLabel work={routed} mark={false} />
         </div>
       </div>
     );
@@ -968,6 +968,53 @@ export function Chat({
           ...collapseScreenshotMessages(displayMessages.slice(unreadIndex)),
         ]
       : collapseScreenshotMessages(displayMessages);
+  const cardQuestions = new Map<string, Message>();
+  const questionsOnCard = new Set<string>();
+  visibleMessages.forEach((question, index) => {
+    const options = question.answerChoices?.options;
+    if (question.role !== 'assistant' || !options) return;
+    for (const card of visibleMessages.slice(Math.max(0, index - 3), index).reverse()) {
+      if (card.role !== 'assistant') return;
+      const pick = card.presentation && presentationPick(card.presentation);
+      if (!pick) continue;
+      if (
+        card.turnId === question.turnId &&
+        pick.choices.length === options.length &&
+        pick.choices.every((choice, at) => choice.label === options[at]!.label)
+      ) {
+        cardQuestions.set(card.id, question);
+        questionsOnCard.add(question.id);
+      }
+      return;
+    }
+  });
+  const cardOptionTexts = new Map<string, Set<string>>();
+  for (const message of visibleMessages) {
+    if (
+      message.role !== 'assistant' ||
+      !message.presentation ||
+      presentationPick(message.presentation)
+    )
+      continue;
+    const choices = presentationChoices(message.presentation);
+    if (choices.length)
+      cardOptionTexts.set(
+        message.id,
+        new Set(
+          choices.map((choice, index) => choiceAnswerText([{ ...choice, id: String(index) }])),
+        ),
+      );
+  }
+  const cardChoices = new Map<string, string>();
+  for (const message of visibleMessages)
+    if (
+      message.role === 'user' &&
+      message.replyTo?.role === 'assistant' &&
+      !cardChoices.has(message.replyTo.id) &&
+      cardOptionTexts.get(message.replyTo.id)?.has(message.text)
+    )
+      cardChoices.set(message.replyTo.id, message.text);
+  const lastOwnerIndex = visibleMessages.findLastIndex((message) => message.role === 'user');
   const fileKey = visibleMessages
     .map(
       (message) =>
@@ -2415,8 +2462,42 @@ export function Chat({
                       }
                       taskStopped={approvalTask(message)?.status === 'cancelled'}
                       answersDisabled={sending || !state.configuration.llmReady || welcoming}
+                      pickQuestion={cardQuestions.get(message.id)}
+                      choicesOnCard={questionsOnCard.has(message.id)}
+                      chosenText={cardChoices.get(message.id)}
+                      onChoose={
+                        message.presentation?.type !== 'draft' ||
+                        index > lastOwnerIndex ||
+                        cardChoices.has(message.id)
+                          ? async (value) => {
+                              const replying = (id?: string) => id === message.id;
+                              if (replying(replyTo?.id) && composer.current?.hasDraft()) {
+                                composer.current.focus();
+                                throw new Error(
+                                  'Send your answer from the composer to include your edits.',
+                                );
+                              }
+                              const result = await send(
+                                value,
+                                [],
+                                { id: message.id, role: 'assistant', text: message.text },
+                                'answer_choice',
+                              );
+                              if (!result.sent && result.error) throw new Error(result.error);
+                              if (
+                                result.sent &&
+                                replying(replyTo?.id) &&
+                                !composer.current?.hasDraft()
+                              )
+                                setReplyTo((current) => (replying(current?.id) ? null : current));
+                              return result.sent;
+                            }
+                          : undefined
+                      }
                       onAnswer={async (value, answer) => {
-                        if (replyTo?.id === message.id && composer.current?.hasDraft()) {
+                        const target = cardQuestions.get(message.id) ?? message;
+                        const replying = (id?: string) => id === message.id || id === target.id;
+                        if (replying(replyTo?.id) && composer.current?.hasDraft()) {
                           composer.current.focus();
                           throw new Error(
                             'Send your answer from the composer to include your edits.',
@@ -2425,19 +2506,15 @@ export function Chat({
                         const result = await send(
                           value,
                           [],
-                          { id: message.id, role: 'assistant', text: message.text },
+                          { id: target.id, role: 'assistant', text: target.text },
                           'answer_choice',
                           undefined,
                           answer,
                         );
                         if (result.questionUnavailable) return 'unavailable';
                         if (!result.sent && result.error) throw new Error(result.error);
-                        if (
-                          result.sent &&
-                          replyTo?.id === message.id &&
-                          !composer.current?.hasDraft()
-                        )
-                          setReplyTo((current) => (current?.id === message.id ? null : current));
+                        if (result.sent && replying(replyTo?.id) && !composer.current?.hasDraft())
+                          setReplyTo((current) => (replying(current?.id) ? null : current));
                         return result.sent;
                       }}
                       onApprove={

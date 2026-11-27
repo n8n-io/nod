@@ -54,8 +54,8 @@ import { files } from '../src/whisperbench-attempt.ts';
 import { judge, summarizeWhisper } from '../src/whisperbench.ts';
 import type { WhisperCase, WhisperRun } from '../src/whisperbench-data.ts';
 import { summarizePopulation } from '../src/proactivity.ts';
-import { select } from '../src/run.ts';
-import { decide, promote } from '../src/gate.ts';
+import { mergeRuns, parseShard, select } from '../src/run.ts';
+import { decide, evaluateGate, promote } from '../src/gate.ts';
 import { grade } from '../src/grade.ts';
 import { criteria as productCriteria, standard } from '../src/product.ts';
 import { check, type Scenario } from '../src/scenario.ts';
@@ -277,7 +277,13 @@ test('map evidence accepts split and detail maps but rejects duplicate, wrong or
       await locations.check({
         messages: groups.map((places) => ({
           role: 'assistant',
-          presentation: { type: 'map', places },
+          presentation: {
+            type: 'items',
+            items: places.map(({ name, latitude, longitude }) => ({
+              title: name,
+              location: { latitude, longitude },
+            })),
+          },
         })),
       } as Run)
     ).pass;
@@ -3612,6 +3618,79 @@ test('the release gate is inconclusive without measurements and blocks only a ne
   assert.deepEqual(judged.blocking, []);
 });
 
+test('a gate already blocked by its first attempts reruns nothing', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nod-gate-blocked-'));
+  const id = 'book-dinner';
+  const write = async (label: string, statuses: AttemptResult['status'][]) => {
+    await mkdir(join(root, label, 'attempts'), { recursive: true });
+    const manifest: RunManifest = {
+      label,
+      startedAt: '2026-11-25T01:00:00.000Z',
+      commit: 'abc1234',
+      dirty: false,
+      model: 'openai/gpt-6.1-sol',
+      judge: 'anthropic/claude-sonnet-5-5',
+      repeat: statuses.length,
+      scenarioIds: [id],
+      k: statuses.length,
+      provenance: {},
+    };
+    await writeFile(join(root, label, 'manifest.json'), JSON.stringify(manifest));
+    for (const [index, status] of statuses.entries())
+      await writeFile(
+        join(root, label, 'attempts', `${id}.${index + 1}.json`),
+        JSON.stringify(
+          attempt(id, status, {
+            attempt: index + 1,
+            fingerprint: fingerprint(id),
+            ...(status === 'fail'
+              ? {
+                  checks: [
+                    {
+                      id: 'no-send',
+                      kind: 'check' as const,
+                      group: 'task' as const,
+                      aspect: 'process' as const,
+                      failure: 'unsafe' as const,
+                      required: true,
+                      pass: false,
+                    },
+                  ],
+                }
+              : {}),
+          }),
+        ),
+      );
+  };
+  try {
+    await write('base', ['pass', 'pass', 'pass']);
+    await write('cand', ['pass', 'pass', 'fail']);
+    const gate = await evaluateGate({
+      root,
+      baselineLabel: 'base',
+      candidateLabel: 'cand',
+      baselineName: 'main',
+      label: 'cand',
+      resample: 7,
+      runOptions: {
+        root,
+        model: 'missing/model',
+        repeat: 3,
+        concurrency: 1,
+        tier: 'full',
+        resume: false,
+        ignoreWindow: true,
+        retries: 0,
+        diagnose: false,
+      },
+    });
+    assert.equal(gate.verdict, 'NO-GO');
+    assert.match(gate.report, /were not rerun/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('only calibrated scenarios that passed every one of at least five attempts earn a gate place', async () => {
   const root = await mkdtemp(join(tmpdir(), 'nod-gate-'));
   const file = join(root, 'gate.json');
@@ -3839,7 +3918,7 @@ test('the chart eval rejects writes even when the report was read and cited', as
     at: 0,
     turnId: null,
     presentation: {
-      type: 'chart',
+      type: 'compare',
       sources: [{ url: 'https://reports.visual-fixture.example.net/revenue/2026' }],
     },
   });
@@ -4435,5 +4514,147 @@ test('the proactive app check reads the tool name inside its input envelope', as
       { name: 'read_source', input, isError, turnId, output: 'Juniper quote', at: 0, lead: '' },
     ];
     assert.equal((await expectation.check(run)).pass, pass);
+  }
+});
+
+test('sharding partitions scenarios cleanly and mergeRuns combines shard outputs', async () => {
+  assert.deepEqual(parseShard('2/4'), { index: 2, total: 4 });
+  assert.throws(() => parseShard('0/4'));
+  assert.throws(() => parseShard('5/4'));
+  assert.throws(() => parseShard('abc'));
+
+  const all = select({ tier: 'full', ignoreWindow: true }).map((item) => item.id);
+  const parts = [1, 2, 3, 4].map((index) =>
+    select({ tier: 'full', ignoreWindow: true, shard: { index, total: 4 } }).map((item) => item.id),
+  );
+  const flattened = parts.flat();
+  assert.equal(flattened.length, all.length);
+  assert.equal(new Set(flattened).size, all.length);
+  assert.deepEqual([...flattened].sort(), [...all].sort());
+
+  const root = await mkdtemp(join(tmpdir(), 'nod-eval-merge-'));
+  try {
+    const baseManifest = (label: string, scenarioIds: string[]): RunManifest => ({
+      label,
+      startedAt: '2026-11-25T01:00:00.000Z',
+      commit: 'abc1234',
+      dirty: false,
+      model: 'openai/gpt-6.1-sol',
+      effort: 'high',
+      judge: 'anthropic/claude-sonnet-5-5',
+      repeat: 1,
+      scenarioIds,
+      k: 1,
+      provenance: { node: 'v24' },
+    });
+    const makeAttempt = (scenario: string, status: 'pass' | 'fail'): AttemptResult => ({
+      scenario,
+      title: scenario,
+      capabilities: ['apps'],
+      tier: 'full',
+      complexity: 'simple',
+      stance: 'regression',
+      fingerprint: 'fp1',
+      attempt: 1,
+      task: 'task',
+      status,
+      checks: [
+        {
+          id: 'ok',
+          kind: 'check',
+          group: 'task',
+          aspect: 'outcome',
+          failure: 'incomplete',
+          required: true,
+          pass: status === 'pass',
+        },
+      ],
+      seconds: 10,
+      toolCalls: 1,
+      modelCalls: 1,
+      tokens: 100,
+      costUsd: 0.1,
+      toolErrors: 0,
+      firstReplySeconds: 2,
+      judgeCostUsd: 0.01,
+      final: 'done',
+      transcript: '',
+      groundTruth: '',
+    });
+    const writeShard = async (
+      label: string,
+      scenario: string,
+      status: 'pass' | 'fail',
+      startedAt?: string,
+    ) => {
+      const dir = join(root, label);
+      await mkdir(join(dir, 'attempts'), { recursive: true });
+      const manifest = { ...baseManifest(label, [scenario]), ...(startedAt ? { startedAt } : {}) };
+      await writeFile(join(dir, 'manifest.json'), JSON.stringify(manifest));
+      await writeFile(
+        join(dir, 'attempts', `${scenario}.1.json`),
+        JSON.stringify(makeAttempt(scenario, status)),
+      );
+    };
+    await writeShard('s1', 'latest-email', 'pass', '2026-11-25T01:02:00.000Z');
+    await writeShard('s2', 'book-dinner', 'fail', '2026-11-25T01:00:00.000Z');
+
+    const merged = await mergeRuns({ root, labels: ['s1', 's2'], label: 'combined' });
+    assert.equal(merged.attempts.length, 2);
+    assert.deepEqual(merged.manifest.scenarioIds, ['book-dinner', 'latest-email']);
+    assert.equal(merged.manifest.startedAt, '2026-11-25T01:00:00.000Z');
+    assert.equal(merged.summary.regression.passed, 1);
+    assert.equal(merged.summary.regression.total, 2);
+    assert.ok(
+      (await readFile(join(root, 'combined', 'report.html'), 'utf8')).includes('book-dinner'),
+    );
+
+    await assert.rejects(
+      () => mergeRuns({ root, labels: ['s1', 's1'], label: 'dup' }),
+      /Duplicate attempt/,
+    );
+
+    await writeShard('other-model', 'invoices-overdue', 'pass');
+    const otherManifest = JSON.parse(
+      await readFile(join(root, 'other-model', 'manifest.json'), 'utf8'),
+    );
+    otherManifest.model = 'anthropic/claude-sonnet-5-5';
+    await writeFile(join(root, 'other-model', 'manifest.json'), JSON.stringify(otherManifest));
+    await assert.rejects(
+      () => mergeRuns({ root, labels: ['s1', 'other-model'], label: 'mismatch' }),
+      /different model/,
+    );
+
+    await writeShard('p1', 'latest-email', 'pass');
+    const shardManifest = JSON.parse(await readFile(join(root, 'p1', 'manifest.json'), 'utf8'));
+    shardManifest.shard = { index: 1, total: 2, scenarioIds: ['book-dinner', 'latest-email'] };
+    await writeFile(join(root, 'p1', 'manifest.json'), JSON.stringify(shardManifest));
+    const partial = await mergeRuns({ root, labels: ['p1'], label: 'partial' });
+    assert.deepEqual(partial.manifest.scenarioIds, ['book-dinner', 'latest-email']);
+    assert.deepEqual(partial.summary.coverage.missing, ['book-dinner.1']);
+    assert.equal(partial.manifest.provenance.missingShards, '2');
+    const partialGate = await evaluateGate({
+      root,
+      baselineLabel: 'combined',
+      candidateLabel: 'partial',
+      baselineName: 'main',
+      label: 'partial',
+      resample: 0,
+    });
+    assert.equal(partialGate.verdict, 'INCONCLUSIVE');
+    assert.match(partialGate.unclear.join('\n'), /missing shards 2/);
+
+    const gate = await evaluateGate({
+      root,
+      baselineLabel: 'combined',
+      candidateLabel: 'combined',
+      baselineName: 'main',
+      label: 'combined',
+      resample: 0,
+    });
+    assert.equal(gate.verdict, 'INCONCLUSIVE');
+    assert.ok((await readFile(join(root, 'combined-gate.md'), 'utf8')).includes('INCONCLUSIVE'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

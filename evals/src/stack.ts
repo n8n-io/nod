@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import pg from 'pg';
-import { createAgentSession } from '@earendil-works/pi-coding-agent';
 import type { ModelEffort } from '../../src/shared/models.ts';
 import { parse } from 'dotenv';
 import { readFile } from 'node:fs/promises';
@@ -125,6 +124,7 @@ export interface Stack {
   event(summary: string, sources?: string[]): Promise<string>;
   stop(): Promise<void>;
   finalUsage?: Run['usage'];
+  effort?: ModelEffort;
 }
 
 export function createStackRequest(baseUrl: string, cookie: string): Stack['request'] {
@@ -391,6 +391,18 @@ export async function startStack(options: {
       },
     });
     await models.initialize();
+    const current = models.view().selection;
+    const effort = model.effort ?? 'high';
+    if (current && current.effort !== effort) {
+      const connection = models.view().connections.find((row) => row.id === current.connectionId);
+      const choice = connection?.models.find((item) => item.id === current.modelId);
+      if (choice?.efforts.length && !choice.efforts.includes(effort)) {
+        if (model.effort)
+          throw new Error(
+            `${model.name} does not support --effort ${model.effort}. Use one of: ${choice.efforts.join(', ')}.`,
+          );
+      } else if (choice?.efforts.length) await models.select({ ...current, effort });
+    }
     if (options.backgroundModel) {
       if (!('setRoute' in models))
         throw new Error('--background-model needs app code that supports model routes.');
@@ -433,16 +445,6 @@ export async function startStack(options: {
             apiKey: model.apiKey,
             resolve: (choice) => models.resolve(false, choice),
             sessionRoot,
-            ...(model.effort
-              ? {
-                  createSession: (input) =>
-                    createAgentSession(
-                      input?.model?.id === model.name
-                        ? { ...input, thinkingLevel: model.effort }
-                        : input,
-                    ),
-                }
-              : {}),
           }),
         ),
         computer,
@@ -555,6 +557,7 @@ export async function startStack(options: {
       get finalUsage() {
         return finalUsage;
       },
+      effort: models.view().selection?.effort,
       proactivity: {
         view: () => engine.view(),
         control: (input) => engine.control(input),

@@ -32,28 +32,41 @@ on:
         type: string
         default: ''
       budget:
-        description: Optional spend limit in dollars; leave empty to run all attempts
+        description: Optional spend limit in dollars per shard; leave empty to run all attempts
         type: string
         default: ''
+      shards:
+        description: Parallel shards per side (1-8; default 4 for full, 2 for pr)
+        type: string
+        default: ''
+      fresh_baseline:
+        description: Run the baseline again even when a nightly run already scored that commit
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: evals-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  evals:
-    name: Capability evals
+  plan:
+    name: Plan eval shards
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: ${{ (inputs.tier || 'full') == 'full' && 360 || 90 }}
+    timeout-minutes: 10
     outputs:
-      verdict: ${{ steps.run.outputs.verdict }}
-    env:
-      TEST_DATABASE_URL: postgresql://nod:nod-evals@127.0.0.1:5432/nod_evals
-      NOD_EVAL_WORKSPACE_IMAGE: nod-eval-workspace
-      NOD_EVAL_BROWSER_IMAGE: nod-eval-browser
+      run: ${{ steps.plan.outputs.run }}
+      candidate: ${{ steps.plan.outputs.candidate }}
+      baseline_ref: ${{ steps.plan.outputs.baseline_ref }}
+      baseline_label: ${{ steps.plan.outputs.baseline_label }}
+      baseline_name: ${{ steps.plan.outputs.baseline_name }}
+      baseline_run: ${{ steps.plan.outputs.baseline_run }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      noop: ${{ steps.plan.outputs.noop }}
+      shards: ${{ steps.plan.outputs.shards }}
     steps:
       - name: Require the model keys
         env:
@@ -64,6 +77,158 @@ jobs:
             echo "::error::Add the EVALS_OPENAI_API_KEY and EVALS_ANTHROPIC_API_KEY repository secrets."
             exit 1
           fi
+      - name: Check out the code under test
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: ${{ inputs.baseline != '' && '0' || '1' }}
+          persist-credentials: false
+      - name: Plan shards and baseline
+        id: plan
+        env:
+          BASELINE: ${{ inputs.baseline }}
+          TIER: ${{ inputs.tier || 'full' }}
+          SCENARIO: ${{ inputs.scenario }}
+          CAPABILITY: ${{ inputs.capability }}
+          SHARDS_INPUT: ${{ inputs.shards }}
+          REPEAT: ${{ inputs.repeat || '3' }}
+          MODEL: ${{ inputs.model || 'openai/gpt-6.1-sol' }}
+          BUDGET: ${{ inputs.budget }}
+          FRESH_BASELINE: ${{ inputs.fresh_baseline && 'true' || 'false' }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          label() { printf '%s' "$1" | tr -c 'a-zA-Z0-9.' '-' | sed 's/^-*//;s/-*$//' | cut -c1-40; }
+          candidate="$(label "$GITHUB_REF_NAME")-$(git rev-parse --short=7 HEAD)"
+          echo "candidate=$candidate" >> "$GITHUB_OUTPUT"
+
+          default_shards=4
+          if [ "$TIER" = "pr" ]; then default_shards=2; fi
+          if [ -n "$SCENARIO" ]; then default_shards=1; fi
+          shards="${SHARDS_INPUT:-$default_shards}"
+          if ! [[ "$shards" =~ ^[1-8]$ ]]; then
+            echo "::error::shards must be a whole number from 1 to 8."
+            exit 1
+          fi
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
+
+          base=""
+          baseline_name=""
+          baseline_label=""
+          if [ -n "$BASELINE" ]; then
+            if [ "$BASELINE" = latest-release ]; then
+              BASELINE="$(git describe --tags --abbrev=0 --match 'nod-v*' HEAD^ 2>/dev/null || true)"
+              if [ -z "$BASELINE" ]; then
+                echo "::notice::There is no earlier desktop release, so this commit is scored alone."
+              fi
+            fi
+          fi
+          if [ -n "$BASELINE" ]; then
+            case "$BASELINE" in -*) echo "::error::The baseline must be a branch or tag."; exit 1 ;; esac
+            git rev-parse --verify --quiet "$BASELINE^{commit}" >/dev/null || BASELINE="origin/$BASELINE"
+            base="$(git merge-base HEAD "$BASELINE")"
+            if [ "$base" = "$(git rev-parse HEAD)" ]; then
+              echo "::notice::This commit is already in $BASELINE, so there is nothing to compare."
+              base=""
+            fi
+          fi
+
+          if [ -n "$base" ]; then
+            baseline_name="$(git rev-parse --short=7 "$base")"
+            if [ "$base" = "$(git rev-parse "$BASELINE^{commit}")" ]; then baseline_name="$BASELINE"; fi
+            baseline_label="$(label "$baseline_name")-for-${candidate}"
+            baseline_label="${baseline_label:0:60}"
+            if git diff --quiet "$base" HEAD -- src ':(exclude)src/web' package.json pnpm-lock.yaml pnpm-workspace.yaml; then
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              echo "noop=true" >> "$GITHUB_OUTPUT"
+              echo "baseline_ref=$base" >> "$GITHUB_OUTPUT"
+              echo "baseline_name=$baseline_name" >> "$GITHUB_OUTPUT"
+              echo "baseline_label=$baseline_label" >> "$GITHUB_OUTPUT"
+              echo "matrix={\"include\":[]}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          baseline_run=""
+          if [ -n "$base" ] && [ "$FRESH_BASELINE" != "true" ] && [ "$TIER" = "full" ] \
+            && [ -z "$SCENARIO$CAPABILITY$BUDGET" ] && git diff --quiet "$base" HEAD -- evals Dockerfile.workspace Dockerfile.browser src/shared src/providers/process.ts src/providers/agent-browser/index.ts src/providers/decisions.ts src/providers/pi/models.ts src/providers/pi/context.ts src/providers/pi/memory-curator.ts src/server/access.ts src/server/trust-basis.ts src/server/trust-review.ts src/server/trust-jev-policy.ts src/server/owner-instructions.ts; then
+            nightly="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow evals.yml --event schedule \
+              --branch main --commit "$base" --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty' || true)"
+            if [ -n "$nightly" ] && gh run download "$nightly" --repo "$GITHUB_REPOSITORY" \
+              --name capability-evals --dir "$RUNNER_TEMP/nightly" 2>/dev/null; then
+              found="$(node -e '
+                const { readdirSync, readFileSync, existsSync } = require("node:fs");
+                const [root, commit, model, repeat] = process.argv.slice(1);
+                for (const label of readdirSync(root)) {
+                  const file = `${root}/${label}/manifest.json`;
+                  if (!existsSync(file)) continue;
+                  const m = JSON.parse(readFileSync(file, "utf8"));
+                  if (m.commit === commit && !m.ref && m.model === model && m.judge === "anthropic/claude-sonnet-5-5" && String(m.repeat) === repeat) {
+                    process.stdout.write(label);
+                    break;
+                  }
+                }
+              ' "$RUNNER_TEMP/nightly" "$base" "$MODEL" "$REPEAT")"
+              if [ -n "$found" ]; then
+                baseline_run="$nightly"
+                baseline_label="$found"
+                echo "::notice::Reusing the baseline scored by nightly run $nightly at $(git rev-parse --short=7 "$base")."
+              fi
+            fi
+          fi
+          echo "baseline_run=$baseline_run" >> "$GITHUB_OUTPUT"
+
+          matrix="$(node -e '
+            const shards = Number(process.argv[1]);
+            const candidate = process.argv[2];
+            const baseRef = process.argv[3];
+            const baseLabel = process.argv[4];
+            const reused = Boolean(process.argv[5]);
+            const include = [];
+            for (let i = 1; i <= shards; i++) {
+              include.push({
+                side: "candidate",
+                shard: i,
+                total: shards,
+                ref: "",
+                label: `${candidate}-s${i}of${shards}`,
+              });
+            }
+            if (baseRef && !reused) {
+              for (let i = 1; i <= shards; i++) {
+                include.push({
+                  side: "baseline",
+                  shard: i,
+                  total: shards,
+                  ref: baseRef,
+                  label: `${baseLabel}-s${i}of${shards}`,
+                });
+              }
+            }
+            process.stdout.write(JSON.stringify({ include }));
+          ' "$shards" "$candidate" "$base" "$baseline_label" "$baseline_run")"
+
+          echo "run=true" >> "$GITHUB_OUTPUT"
+          echo "noop=false" >> "$GITHUB_OUTPUT"
+          echo "baseline_ref=$base" >> "$GITHUB_OUTPUT"
+          echo "baseline_name=$baseline_name" >> "$GITHUB_OUTPUT"
+          echo "baseline_label=$baseline_label" >> "$GITHUB_OUTPUT"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  shard:
+    name: 'Eval ${{ matrix.side }} (${{ matrix.shard }}/${{ matrix.total }})'
+    needs: plan
+    if: needs.plan.outputs.run == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: ${{ (inputs.tier || 'full') == 'full' && 180 || 90 }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    env:
+      TEST_DATABASE_URL: postgresql://nod:nod-evals@127.0.0.1:5432/nod_evals
+      NOD_EVAL_WORKSPACE_IMAGE: nod-eval-workspace
+      NOD_EVAL_BROWSER_IMAGE: nod-eval-browser
+    steps:
       - name: Start a disposable PostgreSQL with room for parallel attempts
         run: >-
           docker run --detach --name evals-postgres
@@ -72,7 +237,7 @@ jobs:
       - name: Check out the code under test
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          fetch-depth: ${{ inputs.baseline != '' && '0' || '1' }}
+          fetch-depth: ${{ matrix.ref != '' && '0' || '1' }}
           persist-credentials: false
       - name: Set up pnpm
         uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
@@ -93,65 +258,183 @@ jobs:
           docker buildx build --load --file Dockerfile.browser --target eval --tag "$NOD_EVAL_BROWSER_IMAGE" .
       - name: Wait for PostgreSQL
         run: timeout 60 sh -c 'until docker exec evals-postgres pg_isready -h 127.0.0.1 -U nod -d nod_evals; do sleep 1; done'
-      - name: Run the evals
-        id: run
+      - name: Run shard
         env:
           OPENAI_API_KEY: ${{ secrets.EVALS_OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.EVALS_ANTHROPIC_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.EVALS_OPENROUTER_API_KEY }}
-          BASELINE: ${{ inputs.baseline }}
           TIER: ${{ inputs.tier || 'full' }}
           REPEAT: ${{ inputs.repeat || '3' }}
           MODEL: ${{ inputs.model || 'openai/gpt-6.1-sol' }}
           SCENARIO: ${{ inputs.scenario }}
           CAPABILITY: ${{ inputs.capability }}
           BUDGET: ${{ inputs.budget }}
+          SHARD: '${{ matrix.shard }}/${{ matrix.total }}'
+          SHARD_LABEL: ${{ matrix.label }}
+          SHARD_REF: ${{ matrix.ref }}
         shell: bash
         run: |
           set -euo pipefail
-          label() { printf '%s' "$1" | tr -c 'a-zA-Z0-9.' '-' | cut -c1-40; }
-          args=(--model "$MODEL" --judge anthropic/claude-sonnet-5-5 --tier "$TIER" --repeat "$REPEAT" --concurrency 4)
+          args=(--model "$MODEL" --judge anthropic/claude-sonnet-5-5 --tier "$TIER" --repeat "$REPEAT" --concurrency 4 --shard "$SHARD" --label "$SHARD_LABEL")
           if [ -n "$BUDGET" ]; then args+=(--budget "$BUDGET"); fi
           if [ -n "$SCENARIO" ]; then args+=(--scenario "$SCENARIO"); fi
           if [ -n "$CAPABILITY" ]; then args+=(--capability "$CAPABILITY"); fi
-          candidate="$(label "$GITHUB_REF_NAME")-$(git rev-parse --short=7 HEAD)"
-          echo "candidate=$candidate" >> "$GITHUB_OUTPUT"
-          base=""
-          if [ -n "$BASELINE" ]; then
-            if [ "$BASELINE" = latest-release ]; then
-              BASELINE="$(git describe --tags --abbrev=0 --match 'nod-v*' HEAD^ 2>/dev/null || true)"
-              if [ -z "$BASELINE" ]; then
-                echo "::notice::There is no earlier desktop release, so this commit is scored alone."
-              fi
-            fi
-          fi
-          if [ -n "$BASELINE" ]; then
-            case "$BASELINE" in -*) echo "::error::The baseline must be a branch or tag."; exit 1 ;; esac
-            git rev-parse --verify --quiet "$BASELINE^{commit}" >/dev/null || BASELINE="origin/$BASELINE"
-            base="$(git merge-base HEAD "$BASELINE")"
-            if [ "$base" = "$(git rev-parse HEAD)" ]; then
-              echo "::notice::This commit is already in $BASELINE, so there is nothing to compare."
-              base=""
-            fi
-          fi
-          if [ -z "$base" ]; then
-            echo "verdict=INCONCLUSIVE" >> "$GITHUB_OUTPUT"
-            pnpm run eval:capability run "${args[@]}" --label "$candidate"
-            exit 0
-          fi
-          ref="$(git rev-parse --short=7 "$base")"
-          if [ "$base" = "$(git rev-parse "$BASELINE^{commit}")" ]; then ref="$BASELINE"; fi
+          if [ -n "$SHARD_REF" ]; then args+=(--ref "$SHARD_REF"); fi
+          if [ "${{ matrix.shard }}" != "1" ]; then args+=(--no-canary); fi
+          pnpm run eval:capability run "${args[@]}" || true
+          test -f ".local/capability-evals/$SHARD_LABEL/manifest.json"
+      - name: Upload shard results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: eval-shard-${{ matrix.side }}-${{ matrix.shard }}
+          path: |
+            .local/capability-evals/
+            !.local/capability-evals/${{ matrix.label }}/logs/
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: warn
+
+  evals:
+    name: Capability evals
+    needs: [plan, shard]
+    if: ${{ !cancelled() && (needs.plan.outputs.noop == 'true' || needs.plan.outputs.run == 'true') }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 180
+    outputs:
+      verdict: ${{ steps.merge.outputs.verdict }}
+    env:
+      TEST_DATABASE_URL: postgresql://nod:nod-evals@127.0.0.1:5432/nod_evals
+      NOD_EVAL_WORKSPACE_IMAGE: nod-eval-workspace
+      NOD_EVAL_BROWSER_IMAGE: nod-eval-browser
+    steps:
+      - name: Check out the code under test
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: ${{ needs.plan.outputs.baseline_ref != '' && '0' || '1' }}
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+      - name: Set up Node.js 24.21.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.21.0'
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Download shard artifacts
+        if: needs.plan.outputs.run == 'true'
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          pattern: eval-shard-*
+          path: .local/capability-evals
+          merge-multiple: true
+      - name: Download the nightly baseline
+        if: needs.plan.outputs.run == 'true' && needs.plan.outputs.baseline_run != ''
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: capability-evals
+          path: .local/capability-evals
+          run-id: ${{ needs.plan.outputs.baseline_run }}
+          github-token: ${{ github.token }}
+      - name: Start Postgres and build images for gate resampling
+        if: needs.plan.outputs.run == 'true' && needs.plan.outputs.baseline_ref != ''
+        run: |
+          docker run --detach --name evals-postgres \
+            --env POSTGRES_USER=nod --env POSTGRES_PASSWORD=nod-evals --env POSTGRES_DB=nod_evals \
+            --publish 127.0.0.1:5432:5432 postgres:17-alpine -c max_connections=300
+          timeout 60 sh -c 'until docker exec evals-postgres pg_isready -h 127.0.0.1 -U nod -d nod_evals; do sleep 1; done'
+      - name: Set up Docker layer cache for gate resampling
+        if: needs.plan.outputs.run == 'true' && needs.plan.outputs.baseline_ref != ''
+        uses: useblacksmith/setup-docker-builder@9657a6e02ca6445e6d6ce5ffaf370f4828dea50d
+        with:
+          cache-key: n8n-io/nod/evals
+      - name: Build images for gate resampling
+        if: needs.plan.outputs.run == 'true' && needs.plan.outputs.baseline_ref != ''
+        run: |
+          docker buildx build --load --file Dockerfile.workspace --tag "$NOD_EVAL_WORKSPACE_IMAGE" .
+          docker buildx build --load --file Dockerfile.browser --target eval --tag "$NOD_EVAL_BROWSER_IMAGE" .
+      - name: Merge shards and score
+        id: merge
+        env:
+          OPENAI_API_KEY: ${{ secrets.EVALS_OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.EVALS_ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.EVALS_OPENROUTER_API_KEY }}
+          CANDIDATE: ${{ needs.plan.outputs.candidate }}
+          BASELINE_REF: ${{ needs.plan.outputs.baseline_ref }}
+          BASELINE_LABEL: ${{ needs.plan.outputs.baseline_label }}
+          BASELINE_NAME: ${{ needs.plan.outputs.baseline_name }}
+          BASELINE_RUN: ${{ needs.plan.outputs.baseline_run }}
+          NOOP: ${{ needs.plan.outputs.noop }}
+          SHARDS: ${{ needs.plan.outputs.shards }}
+          TIER: ${{ inputs.tier || 'full' }}
+          REPEAT: ${{ inputs.repeat || '3' }}
+          MODEL: ${{ inputs.model || 'openai/gpt-6.1-sol' }}
+          BUDGET: ${{ inputs.budget }}
+        shell: bash
+        run: |
+          set -euo pipefail
           mkdir -p .local/capability-evals
-          if git diff --quiet "$base" HEAD -- src ':(exclude)src/web' package.json pnpm-lock.yaml pnpm-workspace.yaml; then
-            printf '### GO against %s\n\nNothing the evals exercise changed, so nothing was run.\n' "$ref" > ".local/capability-evals/$candidate-gate.md"
+          inconclusive() {
+            if [ -n "$BASELINE_REF" ]; then
+              printf '### INCONCLUSIVE against `%s`\n\n- %s\n' "$BASELINE_NAME" "$1" > ".local/capability-evals/$CANDIDATE-gate.md"
+              REASON="$1" node -e 'process.stdout.write(JSON.stringify({ verdict: "INCONCLUSIVE", blocking: [], unclear: [process.env.REASON] }, null, 2))' > ".local/capability-evals/$CANDIDATE-gate.json"
+              echo "verdict=INCONCLUSIVE" >> "$GITHUB_OUTPUT"
+            else
+              printf '### INCONCLUSIVE (%s)\n\n- %s\n' "$CANDIDATE" "$1" > ".local/capability-evals/$CANDIDATE-gate.md"
+            fi
+            echo "::error::$1"
+            exit 1
+          }
+          if [ "$NOOP" = "true" ]; then
+            printf '### GO against %s\n\nNothing the evals exercise changed, so nothing was run.\n' "$BASELINE_NAME" > ".local/capability-evals/$CANDIDATE-gate.md"
             echo "verdict=GO" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          pnpm run eval:capability gate "${args[@]}" --baseline "$ref" --label "$candidate"
-          echo "verdict=$(node -p "require('./.local/capability-evals/$candidate-gate.json').verdict")" >> "$GITHUB_OUTPUT"
+          candidate_shards=()
+          for i in $(seq 1 "$SHARDS"); do
+            dir=".local/capability-evals/${CANDIDATE}-s${i}of${SHARDS}"
+            if [ -f "$dir/manifest.json" ]; then
+              candidate_shards+=("${CANDIDATE}-s${i}of${SHARDS}")
+            fi
+          done
+          if [ "${#candidate_shards[@]}" -ne "$SHARDS" ]; then
+            inconclusive "Expected $SHARDS candidate shards with results, got ${#candidate_shards[@]}; a failed harness canary stops shard 1."
+          fi
+          pnpm run eval:capability merge "${candidate_shards[@]}" --label "$CANDIDATE"
+          for s in "${candidate_shards[@]}"; do rm -rf ".local/capability-evals/$s"; done
+
+          if [ -z "$BASELINE_REF" ]; then
+            echo "verdict=INCONCLUSIVE" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -n "$BASELINE_RUN" ]; then
+            if [ ! -f ".local/capability-evals/$BASELINE_LABEL/manifest.json" ]; then
+              inconclusive "Nightly run $BASELINE_RUN has no $BASELINE_LABEL results."
+            fi
+          else
+            baseline_shards=()
+            for i in $(seq 1 "$SHARDS"); do
+              dir=".local/capability-evals/${BASELINE_LABEL}-s${i}of${SHARDS}"
+              if [ -f "$dir/manifest.json" ]; then
+                baseline_shards+=("${BASELINE_LABEL}-s${i}of${SHARDS}")
+              fi
+            done
+            if [ "${#baseline_shards[@]}" -ne "$SHARDS" ]; then
+              inconclusive "Expected $SHARDS baseline shards with results, got ${#baseline_shards[@]}."
+            fi
+            pnpm run eval:capability merge "${baseline_shards[@]}" --label "$BASELINE_LABEL"
+            for s in "${baseline_shards[@]}"; do rm -rf ".local/capability-evals/$s"; done
+          fi
+
+          gate_args=(--model "$MODEL" --judge anthropic/claude-sonnet-5-5 --tier "$TIER" --repeat "$REPEAT" --concurrency 4 --baseline "$BASELINE_NAME" --baseline-label "$BASELINE_LABEL" --candidate-label "$CANDIDATE" --label "$CANDIDATE")
+          if [ -n "$BUDGET" ]; then gate_args+=(--budget "$BUDGET"); fi
+          pnpm run eval:capability gate "${gate_args[@]}"
+          echo "verdict=$(node -p "require('./.local/capability-evals/$CANDIDATE-gate.json').verdict")" >> "$GITHUB_OUTPUT"
       - name: Save the reports
         id: upload
-        if: always() && steps.run.outputs.candidate != ''
+        if: always() && needs.plan.outputs.candidate != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: capability-evals
@@ -162,9 +445,9 @@ jobs:
           retention-days: 14
           if-no-files-found: error
       - name: Show the results
-        if: always() && steps.run.outputs.candidate != ''
+        if: always() && needs.plan.outputs.candidate != ''
         env:
-          CANDIDATE: ${{ steps.run.outputs.candidate }}
+          CANDIDATE: ${{ needs.plan.outputs.candidate }}
           REPORT_URL: ${{ steps.upload.outputs.artifact-url }}
         shell: bash
         run: |

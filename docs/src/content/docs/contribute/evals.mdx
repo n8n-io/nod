@@ -97,6 +97,7 @@ Run each command as `pnpm run eval:capability <command>`. `help` lists every opt
 | ---------------------- | ------------------------------------------------------------------------------------- |
 | See every scenario     | `list`                                                                                |
 | Run a subset           | `run --scenario invoices-overdue --repeat 5`, `run --capability browser`              |
+| Split across machines  | `run --shard 1/4 --label run-s1`, then `merge run-s1 ... --label run`                 |
 | Run the release suite  | `run --tier release` (see [Run the release suite](#run-the-release-suite))            |
 | Compare models         | `models openai/gpt-6.1-sol anthropic/claude-sonnet-5-5 --tier pr`                     |
 | Compare a PR with main | `refs main my-branch --tier pr` (same scenarios, another revision of `src/`)          |
@@ -201,14 +202,15 @@ WhisperBench hashes complete workspace files to detect changes. It captures at m
 
 The **Evals** workflow runs the suite with a disposable PostgreSQL and images built from the code under test. Its scores don't gate CI, deployments or releases. It never runs the release suite: the workflow offers only the **pr** and **full** tiers, and release cases never join the gate.
 
-|               | Nightly                                        | On demand                                                                                   |
-| ------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Start         | Every day at 01:23 UTC on `main`               | **Actions → Evals → Run workflow**                                                          |
-| Suite         | Full controlled suite, three attempts per case | **full** by default, or the small **pr** tier, named cases, one capability or a spend limit |
-| Compared with | Nothing; it scores `main` alone                | **baseline**: `main`, a branch, a tag or `latest-release`, or nothing                       |
-| Time limit    | Six hours                                      | Six hours for **full**, 90 minutes for **pr**                                               |
+|               | Nightly                                        | On demand                                                                                             |
+| ------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Start         | Every day at 01:23 UTC on `main`               | **Actions → Evals → Run workflow**                                                                    |
+| Suite         | Full controlled suite, three attempts per case | **full** by default, or the small **pr** tier, named cases, one capability or a per-shard spend limit |
+| Shards        | 4 parallel shards (4 concurrent attempts each) | **shards**: 1–8 per side (default 4 for **full**, 2 for **pr**, 1 for named scenarios)                |
+| Compared with | Nothing; it scores `main` alone                | **baseline**: `main`, a branch, a tag or `latest-release`, or nothing (shards run in parallel)        |
+| Time limit    | Three hours per shard                          | Three hours per shard for **full**, 90 minutes for **pr**, and three hours to score and rerun         |
 
-In the CLI, use `--effort medium` or another supported level for a separate reasoning-effort comparison. The Actions workflow has no effort input. This changes only the main agent, including its helpers; Trust checks and approval-reply classification keep their production effort. The run manifest records the chosen effort. The default is high. Keep model and effort fixed when you compare harness changes.
+In the CLI, use `--effort medium` or another supported level for a separate reasoning-effort comparison. The Actions workflow has no effort input. This changes only the main agent, including its helpers; Trust checks and approval-reply classification keep their production effort. A level the model doesn't support stops the run. Without `--effort`, the run uses high, or the model's own default if the model has no high level. A resumed run keeps its saved effort. The run manifest records the effort actually used. Keep model and effort fixed when you compare harness changes.
 
 The agent is `openai/gpt-6.1-sol` at high reasoning effort, and the judge is `anthropic/claude-sonnet-5-5`. Their keys are the `EVALS_OPENAI_API_KEY` and `EVALS_ANTHROPIC_API_KEY` repository secrets, plus `EVALS_OPENROUTER_API_KEY` for OpenRouter models.
 
@@ -216,7 +218,9 @@ The agent is `openai/gpt-6.1-sol` at high reasoning effort, and the judge is `an
 The branch's code runs with the eval keys.
 :::
 
-With a baseline, the run summary shows the verdict and both sides' scores. Without one, it shows this run's scores. The `capability-evals` artifact, kept for 14 days, has a `report.html` for each run. A low score doesn't fail the workflow. It fails only when nothing could be scored.
+When the baseline commit was already scored by a successful nightly run, the workflow reuses that run's results instead of running the baseline again. It does so only for the **full** tier with three attempts, no case filter or spend limit, the same model and judge, and no changes to `evals/`, the Dockerfiles, or the shared app files the harness imports since the baseline. Tick **fresh_baseline** to run the baseline again, for example when provider behaviour may have changed since the night before.
+
+With a baseline, the run summary shows the verdict and both sides' scores. Without one, it shows this run's scores. The `capability-evals` artifact, kept for 14 days, has a `report.html` for each run. A low score doesn't fail the workflow. It fails when a shard or the reused baseline left no results, and with a baseline it then reports INCONCLUSIVE.
 
 The release cases `owner-warm-mail-work` and `owner-day-unchanged-source` check session reuse and idle model cost. `owner-long-context-recall` supplies six large temporary reports and checks their facts after context growth. `returning-user-po-detail` and `returning-user-two-gaps-decision` wait six minutes of real time between requests, so the prompt cache goes cold, and check that details read before the break stay correct, drafts include them and no action repeats. Saved attempt metrics include actual Pi compaction counts and each cost row's foreground, observer, background or housekeeping role. Agent-category cost includes all agent roles; it does not mean foreground chat only. The source case advances 48 half-hour poll deadlines against fixed records and tokens; it is a simulated owner-day, not a real 24-hour soak. `gmail-filter-website-fallback` checks a definite API denial followed by the same requested website change. `browser-flight-search-no-confirmation` checks search controls without a booking. `browser-calendar-retry-uncertain-save` checks that a retry finds an event saved without a receipt and creates no duplicate.
 
@@ -246,14 +250,16 @@ Some scenarios append judge-only evidence and criterion explanations. Their fing
 
 ## What the verdict means
 
-A run with a baseline ends in **GO**, **NO-GO** or **INCONCLUSIVE**. Both sides run in one job with the same harness, scenarios, images, model and judge, so only the app code differs.
+A run with a baseline ends in **GO**, **NO-GO** or **INCONCLUSIVE**. Both sides use the same harness, scenarios, images, model and judge, so only the app code differs. A reused nightly baseline ran on an earlier day.
 
 ```mermaid
 flowchart TD
   canary{{Harness canary passes<br/>and a gate scenario ran?}} -- no --> inc[INCONCLUSIVE]:::muted
   canary -- yes --> worse{{A gate scenario did worse<br/>or has too few attempts?}}
   worse -- no --> go[GO]:::go
-  worse -- yes --> more[Seven more attempts<br/>on both sides]
+  worse -- yes --> blocked{{Already a NO-GO?}}
+  blocked -- yes --> nogo
+  blocked -- no --> more[Seven more attempts<br/>on both sides]
   more --> drop{{Significant drop or<br/>safety check failed?}}
   drop -- yes --> nogo[NO-GO]:::stop
   drop -- no --> go
@@ -275,9 +281,9 @@ flowchart TD
   - A gate scenario that passed at least 70% of the time on the baseline drops by 30 points or more, and a one-sided Fisher exact test stays below 0.05 after Holm correction across the gate scenarios.
   - A coded safety check fails on the candidate but held on the baseline.
   - Across at least five gate scenarios, paired by scenario, the pass rate falls by 5 points or more with a 95% interval entirely below zero.
-- **INCONCLUSIVE** when no gate scenario ran, a gate scenario completed fewer than three attempts on either side, or a gate scenario that passed at least 70% on the baseline dropped but has fewer than 10 completed attempts on either side. It's also inconclusive when the harness canary failed, the sides ran different models or judges, the judge is the agent model, or the run failed.
+- **INCONCLUSIVE** when no gate scenario ran, a gate scenario completed fewer than three attempts on either side, or a gate scenario that passed at least 70% on the baseline dropped but has fewer than 10 completed attempts on either side. It's also inconclusive when the harness canary failed, the sides ran different models or judges, the judge is the agent model, a merged run is missing a shard, or the run failed.
 - **GO** otherwise.
-- Gate scenarios where the candidate did worse, or that completed too few attempts, get seven more attempts on both sides, so a drop is judged on at least 10.
+- Gate scenarios where the candidate did worse, or that completed too few attempts, get seven more attempts on both sides, run at the same time on the commit, model, judge and effort each side was scored with, so a drop is judged on at least 10. When the first attempts already give a NO-GO, through a safety check or the paired drop, nothing is rerun.
 - The 70% floor applies only to the per-scenario test. A drop from a lower baseline still counts towards the paired drop across gate scenarios.
 - A failure class is listed when it has at least three more failures and a rate five points higher than on the baseline. This never blocks.
 - Both sides use the candidate's Dockerfiles, so image changes aren't compared.

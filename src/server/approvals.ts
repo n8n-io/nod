@@ -118,6 +118,7 @@ type TurnRow = {
   thread_id: string;
   task_id: string | null;
   source: string;
+  source_id: string | null;
   parent_turn_id: string | null;
   message_id: string | null;
   prompt: string;
@@ -170,7 +171,7 @@ function confirmedOutcome(
 async function turnRow(client: PoolClient, turnId: string) {
   return (
     await client.query<TurnRow>(
-      "SELECT id,thread_id,to_jsonb(turns)->>'task_id' AS task_id,source,parent_turn_id,message_id,prompt,background,channel FROM turns WHERE id=$1 AND owner_id=$2",
+      "SELECT id,thread_id,to_jsonb(turns)->>'task_id' AS task_id,source,to_jsonb(turns)->>'source_id' AS source_id,parent_turn_id,message_id,prompt,background,channel FROM turns WHERE id=$1 AND owner_id=$2",
       [turnId, ownerId],
     )
   ).rows[0];
@@ -271,9 +272,12 @@ export async function turnOrigin(turnId: string) {
             ]),
           ]
         : [];
+    const scheduledResume =
+      current.source === 'resume' && String(current.source_id ?? '').startsWith('task-check:');
     return {
       taskId: current.task_id,
       source: origin.source,
+      scheduledResume,
       messageIds: said,
       channel: current.channel,
       scheduleInstruction: run?.authority ?? undefined,
@@ -415,7 +419,10 @@ export async function createApprovals(
         ).rows[0];
         if (!steering) throw new Error('This action needs a direct request from the user.');
       }
-      const background = !steering && ['event', 'schedule'].includes(origin.source);
+      const scheduledResume =
+        current.source === 'resume' && String(current.source_id ?? '').startsWith('task-check:');
+      const background =
+        !steering && (['event', 'schedule'].includes(origin.source) || scheduledResume);
       let authorMessageId: string | null;
       const schedule =
         origin.source === 'schedule' ? await scheduleAuthority(client, origin.id) : undefined;
