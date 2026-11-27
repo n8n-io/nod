@@ -925,6 +925,8 @@ const flightRisks = (segment: FlightSegment) => [
     ? [`Self-transfer at ${segment.arrival.airport}`]
     : []),
 ];
+const nonstop = (journey: FlightsPresentation['options'][number]['journeys'][number]) =>
+  journey.segments.length === 1 && !journey.segments[0]!.technicalStops?.length;
 const stop = (place: FlightSegment['departure']) => ({
   place: clip(airportCode(place.airport), 80),
   time: clip(place.time, 40),
@@ -942,8 +944,14 @@ export function flightItems(value: FlightsPresentation): ItemsPresentation {
     items: value.options.map((option) => {
       const segments = option.journeys[0]!.segments;
       const first = segments[0]!;
-      const last = segments.at(-1)!;
-      const connections = segments.slice(0, -1);
+      const all = option.journeys.flatMap((journey) => journey.segments);
+      const connections = option.journeys.flatMap((journey) => journey.segments.slice(0, -1));
+      const chained =
+        option.journeys.length > 2 ||
+        (option.journeys.length > 1 &&
+          airportCode(all.at(-1)!.arrival.airport) !== airportCode(first.departure.airport));
+      const shown = chained ? all : segments;
+      const last = shown.at(-1)!;
       const risks = option.journeys.flatMap((journey) =>
         journey.segments
           .slice(0, -1)
@@ -958,7 +966,7 @@ export function flightItems(value: FlightsPresentation): ItemsPresentation {
           journey.duration,
           journey.segments.length > 1
             ? changes(journey.segments.length - 1)
-            : !journey.segments[0]!.technicalStops?.length && 'Nonstop',
+            : nonstop(journey) && 'Nonstop',
         ]
           .filter(Boolean)
           .join(' · ');
@@ -975,8 +983,9 @@ export function flightItems(value: FlightsPresentation): ItemsPresentation {
         ...(option.baggage ? [{ label: 'Baggage', value: option.baggage }] : []),
       ].map((fact) => ({ label: clip(fact.label, 80), value: clip(fact.value, 400) }));
       const sub = option.label;
-      const duration =
-        option.journeys[0]!.duration ?? (segments.length === 1 ? first.duration : undefined);
+      const duration = chained
+        ? undefined
+        : (option.journeys[0]!.duration ?? (segments.length === 1 ? first.duration : undefined));
       return {
         title: clip(
           [
@@ -994,23 +1003,24 @@ export function flightItems(value: FlightsPresentation): ItemsPresentation {
           ? { status: { label: 'Booked', tone: 'done' as const } }
           : {}),
         ...(option.price ? { value: clip(option.price, 40) } : {}),
-        ...(connections.length
+        ...(!chained && connections.length
           ? {
               valueSub: clip(
                 `${changes(connections.length)} · ${connections.map((segment) => airportCode(segment.arrival.airport)).join(', ')}`,
                 48,
               ),
             }
-          : !first.technicalStops?.length
+          : !chained && option.journeys.every(nonstop)
             ? { valueSub: 'Nonstop' }
             : {}),
         route: {
           from: stop(first.departure),
           to: stop(last.arrival),
           ...(duration ? { duration: clip(duration, 40) } : {}),
-          ...(connections.length
+          ...(shown.length > 1
             ? {
-                middle: connections
+                middle: shown
+                  .slice(0, -1)
                   .slice(0, 3)
                   .map((segment) => clip(airportCode(segment.arrival.airport), 80)),
               }
