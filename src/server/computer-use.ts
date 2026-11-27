@@ -6,7 +6,7 @@ import { z } from 'zod';
 import type { DesktopControl } from '../ports/desktop.ts';
 import { IntegrationError } from './integration-connection.ts';
 import { addKeepOut, removeKeepOut } from './keep-out.ts';
-import { assertStartedByOwner as startedByOwner, type OwnedTurn } from './owner-started.ts';
+import { ownerStartedRoot as startedByOwner, type OwnedTurn } from './owner-started.ts';
 import { redactSecretText } from './redaction.ts';
 
 type Query = Pick<Pool, 'query'>;
@@ -496,7 +496,11 @@ export function createComputerUse(
         'Computer use is off. The owner can turn it on in Settings, Computer use.',
         403,
       );
-    return { root, keptOut };
+    return {
+      root: root.id,
+      keptOut,
+      directChat: root.source === 'user' && root.id === turn.turnId,
+    };
   }
 
   async function prepareStep(
@@ -699,7 +703,8 @@ export function createComputerUse(
     signal?: AbortSignal,
   ): Promise<() => Promise<unknown>> {
     signal?.throwIfAborted();
-    const { root, keptOut } = await ready(turn);
+    const { root, keptOut, directChat } = await ready(turn);
+    const chatAuthority = desktop?.paired && directChat ? { ownerChat: true } : {};
     if (action === 'COMPUTER_APPS') {
       const apps = await Promise.all(
         (await running(signal)).map((app) =>
@@ -744,7 +749,10 @@ export function createComputerUse(
         if (pid === undefined)
           try {
             pid = (
-              (await ask({ op: 'open', bundle: target.bundle, app: target.name }, signal)) as {
+              (await ask(
+                { op: 'open', bundle: target.bundle, app: target.name, ...chatAuthority },
+                signal,
+              )) as {
                 pid?: number;
               }
             ).pid;
@@ -798,6 +806,7 @@ export function createComputerUse(
         const result = (await ask(
           {
             op: step(action),
+            ...chatAuthority,
             ref: prepared.ref,
             app: found.app,
             bundle: found.bundle,
@@ -840,6 +849,7 @@ export function createComputerUse(
       await ask(
         {
           op: 'key',
+          ...chatAuthority,
           keys: prepared.keys,
           ...scope,
           expected: prepared.windowBinding!.state,

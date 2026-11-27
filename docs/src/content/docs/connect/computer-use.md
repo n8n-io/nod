@@ -33,6 +33,8 @@ Save a file named `paired-windows.json` in `%APPDATA%\nod\profiles\local`. Set `
 
 Turn on computer use in server settings. From the Windows Nod tray menu, choose **Share the Windows desktop with the server…** and confirm desktop sharing. Ask in your usual server chat to work across Windows apps. Nod applies its app and system shortcut restrictions on both devices. Confirm inputs and window pictures in the Windows dialog. End sharing from the desktop overlay or choose **Stop sharing the Windows desktop** in the tray. Closing Nod or losing the connection ends the session. A new session needs a new local choice.
 
+In the Windows app toolbar, choose **Share PC** and confirm the server shown in the native dialog. During this session, explicit chat requests can open Discord, search, type and send using its installed app. Nod still checks each action against the request, recipient and current window. Use **Stop sharing PC** to end the session. Other apps, screenshots and work started by a schedule keep their local confirmation.
+
 ## Start with a request
 
 Tell Nod which app to use and what to do:

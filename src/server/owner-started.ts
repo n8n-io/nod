@@ -14,6 +14,15 @@ export async function assertStartedByOwner(
   turn: OwnedTurn | undefined,
   refusal: string,
 ) {
+  return (await ownerStartedRoot(database, ownerId, turn, refusal)).id;
+}
+
+export async function ownerStartedRoot(
+  database: Pick<Pool, 'query'>,
+  ownerId: string,
+  turn: OwnedTurn | undefined,
+  refusal: string,
+) {
   const { rows } = turn
     ? await database.query<{
         id: string;
@@ -46,5 +55,5 @@ export async function assertStartedByOwner(
     ((root.source === 'user' && root.message_id) || hasOwnerInstructions(schedule?.authority));
   if (owned && schedule?.authority) validateSavedInstructions(schedule.authority);
   if (!owned) throw new IntegrationError(refusal, 403);
-  return root.id;
+  return { id: root.id, source: root.source };
 }

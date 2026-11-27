@@ -22,7 +22,23 @@ const changes = new Set([
   'screenshot',
 ]);
 
-export function scopedWindowsRequest(helper, application, approve, policy) {
+function discordChatInput(input) {
+  if (input.ownerChat !== true || name(input.app || input.bundle) !== 'discord') return false;
+  if (input.op === 'open') return true;
+  if (!input.window) return false;
+  if (input.op === 'key')
+    return (
+      Boolean(input.expected && input.expectedFocus && input.noSecureFocus) &&
+      /^(ctrl\+[akf]|backspace|enter|return|esc|escape|tab|shift\+tab|up|down|arrowup|arrowdown)$/i.test(
+        input.keys,
+      )
+    );
+  if (!input.ref || !input.control || !input.role) return false;
+  if (input.op === 'focus') return true;
+  return Boolean(input.expected) && ['type', 'set_value', 'press', 'select'].includes(input.op);
+}
+
+export function scopedWindowsRequest(helper, application, approve, policy, discordOrders = false) {
   const selected = application && name(application);
   const eligible = (value) =>
     typeof value === 'string' &&
@@ -61,7 +77,11 @@ export function scopedWindowsRequest(helper, application, approve, policy) {
       (typeof input.keys !== 'string' || policy.systemShortcut(input.keys, 'win32'))
     )
       throw Error('System shortcuts are unavailable.');
-    if (changes.has(input.op) && !(await approve(input, signal)))
+    if (
+      changes.has(input.op) &&
+      !(discordOrders && discordChatInput(input)) &&
+      !(await approve(input, signal))
+    )
       throw Error('The Windows user declined this step.');
     signal.throwIfAborted();
     return helper.request({ ...input, step: id, deadline: Date.now() + 45_000 });
@@ -79,8 +99,10 @@ export function windowsSharing({
   loadPolicy,
 }) {
   let active,
-    choosing = false;
+    choosing = false,
+    generation = 0;
   function stop() {
+    generation++;
     const current = active;
     if (!current) return;
     active = undefined;
@@ -90,21 +112,30 @@ export function windowsSharing({
     current.ssh.kill();
     changed();
   }
-  async function start(config, origin, application) {
+  async function start(config, origin, application, discordOrders = false) {
+    const choice = generation;
     if (active || (await configuredOrigin()) !== origin) return;
     const policy = await loadPolicy();
     const label = application || 'Windows desktop';
     const confirmation = await dialog.showMessageBox({
       type: 'question',
-      buttons: ['Cancel', 'Share app'],
+      buttons: ['Cancel', discordOrders ? 'Share desktop' : 'Share app'],
       defaultId: 0,
       cancelId: 0,
       message: label + ' – share with Nod?',
       detail:
         origin +
-        '\nNod can read the windows of the apps you share. You confirm input and window pictures on this PC. Stop in the Nod menu or disconnect to end sharing.',
+        (discordOrders
+          ? '\nNod can read windows of shared apps. During this session, Nod can search, type and send in Discord for requests you give in chat. Stop desktop sharing in the Nod toolbar at any time.'
+          : '\nNod can read the windows of the apps you share. You confirm input and window pictures on this PC. Stop in the Nod menu or disconnect to end sharing.'),
     });
-    if (confirmation.response !== 1 || active || (await configuredOrigin()) !== origin) return;
+    if (
+      confirmation.response !== 1 ||
+      (await configuredOrigin()) !== origin ||
+      active ||
+      choice !== generation
+    )
+      return;
     const args = [
       '-T',
       '-o',
@@ -192,6 +223,7 @@ export function windowsSharing({
         );
       },
       policy,
+      discordOrders,
     );
     reader.on('line', async (line) => {
       if (active !== current) return;
@@ -237,8 +269,8 @@ export function windowsSharing({
         ssh.stdin.write(JSON.stringify({ id, ...answer }) + '\n');
     });
   }
-  async function choose(wholeDesktop = false) {
-    if (active) return stop();
+  async function choose(wholeDesktop = false, discordOrders = false) {
+    if (active) return discordOrders ? undefined : stop();
     if (choosing) return;
     choosing = true;
     try {
@@ -251,7 +283,7 @@ export function windowsSharing({
         !/^[a-z0-9][a-z0-9_.-]{0,95}$/i.test(config.container)
       )
         throw Error('Check the server origin, SSH alias and container in paired-windows.json.');
-      if (wholeDesktop) return await start(config, origin, null);
+      if (wholeDesktop) return await start(config, origin, null, discordOrders);
       const policy = await loadPolicy();
       const { apps } = await helper.request({ op: 'apps' });
       const names = [
@@ -292,6 +324,10 @@ export function windowsSharing({
   return {
     choose: () => choose(false),
     shareDesktop: () => choose(true),
+    shareForChat: () => choose(true, true),
+    get state() {
+      return active ? (active.ready ? 'active' : 'connecting') : 'off';
+    },
     stop,
     get enabled() {
       return Boolean(active);

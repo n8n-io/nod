@@ -92,8 +92,21 @@ type DesktopAppOpening = {
   sinceBoot?: 'under_5m' | 'under_1h' | 'over_1h';
 };
 
+export type PcSharingState = 'off' | 'connecting' | 'active';
+type PcSharing = {
+  state(): Promise<PcSharingState>;
+  start(): Promise<PcSharingState>;
+  stop(): Promise<PcSharingState>;
+  subscribe(listener: (value: PcSharingState) => void): () => void;
+};
+
+export function desktopPcSharing() {
+  return (window as DesktopWindow).nodDesktop?.pcSharing;
+}
+
 type DesktopWindow = Window & {
   nodDesktop?: {
+    pcSharing?: PcSharing;
     protocolVersion?: number;
     mode?: 'local' | 'remote';
     localRuntime?: LocalRuntime;

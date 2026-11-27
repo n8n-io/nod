@@ -72,6 +72,20 @@ contextBridge.exposeInMainWorld('nodDesktop', {
       }
     : {}),
   remote,
+  ...(remote && process.platform === 'win32'
+    ? {
+        pcSharing: {
+          state: () => invoke('nod:pc-sharing:state'),
+          start: () => invoke('nod:pc-sharing:start'),
+          stop: () => invoke('nod:pc-sharing:stop'),
+          subscribe(listener) {
+            const receive = (_event, state) => listener(state);
+            ipcRenderer.on('nod:pc-sharing:changed', receive);
+            return () => ipcRenderer.removeListener('nod:pc-sharing:changed', receive);
+          },
+        },
+      }
+    : {}),
   fileAction: (id, action) => invoke('nod:file:action', id, action),
   fileMenu: (id, image) => invoke('nod:file:menu', id, image),
   ready: () => invoke('nod:renderer-ready'),

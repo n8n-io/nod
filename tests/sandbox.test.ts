@@ -2725,6 +2725,44 @@ test('computer use on macOS tells an app from its same-named helper processes by
   assert.equal(sent.bundle, mail.bundle);
 });
 
+test('paired Windows tags only a direct owner chat for session inputs', async () => {
+  const pool = {
+    query: async (sql: string) => {
+      if (sql.startsWith('SELECT computer_use'))
+        return { rows: [{ computer_use: true, computer_keep_out: [] }] };
+      if (sql.startsWith('WITH RECURSIVE'))
+        return {
+          rows: [{ id: 'owner-message', source: 'user', message_id: 'message', proactive: false }],
+        };
+      assert.fail('Unexpected fixture query');
+    },
+  } as unknown as Pool;
+  const tags: unknown[] = [];
+  const computer = createComputerUse(pool, 'owner', {
+    platform: 'win32',
+    desktop: {
+      paired: true,
+      session: 'session',
+      request: async (input) => {
+        if (input.op === 'apps') return { apps: [] };
+        if (input.op === 'locate')
+          return { name: 'Discord', bundle: 'Discord.exe', program: 'Discord.exe' };
+        if (input.op === 'open') {
+          tags.push(input.ownerChat);
+          return { pid: 20 };
+        }
+        assert.fail('Unexpected fixture operation');
+      },
+    },
+  });
+  for (const turnId of ['owner-message', 'child-turn']) {
+    const turn = { turnId, threadId: 'fixture' };
+    const prepared = await computer.prepare(turn, 'COMPUTER_OPEN', { bundle: 'Discord.exe' });
+    await computer.execute(turn, 'COMPUTER_OPEN', prepared);
+  }
+  assert.deepEqual(tags, [true, undefined]);
+});
+
 test('computer use on Windows keeps an opened app granted however the app list names it, and refuses apps it cannot identify', async () => {
   const pool = {
     query: async (sql: string) => {

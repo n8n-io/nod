@@ -13176,3 +13176,57 @@ test('desktop sharing can switch apps but checks restricted targets on the Windo
   await assert.rejects(send({ op: 'key', app: 'Notepad.exe', keys: 'win+r' }), /System shortcuts/);
   assert.equal(completed.length, 4);
 });
+
+test('chat sharing covers checked Discord inputs only for a direct owner message', async () => {
+  const actions = [];
+  let prompts = 0;
+  const run = scopedWindowsRequest(
+    {
+      async request(input) {
+        actions.push(input.op);
+        return {};
+      },
+    },
+    null,
+    async () => {
+      prompts++;
+      return false;
+    },
+    pairedAppPolicy,
+    true,
+  );
+  const signal = new AbortController();
+  const send = (input) => run(input, randomUUID(), signal.signal);
+  const target = {
+    app: 'Discord.exe',
+    ownerChat: true,
+    window: 'w',
+    ref: '@abcdef:e1',
+    control: { name: 'Chat', role: 'textfield' },
+    role: 'textfield',
+    expected: 'window-state',
+  };
+  await send({ op: 'open', bundle: 'Discord.exe', ownerChat: true });
+  await send({ ...target, op: 'type', text: 'Fixture message' });
+  await send({
+    ...target,
+    op: 'key',
+    keys: 'Enter',
+    expectedFocus: 'focus-state',
+    noSecureFocus: true,
+  });
+  assert.equal(prompts, 0);
+  for (const input of [
+    { ...target, op: 'type', ownerChat: false },
+    { ...target, op: 'type', expected: '' },
+    { ...target, op: 'type', app: 'Notepad.exe' },
+    { ...target, op: 'key', keys: 'ctrl+shift+i' },
+    { ...target, op: 'screenshot' },
+  ])
+    await assert.rejects(send(input), /declined/);
+  assert.equal(prompts, 5);
+  assert.deepEqual(actions, ['open', 'type', 'key']);
+  signal.abort();
+  await assert.rejects(send({ ...target, op: 'press' }));
+  assert.equal(actions.length, 3);
+});
