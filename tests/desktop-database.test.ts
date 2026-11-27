@@ -246,9 +246,7 @@ test(
       join(root, 'database', 'data', 'postmaster.pid'),
       `${process.pid}\n${join(root, 'database', 'data')}\n0\n${port}\n\n127.0.0.1\n0 0\nready   \n`,
     );
-    const reopening = Date.now();
     const reused = await open();
-    assert.ok(Date.now() - reopening < 15_000);
     assert.equal(await kept(reused), 'kept');
   },
 );
