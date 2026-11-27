@@ -14,6 +14,10 @@ export async function createBrowserDownloadFixture() {
   const slowDownloadStarted = new Promise<void>((resolve) => {
     slowStarted = resolve;
   });
+  let releaseHeld!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseHeld = resolve;
+  });
   let crossOrigin = '';
   const handle: RequestListener = (request, response) => {
     const url = new URL(request.url ?? '/', 'http://localhost');
@@ -30,11 +34,14 @@ export async function createBrowserDownloadFixture() {
         <a id="cross-origin" href="${crossOrigin}/invoice.pdf">Download hosted invoice</a>
         <button id="large" onclick="window.location='/large.pdf'">Download large invoice</button>
         <button id="slow" onclick="window.location='/slow.pdf'">Download slow invoice</button>
+        <button id="held" onclick="window.location='/held.pdf'">Download held invoice</button>
         </body></html>`);
     } else if (url.pathname === '/redirect.pdf') {
       response.writeHead(302, { location: `${crossOrigin}/invoice.pdf` });
       response.end();
-    } else if (['/invoice.pdf', '/inline.pdf', '/large.pdf', '/slow.pdf'].includes(url.pathname)) {
+    } else if (
+      ['/invoice.pdf', '/inline.pdf', '/large.pdf', '/slow.pdf', '/held.pdf'].includes(url.pathname)
+    ) {
       if (request.headers.cookie !== `synthetic-session=${cookie}`) {
         unauthenticated++;
         response.writeHead(403);
@@ -42,6 +49,17 @@ export async function createBrowserDownloadFixture() {
         return;
       }
       authenticated++;
+      if (url.pathname === '/held.pdf') {
+        response.writeHead(200, {
+          'content-type': 'application/pdf',
+          'content-length': 512 * 1024,
+          'content-disposition': 'attachment; filename="held.pdf"',
+          'cache-control': 'no-store',
+        });
+        response.write(Buffer.alloc(256 * 1024));
+        void held.then(() => response.end(Buffer.alloc(256 * 1024)));
+        return;
+      }
       if (url.pathname === '/slow.pdf') {
         response.writeHead(200, {
           'content-type': 'application/pdf',
@@ -91,6 +109,7 @@ export async function createBrowserDownloadFixture() {
     origin: `http://127.0.0.1:${address.port}`,
     crossOrigin,
     slowDownloadStarted: () => slowDownloadStarted,
+    releaseHeldDownload: () => releaseHeld(),
     authenticatedDownloads: () => authenticated,
     unauthenticatedDownloads: () => unauthenticated,
     close: async () => {

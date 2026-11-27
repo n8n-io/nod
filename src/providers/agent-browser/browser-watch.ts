@@ -83,19 +83,20 @@ export async function watchBrowser(options: {
       ).data?.targetInfo.parentFrameId;
     }
   };
-  const directoryFor = async (frameId: string) => {
+  const sessionFor = async (frameId: string) => {
     const page = await pageOf(frameId);
     const root = page && rootOf(page);
-    return options.sessions().find((session) => session.root === root)?.directory;
+    return options.sessions().find((session) => session.root === root);
   };
-  const downloads = new Map<string, Promise<string | undefined>>();
+  const downloads = new Map<string, Promise<{ root: string; directory: string } | undefined>>();
   const settle = async (guid: string, completed: boolean) => {
-    const directory = completed ? await downloads.get(guid) : undefined;
+    const owner = completed ? await downloads.get(guid) : undefined;
     downloads.delete(guid);
     const file = resolve(options.incoming, guid);
-    if (!directory) return rm(file, { force: true });
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    await rename(file, resolve(directory, guid));
+    if (!owner || !options.sessions().some((session) => session.root === owner.root))
+      return rm(file, { force: true });
+    await mkdir(owner.directory, { recursive: true, mode: 0o700 });
+    await rename(file, resolve(owner.directory, guid));
   };
   const autoAttach = (sessionId?: string) =>
     send(
@@ -152,7 +153,7 @@ export async function watchBrowser(options: {
       if (download)
         downloads.set(
           download.guid,
-          directoryFor(download.frameId).catch(() => undefined),
+          sessionFor(download.frameId).catch(() => undefined),
         );
     } else if (message.method === 'Browser.downloadProgress') {
       const download = progress.safeParse(message.params).data;

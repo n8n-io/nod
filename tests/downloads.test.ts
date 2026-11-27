@@ -299,6 +299,26 @@ test(
           await failed;
           assert.deepEqual(await readdir(slowDirectory), ['previous.pdf']);
           assert.deepEqual(await readFile(join(slowDirectory, 'previous.pdf')), browserDownloadPdf);
+          await computer.act('ended', { action: 'open', url: `${fixture.origin}/session` });
+          const incoming = join(bridge.browserRoot(), 'runtime', 'incoming-downloads');
+          const guids = async () =>
+            new Set((await readdir(incoming)).map((name) => name.replace(/\.crdownload$/, '')));
+          const earlier = await guids();
+          await computer.act('ended', { action: 'click', selector: '#held' });
+          let ended: string | undefined;
+          for (let tries = 0; !ended && tries < 200; tries++) {
+            ended = [...(await guids())].find((guid) => !earlier.has(guid));
+            if (!ended) await delay(10);
+          }
+          assert.ok(ended);
+          await computer.clear('ended');
+          await computer.act('ended', { action: 'open', url: `${fixture.origin}/session` });
+          fixture.releaseHeldDownload();
+          for (let tries = 0; tries < 200 && (await guids()).has(ended); tries++) await delay(50);
+          assert.ok(!(await guids()).has(ended));
+          await assert.rejects(
+            readdir(join(bridge.browserRoot(), 'runtime', 'downloads', 'ended')),
+          );
         } finally {
           await bridge.close();
         }
