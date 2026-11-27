@@ -207,7 +207,7 @@ export function createWhatsAppLinkedTransport(options: {
       return own && (normalizedJid === `${own}@s.whatsapp.net` || normalizedJid === ownLid(current))
         ? { phone: own, jid: normalizedJid }
         : 'from_me';
-    if (revokedLids.has(normalizedJid)) return 'not_owner';
+    if (revokedLids.has(normalizedJid)) return { stranger: normalizedJid, jid: normalizedJid };
     if (allowedLid && normalizedJid === allowedLid)
       return { phone: otherPhone!, jid: normalizedJid };
     let phone = numberOf(jid) ?? numberOf(message.key.remoteJidAlt);
@@ -342,7 +342,7 @@ export function createWhatsAppLinkedTransport(options: {
     const source = await sender(message, current);
     if (closed || halted || socket !== current) return;
     if (typeof source === 'string') return drop(source, message);
-    if (revokedLids.has(source.jid)) return drop('not_owner', message);
+    if (!('stranger' in source) && revokedLids.has(source.jid)) return drop('not_owner', message);
     const content = normalizeMessageContent(message.message);
     if ('stranger' in source) {
       const code = /^[A-Za-z0-9_-]{32}$/.exec(

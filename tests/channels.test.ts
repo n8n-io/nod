@@ -1667,14 +1667,14 @@ test('WhatsApp accepts the linked phone by a confirmed private ID when mapping l
   events.emit('connection.update', { connection: 'open' });
   assert.equal((await transport.pairing!()).state, 'connected');
 
-  const upsert = (id: string, remoteJid: string) => {
+  const upsert = (id: string, remoteJid: string, body = text) => {
     events.emit('messages.upsert', {
       type: 'notify',
       messages: [
         {
           key: { id, remoteJid, fromMe: false, addressingMode: 'lid' },
           messageTimestamp: Math.floor(Date.now() / 1000),
-          message: { conversation: text },
+          message: { conversation: body },
         },
       ],
     });
@@ -1707,6 +1707,18 @@ test('WhatsApp accepts the linked phone by a confirmed private ID when mapping l
       text,
     })),
     [{ messageId: 'from-owner', senderId: allowedNumber, threadId: lid, text }],
+  );
+
+  const paired: Array<{ messageId: string; threadId: string }> = [];
+  upsert('other-request', otherLid);
+  upsert('other-code', otherLid, 'A'.repeat(32));
+  await transport.poll!(accept, async ({ messageId, threadId }) => {
+    paired.push({ messageId, threadId });
+  });
+  assert.deepEqual(paired, [{ messageId: 'other-code', threadId: otherLid }]);
+  assert.deepEqual(
+    accepted.map(({ messageId }) => messageId),
+    ['from-owner'],
   );
 
   for (const [phone, privateId] of [
