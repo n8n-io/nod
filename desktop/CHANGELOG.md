@@ -2,6 +2,22 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.10.3 - 2026-11-27
+
+### Fixes
+
+- **desktop:** Let chat turns run on Windows with the database on the host. [#1605](https://github.com/n8n-io/nod/pull/1605) (144cde2)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.10.2...144cde2bd99a124f12e5121f43ac05331dd6769a)
+
+<details>
+<summary>Build details</summary>
+
+Source: `144cde2bd99a124f12e5121f43ac05331dd6769a`
+Previous release: `nod-v0.10.2`
+
+</details>
+
 ## 0.10.2 - 2026-11-27
 
 ### Features

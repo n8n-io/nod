@@ -44,7 +44,7 @@
 }
 .card-note {
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--text-control);
 }
 .card-band.card-pick-send {
   display: flex;
@@ -93,7 +93,7 @@
   gap: 6px;
   margin: 0;
   color: var(--muted-foreground);
-  font-size: 13px;
+  font-size: var(--text-control);
 }
 :is(.card-tiles, .card-items)[data-closed] li,
 .card-compare[data-closed] thead th {
@@ -281,7 +281,7 @@ span:is(.card-thumb, .card-contender-image) {
   margin-top: 4px;
   overflow: hidden;
   color: var(--muted-foreground);
-  font-size: 13px;
+  font-size: var(--text-control);
   line-height: 1.4;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 5;
@@ -426,7 +426,7 @@ a.card-row {
 .card-sub,
 .card-main small {
   color: var(--muted-foreground);
-  font-size: 13px;
+  font-size: var(--text-control);
 }
 .card-row-status {
   color: var(--foreground);
@@ -455,7 +455,7 @@ a.card-row {
   display: grid;
   gap: 8px;
   padding: 0 0 14px;
-  font-size: 13px;
+  font-size: var(--text-control);
 }
 .card-items[data-gutter='dot'] .card-detail {
   padding-left: 19px;
@@ -901,7 +901,7 @@ a.card-row {
 .card-compare {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--text-control);
   font-variant-numeric: tabular-nums;
   table-layout: fixed;
 }
@@ -1104,7 +1104,7 @@ button.card-contender {
   gap: 6px;
   flex: none;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--text-control);
   text-decoration: none;
   white-space: nowrap;
 }
