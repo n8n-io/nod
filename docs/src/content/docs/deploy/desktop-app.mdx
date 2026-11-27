@@ -75,7 +75,7 @@ flowchart LR
   server --> browser
 ```
 
-Your data lives in PostgreSQL, which runs on your computer next to the Nod server. Chat, connected apps, memory, schedules, Telegram and WhatsApp need only these two. The private Linux computer runs code and web pages in isolation, so only the workspace and browser need it. It starts in the background, and chat doesn't wait for it, except once after an update from an earlier version, while Nod moves your data.
+Your data lives in PostgreSQL, which runs on your computer next to the Nod server. Chat, connected apps, memory, schedules, Telegram and WhatsApp need only these two. The private Linux computer runs code and web pages in isolation, so only the workspace and browser need it. It starts in the background, and chat doesn't wait for it, except once while Nod moves data that is still inside the private computer.
 
 <Tabs syncKey="os">
 <TabItem label="Mac" icon="apple">
@@ -115,7 +115,7 @@ The workspace and browser have separate networks, no access to your home folder,
 
 The app includes PostgreSQL 17 for Mac, Windows and Linux. Nod creates the database in the profile's `database` folder on first launch, which takes about a second. It listens only on `127.0.0.1`, on a port Nod picks at each launch, and needs a password that stays in the profile folder. Nod starts it before the server and stops it when you quit. If Nod quit unexpectedly, the next launch stops the old database process first.
 
-Versions before this one kept the database inside the private computer. The first launch after the update starts the private computer once, copies every table into the new database in one transaction, and checks that each table has the same number of rows. Only then does Nod use the new database. Before copying, Nod checks for about twice the data's size in free disk space. If the copy fails, nothing changes; select **Try again** or open Nod again to retry. The old database stays on the private computer's disk.
+If a profile's data is still inside the private computer, Nod moves it once. It starts the private computer, copies every table into the new database in one transaction, and checks that each table has the same number of rows. Only then does Nod use the new database. Before copying, Nod checks for about twice the data's size in free disk space. If the copy fails, nothing changes; select **Try again** or open Nod again to retry. The old database stays on the private computer's disk.
 
 When the private computer can't start, Nod keeps running. A tool that needs the workspace or browser waits while the computer starts, or reports why it can't. Nod shows the cause with **Try again**, or **Install WSL** on Windows.
 
