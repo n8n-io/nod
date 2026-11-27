@@ -31,6 +31,10 @@
     "fingerprint": "6ef253146c68",
     "proof": "main-f724033 + main-d7649a6: 6/6"
   },
+  "login-2fa-metrics": {
+    "fingerprint": "cace2bab6e55",
+    "proof": "feat-real-page-sign-in-a8b9367: 5/5"
+  },
   "metrics-week-over-week": {
     "fingerprint": "28c2f5ed7094",
     "proof": "main-f724033 + main-d7649a6: 6/6"
@@ -46,6 +50,10 @@
   "onboarding-connected-calendar-past-only": {
     "fingerprint": "e9afd27691fa",
     "proof": "main-f724033 + main-d7649a6: 6/6"
+  },
+  "portal-account-choice": {
+    "fingerprint": "5ab57899f81c",
+    "proof": "feat-real-page-sign-in-a8b9367: 5/5"
   },
   "portal-nif-signin": {
     "fingerprint": "bccbe63ea70c",
