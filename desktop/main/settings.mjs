@@ -126,6 +126,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
         ![1, 2].includes(value.version) ||
         !['system', 'light', 'dark'].includes(value.theme) ||
         preferenceFields.some((field) => typeof value[field] !== 'boolean') ||
+        (value.notificationSound !== undefined && typeof value.notificationSound !== 'boolean') ||
         (value.version === 1
           ? typeof value.onboardingCompleted !== 'boolean'
           : value.onboardingCompleted !== undefined) ||
@@ -260,6 +261,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
     return {
       launchAtLogin: value.launchAtLogin,
       notifications: value.notifications,
+      notificationSound: value.notificationSound === true,
       theme: value.theme,
       zoomFactor: value.zoomFactor ?? 1,
       ...(value.serverUrl ? { serverUrl: value.serverUrl } : {}),
@@ -341,6 +343,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
                 'zoomFactor',
                 'computerDirectory',
                 ...preferenceFields,
+                'notificationSound',
                 'onboardingPreferenceStep',
                 'welcome',
               ].includes(key),
@@ -390,7 +393,7 @@ export function createSettingsStore(path, encryption, platform = process.platfor
             throw new Error('Welcome has already finished or its choices are invalid.');
           value.welcome = { ...input.welcome };
         }
-        for (const field of preferenceFields) {
+        for (const field of [...preferenceFields, 'notificationSound']) {
           if (input[field] === undefined) continue;
           if (typeof input[field] !== 'boolean') throw new Error('Check your preferences.');
           value[field] = input[field];

@@ -278,9 +278,7 @@ test(
     });
     await thread.initializeThreads();
     await t.test('periodic checks use an installation-spread five-minute schedule', async () => {
-      const { createWorkConsumers } = await import('../src/server/work-admission.ts');
-      const consumers = createWorkConsumers();
-      await consumers.pause();
+      const consumers = { register: async () => {}, close: async () => {} };
       await thread.boss.createQueue('heartbeat', { retryLimit: 0 });
       await thread.boss.schedule('heartbeat', '*/5 * * * *', {}, { tz: 'UTC' });
       try {
@@ -336,17 +334,11 @@ test(
       refresh() {},
     });
     await personal.initialize({ workers: false });
-    let injected = 0;
     let executed = 0;
     const fixtureKey = randomBytes(32);
     const vault = await createVault(db.pool, {
-      requestKey: Buffer.alloc(32, 42),
       keyStore: { id: 'fixture', configured: true, getKey: async () => fixtureKey },
-      inject: async () => {
-        injected++;
-      },
-      resume: thread.resumeAfterCredentials,
-      retry: thread.retryCredentials,
+      inject: async () => {},
     });
     const { createChatVerification } = await import('../src/server/chat-verification.ts');
     const { createSpeech } = await import('../src/server/speech.ts');
@@ -383,11 +375,15 @@ test(
         };
       },
     });
+    await db.pool.query(`CREATE TABLE IF NOT EXISTS vault_payments (
+      id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid NOT NULL, turn_id uuid NOT NULL,
+      status text NOT NULL DEFAULT 'pending'
+    )`);
     const verification = await createChatVerification(db.pool, {
       ownerId,
       keyStore: { getKey: async () => fixtureKey },
       refresh() {},
-      submitCode: async (_owner, _turn, code) => {
+      submitPayment: async (_turn, code) => {
         privateAudioCodes.push(code);
         return { status: 'submitted' };
       },
@@ -596,7 +592,6 @@ test(
           return operation();
         }),
       executeConfirmation: async () => undefined,
-      credentialRequestStatuses: vault.requestStatuses,
       bindVerificationQuestion: verification.bindQuestion,
       connectedApps: readConnectedApps,
       spendingLimit: async () => (limitReached ? { monthlyUsd: 25 } : null),
@@ -833,16 +828,14 @@ test(
         if (context.prompt === 'ask-approval')
           return { status: 'waiting_user', waitingFor: 'approval' };
         if (context.prompt === 'ask-credentials') {
-          const request = randomUUID();
           await db.pool.query(
-            `INSERT INTO credential_requests(id,token_hash,owner_id,thread_id,turn_id,root_turn_id,origin,label,kind,selectors,inspection)
-             VALUES($1,$2,$3,$4,$5,$5,'https://fixture.test','Synthetic code','otp','{}','{}')`,
-            [request, `synthetic-${request}`, ownerId, context.threadId, context.turnId],
+            'INSERT INTO vault_payments(id,owner_id,thread_id,turn_id) VALUES($1,$2,$3,$4)',
+            [randomUUID(), ownerId, context.threadId, context.turnId],
           );
           return {
             status: 'waiting_credentials',
             waitingFor: 'credentials',
-            message: 'Enter the synthetic password. [Sign in](/vault/fixture)',
+            message: 'Approve the synthetic payment.',
           };
         }
         await context.reply(`done: ${context.prompt}`);
@@ -1645,17 +1638,17 @@ test(
         },
       );
 
-      await t.test('credential resume and source-keyed messages are idempotent', async () => {
+      await t.test('payment resume and source-keyed messages are idempotent', async () => {
         const id = randomUUID();
         await db.pool.query(
           "INSERT INTO turns(id,owner_id,thread_id,source,prompt,channel,status,waiting_reason,finished_at) VALUES($1,'local-development',$2,'user','Resume fixture','telegram:fixture','waiting','credentials',now())",
           [id, threadId],
         );
-        await Promise.all([
-          thread.resumeAfterCredentials(id),
-          thread.resumeAfterCredentials(id),
-          thread.resumeAfterCredentials(id),
-        ]);
+        await Promise.all(
+          Array.from({ length: 3 }, () =>
+            thread.resumeAfterPayment(id, 'The payment step has completed.'),
+          ),
+        );
         const resumed = await db.pool.query(
           'SELECT source,channel,background,thread_id FROM turns WHERE source_id=$1',
           [`credentials:${id}`],
@@ -4396,7 +4389,7 @@ test(
               },
             },
             refresh() {},
-            submitCode: async (_owner, _turn, code) => {
+            submitPayment: async (_turn, code) => {
               codes.push(code);
               return { status: 'submitted' };
             },
@@ -4406,7 +4399,7 @@ test(
             verification: delayedVerification,
             configuration: () => ({ ...configuration(), llmReady: true }),
           });
-          transcript = '382916';
+          transcript = '3829';
           const message = { threadId, clientMessageId: randomUUID() };
           const pending = isolated.inject(audioRequest(message)).then((response) => response);
           let stopping: typeof pending | undefined;
@@ -4433,23 +4426,22 @@ test(
             await pending;
             transcript = 'Synthetic spoken request';
             await isolated.close();
-            await db.pool.query(
-              "UPDATE credential_requests SET status='superseded' WHERE turn_id=$1",
-              [waiting.turnId],
-            );
+            await db.pool.query("UPDATE vault_payments SET status='superseded' WHERE turn_id=$1", [
+              waiting.turnId,
+            ]);
           }
         },
       );
 
       await t.test(
-        'spoken verification codes reach private entry without saving their recording or transcript',
+        'spoken security codes reach private entry without saving their recording or transcript',
         async () => {
           await waitFor(settledThread);
           const waiting = await thread.submitUserMessage('ask-credentials');
           await waitFor(settled(waiting.turnId));
           const before = (await db.pool.query('SELECT count(*)::int AS n FROM artifacts')).rows[0]
             .n;
-          transcript = '739218';
+          transcript = '7392';
           chatReady = false;
           try {
             const message = {
@@ -4462,7 +4454,7 @@ test(
             );
             assert.equal(accepted.statusCode, 200, accepted.body);
             assert.equal(accepted.json().verificationStatus, 'submitted');
-            assert.equal(privateAudioCodes.at(-1), '739218');
+            assert.equal(privateAudioCodes.at(-1), '7392');
             assert.equal(
               (await db.pool.query('SELECT count(*)::int AS n FROM artifacts')).rows[0].n,
               before,
@@ -4470,7 +4462,7 @@ test(
             assert.equal(
               (
                 await db.pool.query(
-                  "SELECT 1 FROM messages WHERE text LIKE '%739218%' UNION ALL SELECT 1 FROM turns WHERE prompt LIKE '%739218%' UNION ALL SELECT 1 FROM audio_messages WHERE response::text LIKE '%739218%'",
+                  "SELECT 1 FROM messages WHERE text LIKE '%7392%' UNION ALL SELECT 1 FROM turns WHERE prompt LIKE '%7392%' UNION ALL SELECT 1 FROM audio_messages WHERE response::text LIKE '%7392%'",
                 )
               ).rowCount,
               0,
@@ -4484,10 +4476,9 @@ test(
           } finally {
             transcript = 'Synthetic spoken request';
             chatReady = true;
-            await db.pool.query(
-              "UPDATE credential_requests SET status='superseded' WHERE turn_id=$1",
-              [waiting.turnId],
-            );
+            await db.pool.query("UPDATE vault_payments SET status='superseded' WHERE turn_id=$1", [
+              waiting.turnId,
+            ]);
           }
         },
       );
@@ -4592,9 +4583,8 @@ test(
               if (fixture.multiple) {
                 const second = randomUUID();
                 await db.pool.query(
-                  `INSERT INTO credential_requests(id,token_hash,owner_id,thread_id,turn_id,root_turn_id,origin,label,kind,selectors,inspection)
-                   VALUES($1,$2,$3,$4,$5,$5,'https://fixture.test','Synthetic second code','otp','{}','{}')`,
-                  [second, `synthetic-${second}`, ownerId, threadId, waiting.turnId],
+                  'INSERT INTO vault_payments(id,owner_id,thread_id,turn_id) VALUES($1,$2,$3,$4)',
+                  [second, ownerId, threadId, waiting.turnId],
                 );
               }
               const artifactsBefore = (
@@ -4635,7 +4625,7 @@ test(
               } finally {
                 transcript = 'Synthetic spoken request';
                 await db.pool.query(
-                  "UPDATE credential_requests SET status='superseded' WHERE turn_id=$1",
+                  "UPDATE vault_payments SET status='superseded' WHERE turn_id=$1",
                   [waiting.turnId],
                 );
                 await waitFor(settledThread);
@@ -4653,23 +4643,22 @@ test(
             const waiting = await thread.submitUserMessage('ask-credentials');
             await waitFor(settled(waiting.turnId));
             const requestId = (
-              await db.pool.query('SELECT id FROM credential_requests WHERE turn_id=$1', [
+              await db.pool.query('SELECT id FROM vault_payments WHERE turn_id=$1', [
                 waiting.turnId,
               ])
             ).rows[0].id;
             if (multiple) {
               const second = randomUUID();
               await db.pool.query(
-                `INSERT INTO credential_requests(id,token_hash,owner_id,thread_id,turn_id,root_turn_id,origin,label,kind,selectors,inspection)
-                 VALUES($1,$2,$3,$4,$5,$5,'https://fixture.test','Synthetic second code','otp','{}','{}')`,
-                [second, `synthetic-${second}`, ownerId, threadId, waiting.turnId],
+                'INSERT INTO vault_payments(id,owner_id,thread_id,turn_id) VALUES($1,$2,$3,$4)',
+                [second, ownerId, threadId, waiting.turnId],
               );
             }
             let releaseTranscription!: () => void;
             transcriptionGate = new Promise<void>((resolve) => {
               releaseTranscription = resolve;
             });
-            transcript = '482613';
+            transcript = '4826';
             const before = transcriptions.length;
             const privateBefore = privateAudioCodes.length;
             const artifactsBefore = (
@@ -4679,10 +4668,9 @@ test(
             const pending = sendAudio(message).then((response) => response);
             try {
               await waitFor(() => transcriptions.length > before);
-              await db.pool.query(
-                "UPDATE credential_requests SET status='superseded' WHERE id=$1",
-                [requestId],
-              );
+              await db.pool.query("UPDATE vault_payments SET status='superseded' WHERE id=$1", [
+                requestId,
+              ]);
               transcriptionGate = undefined;
               releaseTranscription();
               const response = await pending;
@@ -4710,7 +4698,7 @@ test(
               await pending;
               transcript = 'Synthetic spoken request';
               await db.pool.query(
-                "UPDATE credential_requests SET status='superseded' WHERE turn_id=$1",
+                "UPDATE vault_payments SET status='superseded' WHERE turn_id=$1",
                 [waiting.turnId],
               );
             }
@@ -4725,9 +4713,7 @@ test(
           const waiting = await thread.submitUserMessage('ask-credentials');
           await waitFor(settled(waiting.turnId));
           const requestId = (
-            await db.pool.query('SELECT id FROM credential_requests WHERE turn_id=$1', [
-              waiting.turnId,
-            ])
+            await db.pool.query('SELECT id FROM vault_payments WHERE turn_id=$1', [waiting.turnId])
           ).rows[0].id;
           const held = await db.pool.connect();
           await held.query('BEGIN');
@@ -4739,7 +4725,7 @@ test(
           let finished = false;
           const pending = assert
             .rejects(
-              verification.accept('582614', {
+              verification.accept('5826', {
                 threadId,
                 clientMessageId: messageId,
                 verificationRequestId: requestId,
@@ -4778,10 +4764,9 @@ test(
             await held.query('ROLLBACK');
             held.release();
             await pending;
-            await db.pool.query(
-              "UPDATE credential_requests SET status='superseded' WHERE turn_id=$1",
-              [waiting.turnId],
-            );
+            await db.pool.query("UPDATE vault_payments SET status='superseded' WHERE turn_id=$1", [
+              waiting.turnId,
+            ]);
           }
         },
       );
@@ -7842,17 +7827,6 @@ test(
             randomUUID(),
             ownerId,
           ]);
-          const credentialTurn = await running('Old credential task');
-          const credential = await vault.request(credentialTurn, ownerId, {
-            origin: 'https://example.com',
-            label: 'Example',
-            kind: 'password',
-            passwordSelector: '#password',
-          });
-          await db.pool.query(
-            "UPDATE turns SET status='waiting',waiting_reason='credentials' WHERE id=$1",
-            [credentialTurn.turnId],
-          );
           const approvalTurn = await running('Old approval task');
           await approvals.request(approvalTurn, 'FIXTURE_WRITE', {});
           const confirmationMessageId = (
@@ -8001,18 +7975,7 @@ test(
             ).statusCode,
             404,
           );
-          assert.equal(
-            (
-              await request(
-                'POST',
-                credential.url.replace('/vault/', '/api/credential-requests/'),
-                { password: 'must-not-inject' },
-              )
-            ).statusCode,
-            409,
-          );
           assert.equal(executed, 0);
-          assert.equal(injected, 0);
           assert.ok(
             (await request('GET', '/api/tasks'))
               .json()
@@ -11289,10 +11252,8 @@ test(
               assert.equal(await turnStatus(active!.turnId), 'running');
               return resumed.id as string;
             };
-            await thread.resumeAfterCredentials(research);
-            const resumed = await checkResume(`credentials:${research}`);
-            await thread.retryCredentials(resumed);
-            await checkResume(`credentials-retry:${resumed}`);
+            await thread.resumeAfterPayment(research, 'The payment step has completed.');
+            await checkResume(`credentials:${research}`);
             assert.equal(await thread.resumeAfterConnection(research, 'Synthetic source'), true);
             const connected = await checkResume(`connection:${research}`);
             let handoffTurn = connected;
@@ -12172,118 +12133,6 @@ test(
             limitReached = false;
           }
           assert.equal(sends, 3);
-        },
-      );
-
-      await t.test(
-        'expired sign-in links reach the next turn without closing another session',
-        async () => {
-          await waitFor(settledThread);
-          const originalObserver = inspectObserver;
-          const mainPrompt = 'Synthetic Google sign-in request';
-          const otherPrompt = 'Synthetic separate sign-in request';
-          const mainOrigin = 'https://lab897-main.test';
-          const otherOrigin = 'https://lab897-other.test';
-          const links = new Map<string, string>();
-          inspectObserver = async (context) => {
-            if (context.prompt !== mainPrompt && context.prompt !== otherPrompt) return;
-            const main = context.prompt === mainPrompt;
-            const { url } = await vault.request(
-              { threadId: context.threadId, turnId: context.turnId, browserId: context.sessionId },
-              ownerId,
-              {
-                origin: main ? mainOrigin : otherOrigin,
-                label: main ? 'Synthetic Google sign-in' : 'Synthetic other sign-in',
-                kind: 'password',
-                passwordSelector: '#password',
-              },
-            );
-            links.set(context.prompt, url);
-            return {
-              status: 'waiting_credentials',
-              waitingFor: 'credentials',
-              message: `Sign in. [Continue](${url})`,
-            };
-          };
-          const formStatus = async (url: string) =>
-            (await request('GET', url.replace('/vault/', '/api/credential-requests/'))).json()
-              .status as string;
-          try {
-            const signIn = await thread.submitUserMessage(mainPrompt);
-            await waitFor(settled(signIn.turnId));
-            assert.equal(await turnStatus(signIn.turnId), 'waiting');
-            const mainLink = links.get(mainPrompt)!;
-            assert.equal(await formStatus(mainLink), 'pending');
-
-            const other = await thread.enqueueTurn(otherPrompt, {
-              source: 'event',
-              sessionId: randomUUID(),
-            });
-            await waitFor(settled(other));
-            assert.equal(await turnStatus(other), 'waiting');
-            const otherLink = links.get(otherPrompt)!;
-            assert.equal(await formStatus(otherLink), 'pending');
-
-            const next = await thread.submitUserMessage('Synthetic reminder follow-up');
-            await waitFor(settled(next.turnId));
-            assert.equal(await formStatus(mainLink), 'expired');
-            assert.equal(await formStatus(otherLink), 'pending');
-            assert.ok(ran(next.turnId)!.history.some(({ text }) => text.includes(mainLink)));
-            assert.deepEqual(
-              (ran(next.turnId)!.credentialRequests ?? []).filter(
-                (item) => item.origin === mainOrigin || item.origin === otherOrigin,
-              ),
-              [
-                {
-                  turnId: signIn.turnId,
-                  origin: mainOrigin,
-                  label: 'Synthetic Google sign-in',
-                  kind: 'password',
-                  status: 'expired',
-                },
-              ],
-            );
-            const instruction = firstInstruction(ran(next.turnId)!, true, new Set());
-            const requestData = JSON.parse(
-              instruction.split('Request data (JSON):\n')[1]!.split('\n\n')[0]!,
-            ) as { credentialRequests: string };
-            assert.match(requestData.credentialRequests, /lab897-main\.test/);
-            assert.match(requestData.credentialRequests, /"status":"expired"/);
-
-            const batchId = randomUUID();
-            const added = await db.pool.query<{ id: string }>(
-              `INSERT INTO credential_requests (
-                 id,token_hash,owner_id,thread_id,turn_id,root_turn_id,origin,label,kind,
-                 status,selectors,inspection,browser_id,flow_id,flow_expires_at,created_at
-               ) SELECT md5($2||':'||series.n::text),md5($2||':token:'||series.n::text),
-                 r.owner_id,r.thread_id,r.turn_id,r.root_turn_id,
-                 'https://lab897-extra-'||series.n::text||'.test','Synthetic previous sign-in',r.kind,
-                 'superseded',r.selectors,r.inspection,r.browser_id,r.flow_id,r.flow_expires_at,
-                 r.created_at+series.n*interval '1 second'
-               FROM credential_requests r CROSS JOIN generate_series(1,30) AS series(n)
-               WHERE r.turn_id=$1 RETURNING id`,
-              [signIn.turnId, batchId],
-            );
-            try {
-              const sessionId = (
-                await db.pool.query<{ session_id: string }>(
-                  'SELECT session_id FROM turns WHERE id=$1',
-                  [signIn.turnId],
-                )
-              ).rows[0]!.session_id;
-              const statuses = await vault.requestStatuses(signIn.threadId, sessionId, [
-                signIn.turnId,
-              ]);
-              assert.equal(statuses.length, 31);
-              assert.equal(statuses.find((item) => item.origin === mainOrigin)?.status, 'expired');
-            } finally {
-              await db.pool.query('DELETE FROM credential_requests WHERE id=ANY($1::text[])', [
-                added.rows.map((row) => row.id),
-              ]);
-            }
-          } finally {
-            inspectObserver = originalObserver;
-          }
         },
       );
     } finally {
@@ -13567,54 +13416,7 @@ test(
       `${new Date(Date.now() - 5000).toISOString()} update check result=offered version=9.9.9 for Marta Vidal\n`,
     );
     const scope = { turnId, sessionId, runId: childRun, parentRunId: mainRun, callId };
-    const { createBrowserWorkerFixture } = await import('./browser-fixture.ts');
     const { withFailureLog } = await import('../src/ports/failure-log.ts');
-    let pickerGuard = 'control_covered';
-    const refusePicker = async () => {
-      throw Object.assign(new Error(privateText), {
-        signInGuard: pickerGuard,
-        cause: privateText,
-      });
-    };
-    const bridge = await createBrowserWorkerFixture({
-      computer: fakeComputer({
-        signInMethods: refusePicker,
-        selectSignInMethod: refusePicker,
-      }),
-    });
-    try {
-      const client = bridge.client('/synthetic/diagnostic-picker');
-      for (const [method, guard] of [
-        ['signInMethods', 'control_covered'],
-        ['signInMethods', 'control_changed'],
-        ['selectSignInMethod', 'control_changed'],
-      ]) {
-        pickerGuard = guard;
-        await assert.rejects(
-          withFailureLog(
-            (event, error, context) =>
-              failureJournal.record('failure', { event, error, context }, scope),
-            () =>
-              method === 'signInMethods'
-                ? client.signInMethods!('task', 'https://example.test', [
-                    { label: privateValues[0], selector: `[data-account="${privateValues[1]}"]` },
-                  ])
-                : client.selectSignInMethod!('task', {
-                    origin: 'https://example.test',
-                    document: 'synthetic-document',
-                    methodId: randomUUID(),
-                  }),
-          ),
-          (error: unknown) => {
-            assert.equal(Object(error).signInGuard, guard);
-            assert.ok(privateValues.every((value) => !Object(error).message.includes(value)));
-            return true;
-          },
-        );
-      }
-    } finally {
-      await bridge.close();
-    }
     const { createDecisionModel } = await import('../src/providers/decisions.ts');
     const { createMailCheck } = await import('../src/server/mail-check.ts');
     const { privateEmailResult } = await import('../src/server/integration-result.ts');
@@ -13843,7 +13645,7 @@ test(
     assert.equal(report.logs[0].data.tool, 'apps');
     assert.equal(report.logs[0].data.input.query, 'Find the failed workflow');
     assert.equal(report.logs[1].data.output.statusCode, 503);
-    assert.equal(report.failures.length, 8);
+    assert.equal(report.failures.length, 5);
     const mailFailures = report.failures.filter(
       (row: any) => row.data.event === 'mail_check_failed',
     );
@@ -13862,25 +13664,6 @@ test(
       (row: any) =>
         row.data.event === 'browser_bridge_failed' && row.data.context.reason === 'exit',
     );
-    const pickerFailure = report.failures.find(
-      (row: any) => row.data.context?.signInGuard === 'control_covered',
-    );
-    const pickerFailures = report.failures.filter((row: any) => row.data.context?.signInGuard);
-    assert.deepEqual(
-      pickerFailures
-        .map((row: any) => [row.data.context.method, row.data.context.signInGuard, row.count])
-        .sort(),
-      [
-        ['selectSignInMethod', 'control_changed', 1],
-        ['signInMethods', 'control_changed', 1],
-        ['signInMethods', 'control_covered', 1],
-      ],
-    );
-    assert.equal(pickerFailure.data.error.code, 'unavailable');
-    assert.equal(pickerFailure.data.context.method, 'signInMethods');
-    assert.equal(pickerFailure.data.context.reason, 'error_response');
-    assert.equal(pickerFailure.count, 1);
-    assert.equal(pickerFailure.runId, child.runId);
     assert.match(requestFailure.data.error.message, /Gmail fetch failed with HTTP 503/);
     assert.equal(requestFailure.count, 1);
     assert.equal(bridgeFailure.data.context.exitCode, 137);

@@ -94,7 +94,6 @@ async function request<T>(
           'schedule-runs': 'tasks',
           usage: 'usage',
           vault: 'vault',
-          'credential-requests': 'vault',
           'payment-requests': 'vault',
           preferences: 'settings',
           privacy: 'settings',

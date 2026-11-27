@@ -30,7 +30,6 @@ export function createAccountSession(options: {
   traces?: boolean;
   onTraces?(enabled: boolean): void;
   updatesEmail?: boolean;
-  prepare?(signal: AbortSignal): Promise<void>;
 }) {
   const user = options.localUser;
   const owner = user.id;
@@ -149,17 +148,6 @@ export function createAccountSession(options: {
     }
     return true;
   }
-  async function prepare(reply: FastifyReply) {
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    reply.raw.once('close', abort);
-    try {
-      if (reply.raw.destroyed) controller.abort();
-      await options.prepare?.(controller.signal);
-    } finally {
-      reply.raw.off('close', abort);
-    }
-  }
   function setupFailed(reply: FastifyReply, error: unknown, what: string) {
     logFailure('setup_failed', error);
     const reason =
@@ -168,7 +156,6 @@ export function createAccountSession(options: {
   }
   async function start(reply: FastifyReply, complete?: () => Promise<unknown>) {
     try {
-      await prepare(reply);
       await options.start?.();
       await complete?.();
       return true;
@@ -181,19 +168,6 @@ export function createAccountSession(options: {
     app.get('/api/session', async (_request, reply) => {
       reply.header('cache-control', 'no-store');
       return response();
-    });
-    app.post('/api/account/prepare', async (request, reply) => {
-      if (!guard(request, reply)) return;
-      z.object({})
-        .strict()
-        .parse(request.body ?? {});
-      reply.header('cache-control', 'no-store');
-      try {
-        await prepare(reply);
-      } catch (error) {
-        return setupFailed(reply, error, 'Setup could not be completed.');
-      }
-      return { ok: true };
     });
     app.post('/api/account/model-setup', async (request, reply) => {
       if (!guard(request, reply)) return;

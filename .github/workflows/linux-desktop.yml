@@ -30,6 +30,8 @@ on:
       - 'desktop/scripts/release-tools.mjs'
       - 'desktop/scripts/runtime-build-lock.json'
       - 'desktop/runtime/assets.mjs'
+      - 'desktop/runtime/database.mjs'
+      - 'desktop/scripts/postgres-binaries.mjs'
       - 'desktop/test/*linux*.test.mjs'
       - 'desktop/test/runtime-assets.test.mjs'
 
@@ -149,6 +151,17 @@ jobs:
             await pool.end();
             const sharp = (await import("sharp")).default;
             await sharp({ create: { width: 2, height: 2, channels: 4, background: "#ff0000" } }).png().toBuffer();
+            const { mkdtemp } = await import("node:fs/promises");
+            const { tmpdir } = await import("node:os");
+            const { join } = await import("node:path");
+            const { openDatabase } = await import("./desktop/runtime/database.mjs");
+            const database = await openDatabase({ dataRoot: await mkdtemp(join(tmpdir(), "nod-flatpak-")), resourcesPath: process.cwd() });
+            const { default: pg } = await import("pg");
+            const client = new pg.Client({ connectionString: database.url });
+            await client.connect();
+            await client.query("CREATE TABLE flatpak_check (value text)");
+            await client.end();
+            await database.close();
           '
       - name: Check power services through the installed Flatpak
         run: /usr/bin/python3 desktop/scripts/check-linux-power.py

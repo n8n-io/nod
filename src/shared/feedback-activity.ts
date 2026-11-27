@@ -51,7 +51,6 @@ const fields: Record<string, Record<string, readonly unknown[] | number>> = {
       '/vault',
       '/settings',
       '/browser',
-      '/credentials',
       '/payments',
       '/not-found',
     ],

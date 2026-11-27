@@ -5,6 +5,7 @@ export type DesktopPreferences = {
   theme: 'system' | 'light' | 'dark';
   resolvedTheme: 'light' | 'dark';
   notifications: boolean;
+  notificationSound: boolean;
   launchAtLogin: boolean;
 };
 
@@ -16,6 +17,9 @@ type LocalRuntime = {
   status(): Promise<DesktopStatus>;
   subscribeStatus(listener: (status: DesktopStatus) => void): () => void;
   prepare(options?: { retry: boolean }): Promise<DesktopStatus>;
+  installWsl?(): Promise<DesktopStatus>;
+  importRuntime?(): Promise<DesktopStatus>;
+  chooseComputerDirectory?(): Promise<DesktopStatus>;
   setup(): Promise<LocalSetup>;
   completePreferences(): Promise<LocalSetup>;
   reconcileSetup(): Promise<void>;
@@ -40,6 +44,9 @@ export type DesktopStatus = {
     error?: string;
     progress?: number;
     secondsLeft?: number;
+    needsWsl?: boolean;
+    needsStorage?: boolean;
+    needsRuntimeArchive?: boolean;
   };
 };
 
@@ -58,7 +65,7 @@ export type DesktopUpdateStatus = {
 };
 
 export type DesktopSettingsChange = Partial<
-  Pick<DesktopPreferences, 'theme' | 'notifications' | 'launchAtLogin'>
+  Pick<DesktopPreferences, 'theme' | 'notifications' | 'notificationSound' | 'launchAtLogin'>
 >;
 
 type DesktopSettingsSection = 'general' | 'models' | 'preferences';
@@ -100,6 +107,9 @@ type DesktopWindow = Window & {
     downloadUpdate?(): Promise<void>;
     restartUpdate?(): Promise<void>;
     prepare?(options?: { retry: boolean }): Promise<DesktopStatus>;
+    installWsl?(): Promise<DesktopStatus>;
+    importRuntime?(): Promise<DesktopStatus>;
+    chooseComputerDirectory?(): Promise<DesktopStatus>;
     savePreferences?(input: DesktopSettingsChange): Promise<DesktopSettings>;
     saveSettings(
       input:
@@ -160,6 +170,9 @@ export function clientPlatform(): ClientPlatform {
         if (!bridge.prepare) throw new Error('Restart Nod to try setting up your workspace again.');
         return bridge.prepare(options);
       },
+      installWsl: bridge.installWsl,
+      importRuntime: bridge.importRuntime,
+      chooseComputerDirectory: bridge.chooseComputerDirectory,
       setup: async () => ({
         preferenceStep: (await bridge.getSettings()).onboardingPreferenceStep ?? 'launchAtLogin',
       }),
@@ -361,16 +374,25 @@ export function restartDesktopUpdate() {
   return restart();
 }
 
-export async function retryDesktopRuntime() {
-  const status = await localRuntime().prepare({ retry: true });
-  const failure =
-    status.error ||
-    (status.phase === 'error' ? status.message : undefined) ||
-    status.runtime?.error ||
-    (status.runtime?.phase === 'error' ? status.runtime.message : undefined);
-  if (failure || status.phase !== 'ready' || status.runtime?.phase !== 'ready')
-    throw new Error(failure || 'Your workspace is not ready yet. Try again.');
+export function retryDesktopComputer() {
+  return localRuntime().prepare({ retry: true });
 }
+
+const runtimeActions = {
+  installWsl: 'install WSL',
+  importRuntime: 'choose a Runtime pack',
+  chooseComputerDirectory: 'choose a folder for the private computer',
+};
+
+function runtimeAction(name: keyof typeof runtimeActions) {
+  const action = localRuntime()[name];
+  if (!action) return Promise.reject(new Error(`Update Nod to ${runtimeActions[name]} from here.`));
+  return action();
+}
+
+export const installDesktopWsl = () => runtimeAction('installWsl');
+export const importDesktopRuntime = () => runtimeAction('importRuntime');
+export const chooseDesktopComputerFolder = () => runtimeAction('chooseComputerDirectory');
 
 export function desktopFilesAvailable() {
   return (

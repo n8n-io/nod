@@ -129,9 +129,7 @@ Pi can run multi-step browser flows in one turn with the `browser_run` tool, whi
 
 A browser wait takes one condition: text to appear, a URL to match, or a page load state. `waitMs` sets how long to wait for that condition. If the call omits the condition or supplies more than one, Nod gets a validation error and can correct the wait on the same page.
 
-Browser hit tests convert viewport positions to document coordinates using the target page or frame's current scroll position. This keeps sign-in choices and the form shown to the trust check bound to the visible control after scrolling. A hit test finds the control a click would reach. A layer that lets clicks through does not block a sign-in choice. A banner or dialog over the control does, and Nod has to dismiss it first.
-
-For a private sign-in click, Nod keeps the control's position in its frame and its position in the main page. Nod calculates the position in the main page again before each check. It checks the visible point and live target from the main page, then sends one press and release through the checked frame's browser session. The page can still change between the check and the press. Nod does not retry input. The private picker still refuses a frame whose origin differs from the page's origin.
+Browser hit tests convert viewport positions to document coordinates using the target page or frame's current scroll position. This keeps the form shown to the trust check bound to the visible control after scrolling. A hit test finds the control a click would reach. A banner or dialog over the control blocks it, and Nod has to dismiss it first.
 
 Every browser command has a deadline: 60 seconds, or a wait's own timeout plus 30 seconds. That leaves room for agent-browser's own 30-second limit on each browser call, so only a browser that has stopped answering misses it. A session that misses its deadline, is interrupted or doesn't close within 5 seconds has its agent-browser process killed and its tab closed. The browser and other sessions' tabs keep running. A cancelled action requires an explicit open before that session can continue. A lost bridge response still requires recovery of the application namespace because the worker may have closed it. Nod never repeats the interrupted action during recovery. While a dialog is open, the observation is the dialog, and every action except open is refused until Pi accepts or dismisses it.
 
@@ -141,7 +139,7 @@ Known secret values (passwords, codes, card numbers and security codes) are remo
 
 ## Browser handoff
 
-When Pi needs you in the browser, it calls `browser` with `action: handoff` and a clear instruction. Nod web shows the live tab in chat.
+When Pi needs you in the browser, it calls `browser` with `action: handoff` and a clear instruction. `sign_in` does the same when no saved login applies. Nod web shows the live tab in chat.
 
 ```mermaid
 sequenceDiagram
@@ -161,7 +159,9 @@ sequenceDiagram
 - **Return to Nod** continues the session that asked, including a background session, without posting a message for you. Pi looks at the page to see what you did.
 - The panel scrolls into view once, when its first frame arrives. While it is open, the task ledger marks its task `browserHandoff`. With the full prompt, not the compact one for small context windows, the coordinator then points you to the panel instead of forwarding a message, because a task reply closes the handoff.
 - One bridge call carries frames out, newest first, and your input in. Each input is acknowledged after the browser applies it. Failures reach the view without retrying the input. Losing the connection rejects pending input and disables it until the view reconnects.
+- The panel's title shows the page's protocol, host and port, taken from the browser's current address, never from Pi. The path and query stay out.
 - Frames pause during credential entry. Passwords you type in the handoff join the known secrets.
+- Nod keeps the last account and password you typed on a page in memory only. An account pairs with a password only when you typed it on the same origin, during this handoff and before the password. When you select **Return to Nod**, Nod takes that login from the browser and keeps it in memory for 10 minutes; the reply says only that a login can be saved and for which host. Nod saves it to Vault under that origin only when you select **Save login to Vault**, and only for HTTPS or loopback origins. The saved login then follows the [website matching](/trust/vault/#website-matching) rules.
 - An init script makes every passkey request fail at once and reports no passkey support, so a sign-in doesn't open a passkey prompt that the live view can't show. Nod adds it to every tab, popup and frame before the page's own scripts run.
 
 :::caution[Limits]

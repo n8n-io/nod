@@ -28,12 +28,7 @@ import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { IntegrationConnectionError } from '../src/ports/integrations.ts';
 import { telegramText, whatsappText } from '../src/providers/chat-sdk/format.ts';
 import { createAnalytics, snapshotAnalytics } from '../src/server/analytics.ts';
-import {
-  accessCookie,
-  accessKey,
-  credentialRequestKey,
-  registerLocalAccess,
-} from '../src/server/access.ts';
+import { accessCookie, accessKey, registerLocalAccess } from '../src/server/access.ts';
 import { appConfirmation } from '../src/ports/agent.ts';
 import type {
   ApprovalDescription,
@@ -1404,12 +1399,6 @@ test('localhost access requires the owner key and rejects foreign Host, Origin a
     await chmod(join(root, 'access-key'), 0o644);
     assert.equal(await accessKey(root), key);
     assert.equal((await stat(join(root, 'access-key'))).mode & 0o777, 0o600);
-    const requestKeys = await Promise.all(
-      Array.from({ length: 4 }, () => credentialRequestKey(root)),
-    );
-    assert.equal(new Set(requestKeys).size, 1);
-    assert.equal(requestKeys[0] === key, false);
-    assert.equal((await stat(join(root, 'credential-request-key'))).mode & 0o777, 0o600);
     registerLocalAccess(app, 4310, { key });
     app.post('/api/fixture', async () => ({ ok: true }));
     app.get('/api/privacy', async () => ({ content: null }));
@@ -1463,7 +1452,6 @@ test('localhost access requires the owner key and rejects foreign Host, Origin a
         cookie: `nod-access-4310=${randomBytes(32).toString('base64url')}`,
       },
       { host: 'localhost:4310', cookie: `nod-access-4311=${key}` },
-      { host: 'localhost:4310', cookie: `nod-access-4310=${requestKeys[0]}` },
       { host: 'localhost:4310', 'x-nod-desktop-token': key },
     ])
       assert.equal(

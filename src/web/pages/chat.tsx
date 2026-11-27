@@ -84,10 +84,10 @@ function verificationFailure(
   ambiguous: boolean,
 ) {
   if (ambiguous)
-    return 'More than one sign-in needs a code. Reply to the verification request you want to complete.';
+    return 'More than one payment needs a security code. Reply to the payment request you want to complete.';
   if (status === 'unavailable')
-    return 'The result could not be confirmed. Check the sign-in or payment before trying again.';
-  return 'The verification code could not be confirmed. Check the sign-in request and try again.';
+    return 'The result could not be confirmed. Check the payment before trying again.';
+  return 'The security code could not be confirmed. Check the payment request and try again.';
 }
 function scrollBehavior(): ScrollBehavior {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth';
@@ -937,12 +937,12 @@ export function Chat({
   };
   for (const id of streamTimes.current.keys())
     if (!streamIds.has(id)) streamTimes.current.delete(id);
-  const codeRequests = new Map(
+  const codeRequests = new Set(
     (state.verificationRequests ?? []).flatMap((request) => {
       const target = allMessages.findLast(
         (message) => message.role === 'assistant' && message.turnId === request.turnId,
       );
-      return target ? [[target.id, request.kind] as const] : [];
+      return target ? [target.id] : [];
     }),
   );
   const displayMessages: Message[] = [
@@ -1386,19 +1386,13 @@ export function Chat({
     );
     const explicitVerification =
       classifyVerificationReply(value).kind !== 'ordinary' || Boolean(securityCodeIn(value));
-    let privateVerification =
-      (classifyVerificationReply(value).kind !== 'ordinary' &&
-        verificationRequests.some((request) => request.kind === 'otp')) ||
-      (Boolean(securityCodeIn(value)) &&
-        verificationRequests.some((request) => request.kind === 'payment'));
+    let privateVerification = Boolean(securityCodeIn(value)) && verificationRequests.length > 0;
     const verificationRequestId =
       privateVerification && verificationRequests.length === 1
         ? verificationRequests[0].id
         : undefined;
     let verificationStatus: SubmitMessageResponse['verificationStatus'];
-    const masked = verificationRequests.every((request) => request.kind === 'payment')
-      ? 'Security code sent securely.'
-      : 'Verification code sent securely.';
+    const masked = 'Security code sent securely.';
     const recordingKey = recording && recordingSource(recording);
     if (recordingKey && !recordingIds.current.has(recordingKey))
       recordingIds.current.set(recordingKey, crypto.randomUUID());
@@ -1753,7 +1747,7 @@ export function Chat({
       setOptimistic((current) => current.filter((item) => item.message.id !== id));
       const failure = privateVerification
         ? attachments.length
-          ? 'Send the verification code by itself, without attachments.'
+          ? 'Send the security code by itself, without attachments.'
           : verificationFailure(verificationStatus, verificationRequests.length > 1)
         : errorMessage(cause);
       if (!directAnswer) setError(failure);
@@ -2575,7 +2569,7 @@ export function Chat({
                             }
                           : undefined
                       }
-                      codeRequest={codeRequests.get(message.id)}
+                      codeRequest={codeRequests.has(message.id)}
                       pendingAudio={
                         optimistic.find((item) => item.message.id === message.id)?.audio
                       }

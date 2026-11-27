@@ -69,9 +69,10 @@ Before it replaces Nod, the installer stops any old ShipIt update job and remove
 </TabItem>
 <TabItem label="Windows" icon="seti:windows">
 
-You need Windows 11 on an Intel or AMD x64 computer. A local assistant also needs WSL
-2 with hardware virtualization and at least 20 GB of free disk space. Its app and runtime are about
-2.1 GB to download. Connecting to a server doesn't need WSL or a local runtime.
+You need Windows 11 on an Intel or AMD x64 computer. Chat works as soon as setup finishes. A local
+assistant's workspace and browser also need WSL 2 with hardware virtualization and at least 20 GB of
+free disk space; their runtime downloads in the background. Connecting to a server doesn't need WSL
+or a local runtime.
 
 The desktop app does not support Windows on Arm. You can open a [self-hosted Nod server](/deploy/self-host/#open-a-remote-server-without-a-domain) in your browser instead.
 
@@ -83,7 +84,7 @@ The desktop app does not support Windows on Arm. You can open a [self-hosted Nod
 
 3. At Welcome, choose **Connect to a server** to use an existing assistant, or **Get started** to start a local one. Local setup offers an optional email connection, a few optional questions about you, a model if none works yet, a choice about conversation traces, which also says basic usage data is shared by default for new owners and can be turned off in **Settings → Privacy & data**, and an optional email address for updates about Nod and other n8n products, with its own consent checkbox. Discord and forum links are also in **Settings → General**. Other apps can be connected later from the first chat or **Apps**. Nod tries to turn on **Open at login** when local setup finishes. If the operating system blocks this setting, setup still finishes. After the first chat introduction, choose **Enable notifications** if you want Nod to alert you while you’re away. Windows notification settings control delivery. You can change these preferences later in Settings.
 
-4. If Nod needs WSL, follow its setup instructions and approve the administrator request. If Windows needs a restart, open Nod again afterwards; your saved connections and settings are kept.
+4. If WSL is missing, Nod starts installing it after setup. Approve the administrator request and restart Windows when it's convenient; chat keeps working until then, and your saved connections and settings are kept.
 
 5. Keep your internet connection on. When setup is ready, Nod opens your chat with your saved connections. See [Your first conversation](/get-started/first-conversation/).
 

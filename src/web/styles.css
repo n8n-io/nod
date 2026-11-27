@@ -773,12 +773,20 @@ input[type='range']:disabled {
   font-weight: 400;
 }
 .browser-handoff-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
   margin: 0;
   padding: 10px 14px;
   color: var(--muted-foreground);
   font-size: var(--text-control);
 }
-.browser-handoff-feedback[role='alert'] {
+.browser-handoff-feedback p {
+  margin: 0;
+}
+.browser-handoff-feedback[role='alert'],
+.browser-handoff-feedback [role='alert'] {
   color: var(--error);
 }
 .browser-handoff-recovery {
@@ -840,6 +848,18 @@ input[type='range']:disabled {
 }
 .browser-handoff-title {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.browser-handoff-title > svg {
+  flex: none;
+}
+.browser-handoff-title > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .browser-handoff-expanded .browser-handoff-screen {
   display: flex;
@@ -868,9 +888,6 @@ input[type='range']:disabled {
   }
   .browser-handoff-actions:last-child {
     margin-left: auto;
-  }
-  .browser-handoff-save-label {
-    display: none;
   }
   .browser-handoff-expanded {
     max-width: calc(100vw - 16px);
@@ -1498,15 +1515,6 @@ input[type='range']:disabled {
 .credential-page > .credential-card {
   margin-block: auto;
 }
-.credential-heading {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 24px;
-}
-.credential-heading > div:last-child {
-  min-width: 0;
-}
 .credential-card .form-stack {
   gap: 16px;
 }
@@ -1517,17 +1525,12 @@ input[type='range']:disabled {
 .credential-card .form-stack > .button {
   min-height: 44px;
 }
-.credential-submit {
-  margin-top: 4px;
-  font-size: var(--text-control);
-}
 .credential-card h1 {
   font-size: 28px;
   letter-spacing: -0.8px;
   font-weight: 500;
   line-height: 1.35;
 }
-.credential-symbol,
 .success-mark {
   width: 42px;
   height: 42px;
@@ -1535,79 +1538,9 @@ input[type='range']:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--accent);
-  background: var(--accent-soft);
   margin-bottom: 16px;
-}
-.success-mark {
   background: var(--success-soft);
   color: var(--success);
-}
-.credential-heading .credential-symbol {
-  flex: none;
-  margin-bottom: 0;
-}
-.credential-intro {
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-  line-height: 1.65;
-  margin-top: 4px;
-  overflow-wrap: anywhere;
-}
-.credential-accounts {
-  display: grid;
-  gap: 8px;
-}
-.credential-accounts h2 {
-  font-size: var(--text-control);
-  font-weight: 500;
-  margin-bottom: 0;
-}
-.credential-accounts > .button-outline {
-  height: auto;
-  min-height: 58px;
-  justify-content: flex-start;
-  padding: 12px;
-}
-.credential-accounts .button > span {
-  display: grid;
-  gap: 4px;
-  flex: 1;
-  text-align: left;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-.credential-accounts strong {
-  font-weight: 500;
-}
-.credential-accounts small {
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-}
-.credential-methods {
-  gap: 10px;
-}
-.credential-methods > .button {
-  min-height: 52px;
-  gap: 12px;
-  padding: 12px 16px;
-  background: transparent;
-  border-color: var(--border);
-}
-.credential-methods > .button > :first-child {
-  flex: none;
-}
-.credential-methods > .button > :last-child {
-  flex: none;
-  color: var(--muted-foreground);
-}
-.credential-method-logo {
-  width: 20px;
-  height: 20px;
-  object-fit: contain;
-}
-:root[data-theme='dark'] .credential-method-logo.is-monochrome {
-  filter: invert(1);
 }
 .credential-complete {
   display: flex;

@@ -5,10 +5,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 
 const token = /^[A-Za-z0-9_-]{43}$/;
 
-async function localKey(
-  dataRoot: string,
-  name: 'access-key' | 'credential-request-key' | 'trace-key',
-) {
+async function localKey(dataRoot: string, name: 'access-key' | 'trace-key') {
   const path = join(dataRoot, name);
   if (!token.test(await readFile(path, 'utf8').catch(() => ''))) {
     await mkdir(dataRoot, { recursive: true, mode: 0o700 });
@@ -28,8 +25,6 @@ async function localKey(
 }
 
 export const accessKey = (dataRoot: string) => localKey(dataRoot, 'access-key');
-export const credentialRequestKey = (dataRoot: string) =>
-  localKey(dataRoot, 'credential-request-key');
 export const traceKey = (dataRoot: string) => localKey(dataRoot, 'trace-key');
 
 export const accessCookie = (port: number) => `nod-access-${port}`;
@@ -118,7 +113,7 @@ export function registerLocalAccess(
     }
     const pageNavigation =
       request.method === 'GET' &&
-      (pages.has(path) || /^\/(vault|credentials|payments)\/[A-Za-z0-9_-]+\/?$/.test(path)) &&
+      (pages.has(path) || /^\/payments\/[A-Za-z0-9_-]+\/?$/.test(path)) &&
       request.headers['sec-fetch-mode'] === 'navigate' &&
       request.headers['sec-fetch-dest'] === 'document';
     const state = new URLSearchParams(request.url.split('?')[1]).getAll('state');

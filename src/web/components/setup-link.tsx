@@ -2,7 +2,7 @@ import { Tooltip } from './tooltip';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Globe2, KeyRound, Link2 } from './icons';
-import type { AppSetupStatus, CredentialRequest } from '../../shared/contracts';
+import type { AppSetupStatus } from '../../shared/contracts';
 import { api, ApiError } from '../lib/api';
 import { appConnectionAnalytics, captureAnalytics } from '../lib/analytics';
 import type { SetupKind } from '../lib/message-links';
@@ -15,7 +15,6 @@ import { usePrivateEntry } from './private-entry';
 import { Button } from './ui';
 
 const icons = { vault: KeyRound, website: Globe2, app: Link2 };
-const vaultLink = /^\/(?:vault|credentials)\/([A-Za-z0-9_-]+)\/?$/;
 const paymentLink = /^\/payments\/([a-f0-9-]{36})\/?$/i;
 const appLink = /^\/apps\?connect=([a-f0-9-]{36})$/i;
 
@@ -86,9 +85,7 @@ function usePrivateLinks(hrefs: string[]) {
   const [completed, setCompleted] = useState<Set<string>>(new Set());
   const key = JSON.stringify(hrefs);
   useEffect(() => {
-    const links = (JSON.parse(key) as string[]).filter(
-      (href) => vaultLink.test(href) || paymentLink.test(href),
-    );
+    const links = (JSON.parse(key) as string[]).filter((href) => paymentLink.test(href));
     if (!links.length) return;
     const controller = new AbortController();
     const settled = new Set<string>();
@@ -103,26 +100,14 @@ function usePrivateLinks(hrefs: string[]) {
             .filter((href) => !settled.has(href))
             .map(async (href) => {
               try {
-                const token = vaultLink.exec(href)?.[1];
                 const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]);
-                const status = token
-                  ? (
-                      await api<Pick<CredentialRequest, 'status'>>(
-                        `/api/credential-requests/${token}/status`,
-                        { signal, cache: 'no-store' },
-                      )
-                    ).status
-                  : (
-                      await api<{ status: string }>(
-                        `/api/payment-requests/${paymentLink.exec(href)![1]}/status`,
-                        { signal, cache: 'no-store' },
-                      )
-                    ).status;
+                const { status } = await api<{ status: string }>(
+                  `/api/payment-requests/${paymentLink.exec(href)![1]}/status`,
+                  { signal, cache: 'no-store' },
+                );
                 if (controller.signal.aborted) return;
-                if (['filled', 'submitted', 'uncertain', 'expired'].includes(status))
-                  settled.add(href);
-                if (status === 'filled' || status === 'submitted')
-                  setCompleted((current) => new Set([...current, href]));
+                if (['submitted', 'uncertain', 'expired'].includes(status)) settled.add(href);
+                if (status === 'submitted') setCompleted((current) => new Set([...current, href]));
               } catch (error) {
                 if (
                   !controller.signal.aborted &&
@@ -202,11 +187,7 @@ function SetupAction({
         data-setup={setup}
         href={href}
         target={href.startsWith('/apps?connect=') ? undefined : '_blank'}
-        rel={
-          setup === 'vault' && (vaultLink.test(href) || href.startsWith('/payments/'))
-            ? 'opener'
-            : 'noopener noreferrer'
-        }
+        rel={setup === 'vault' && paymentLink.test(href) ? 'opener' : 'noopener noreferrer'}
         referrerPolicy="no-referrer"
         onClick={(event) => {
           captureAnalytics('setup_link_clicked', { setup });

@@ -283,8 +283,11 @@ function shownWindow(app: App) {
   return app.windows?.find((window) => !window.hidden) ?? app.windows?.[0];
 }
 
-function holdsText(node: Node) {
-  return node.value !== '';
+function replacesText(action: Action, node: Node, selectedByNod: boolean) {
+  return (
+    node.value !== '' &&
+    (action === 'COMPUTER_SET_VALUE' || selectedByNod || !node.states?.includes('focused'))
+  );
 }
 
 function secure(node: Node) {
@@ -340,6 +343,7 @@ export function createComputerUse(
     [...(grants.get(root)?.values() ?? [])].some((ids) => ids.includes(identity(app)));
   const grants = new Map<string, Map<string, string[]>>();
   const controls = new Map<string, Map<string, Control>>();
+  const selecting = new Map<string, Set<string>>();
   let access = new AbortController();
   let listing: { at: number; apps: Promise<App[]> } | undefined;
 
@@ -441,6 +445,28 @@ export function createComputerUse(
       key,
       [...ids].filter((id) => id),
     );
+  }
+
+  function selectedByNod(root: string, bundle: string) {
+    return selecting.get(root)?.has(appKey(bundle)) ?? false;
+  }
+
+  function tracked(root: string, bundle: string, action: Action) {
+    const mark = (selects: boolean) => {
+      const apps = forRoot(selecting, root, () => new Set<string>());
+      if (selects) apps.add(appKey(bundle));
+      else apps.delete(appKey(bundle));
+    };
+    return [
+      (result: Record<string, unknown>) => {
+        mark(action !== 'COMPUTER_TYPE' && action !== 'COMPUTER_SET_VALUE');
+        return result;
+      },
+      (error: unknown) => {
+        if (!(error instanceof Error && beforeDelivery.test(error.message))) mark(true);
+        throw error;
+      },
+    ] as const;
   }
 
   function remember(root: string, entries: Array<[string, Control]>) {
@@ -640,7 +666,7 @@ export function createComputerUse(
         app: { bundle: found.bundle, name: found.app },
         control: { role: found.role, name: found.name, window: found.window },
         ...(['COMPUTER_SET_VALUE', 'COMPUTER_TYPE'].includes(action)
-          ? { replacesText: holdsText(node) }
+          ? { replacesText: replacesText(action, node, selectedByNod(root, found.bundle)) }
           : {}),
         ...(action !== 'COMPUTER_FOCUS'
           ? await windowContext(found.app, chosen, signal, false, !chosen && found.menu, {
@@ -876,6 +902,13 @@ export function createComputerUse(
         !current.available_actions.some((name) => ['SetValue', 'TypeText'].includes(name)) &&
         !current.states?.includes('readonly');
       if (needsCheck(action)) checkedWindow(prepared);
+      const appending =
+        action === 'COMPUTER_TYPE' && prepared.replacesText === false && current.value !== '';
+      if (appending && replacesText(action, current, selectedByNod(root, found.bundle)))
+        throw new IntegrationError(
+          "That field's text or keyboard focus changed since this step was checked, so Nod typed nothing.",
+          409,
+        );
       return async () => {
         const result = (await ask(
           {
@@ -897,10 +930,11 @@ export function createComputerUse(
                 : {}),
             ...(prepared.text !== undefined ? { text: prepared.text } : {}),
             ...(unsettable ? { settable: false } : {}),
+            ...(appending ? { keepFocus: true } : {}),
             ...(prepared.option !== undefined ? { option: prepared.option } : {}),
           },
           signal,
-        )) as { disposition?: { delivery?: string } };
+        ).then(...tracked(root, found.bundle, action))) as { disposition?: { delivery?: string } };
         return {
           done: true,
           ...(result.disposition?.delivery ? { delivery: result.disposition.delivery } : {}),
@@ -927,7 +961,7 @@ export function createComputerUse(
           noSecureFocus: true,
         },
         signal,
-      );
+      ).then(...tracked(root, app.bundle, action));
       return { done: true };
     };
   }

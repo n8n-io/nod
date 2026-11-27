@@ -18,7 +18,7 @@ async function files(directory) {
 const sourceRoot = resolve('src');
 const failures = [];
 const vendor =
-  /^(?:@earendil-works\/|@composio\/|@chat-adapter\/|@whiskeysockets\/|@1password\/|chat$|agent-browser$)/;
+  /^(?:@earendil-works\/|@composio\/|@chat-adapter\/|@whiskeysockets\/|chat$|agent-browser$)/;
 for (const file of await files(sourceRoot)) {
   if (!/\.[cm]?[jt]sx?$/.test(file)) continue;
   const name = relative(sourceRoot, file).replaceAll('\\', '/');

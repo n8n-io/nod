@@ -7,7 +7,7 @@ import {
   type ObservationBatch,
 } from '../../ports/proactivity.ts';
 import type { ActivityReader } from '../../ports/integrations.ts';
-import { messageSchema, messageText } from './verification-email.ts';
+import { messageSchema, messageText } from './gmail-message.ts';
 
 const id = z.string().regex(/^[a-zA-Z0-9_-]{1,1024}$/);
 const page = z.string().min(1).max(2048);

@@ -240,7 +240,6 @@ check('NR3-bounded',event.properties.tab==='general'&&!Object.keys(event.propert
 check('NR3-session',event.properties.$session_id==='synthetic-session'&&event.properties.$window_id==='synthetic-window');
 for(const [path,route] of [
  ['https://private-host.example.test/payments/private-id?code=PRIVATE_URL_CANARY#PRIVATE_FRAGMENT_CANARY','/payments'],
- ['/credentials/private-id?key=PRIVATE_URL_CANARY','/credentials'],
  ['/prepared/00000000-0000-4000-8000-000000000705?token=PRIVATE_URL_CANARY','/prepared'],
 ]){
  capturePageview(path);

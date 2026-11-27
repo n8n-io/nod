@@ -33,7 +33,7 @@ import {
   OutputLimitError,
   ToolFailureError,
 } from '../ports/agent.ts';
-import type { Computer, Workspace } from '../ports/computer.ts';
+import type { Computer, Workspace, WorkspaceSession } from '../ports/computer.ts';
 import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
 import {
@@ -201,6 +201,39 @@ function isToolResult(value: unknown): value is AgentToolResult {
   );
 }
 
+function withFolders(session: WorkspaceSession, path: string, folders: string[]): WorkspaceSession {
+  let created: Promise<void> | undefined;
+  const ensure = (signal?: AbortSignal) =>
+    (created ??= session
+      .exec(`mkdir -p -- ${folders.map((folder) => `'${folder}'`).join(' ')}`, { signal })
+      .then((result) => {
+        if (result.exitCode)
+          throw new Error(
+            `Nod could not create the working folders for this work (exit code ${result.exitCode}).`,
+          );
+      })
+      .catch((error) => {
+        created = undefined;
+        throw error;
+      }));
+  return {
+    ...session,
+    path,
+    exec: async (command, options) => {
+      await ensure(options?.signal);
+      return session.exec(command, options);
+    },
+    ...(session.runConnectedCli
+      ? {
+          runConnectedCli: async (cli, args, environment, timeoutSeconds) => {
+            await ensure();
+            return session.runConnectedCli!(cli, args, environment, timeoutSeconds);
+          },
+        }
+      : {}),
+  };
+}
+
 function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   work.catch(() => {});
   return new Promise<T>((resolve, reject) => {
@@ -348,6 +381,7 @@ export function createAgentRuntime(dependencies: {
     activeTurns.set(context.turnId, { abort, done });
     signal.addEventListener('abort', abort, { once: true });
 
+    const coordinator = !context.taskContext && !context.background && !context.proactivity;
     let taskResult = '';
     let screened = false;
     const speaks = !context.proactivity && (!context.background || Boolean(context.taskContext));
@@ -499,6 +533,7 @@ export function createAgentRuntime(dependencies: {
 
     const spill = async (text: string) => {
       if (text.length <= inlineChars) return text;
+      if (dependencies.workspace.available?.() === false) return text.slice(0, inlineChars);
       const name = `${randomUUID()}-error.txt`;
       try {
         await dependencies.workspace.writeArtifact(threadId, name, Buffer.from(text), signal);
@@ -842,12 +877,11 @@ export function createAgentRuntime(dependencies: {
       let workspace = rootWorkspace;
       if (context.taskContext) {
         const path = `${rootWorkspace.path}/tasks/${context.taskContext.id}`;
-        const created = await rootWorkspace.exec(
-          `mkdir -p '${path}/drafts' '${path}/outputs' '${rootWorkspace.path}/shared'`,
-          { signal },
-        );
-        if (created.exitCode) throw new Error('The task folder could not be created.');
-        workspace = { ...rootWorkspace, path };
+        workspace = withFolders(rootWorkspace, path, [
+          `${path}/drafts`,
+          `${path}/outputs`,
+          `${rootWorkspace.path}/shared`,
+        ]);
       }
       const browser: Computer = {
         ...computer,
@@ -939,7 +973,6 @@ export function createAgentRuntime(dependencies: {
                     { additionalProperties: false },
                   )
                 : tool.parameters;
-            const coordinator = !context.taskContext && !context.background && !context.proactivity;
             const deferredByRole = coordinator && (name === 'computer' || name === 'files');
             const eager = Boolean(tool.eager && !deferredByRole);
             const deferred = (tool as Partial<Pick<AgentTool, 'deferred'>>).deferred;
@@ -951,7 +984,7 @@ export function createAgentRuntime(dependencies: {
               ...(tool.companions ? { companions: tool.companions } : {}),
               ...(deferred ? { deferred } : {}),
               parallel: Boolean(deferred) || parallelTools.has(name),
-              ...(name === 'send_message' ? { early: true } : {}),
+              ...(name === 'send_message' || name === 'react_to_message' ? { early: true } : {}),
               execute: async (params, options) => {
                 assertActive();
                 if (browserTools.has(name)) await take();
@@ -1105,9 +1138,7 @@ export function createAgentRuntime(dependencies: {
           browserId: childBrowser,
         };
         const childPath = `${workspace.path}/.nod/runs/${runId}`;
-        if ((await workspace.exec(`mkdir -p -- '${childPath}'`, { signal })).exitCode)
-          throw new Error('The subagent workspace could not be opened.');
-        assertActive();
+        const childWorkspace = withFolders(workspace, workspace.path, [childPath]);
         let browsed = false;
         let answer = '';
         let partialAnswer = '';
@@ -1188,7 +1219,7 @@ export function createAgentRuntime(dependencies: {
                   return result;
                 },
               })),
-            workspace: { ...workspace, path: childPath },
+            workspace: { ...childWorkspace, path: childPath },
             timeZone: context.timeZone,
             runTool: async (name, params, run, options) => {
               if (capped) return spent();
@@ -1371,7 +1402,9 @@ export function createAgentRuntime(dependencies: {
       const opening = agent.open({
         ...execution,
         ...(context.model ? { model: context.model } : {}),
-        ...(context.taskContext && !context.modelChosen ? { lighterEffort: true } : {}),
+        ...(!context.modelChosen && (context.taskContext || coordinator)
+          ? { lighterEffort: true }
+          : {}),
         automatic: Boolean(context.automatic),
         contextRestart: context.contextRestart,
         ...(context.proactivity ? { restricted: true } : {}),

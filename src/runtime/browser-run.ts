@@ -538,6 +538,18 @@ export async function runBrowserScript(
         return Boolean(image);
       }
       const { step, observe } = built;
+      if (
+        ['snapshot', 'open', 'back', 'forward', 'reload'].includes(step.action) &&
+        actions.length > 0 &&
+        ['click', 'press', 'select', 'check', 'uncheck'].includes(actions[actions.length - 1]!)
+      ) {
+        await handlers
+          .act({ action: 'wait', load: 'domcontentloaded', waitMs: 3000 }, undefined, {
+            observe: false,
+            signal: controller.signal,
+          })
+          .catch(() => {});
+      }
       const current = { index, action: step.action, started: false };
       inFlight = current;
       let done: BrowserRunActResult | { output: unknown };
@@ -825,6 +837,14 @@ export async function runBrowserScript(
     ) {
       finalPageText = `URL: ${lastPage.url}\n${lastPage.text}`;
     } else if (!hasResult) {
+      if (['click', 'press', 'select', 'check', 'uncheck'].includes(actions[actions.length - 1]!)) {
+        await handlers
+          .act({ action: 'wait', load: 'domcontentloaded', waitMs: 3000 }, undefined, {
+            observe: false,
+            signal: handlers.signal,
+          })
+          .catch(() => {});
+      }
       const done = await handlers.act({ action: 'snapshot' }, undefined, {
         observe: true,
         signal: handlers.signal,

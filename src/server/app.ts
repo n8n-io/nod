@@ -48,11 +48,13 @@ import {
   submitUserMessage,
 } from './thread.ts';
 import { reactionReplySql } from './turn-chain.ts';
+import { VaultError } from './vault.ts';
+import { loopbackHost } from '../shared/loopback.ts';
 import { isMessageReaction } from '../shared/emoji.ts';
 import { accessKey, registerLocalAccess } from './access.ts';
 import { logFailure, withFailureLog, type FailureLogSink } from './failure-log.ts';
 import { fileBytes } from '../shared/files.ts';
-import { BrowserActionError, type Computer } from '../ports/computer.ts';
+import { BrowserActionError, type BrowserViewFrame, type Computer } from '../ports/computer.ts';
 import { browserErrorMessage } from '../shared/browser-errors.ts';
 import { browserHandoffInputs } from '../shared/browser-handoff.ts';
 import type {
@@ -264,8 +266,14 @@ export interface AppDependencies {
   verification?: Awaited<ReturnType<typeof createChatVerification>>;
   computer?: Pick<
     Computer,
-    'act' | 'screenshot' | 'control' | 'view' | 'screenStatus' | 'clear' | 'discard'
+    'act' | 'screenshot' | 'control' | 'view' | 'typedLogin' | 'screenStatus' | 'clear' | 'discard'
   >;
+  saveLogin?: (login: {
+    origin: string;
+    label: string;
+    username: string;
+    password: string;
+  }) => Promise<unknown>;
   configuration?: () => Configuration;
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
   forgetLearned?: () => Promise<void>;
@@ -321,7 +329,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
   const streams = new Set<ServerResponse>();
   const browserFrameAcks = new Map<
     string,
-    { turnId: string; browserId: string; acknowledge(): void }
+    { turnId: string; browserId: string; origin?: string; acknowledge(): void }
   >();
   if (dependencies.failureLog)
     app.addHook('onRequest', (_request, _reply, done) =>
@@ -902,6 +910,19 @@ export async function createApp(dependencies: AppDependencies = {}) {
     return latest.rows[0]?.handoff_browser_id as string | undefined;
   }
   const handoffClosed = 'The browser opens here when Nod hands it to you.';
+  const savableLogins = new Map<string, { origin: string; username: string; password: string }>();
+  async function typedHandoffLogin(turnId: string) {
+    const typedLogin = dependencies.computer?.typedLogin;
+    if (!typedLogin) return undefined;
+    const { rows } = await pool.query<{ browser: string; since: Date }>(
+      `SELECT u.handoff_browser_id AS browser,u.finished_at AS since FROM turns u
+       JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
+       WHERE u.owner_id=$1 AND u.id=$2 AND th.archived_at IS NULL
+       AND u.handoff_browser_id IS NOT NULL AND u.finished_at IS NOT NULL`,
+      [ownerId, turnId],
+    );
+    return rows[0] ? typedLogin(rows[0].browser, rows[0].since.getTime()) : undefined;
+  }
   async function readBrowserScreen(reply: FastifyReply) {
     const thread = await activeThread(pool);
     const browserId = (await readCurrentBrowser())?.browserId ?? thread.id;
@@ -963,7 +984,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       let abortOpening = () => {};
       try {
         return await Promise.race([
-          new Promise<IteratorResult<Buffer>>((resolve) => {
+          new Promise<IteratorResult<BrowserViewFrame>>((resolve) => {
             abortOpening = () => resolve({ done: true, value: undefined });
             controller.signal.addEventListener('abort', abortOpening, { once: true });
             if (controller.signal.aborted) abortOpening();
@@ -998,7 +1019,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       });
       while (!next.done && !controller.signal.aborted) {
         const length = Buffer.alloc(4);
-        length.writeUInt32BE(next.value.length);
+        length.writeUInt32BE(next.value.image.length);
         let acknowledge: Promise<void> | undefined;
         if (viewId) {
           acknowledge = new Promise<void>((resolve) => {
@@ -1008,13 +1029,18 @@ export async function createApp(dependencies: AppDependencies = {}) {
               controller.signal.removeEventListener('abort', finish);
               resolve();
             };
-            browserFrameAcks.set(viewId, { turnId, browserId, acknowledge: finish });
+            browserFrameAcks.set(viewId, {
+              turnId,
+              browserId,
+              origin: next.value.origin,
+              acknowledge: finish,
+            });
             controller.signal.addEventListener('abort', finish, { once: true });
             if (controller.signal.aborted) finish();
           });
         }
         reply.raw.write(length);
-        if (!reply.raw.write(next.value))
+        if (!reply.raw.write(next.value.image))
           await new Promise((resolve) => {
             reply.raw.once('drain', resolve);
             reply.raw.once('close', resolve);
@@ -1047,7 +1073,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     if ((await handoffBrowser(turnId)) !== pending.browserId)
       return reply.code(423).send({ error: handoffClosed });
     pending.acknowledge();
-    return { ok: true };
+    return { ok: true, ...(pending.origin ? { origin: pending.origin } : {}) };
   });
   app.post('/api/browser-handoff', async (request, reply) => {
     const body = z
@@ -1083,8 +1109,44 @@ export async function createApp(dependencies: AppDependencies = {}) {
   app.post('/api/browser-handoff/done', async (request, reply) => {
     const body = z.object({ turnId: z.uuid() }).strict().safeParse(request.body);
     if (!body.success) return reply.code(400).send({ error: 'Choose a browser handoff.' });
+    const typed = dependencies.saveLogin
+      ? await typedHandoffLogin(body.data.turnId).catch(() => undefined)
+      : undefined;
+    const login =
+      typed &&
+      (new URL(typed.origin).protocol === 'https:' || loopbackHost(new URL(typed.origin).hostname))
+        ? typed
+        : undefined;
     if (!(await resumeAfterHandoff(body.data.turnId)))
       return reply.code(423).send({ error: handoffClosed });
+    if (!login) return { ok: true };
+    savableLogins.set(body.data.turnId, login);
+    setTimeout(() => savableLogins.delete(body.data.turnId), 10 * 60_000).unref();
+    return { ok: true, savableLogin: { host: new URL(login.origin).host } };
+  });
+  app.post('/api/browser-handoff/save-login', async (request, reply) => {
+    const body = z.object({ turnId: z.uuid() }).strict().safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: 'Choose a browser handoff.' });
+    if (!dependencies.saveLogin) return reply.code(404).send({ error: 'Vault is unavailable.' });
+    const login = savableLogins.get(body.data.turnId);
+    if (!login)
+      return reply.code(409).send({
+        error:
+          'This login is no longer available to save. Sign in again and save it right after you return.',
+      });
+    try {
+      await dependencies.saveLogin({
+        origin: login.origin,
+        label: new URL(login.origin).hostname.slice(0, 100),
+        username: login.username,
+        password: login.password,
+      });
+    } catch (error) {
+      if (error instanceof VaultError)
+        return reply.code(error.statusCode).send({ error: error.message });
+      throw error;
+    }
+    savableLogins.delete(body.data.turnId);
     return { ok: true };
   });
   app.post('/api/browser-handoff/navigate', async (request, reply) => {

@@ -1,13 +1,9 @@
-import {
-  browserErrorMessage,
-  type BrowserErrorCode,
-  type BrowserSignInGuard,
-} from '../../shared/browser-errors.ts';
+import { browserErrorMessage, type BrowserErrorCode } from '../../shared/browser-errors.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { z } from 'zod';
-import { BrowserActionError, type Computer } from '../../ports/computer.ts';
+import { BrowserActionError, type BrowserViewFrame, type Computer } from '../../ports/computer.ts';
 import { logFailure, logRepeatedFailure } from '../../ports/failure-log.ts';
 import { fileBytes } from '../../shared/files.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
@@ -29,7 +25,7 @@ import {
   type BrowserResponse,
 } from './protocol.ts';
 
-const viewFrameLine = 4 * 1024 * 1024 + 256;
+const viewFrameLine = 4 * 1024 * 1024 + 1024;
 const observationSchema = z
   .object({ text: z.string(), url: z.string(), unmet: z.literal(true).optional() })
   .strict();
@@ -59,6 +55,7 @@ export function createBridgeComputer(options: {
   launch(input: BrowserCall): CommandProcess;
   launchPersistent?(): CommandProcess;
   available?(input: BrowserCall): boolean;
+  ready?(signal?: AbortSignal): Promise<void>;
   timeoutMs?: number;
   drainTimeoutMs?: number;
   readyTimeoutMs?: number;
@@ -271,6 +268,20 @@ export function createBridgeComputer(options: {
     recovery = false,
     forceOneShot = false,
   ): Promise<unknown> {
+    if (!options.ready || input.method === 'dispose')
+      return dispatch(input, signal, transfer, recovery, forceOneShot);
+    return options
+      .ready(signal)
+      .then(() => dispatch(input, signal, transfer, recovery, forceOneShot));
+  }
+
+  function dispatch(
+    input: BrowserCall,
+    signal?: AbortSignal,
+    transfer: { data?: Uint8Array; chunks?: Buffer[] } = {},
+    recovery = false,
+    forceOneShot = false,
+  ): Promise<unknown> {
     signal?.throwIfAborted();
     const request = browserRequest.parse({
       ...input,
@@ -314,7 +325,6 @@ export function createBridgeComputer(options: {
       exit: {
         exitCode?: number | null;
         signal?: string | null;
-        signInGuard?: BrowserSignInGuard;
       } = {},
     ) => {
       const message = error instanceof Error ? error.message : undefined;
@@ -329,7 +339,7 @@ export function createBridgeComputer(options: {
       if (reason === 'error_response')
         logRepeatedFailure(
           'browser_bridge_failed',
-          `${input.method}:${message}:${exit.signInGuard ?? ''}`,
+          `${input.method}:${message}`,
           { code: message, stderr },
           context,
         );
@@ -345,29 +355,18 @@ export function createBridgeComputer(options: {
       if (cancelling || (!response.ok && response.error === 'cancelled'))
         return reject(new Error('Browser operation cancelled.'));
       if (response.ok) return resolve(response.result);
-      failed('error_response', new Error(response.error), {
-        ...(response.signInGuard ? { signInGuard: response.signInGuard } : {}),
-      });
+      failed('error_response', new Error(response.error));
       if (browserErrorMessage(response.error))
-        return reject(
-          new BrowserActionError(
-            response.error as BrowserErrorCode,
-            response.detail,
-            response.signInGuard,
-          ),
-        );
+        return reject(new BrowserActionError(response.error as BrowserErrorCode, response.detail));
       if (response.error === 'locked') {
         const error = new Error('Browser observations are paused during credential entry.');
         return reject(Object.assign(error, { statusCode: 423 }));
       }
       reject(
-        Object.assign(
-          new Error(
-            response.detail
-              ? `The workspace browser could not complete this action: ${response.detail}`
-              : 'The workspace browser could not complete this action. Try again.',
-          ),
-          response.signInGuard ? { signInGuard: response.signInGuard } : {},
+        new Error(
+          response.detail
+            ? `The workspace browser could not complete this action: ${response.detail}`
+            : 'The workspace browser could not complete this action. Try again.',
         ),
       );
     };
@@ -456,7 +455,7 @@ export function createBridgeComputer(options: {
             );
             return;
           }
-          if (!['currentPage', 'screenshot'].includes(input.method)) {
+          if (!['currentPage', 'screenshot', 'typedLogin'].includes(input.method)) {
             if (browserId) uncertainBrowsers.add(browserId);
             else uncertain = true;
           }
@@ -555,7 +554,7 @@ export function createBridgeComputer(options: {
       function cancel() {
         if (settled || cancelling) return;
         cancelling = true;
-        if (!['currentPage', 'screenshot'].includes(input.method)) {
+        if (!['currentPage', 'screenshot', 'typedLogin'].includes(input.method)) {
           if (browserId) uncertainBrowsers.add(browserId);
           else uncertain = true;
         }
@@ -629,8 +628,9 @@ export function createBridgeComputer(options: {
     return result;
   }
 
-  async function* view(id: string, signal: AbortSignal): AsyncGenerator<Buffer> {
+  async function* view(id: string, signal: AbortSignal): AsyncGenerator<BrowserViewFrame> {
     const threadId = threadIdentity(id);
+    await options.ready?.(signal);
     signal.throwIfAborted();
     if (
       disposed ||
@@ -648,7 +648,7 @@ export function createBridgeComputer(options: {
     const child = options.launch({ method: 'view', threadId });
     let closed = false;
     let exited = false;
-    let latest: Buffer | undefined;
+    let latest: BrowserViewFrame | undefined;
     let wake = () => {};
     const inputs = new Map<
       string,
@@ -714,7 +714,10 @@ export function createBridgeComputer(options: {
           buffered = buffered.slice(end + 1);
           if (result.id !== request.id) return cancel();
           if ('frame' in result) {
-            latest = Buffer.from(result.frame, 'base64');
+            latest = {
+              image: Buffer.from(result.frame, 'base64'),
+              ...(result.origin ? { origin: result.origin } : {}),
+            };
             wake();
           } else {
             const input = inputs.get(result.inputId);
@@ -832,6 +835,17 @@ export function createBridgeComputer(options: {
       if (bytes.length !== result.size) throw new Error('The browser file is unavailable.');
       return { bytes, name: result.name, mimeType: result.mimeType };
     },
+    typedLogin: async (id, since) =>
+      z
+        .object({
+          origin: z.string().max(2048),
+          username: z.string().max(8192),
+          password: z.string().min(1).max(8192),
+        })
+        .strict()
+        .nullable()
+        .parse(await call({ method: 'typedLogin', threadId: threadIdentity(id), since })) ??
+      undefined,
     currentPage: async (id, step) =>
       pageSchema.parse(
         await call({
@@ -840,29 +854,6 @@ export function createBridgeComputer(options: {
           ...(step ? { input: step } : {}),
         }),
       ),
-    signInMethods: async (id, origin, methods, signal) =>
-      z
-        .object({
-          document: z.string().min(1).max(200),
-          methods: z
-            .array(
-              z
-                .object({ id: z.uuid(), label: z.string().min(1).max(300), page: pageSchema })
-                .strict(),
-            )
-            .min(1)
-            .max(10),
-        })
-        .strict()
-        .parse(
-          await call(
-            { method: 'signInMethods', threadId: threadIdentity(id), origin, methods },
-            signal,
-          ),
-        ),
-    selectSignInMethod: async (id, input, signal) => {
-      await call({ method: 'selectSignInMethod', threadId: threadIdentity(id), input }, signal);
-    },
     fillCard: async (input, signal) => {
       await call(
         {

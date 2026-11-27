@@ -214,8 +214,6 @@ export const approvalCases = inParts(
     let calendarBrowser: Pick<Computer, 'act' | 'currentPage'> | undefined;
     let calendarReview: ((input: object) => unknown) | undefined;
     let browserWording: ((input: Record<string, any>) => unknown) | undefined;
-    let allowMethodBrowser = false;
-    let methodBindings = 0;
     let dialogOpen = false;
     let formTarget = 'https://bank.example.test/transfer/send';
     const sourceRevision = 'v1';
@@ -399,7 +397,6 @@ export const approvalCases = inParts(
                 const run =
                   !readRequiresConsent &&
                   (Boolean(fileRequest) ||
-                    (allowMethodBrowser && words.action?.name === 'NOD_browser') ||
                     (words.action?.name !== 'COMPUTER_PRESS' &&
                       asked.has(words.userMessages?.at(-1)?.text ?? '')) ||
                     cleared.has(String(words.action?.arguments?.recipient_email)) ||
@@ -478,9 +475,9 @@ export const approvalCases = inParts(
                     results.set(
                       options.turnId,
                       await tool(name).execute(
-                        call.tool === 'synthetic_mcp'
+                        call.tool === 'synthetic_mcp' || call.tool === 'sign_in'
                           ? call.args
-                          : call.tool === 'files' || call.tool === 'sign_in'
+                          : call.tool === 'files'
                             ? { action: call.action, ...call.args }
                             : call,
                       ),
@@ -519,9 +516,11 @@ export const approvalCases = inParts(
                 if (planned && calls) {
                   if (planned.sequential) {
                     for (const call of calls)
-                      await (call.tool
-                        ? tool(call.tool).execute({ action: call.action, ...call.args })
-                        : tool('apps').execute(call));
+                      await (call.tool === 'sign_in'
+                        ? tool(call.tool).execute(call.args)
+                        : call.tool
+                          ? tool(call.tool).execute({ action: call.action, ...call.args })
+                          : tool('apps').execute(call));
                     if (calls === planned.taskCalls && planned.taskResult)
                       options.onEvent({ type: 'final', text: planned.taskResult });
                     return;
@@ -530,7 +529,11 @@ export const approvalCases = inParts(
                     calls.map((call, index) => {
                       if (call.tool)
                         return tool(call.tool)
-                          .execute({ action: call.action, ...call.args })
+                          .execute(
+                            call.tool === 'sign_in'
+                              ? call.args
+                              : { action: call.action, ...call.args },
+                          )
                           .catch((error: Error) => batchErrors.push(error.message));
                       if (!planned.subagents) return tool('apps').execute(call);
                       const title = `${options.turnId}-${index}`;
@@ -595,12 +598,12 @@ export const approvalCases = inParts(
                           ? (plan.args.input as Record<string, unknown>)
                           : plan.tool === 'synthetic_mcp' ||
                               plan.tool === 'send_message' ||
-                              plan.tool === 'pay'
+                              plan.tool === 'pay' ||
+                              plan.tool === 'sign_in'
                             ? plan.args
                             : plan.tool === 'read_source'
                               ? { input: plan.args }
                               : plan.tool === 'browser' ||
-                                  plan.tool === 'sign_in' ||
                                   plan.tool === 'files' ||
                                   plan.tool === 'task'
                                 ? { action: plan.action, ...plan.args }
@@ -654,24 +657,6 @@ export const approvalCases = inParts(
           put: (path: string) => rm(path, { recursive: true }),
         },
         computer: fakeComputer({
-          signInMethods: async (_browser, origin, methods) => {
-            methodBindings++;
-            return {
-              document: 'synthetic-sign-in-document',
-              methods: methods.map((method) => ({
-                id: randomUUID(),
-                label: method.label,
-                page: {
-                  origin,
-                  url: `${origin}/sign-in`,
-                  controls: [{ role: 'button', name: method.label }],
-                },
-              })),
-            };
-          },
-          selectSignInMethod: async () => {
-            throw new Error('This fixture never selects a method.');
-          },
           checkoutImage: async () =>
             Buffer.from(
               'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=',
@@ -4814,63 +4799,6 @@ export const approvalCases = inParts(
       );
 
       await inPart(
-        'sign-in method selection needs exact-origin consent before binding controls',
-        async () => {
-          const input = {
-            origin: 'https://bank.example.test',
-            label: 'Synthetic bank',
-            kind: 'method',
-            methods: [{ label: 'Continue with Identity', selector: '@identity' }],
-            message: 'Choose a sign-in method.',
-          };
-          allowMethodBrowser = true;
-          try {
-            const checks = fallbackChecks.length;
-            const held = await propose('Choose sign-in', input, 'sign_in');
-            const [card] = await approvalsFor(held);
-            assert.ok(card);
-            assert.equal(card.action, 'NOD_vault_allow');
-            assert.equal(card.status, 'pending');
-            assert.deepEqual(card.args, { origin: input.origin, kind: 'sign_in' });
-            assert.equal(methodBindings, 0);
-            assert.equal(
-              (await pool.query('SELECT 1 FROM credential_requests WHERE turn_id=$1', [held]))
-                .rowCount,
-              0,
-            );
-            assert.ok(
-              fallbackChecks
-                .slice(checks)
-                .some(
-                  (check) =>
-                    (check as { action?: { name?: string } }).action?.name === 'NOD_sign_in',
-                ),
-            );
-            const declined = await request('POST', '/api/messages', {
-              text: 'No',
-              replyToMessageId: card.confirmation_message_id,
-              clientMessageId: randomUUID(),
-            });
-            await waitFor(declined.json().turnId, 'succeeded');
-            assert.equal((await approvalsFor(held))[0].status, 'declined');
-            const text = `Sign in to the synthetic bank ${randomUUID()}`;
-            asked.add(text);
-            const permitted = await propose('Choose sign-in', input, 'sign_in', text);
-            assert.deepEqual(await approvalsFor(permitted), []);
-            assert.equal(methodBindings, 1);
-            const [form] = (
-              await pool.query(
-                'SELECT origin,kind,status FROM credential_requests WHERE turn_id=$1',
-                [permitted],
-              )
-            ).rows;
-            assert.deepEqual(form, { origin: input.origin, kind: 'method', status: 'pending' });
-          } finally {
-            allowMethodBrowser = false;
-          }
-        },
-      );
-      await inPart(
         'HTTP confirmations describe the exact request and bind it to the selected account',
         async () => {
           const { createAppGrantVault } = await import('../src/server/vault-app-grants.ts');
@@ -5450,58 +5378,6 @@ export const approvalCases = inParts(
           }
         },
       );
-      await inPart('sign-in approval preserves its exact displayed origin', async () => {
-        const origin = 'https://bank.example.test';
-        const input = {
-          origin,
-          label: 'Synthetic bank',
-          kind: 'method',
-          methods: [{ label: 'Continue with Identity', selector: '@identity' }],
-          message: 'Choose a sign-in method.',
-        };
-        const before = methodBindings;
-        allowMethodBrowser = true;
-        confirmationModel = (request) => {
-          const data = request.data as { action: string; args: { origin: string } };
-          assert.equal(data.action, 'NOD_vault_allow');
-          assert.equal(data.args.origin, origin);
-          return request.purpose === 'confirmation_review'
-            ? {
-                valid:
-                  request.text === `Can I use ${origin}?` &&
-                  JSON.stringify(request.literalValues) === JSON.stringify([origin]),
-              }
-            : { text: `Can I use ${origin}?`, action: 'Use saved sign-in' };
-        };
-        try {
-          const held = await propose('Choose sign-in', input, 'sign_in');
-          const [card] = await approvalsFor(held);
-          assert.equal(card.action, 'NOD_vault_allow');
-          assert.deepEqual(card.args, { origin, kind: 'sign_in' });
-          assert.equal(methodBindings, before);
-          repeatAfterConfirm = { tool: 'sign_in', action: 'Choose sign-in', args: input };
-          const response = await request('POST', '/api/messages', {
-            text: 'Yes',
-            replyToMessageId: card.confirmation_message_id,
-            approvalAnswer: { approvalId: card.id, approved: true },
-          });
-          assert.equal(response.statusCode, 200, response.body);
-          await waitFor(response.json().turnId, 'waiting|succeeded');
-          assert.equal((await approvalsFor(held))[0].status, 'completed');
-          assert.equal(methodBindings, before + 1);
-          const form = (
-            await pool.query(
-              'SELECT origin,kind,status FROM credential_requests WHERE turn_id=$1',
-              [response.json().turnId],
-            )
-          ).rows[0];
-          assert.deepEqual(form, { origin, kind: 'method', status: 'pending' });
-        } finally {
-          confirmationModel = undefined;
-          allowMethodBrowser = false;
-          repeatAfterConfirm = undefined;
-        }
-      });
       await inPart('MCP approval preserves the saved endpoint and dispatches once', async () => {
         const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
         const { StreamableHTTPServerTransport } =
@@ -5612,14 +5488,13 @@ export const approvalCases = inParts(
         const origin = 'https://bank.example.test';
         const input = {
           origin,
-          label: 'Synthetic cancellation login',
           passwordSelector: '@password',
           submitSelector: '@submit',
           message: 'Enter the synthetic password.',
         };
         const before = injected.length;
         let login: string | undefined;
-        for (const source of ['form', 'saved', 'card']) {
+        for (const source of ['saved', 'card']) {
           if (source === 'saved') {
             const saved = await request('POST', '/api/vault', {
               origin,
@@ -5687,19 +5562,11 @@ export const approvalCases = inParts(
                   ])
                 ).rows,
               );
-              token = (
-                source === 'card' ? /\/payments\/([a-f0-9-]{36})/ : /\/vault\/([A-Za-z0-9_-]{43})/
-              ).exec(messages)?.[1];
+              token = /\/payments\/([a-f0-9-]{36})/.exec(messages)?.[1];
               assert.ok(token);
-              consumption = request(
-                'POST',
-                source === 'card'
-                  ? `/api/payment-requests/${token}`
-                  : `/api/credential-requests/${token}`,
-                source === 'card'
-                  ? { code: '737' }
-                  : { password: 'Synthetic cancellation password' },
-              ).then((result) => result);
+              consumption = request('POST', `/api/payment-requests/${token}`, {
+                code: '737',
+              }).then((result) => result);
             }
             for (let attempt = 0; !entered && attempt < 300; attempt++) await delay(20);
             assert.equal(entered, true);
@@ -5710,19 +5577,10 @@ export const approvalCases = inParts(
             release();
             if (consumption) {
               const result = await consumption;
-              assert.equal(result.statusCode, source === 'card' ? 409 : 502, result.body);
+              assert.equal(result.statusCode, 409, result.body);
               assert.equal(
-                (
-                  await request(
-                    'POST',
-                    source === 'card'
-                      ? `/api/payment-requests/${token}`
-                      : `/api/credential-requests/${token}`,
-                    source === 'card'
-                      ? { code: '737' }
-                      : { password: 'Synthetic cancellation password' },
-                  )
-                ).statusCode,
+                (await request('POST', `/api/payment-requests/${token}`, { code: '737' }))
+                  .statusCode,
                 409,
               );
             }
@@ -5758,6 +5616,79 @@ export const approvalCases = inParts(
         assert.equal(injected.length, before + 1);
       });
       await inPart(
+        'sign-in hands the real page to the owner when no saved login can be entered',
+        async (t) => {
+          const previousOrigin = browserOrigin;
+          const previousUrl = browserUrl;
+          t.after(() => {
+            browserOrigin = previousOrigin;
+            browserUrl = previousUrl;
+          });
+          const origin = 'https://handoff.example.test';
+          browserOrigin = origin;
+          browserUrl = `${origin}/login`;
+          const message = 'Sign in to the synthetic website.';
+          const signIn = {
+            tool: 'sign_in',
+            action: 'Sign in',
+            args: {
+              origin,
+              usernameSelector: '@username',
+              passwordSelector: '@password',
+              submitSelector: '@submit',
+              message,
+            },
+          };
+          const handedOver = async (turnId: string) => {
+            const turn = (
+              await pool.query(
+                'SELECT status,waiting_reason,handoff_browser_id FROM turns WHERE id=$1',
+                [turnId],
+              )
+            ).rows[0];
+            assert.equal(turn.status, 'waiting');
+            assert.equal(turn.waiting_reason, 'question');
+            assert.ok(turn.handoff_browser_id);
+            const reply = (
+              await pool.query(
+                "SELECT text FROM messages WHERE turn_id=$1 AND role='assistant' ORDER BY created_at DESC LIMIT 1",
+                [turnId],
+              )
+            ).rows[0];
+            assert.equal(reply?.text, message);
+          };
+          const before = injected.length;
+          const unsaved = `Sign in to the synthetic handoff website ${randomUUID()}`;
+          asked.add(unsaved);
+          const first = await taskTurn(unsaved, [signIn], { wait: 'waiting' });
+          await handedOver(first.turnId);
+          assert.equal(injected.length, before);
+          assert.equal(
+            (await pool.query('SELECT 1 FROM vault_uses WHERE origin=$1', [origin])).rowCount,
+            0,
+          );
+          assert.deepEqual(await approvalsFor(first.turnId), []);
+
+          const saved = await request('POST', '/api/vault', {
+            label: 'Synthetic handoff login',
+            origin,
+            username: 'handoff@example.test',
+            password: 'Synthetic handoff password',
+          });
+          assert.equal(saved.statusCode, 200, saved.body);
+          const repeated = `Sign in twice to the synthetic handoff website ${randomUUID()}`;
+          asked.add(repeated);
+          const second = await taskTurn(repeated, [signIn, signIn], { wait: 'waiting' });
+          await handedOver(second.turnId);
+          assert.equal(injected.length, before + 1);
+          assert.equal(injected.at(-1)?.password, 'Synthetic handoff password');
+          assert.deepEqual(
+            (await pool.query('SELECT status FROM vault_uses WHERE origin=$1', [origin])).rows,
+            [{ status: 'submitted' }],
+          );
+        },
+      );
+      await inPart(
         'saved login consent keeps the account name and enters a code only with exact-origin consent',
         async () => {
           const origin = 'https://bank.example.test';
@@ -5774,7 +5705,6 @@ export const approvalCases = inParts(
           const login = saved.json().id as string;
           const input = {
             origin,
-            label: 'Synthetic bank',
             kind: 'otp',
             passwordSelector: '@code',
             submitSelector: '@verify',
@@ -5790,7 +5720,6 @@ export const approvalCases = inParts(
                     origin: input.origin,
                     submitSelector: input.submitSelector,
                     message: input.message,
-                    label: 'Model-supplied account name',
                     savedLoginId: login,
                     usernameSelector: '@username',
                     passwordSelector: '@password',
@@ -5809,11 +5738,9 @@ export const approvalCases = inParts(
             assert.equal(typeof account, 'string');
             assert.ok(account.includes(saved.json().label));
             assert.ok(account.includes(saved.json().usernameHint));
-            assert.equal(account.includes('Model-supplied account name'), false);
             const confirmation = await confirmationFor(card);
             assert.ok(confirmation.includes(saved.json().label));
             assert.ok(confirmation.includes(saved.json().usernameHint));
-            assert.equal(confirmation.includes('Model-supplied account name'), false);
             assert.doesNotMatch(
               JSON.stringify({ checks, confirmation }),
               /synthetic-bank-password|JBSWY3DP|otpauth/i,
@@ -5840,11 +5767,6 @@ export const approvalCases = inParts(
           assert.ok([earliest, latest].includes(entry.code!));
           assert.equal(JSON.stringify(results.get(entered)).includes(entry.code!), false);
           assert.doesNotMatch(JSON.stringify(results.get(entered)), /JBSWY3DP|otpauth/i);
-          assert.equal(
-            (await pool.query('SELECT 1 FROM credential_requests WHERE turn_id=$1', [entered]))
-              .rowCount,
-            0,
-          );
           assert.deepEqual(
             (
               await pool.query(
@@ -5880,7 +5802,6 @@ export const approvalCases = inParts(
         ).rows[0];
         const input = {
           origin,
-          label: 'Synthetic www account',
           message: 'Sign in to the synthetic website.',
           usernameSelector: '@username',
           passwordSelector: '@password',
@@ -8313,7 +8234,6 @@ export const approvalCases = inParts(
               action: 'Enter saved login',
               args: {
                 origin: 'https://bank.example.test',
-                label: 'Synthetic shutdown login',
                 savedLoginId: saved.json().id,
                 passwordSelector: '@password',
                 submitSelector: '@submit',

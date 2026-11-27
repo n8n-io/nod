@@ -8,7 +8,6 @@ import type { BrowserAction, BrowserPage, WorkspaceSession } from './computer.ts
 import type {
   AgentReactionResult,
   Artifact,
-  CredentialRequest,
   MessageReaction,
   SpeechReplyMode,
 } from '../shared/contracts.ts';
@@ -172,9 +171,6 @@ export interface RuntimeContext {
   withdrawnRequest?: 'stopped' | 'failed';
   confirmedActions?: string[];
   approvals?: Array<{ title: string; status: string; createdAt: string }>;
-  credentialRequests?: Array<
-    Pick<CredentialRequest, 'turnId' | 'origin' | 'label' | 'kind' | 'status' | 'notEntered'>
-  >;
   taskContext?: {
     id: string;
     title: string;
@@ -238,24 +234,14 @@ export interface RuntimeContext {
   requestCredential(
     input: {
       origin: string;
-      label: string;
-    } & (
-      | {
-          kind?: 'otp';
-          savedLoginId?: string;
-          usernameSelector?: string;
-          passwordSelector?: string | string[];
-          submitSelector?: string;
-          emailCode?: boolean;
-          emailRecipient?: string;
-        }
-      | {
-          kind: 'method';
-          methods: { label: string; selector: string }[];
-        }
-    ),
+      kind?: 'otp';
+      savedLoginId?: string;
+      usernameSelector?: string;
+      passwordSelector?: string | string[];
+      submitSelector?: string;
+    },
     admit?: (asks: boolean, read?: boolean) => Promise<void>,
-  ): Promise<{ url: string } | { filled: true } | { [appConfirmation]: string }>;
+  ): Promise<{ handoff: true } | { filled: true } | { [appConfirmation]: string }>;
   requestPayment?(
     input: unknown,
     admit?: (asks: boolean, read?: boolean) => Promise<void>,

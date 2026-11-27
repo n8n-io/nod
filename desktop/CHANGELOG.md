@@ -2,6 +2,46 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.10.1 - 2026-11-27
+
+### Features
+
+- **desktop:** Run the database on the host so chat opens before the private computer. [#1570](https://github.com/n8n-io/nod/pull/1570) (f4497ca)
+- **desktop:** Update the Linux Flatpak and RPM, and report why Linux setup fails. [#1568](https://github.com/n8n-io/nod/pull/1568) (45a7103)
+- **browser:** Add browser\_run code mode, incremental page diffs, and persistent bridge. [commit](https://github.com/n8n-io/nod/commit/20d16662b776d7368044a1718340771df39cd05e) (20d1666)
+
+### Fixes
+
+- **desktop:** Keep Nod's window and Dock icon when computer use starts on macOS. [#1571](https://github.com/n8n-io/nod/pull/1571) (591788f)
+- **analytics:** Record login item state after onboarding. [#1564](https://github.com/n8n-io/nod/pull/1564) (a5959dd)
+- **apps:** Keep MCP connections signed in through temporary refresh failures. [#1569](https://github.com/n8n-io/nod/pull/1569) (308d71e)
+
+### Other changes
+
+- Bound tool results by the context room left so small models never overflow. [commit](https://github.com/n8n-io/nod/commit/28809e019a1ccd654e46d46cf8908447f1211d53) (28809e0)
+- Guide browser\_run to snapshot before using @eN refs after navigation. [commit](https://github.com/n8n-io/nod/commit/8095476eb82bc86c3d87e9b9f7365c14bbd3d17f) (8095476)
+- Fix Electron child launch, flush browser\_run output on close, simplify DevTools lifecycle, and back off on bridge ready timeout. [commit](https://github.com/n8n-io/nod/commit/2c960933d36c850eeb8edca4e0c2da902a24df98) (2c96093)
+- Isolate browser\_run in child process, fix interrupted action reporting, bridge ready timeout, and DevTools world creation. [commit](https://github.com/n8n-io/nod/commit/1d509edbdb5861812ae9e7cec78ac2c29e277029) (1d509ed)
+- Seal console serialization in vm, abort queued actions on script failure, settle unwritten bridge cancels immediately. [commit](https://github.com/n8n-io/nod/commit/84c6994c653b370f06d9e8a9b861cb5ea3f28b18) (84c6994)
+- Seal browser\_run realm, gate multiplex fallback on ready, reject navigated DevTools frames. [commit](https://github.com/n8n-io/nod/commit/6ce6b785582580013598c980e7ca6a6260c462c9) (6ce6b78)
+- Harden browser\_run sandbox, fix native browser CI and PR review findings. [commit](https://github.com/n8n-io/nod/commit/4095ef53278f6baf5bb635edb0dd442ee09e9162) (4095ef5)
+- Address remaining DevHub and Cubic review findings on PR #1566. [commit](https://github.com/n8n-io/nod/commit/66f76ca43b8556b1426b8133f6e465fe7ae4a650) (66f76ca)
+- Keep task start separate from replyCommitted for turn analytics. [commit](https://github.com/n8n-io/nod/commit/b5ed9bd2bd2ef68a7509f5548734bffea4729c8b) (b5ed9bd)
+- Remove invalid app\_actions.status check from retryable queries. [commit](https://github.com/n8n-io/nod/commit/0e56282c469206c79404560f2601fbda4247c42f) (0e56282)
+- Address PR #1566 review findings and fix CI test. [commit](https://github.com/n8n-io/nod/commit/df7b23f9cb998a84b3813423609e81a7ee29c479) (df7b23f)
+- Improve burst task fan-out, failed-task ledger capping, and chat card UX. [commit](https://github.com/n8n-io/nod/commit/b9fdf37b7e843f7098dc8765bab4ff8d6824bc2e) (b9fdf37)
+- Add durable turn leases, card interactions, wake checks, and versioned skill overlays. [commit](https://github.com/n8n-io/nod/commit/705151bd52fb547158464b3a997a32286399b7b9) (705151b)
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.10.0...f4497ca632e1a4cbfb3412730a297e74a210df34)
+
+<details>
+<summary>Build details</summary>
+
+Source: `f4497ca632e1a4cbfb3412730a297e74a210df34`
+Previous release: `nod-v0.10.0`
+
+</details>
+
 ## 0.10.0 - 2026-11-26
 
 ### Breaking changes

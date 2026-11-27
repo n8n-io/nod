@@ -131,7 +131,7 @@ export async function createVaultUses(
       const report = (stage: 'claim' | 'entry' | 'completion', error: unknown) =>
         logFailure('vault_private_operation_interrupted', uncertain(), {
           stage,
-          kind: ['identifier', 'password', 'otp', 'method', 'card', 'payment'].includes(use.kind)
+          kind: ['identifier', 'password', 'otp', 'card', 'payment'].includes(use.kind)
             ? use.kind
             : 'other',
           cause: failureCause(error),

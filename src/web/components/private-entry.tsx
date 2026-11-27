@@ -3,10 +3,10 @@ import { Check, X } from './icons';
 import type { VaultListEntry } from '../../shared/contracts';
 import { pageDataCache } from '../lib/page-data-cache';
 import { VaultItemForm } from './vault-item-form';
-import { Credentials, Payment } from '../pages/credentials';
+import { Payment } from '../pages/payment';
 import { Button } from './ui';
 
-type Entry = { kind: 'credentials' | 'payment' | 'card'; id: string; path: string; serial: number };
+type Entry = { kind: 'payment' | 'card'; id: string; path: string; serial: number };
 type PrivateEntry = { open(href: string, trigger?: HTMLElement): boolean; close(): void };
 const PrivateEntryContext = createContext<PrivateEntry | null>(null);
 
@@ -26,9 +26,6 @@ function privateRequest(href: string) {
   if (url.pathname === '/vault' && url.search === '?add=card')
     return { kind: 'card' as const, id: 'new', path: '/vault?add=card' };
   if (url.search) return null;
-  const credential = /^\/(?:vault|credentials)\/([A-Za-z0-9_-]{20,100})\/?$/.exec(url.pathname);
-  if (credential)
-    return { kind: 'credentials' as const, id: credential[1], path: `/vault/${credential[1]}` };
   const payment =
     /^\/payments\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\/?$/i.exec(
       url.pathname,
@@ -81,7 +78,6 @@ export function PrivateEntryWorkspace({
   const panel = useRef<HTMLElement>(null);
   const trigger = useRef<HTMLElement | undefined>(undefined);
   const serial = useRef(0);
-  const replacements = useRef(new Map<string, string>());
   const close = () => {
     setEntry(null);
     window.requestAnimationFrame(() => {
@@ -127,9 +123,7 @@ export function PrivateEntryWorkspace({
           const requested = privateRequest(href);
           if (!active || !requested) return false;
           trigger.current = element;
-          const replacement = replacements.current.get(requested.path);
-          const request = (replacement && privateRequest(replacement)) || requested;
-          setEntry({ ...request, serial: ++serial.current });
+          setEntry({ ...requested, serial: ++serial.current });
           return true;
         },
         close,
@@ -149,13 +143,7 @@ export function PrivateEntryWorkspace({
             className="private-entry-panel"
             role={narrow ? 'dialog' : undefined}
             aria-modal={narrow || undefined}
-            aria-label={
-              entry.kind === 'card'
-                ? 'New payment card'
-                : entry.kind === 'payment'
-                  ? 'Private payment'
-                  : 'Private sign-in'
-            }
+            aria-label={entry.kind === 'card' ? 'New payment card' : 'Private payment'}
             tabIndex={-1}
             data-analytics-private
             onKeyDown={(event) => {
@@ -193,22 +181,8 @@ export function PrivateEntryWorkspace({
             </div>
             {entry.kind === 'card' ? (
               <NewPaymentCard onClose={close} />
-            ) : entry.kind === 'payment' ? (
-              <Payment id={entry.id} embedded onClose={close} />
             ) : (
-              <Credentials
-                id={entry.id}
-                embedded
-                onClose={close}
-                onRequestChange={(id) => {
-                  const next = `/vault/${id}`;
-                  const previous = replacements.current.get(entry.path) ?? entry.path;
-                  for (const [path, replacement] of replacements.current)
-                    if (replacement === previous) replacements.current.set(path, next);
-                  replacements.current.set(previous, next);
-                  replacements.current.set(entry.path, next);
-                }}
-              />
+              <Payment id={entry.id} embedded onClose={close} />
             )}
           </aside>
         )}

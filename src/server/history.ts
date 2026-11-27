@@ -35,10 +35,12 @@ export function createHistorySearch({
   pool,
   ownerId,
   standing = false,
+  includeTurns = true,
 }: {
   pool: Pick<Pool, 'query'>;
   ownerId: string;
   standing?: boolean;
+  includeTurns?: boolean;
 }) {
   const kept = (alias: string) =>
     standing ? ` AND NOT (${alias}.role='user' AND ${withdrawnSql(alias)})` : '';
@@ -93,13 +95,16 @@ export function createHistorySearch({
       from ?? null,
       to ?? null,
     ];
-    const turns = await pool.query(
-      `${terms} SELECT u.id,left(u.prompt,200) AS title,u.status,u.source,u.created_at,split_part(u.channel,':',1) AS channel
+    const [turns, page] = await Promise.all([
+      includeTurns
+        ? pool.query(
+            `${terms} SELECT u.id,left(u.prompt,200) AS title,u.status,u.source,u.created_at,split_part(u.channel,':',1) AS channel
        FROM turns u CROSS JOIN terms WHERE ${where('u', 'u.prompt')} ORDER BY ${ordered('u', 'u.prompt')} LIMIT 15`,
-      values,
-    );
-    const page = await pool.query<HistoryMessage & { place: string; total: number }>(
-      `${terms}, corpus AS (
+            values,
+          )
+        : Promise.resolve({ rows: [] }),
+      pool.query<HistoryMessage & { place: string; total: number }>(
+        `${terms}, corpus AS (
          SELECT m.id,m.owner_id,m.turn_id,m.role,m.text,m.created_at,to_tsvector('english',m.text) AS v
          FROM messages m CROSS JOIN terms WHERE ${scope('m')} AND m.hidden_at IS NULL),
        docs AS (SELECT corpus.* FROM corpus CROSS JOIN terms WHERE ($2::text IS NULL OR corpus.v @@ terms.q)${kept('corpus')}),
@@ -117,8 +122,9 @@ export function createHistorySearch({
        hits AS (SELECT * FROM ranked WHERE $7::uuid IS NULL OR place>(SELECT place FROM position) ORDER BY place LIMIT 21)
        SELECT hits.id,hits.role,left(hits.text,6000) AS text,length(hits.text)>6000 AS shortened,hits.created_at,hits.place,
          (SELECT count(*)::int FROM ranked) AS total FROM hits ORDER BY place`,
-      [...values, cursor ?? null],
-    );
+        [...values, cursor ?? null],
+      ),
+    ]);
     if (cursor && !page.rows.length) {
       const { rows } = await pool.query(
         `${terms} SELECT m.id FROM messages m CROSS JOIN terms WHERE ${where('m', 'm.text')} AND m.hidden_at IS NULL${kept('m')} AND m.id=$7::uuid`,

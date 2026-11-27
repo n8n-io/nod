@@ -768,7 +768,7 @@ test(
         const base = await seed(
           [
             first,
-            'Verification code sent securely.',
+            'Security code sent securely.',
             '654321',
             'My password is synthetic-only.',
             clarification,

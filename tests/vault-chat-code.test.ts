@@ -31,7 +31,7 @@ test('a verification code is held back in any wording or language and is the cod
 });
 
 test(
-  'chat verification intercepts owned codes before message routing and plaintext persistence',
+  'chat verification intercepts card security codes before message routing and plaintext persistence',
   {
     skip: !process.env.TEST_DATABASE_URL,
     timeout: 30_000,
@@ -67,15 +67,7 @@ test(
     await db.initializeDatabase();
     await createTasks({ pool: db.pool, ownerId }).initialize();
     await thread.initializeThreads();
-    await db.pool.query(`CREATE TABLE credential_requests (
-    id text PRIMARY KEY,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),
-    owner_id text NOT NULL,kind text NOT NULL,status text NOT NULL DEFAULT 'pending'
-  )`);
     const ordinary: string[] = [];
-    const injected: Array<{ owner: string; turnId: string; code: string; requestId: string }> = [];
-    let hold: Promise<void> | undefined;
-    let started: (() => void) | undefined;
-    let throwPrivateError = false;
     const failurePresentations: Array<{ threadId: string; input: object }> = [];
     let beforePayment = async () => {};
     let duringPayment = async () => {};
@@ -139,16 +131,6 @@ test(
         failurePresentations.push({ threadId, input: structuredClone(input) });
         return 'Synthetic verification result.';
       },
-      async submitCode(owner, turnId, code, requestId) {
-        injected.push({ owner, turnId, code, requestId });
-        started?.();
-        await hold;
-        if (throwPrivateError) throw new Error(`Untrusted website echoed ${code}`);
-        await db.pool.query("UPDATE credential_requests SET status='filled' WHERE id=$1", [
-          requestId,
-        ]);
-        return { status: 'submitted' as const };
-      },
     });
     const app = await createApp({
       verification,
@@ -170,72 +152,40 @@ test(
         headers,
         payload: { text, clientMessageId: randomUUID(), ...extra },
       });
-    async function seed(
-      options: {
-        owner?: string;
-        channel?: string;
-        kind?: string;
-        archived?: boolean;
-        status?: string;
-        reason?: string;
-        superseded?: boolean;
-        supersededLongAgo?: boolean;
-      } = {},
-    ) {
-      const owner = options.owner ?? ownerId;
-      const threadId = (await thread.activeThread(db.pool, owner)).id;
+    const order = {
+      amount: '43.20',
+      currency: 'EUR',
+      fields: { number: '@e4', expiry: '@e5', securityCode: '@e6' },
+    };
+    async function seed() {
+      const threadId = (await thread.activeThread(db.pool, ownerId)).id;
       const turnId = randomUUID();
-      const requestId = randomUUID();
       const messageId = randomUUID();
       await db.pool.query(
         `INSERT INTO turns(id,owner_id,thread_id,source,prompt,channel,status,waiting_reason,started_at)
-      VALUES($1,$2,$3,'user','Sign in',$4,$5,$6,clock_timestamp())`,
-        [
-          turnId,
-          owner,
-          threadId,
-          options.channel ?? 'web',
-          options.status ?? 'waiting',
-          options.reason ?? 'credentials',
-        ],
+      VALUES($1,$2,$3,'user','Buy the hinges','web','waiting','credentials',clock_timestamp())`,
+        [turnId, ownerId, threadId],
       );
       await db.pool.query(
-        `INSERT INTO credential_requests(id,thread_id,turn_id,owner_id,kind) VALUES($1,$2,$3,$4,$5)`,
-        [requestId, threadId, turnId, owner, options.kind ?? 'otp'],
+        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'assistant','Approve the payment.',$3,$4)",
+        [messageId, ownerId, threadId, turnId],
       );
-      await db.pool.query(
-        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'assistant','Reply with the verification code.',$3,$4)",
-        [messageId, owner, threadId, turnId],
-      );
-      await verification.bindQuestion(turnId, messageId);
-      if (options.archived)
-        await db.pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [threadId]);
-      if (options.superseded || options.supersededLongAgo) {
-        if (options.supersededLongAgo)
-          await db.pool.query(
-            "UPDATE turns SET created_at=now()-interval '20 minutes' WHERE id=$1",
-            [turnId],
-          );
-        await db.pool.query(
-          `INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,started_at,created_at)
-           VALUES($1,$2,$3,'user','Later','running',clock_timestamp(),
-             CASE WHEN $4 THEN now()-interval '11 minutes' ELSE clock_timestamp() END)`,
-          [randomUUID(), owner, threadId, Boolean(options.supersededLongAgo)],
-        );
-      }
-      return { threadId, turnId, requestId, messageId };
+      return { threadId, turnId, messageId };
+    }
+    async function seedPayment() {
+      const pending = await seed();
+      await payments.request(pending, order);
+      const paymentId = (await db.pool.query('SELECT id FROM vault_payments')).rows[0].id as string;
+      return { ...pending, paymentId };
     }
     async function reset() {
       await db.pool.query(
-        'DELETE FROM audio_messages; DELETE FROM chat_verification_submissions; DELETE FROM messages; DELETE FROM credential_requests; DELETE FROM vault_payments; DELETE FROM turn_events; DELETE FROM turns; DELETE FROM threads',
+        'DELETE FROM audio_messages; DELETE FROM chat_verification_submissions; DELETE FROM messages; DELETE FROM vault_payments; DELETE FROM turn_events; DELETE FROM turns; DELETE FROM threads',
       );
       ordinary.length = 0;
       entered.length = 0;
-      injected.length = 0;
-      hold = undefined;
-      started = undefined;
-      throwPrivateError = false;
       failurePresentations.length = 0;
+      beforePayment = async () => {};
     }
     try {
       await t.test(
@@ -271,18 +221,10 @@ test(
             });
           };
           try {
-            for (const kind of ['otp', 'payment']) {
+            {
               await reset();
-              const privateQuestion = await seed();
-              const code = kind === 'otp' ? '123456' : '737';
-              if (kind === 'payment') {
-                await db.pool.query('DELETE FROM credential_requests');
-                await payments.request(privateQuestion, {
-                  amount: '43.20',
-                  currency: 'EUR',
-                  fields: { number: '@e4', expiry: '@e5', securityCode: '@e6' },
-                });
-              }
+              const privateQuestion = await seedPayment();
+              const code = '737';
               const questionId = randomUUID();
               const questionTurn = randomUUID();
               const choiceId = randomUUID();
@@ -376,7 +318,6 @@ test(
                 code,
               );
               assert.deepEqual(entered, []);
-              assert.deepEqual(injected, []);
             }
           } finally {
             await isolated.close();
@@ -386,24 +327,36 @@ test(
       await t.test(
         'failure presentation never sees the code and never retries private entry',
         async () => {
-          await reset();
-          const pending = await seed();
-          const clientMessageId = randomUUID();
-          throwPrivateError = true;
-          const response = await send('654913', { clientMessageId });
-          assert.equal(response.statusCode, 200, response.body);
-          assert.equal(response.json().verificationStatus, 'unavailable');
-          assert.deepEqual(failurePresentations, [
-            {
-              threadId: pending.threadId,
-              input: { kind: 'verification_failure', verification: 'otp' },
-            },
-          ]);
-          const messages = await db.pool.query('SELECT text FROM messages ORDER BY created_at,id');
-          assert.doesNotMatch(JSON.stringify(messages.rows), /654913|Untrusted website/);
-          assert.equal((await send('654913', { clientMessageId })).statusCode, 200);
-          assert.equal(injected.length, 1);
-          assert.equal(failurePresentations.length, 1);
+          for (const afterEntry of [false, true]) {
+            await reset();
+            const pending = await seedPayment();
+            let attempts = 0;
+            const fail = async () => {
+              attempts++;
+              throw new Error('Untrusted website echoed 737');
+            };
+            if (afterEntry) duringPayment = fail;
+            else beforePayment = fail;
+            const clientMessageId = randomUUID();
+            const response = await send('737', { clientMessageId });
+            assert.equal(response.statusCode, 200, response.body);
+            assert.equal(response.json().verificationStatus, 'unavailable');
+            assert.deepEqual(failurePresentations, [
+              {
+                threadId: pending.threadId,
+                input: { kind: 'verification_failure', verification: 'payment' },
+              },
+            ]);
+            const messages = await db.pool.query(
+              'SELECT text FROM messages ORDER BY created_at,id',
+            );
+            assert.doesNotMatch(JSON.stringify(messages.rows), /737|Untrusted website/);
+            assert.equal((await send('737', { clientMessageId })).statusCode, 200);
+            assert.equal(attempts, 1);
+            assert.equal(failurePresentations.length, 1);
+            assert.deepEqual(entered, afterEntry ? ['737'] : []);
+            duringPayment = async () => {};
+          }
         },
       );
       await t.test(
@@ -411,7 +364,7 @@ test(
         async () => {
           for (const afterEntry of [false, true]) {
             await reset();
-            const request = await seed();
+            const request = await seedPayment();
             const controller = new AbortController();
             const cancelled = new Error('Synthetic cancellation.');
             const delivered: string[] = [];
@@ -421,7 +374,7 @@ test(
               refresh() {
                 if (!afterEntry) controller.abort(cancelled);
               },
-              submitCode: async (_owner, _turn, code) => {
+              submitPayment: async (_turn, code) => {
                 delivered.push(code);
                 controller.abort(cancelled);
                 return { status: 'submitted' };
@@ -429,7 +382,7 @@ test(
             });
             const clientMessageId = randomUUID();
             await assert.rejects(
-              guarded.accept('563829', {
+              guarded.accept('737', {
                 clientMessageId,
                 threadId: request.threadId,
                 signal: controller.signal,
@@ -447,94 +400,57 @@ test(
             assert.equal(receipt.status, afterEntry ? 'submitted' : 'cancelled');
             if (afterEntry) assert.match(receipt.text, /sent securely/);
             else assert.match(receipt.text, /cancelled/i);
-            assert.deepEqual(delivered, afterEntry ? ['563829'] : []);
-            assert.doesNotMatch(JSON.stringify(receipt), /563829/);
-            const replay = await guarded.accept('563829', {
+            assert.deepEqual(delivered, afterEntry ? ['737'] : []);
+            assert.doesNotMatch(JSON.stringify(receipt), /737/);
+            const replay = await guarded.accept('737', {
               clientMessageId,
               threadId: request.threadId,
             });
             assert.equal(replay?.verificationStatus, afterEntry ? 'submitted' : 'unavailable');
             assert.equal(replay?.messageText, receipt.text);
-            assert.deepEqual(delivered, afterEntry ? ['563829'] : []);
+            assert.deepEqual(delivered, afterEntry ? ['737'] : []);
           }
         },
       );
       await t.test('known non-entry keeps a cancelled code receipt across replay', async () => {
-        for (const kind of ['otp', 'payment']) {
-          await reset();
-          const pending = await seed();
-          let requestId = pending.requestId;
-          let calls = 0;
-          const guarded =
-            kind === 'payment'
-              ? verification
-              : await createChatVerification(db.pool, {
-                  ownerId,
-                  keyStore: { getKey: async () => Buffer.alloc(32, 61) },
-                  refresh() {},
-                  submitCode: async (_owner, _turn, _code, id) => {
-                    calls++;
-                    await db.pool.query(
-                      "UPDATE credential_requests SET status='consumed' WHERE id=$1",
-                      [id],
-                    );
-                    return { status: 'unavailable', notEntered: true };
-                  },
-                });
-          if (kind === 'payment') {
-            await payments.request(pending, {
-              amount: '43.20',
-              currency: 'EUR',
-              fields: { number: '@e4', expiry: '@e5', securityCode: '@e6' },
-            });
-            requestId = (await db.pool.query('SELECT id FROM vault_payments')).rows[0].id;
-            cancelPaymentBeforeEntry = pending.turnId;
-          }
-          const clientMessageId = randomUUID();
-          const input = {
-            clientMessageId,
-            threadId: pending.threadId,
-            verificationRequestId: requestId,
-          };
-          const code = kind === 'payment' ? '737' : '563829';
-          const response = await guarded.accept(code, input);
-          assert.equal(response?.verificationStatus, 'unavailable');
-          assert.match(response?.messageText ?? '', /cancelled before sending/);
-          const stored = (
-            await db.pool.query(
-              'SELECT v.status,m.text FROM chat_verification_submissions v JOIN messages m ON m.id=v.message_id WHERE v.message_id=$1',
-              [clientMessageId],
-            )
-          ).rows[0];
-          assert.equal(stored.status, 'cancelled');
-          assert.equal(stored.text, response?.messageText);
-          assert.equal(stored.text.includes(code), false);
-          assert.doesNotMatch(stored.text, /sent securely/);
-          const repeated = await guarded.accept(code, input);
-          assert.deepEqual(repeated, response);
-          assert.deepEqual(entered, []);
-          assert.deepEqual(injected, []);
-          assert.equal(calls, kind === 'otp' ? 1 : 0);
-          assert.deepEqual(failurePresentations, []);
-          if (kind === 'payment')
-            assert.deepEqual(
-              (await db.pool.query('SELECT status FROM vault_uses WHERE id=$1', [requestId])).rows,
-              [{ status: 'not_entered' }],
-            );
-        }
+        await reset();
+        const pending = await seedPayment();
+        cancelPaymentBeforeEntry = pending.turnId;
+        const clientMessageId = randomUUID();
+        const input = {
+          clientMessageId,
+          threadId: pending.threadId,
+          verificationRequestId: pending.paymentId,
+        };
+        const response = await verification.accept('737', input);
+        assert.equal(response?.verificationStatus, 'unavailable');
+        assert.match(response?.messageText ?? '', /cancelled before sending/);
+        const stored = (
+          await db.pool.query(
+            'SELECT v.status,m.text FROM chat_verification_submissions v JOIN messages m ON m.id=v.message_id WHERE v.message_id=$1',
+            [clientMessageId],
+          )
+        ).rows[0];
+        assert.equal(stored.status, 'cancelled');
+        assert.equal(stored.text, response?.messageText);
+        assert.equal(stored.text.includes('737'), false);
+        assert.doesNotMatch(stored.text, /sent securely/);
+        const repeated = await verification.accept('737', input);
+        assert.deepEqual(repeated, response);
+        assert.deepEqual(entered, []);
+        assert.deepEqual(failurePresentations, []);
+        assert.deepEqual(
+          (await db.pool.query('SELECT status FROM vault_uses WHERE id=$1', [pending.paymentId]))
+            .rows,
+          [{ status: 'not_entered' }],
+        );
       });
       await t.test(
         'Stop cancels a waiting payment before or during entry without restarting the task',
         async () => {
           for (const afterEntry of [false, true]) {
             await reset();
-            const pending = await seed();
-            await payments.request(pending, {
-              amount: '43.20',
-              currency: 'EUR',
-              fields: { number: '@e4', expiry: '@e5', securityCode: '@e6' },
-            });
-            const paymentId = (await db.pool.query('SELECT id FROM vault_payments')).rows[0].id;
+            const { paymentId, ...pending } = await seedPayment();
             let reached!: () => void;
             let release!: () => void;
             const started = new Promise<void>((resolve) => {
@@ -706,36 +622,40 @@ test(
         },
       );
       await t.test(
-        'duplicates during and after injection do not replay a code or fall through after request consumption',
+        'duplicates during and after entry do not replay a code or fall through after request consumption',
         async () => {
           await reset();
-          const request = await seed();
+          const request = await seedPayment();
           const clientMessageId = randomUUID();
           let release!: () => void;
-          hold = new Promise<void>((resolve) => {
+          const hold = new Promise<void>((resolve) => {
             release = resolve;
           });
+          let started!: () => void;
           const entering = new Promise<void>((resolve) => {
             started = resolve;
           });
-          const first = send('834 725', { clientMessageId });
+          beforePayment = async () => {
+            started();
+            await hold;
+          };
+          const first = send('737', { clientMessageId });
           await Promise.race([
             entering,
-            first.then(() => assert.fail('Expected private verification injection.')),
+            first.then(() => assert.fail('Expected private payment entry.')),
           ]);
-          const duplicate = await send('834725', { clientMessageId });
+          const duplicate = await send('737', { clientMessageId });
           assert.equal(duplicate.statusCode, 200, duplicate.body);
           assert.equal(duplicate.json().verificationStatus, 'pending');
-          assert.equal(injected.length, 1);
           release();
           assert.equal((await first).statusCode, 200);
-          const after = await send('834725.', {
+          const after = await send('737.', {
             clientMessageId,
-            verificationRequestId: request.requestId,
+            verificationRequestId: request.paymentId,
           });
           assert.equal(after.statusCode, 200, after.body);
           assert.equal(after.json().verificationStatus, 'submitted');
-          assert.equal(injected.length, 1);
+          assert.deepEqual(entered, ['737']);
           assert.deepEqual(ordinary, []);
           assert.equal(
             (await db.pool.query("SELECT * FROM messages WHERE role='user'")).rowCount,
@@ -744,83 +664,10 @@ test(
         },
       );
       await t.test(
-        'ambiguous explicit code replies stay private while a challenge is registered',
-        async () => {
-          await reset();
-          const question = await seed();
-          for (const text of [
-            'oh and while ur in there whats the status of invoice NS-1042',
-            'Your code is 482913',
-            '验证码482913',
-            'Code: +123456',
-            'Code: +351912345678',
-            'Code: 123456 or 654321',
-            'O código é 739126 ou 928361',
-            'Code: 123456 and please continue',
-            '739126 ist mein Code',
-            'Code: 123',
-            'Code: 123456789',
-            'Code: 2026-09-29',
-          ])
-            for (const reply of [{}, { replyToMessageId: question.messageId }]) {
-              const response = await send(text, reply);
-              assert.equal(response.statusCode, 409, text);
-              assert.ok(!response.body.includes(text));
-            }
-          assert.deepEqual(ordinary, []);
-          assert.equal(injected.length, 0);
-          assert.equal(
-            (await db.pool.query("SELECT * FROM messages WHERE role='user'")).rowCount,
-            0,
-          );
-          assert.equal(
-            (await db.pool.query('SELECT * FROM chat_verification_submissions')).rowCount,
-            0,
-          );
-          assert.equal((await send('482913')).json().verificationStatus, 'submitted');
-          assert.deepEqual(
-            injected.map(({ code }) => code),
-            ['482913'],
-          );
-          await reset();
-          await seed({ superseded: true });
-          assert.equal((await send('Your code is 482913')).statusCode, 409);
-          assert.deepEqual(ordinary, []);
-          assert.equal(injected.length, 0);
-        },
-      );
-      await t.test('a code request ends with the turn that asked for it', async () => {
-        await reset();
-        const gifts = 'Gift ideas: https://shop.example.test/books/05382/some-book/';
-        const working = await seed({ status: 'running' });
-        assert.equal((await send(gifts)).statusCode, 409);
-        await db.pool.query("UPDATE turns SET status='cancelled',finished_at=now() WHERE id=$1", [
-          working.turnId,
-        ]);
-        assert.equal((await send(gifts)).statusCode, 200);
-        assert.equal((await send('What was invoice NS-1042 for?')).statusCode, 200);
-        for (const text of ['482913', 'my code is 482913']) {
-          const response = await send(text);
-          assert.equal(response.statusCode, 409, text);
-          assert.ok(!response.body.includes('482913'));
-        }
-        await db.pool.query(
-          "UPDATE turns SET finished_at=now()-interval '11 minutes' WHERE id=$1",
-          [working.turnId],
-        );
-        assert.equal((await send('2026')).statusCode, 200);
-        assert.deepEqual(ordinary, [gifts, 'What was invoice NS-1042 for?', '2026']);
-        assert.deepEqual(injected, []);
-        assert.doesNotMatch(
-          JSON.stringify((await db.pool.query('SELECT text FROM messages')).rows),
-          /482913/,
-        );
-      });
-      await t.test(
         'an unavailable fingerprint key never routes pending codes or replays receipts',
         async () => {
           await reset();
-          await seed();
+          await seedPayment();
           const unavailable = await createChatVerification(db.pool, {
             ownerId,
             keyStore: {
@@ -829,14 +676,14 @@ test(
               },
             },
             refresh() {},
-            submitCode: async () => {
-              throw new Error('No injection expected.');
+            submitPayment: async () => {
+              throw new Error('No entry expected.');
             },
           });
           const clientMessageId = randomUUID();
           const assertUnavailable = () =>
             assert.rejects(
-              unavailable.accept('482753', {
+              unavailable.accept('737', {
                 clientMessageId,
                 persistOrdinary: async () => {
                   throw new Error('No ordinary persistence expected.');
@@ -844,12 +691,12 @@ test(
               }),
               (error: unknown) => {
                 assert.equal((error as { statusCode: number }).statusCode, 503);
-                assert.doesNotMatch(String(error), /482753|Private key failure/);
+                assert.doesNotMatch(String(error), /737|Private key failure/);
                 return true;
               },
             );
           await assertUnavailable();
-          assert.equal(injected.length, 0);
+          assert.deepEqual(entered, []);
           assert.equal(
             (await db.pool.query("SELECT * FROM messages WHERE role='user'")).rowCount,
             0,
@@ -859,11 +706,11 @@ test(
             0,
           );
           assert.equal(
-            (await verification.accept('482753', { clientMessageId }))?.verificationStatus,
+            (await verification.accept('737', { clientMessageId }))?.verificationStatus,
             'submitted',
           );
           await assertUnavailable();
-          assert.equal(injected.length, 1);
+          assert.deepEqual(entered, ['737']);
           assert.deepEqual(ordinary, []);
           assert.equal(
             (await db.pool.query('SELECT * FROM chat_verification_submissions')).rowCount,

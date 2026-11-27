@@ -29,7 +29,7 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, join, posix, relative, resolve } from 'node:path';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
-import { createDesktopLifecycle } from '../main/lifecycle.mjs';
+import { createDesktopLifecycle, startupErrorDetails } from '../main/lifecycle.mjs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { create } from 'tar';
@@ -2282,9 +2282,9 @@ test('engine source includes startup reporting and documentation without site de
     'desktop/main/engine.mjs',
     'desktop/main/feedback.mjs',
     'desktop/main/system-certificates.mjs',
-    'desktop/main/onepassword.mjs',
     'desktop/runtime/index.mjs',
     'desktop/runtime/assets.mjs',
+    'desktop/runtime/database.mjs',
     'desktop/runtime/guest-config.mjs',
   ]) {
     await mkdir(dirname(join(source, path)), { recursive: true });
@@ -2302,6 +2302,7 @@ test('engine source includes startup reporting and documentation without site de
   );
   for (const path of [
     'desktop/main/feedback.mjs',
+    'desktop/runtime/database.mjs',
     'src/shared/environment-secrets.mjs',
     'src/shared/literal-masks.mjs',
     'src/shared/startup-feedback-facts.mjs',
@@ -2320,7 +2321,6 @@ test('engine source imports only production dependencies outside the development
     join(repository, 'desktop/main/engine.mjs'),
     join(repository, 'desktop/main/feedback.mjs'),
     join(repository, 'desktop/main/system-certificates.mjs'),
-    join(repository, 'desktop/main/onepassword.mjs'),
   ];
   const walk = async (directory) => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -4602,115 +4602,6 @@ test('runtime replaces owned containers even with unchanged images and retains t
   }
 });
 
-test('runtime retries reuse only the same owned PostgreSQL container with unchanged storage, port and security', async () => {
-  const { replaceContainer } = await import('../runtime/index.mjs');
-  const name = 'nod-postgres-fixture';
-  const image = `sha256:${'a'.repeat(64)}`;
-  const args = [
-    '--network',
-    'nod-control-fixture',
-    '--publish',
-    '127.0.0.1:54329:5432',
-    '--volume',
-    `${name}:/var/lib/postgresql/data`,
-  ];
-  const original = {
-    Id: 'synthetic-postgres-container',
-    Image: image,
-    Config: { Labels: { 'dev.nod.desktop.experiment': 'true' }, Env: ['POSTGRES_DB=nod'] },
-    Mounts: [{ Type: 'volume', Name: name, Destination: '/var/lib/postgresql/data', RW: true }],
-    HostConfig: {
-      Privileged: false,
-      NetworkMode: 'nod-control-fixture',
-      PortBindings: { '5432/tcp': [{ HostIp: '127.0.0.1', HostPort: '54329' }] },
-    },
-    NetworkSettings: { Networks: { 'nod-control-fixture': { NetworkID: 'owned-control' } } },
-    State: { Running: true },
-  };
-  const reuse = await replaceContainer(
-    async (args) => (args[1] === 'inspect' ? JSON.stringify([original]) : ''),
-    name,
-    image,
-    args,
-    { remember: true },
-  );
-  for (const change of [
-    undefined,
-    (value) => {
-      value.Id = 'replacement';
-    },
-    (value) => {
-      value.Image = `sha256:${'b'.repeat(64)}`;
-    },
-    (value) => {
-      value.State.Running = false;
-    },
-    (value) => {
-      value.HostConfig.Privileged = true;
-    },
-    (value) => {
-      value.HostConfig.PortBindings['5432/tcp'][0].HostIp = '0.0.0.0';
-    },
-    (value) => {
-      value.HostConfig.PortBindings['5432/tcp'][0].HostPort = '54330';
-    },
-    (value) => {
-      value.HostConfig.NetworkMode = 'host';
-    },
-    (value) => {
-      value.Config.Env = ['POSTGRES_DB=foreign'];
-    },
-    (value) => {
-      value.NetworkSettings.Networks['nod-control-fixture'].NetworkID = 'foreign';
-    },
-  ]) {
-    const current = structuredClone(original);
-    change?.(current);
-    const commands = [];
-    await replaceContainer(
-      async (args) => {
-        commands.push(args);
-        return args[1] === 'inspect' ? JSON.stringify([current]) : '';
-      },
-      name,
-      image,
-      args,
-      { reuse },
-    );
-    if (!change) assert.deepEqual(commands, [['container', 'inspect', name]]);
-    else
-      assert.deepEqual(
-        commands.filter((args) => ['stop', 'rm', 'run'].includes(args[0])).map((args) => args[0]),
-        ['stop', 'rm', 'run'],
-      );
-  }
-  for (const change of [
-    (value) => {
-      value.Config.Labels = {};
-    },
-    (value) => {
-      value.Mounts[0].Name = 'foreign-data';
-    },
-  ]) {
-    const current = structuredClone(original);
-    change(current);
-    const commands = [];
-    await assert.rejects(
-      replaceContainer(
-        async (args) => {
-          commands.push(args);
-          return JSON.stringify([current]);
-        },
-        name,
-        image,
-        args,
-        { reuse },
-      ),
-    );
-    assert.equal(commands.length, 1);
-  }
-});
-
 test('native runtime can stop after the streaming runtime pack is removed', async (t) => {
   if (process.platform === 'win32') return t.skip('This fixture uses a Mac shell program.');
   const root = await mkdtemp(join(tmpdir(), 'nod-stop-runtime-'));
@@ -4783,7 +4674,7 @@ test('native runtime can stop after the streaming runtime pack is removed', asyn
   });
 });
 
-test('native runtime wrapper preserves handed-off storage through failed preparation and explicit retry until quit', async () => {
+test('a failed computer start stops a computer that may be running, and quit retries a failed stop', async () => {
   const source = await readFile(new URL('../runtime/index.mjs', import.meta.url), 'utf8');
   const wrapper = source
     .slice(
@@ -4791,11 +4682,10 @@ test('native runtime wrapper preserves handed-off storage through failed prepara
       source.indexOf('async function stopComputer('),
     )
     .replaceAll('export ', '');
-  for (const terminal of ['retry', 'quit', 'abort', 'cleanup-failed']) {
-    let attempts = 0;
+  for (const terminal of ['before-start', 'stopped', 'cleanup-failed']) {
     let stops = 0;
     let engineStops = 0;
-    let retired = false;
+    let databaseCloses = 0;
     const startupError = Object.assign(new Error('Synthetic startup failure'), {
       code: 'NOD_COMPUTER_PROTECTION_FAILED',
       details: 'Synthetic startup command details',
@@ -4805,286 +4695,64 @@ test('native runtime wrapper preserves handed-off storage through failed prepara
       code: 'NOD_RUNTIME_STOP_FAILED',
       details: 'Synthetic stop command details',
     });
-    const pending = [];
-    let handed;
-    const storageHanded = new Promise((accept) => {
-      handed = accept;
-    });
-    const storage = {
-      env: {},
-      close: () => runtime.stopRuntime({ dataRoot: resolve('synthetic-profile') }),
-    };
     const runtime = runInNewContext(`${wrapper}; ({ prepareRuntime, stopRuntime })`, {
       resolve,
       preparing: new Map(),
-      storageReady: new Map(),
       prepare: async (options, started, progress) => {
-        started();
-        attempts++;
+        progress.step = 'assets';
+        if (terminal !== 'before-start') started();
         progress.step = 'start';
-        if (terminal === 'cleanup-failed') throw startupError;
-        if (retired) throw new Error('Synthetic new attempt before storage');
-        if (attempts === 2) throw new Error('Synthetic retry before storage handshake');
-        await options.onStorageReady(storage);
-        handed();
-        if (terminal === 'abort')
-          await new Promise((_, reject) =>
-            options.signal.addEventListener('abort', () => reject(new Error('Synthetic abort')), {
-              once: true,
-            }),
-          );
-        if (attempts === 1) throw new Error('Synthetic workspace startup failure');
-        return storage;
+        throw startupError;
       },
       stopComputer: async () => {
         stops++;
         if (terminal === 'cleanup-failed' && stops === 1) throw cleanupError;
       },
     });
+    const failures = [];
     const lifecycle = createDesktopLifecycle({
+      openDatabase: async () => ({
+        url: 'postgresql://nod:synthetic@127.0.0.1:1/nod',
+        password: 'synthetic',
+        pendingMove: false,
+        moved: async () => {},
+        close: async () => {
+          databaseCloses++;
+        },
+      }),
       prepareRuntime: (options) =>
         runtime.prepareRuntime({ ...options, dataRoot: resolve('synthetic-profile') }),
       validateStart: async () => {},
-      startEngine: async ({ pending: waiting }) => pending.push(waiting === true),
+      startEngine: async () => {},
       stopEngine: async () => {
         engineStops++;
       },
       stopRuntime: () => runtime.stopRuntime({ dataRoot: resolve('synthetic-profile') }),
       onRuntimeStatus() {},
+      onRuntime: ({ error }) => failures.push(error),
     });
-    if (terminal === 'cleanup-failed') {
-      await assert.rejects(lifecycle.start(), (error) => {
-        assert.equal(error.code, startupError.code);
-        assert.match(error.message, /Synthetic startup failure.*Synthetic stop failure/);
-        assert.equal(error.step, 'start');
-        assert.equal(error.errors[0], startupError);
-        assert.equal(error.errors[1], cleanupError);
-        assert.equal(error.cause, cleanupError);
-        assert.equal(error.cause.cause, stopError);
-        assert.ok(error.details.includes(startupError.details));
-        assert.ok(error.details.includes('Synthetic stop command details'));
+    await assert.rejects(lifecycle.warmup(), (error) => {
+      assert.equal(error.step, 'start');
+      if (terminal !== 'cleanup-failed') {
+        assert.equal(error, startupError);
         return true;
-      });
-      assert.equal(stops, 1);
-      assert.deepEqual(pending, []);
-      await lifecycle.close();
-      assert.equal(stops, 2);
-      assert.equal(engineStops, 1);
-      continue;
-    }
-    if (terminal === 'abort') {
-      const starting = assert.rejects(lifecycle.start(), /Synthetic abort/);
-      await storageHanded;
-      await lifecycle.close();
-      await starting;
-      assert.equal(engineStops, 1);
-      assert.equal(stops, 1);
-      continue;
-    }
-    await assert.rejects(lifecycle.start(), /Synthetic workspace startup failure/);
-    assert.equal(stops, 0, `${terminal}: storage must remain usable after workspace failure`);
-    assert.deepEqual(pending, [true]);
-    if (terminal === 'retry') {
-      await assert.rejects(lifecycle.start());
-      assert.equal(attempts, 1);
-      await assert.rejects(
-        lifecycle.start({ retry: true }),
-        /Synthetic retry before storage handshake/,
-      );
-      assert.equal(stops, 0);
-      await lifecycle.start({ retry: true });
-      assert.equal(attempts, 3);
-      assert.deepEqual(pending, [true, true, false]);
-    }
+      }
+      assert.equal(error.code, startupError.code);
+      assert.match(error.message, /Synthetic startup failure.*Synthetic stop failure/);
+      assert.equal(error.errors[0], startupError);
+      assert.equal(error.errors[1], cleanupError);
+      assert.equal(error.cause, cleanupError);
+      assert.equal(error.cause.cause, stopError);
+      assert.ok(error.details.includes(startupError.details));
+      assert.ok(error.details.includes('Synthetic stop command details'));
+      return true;
+    });
+    assert.equal(failures.length, 1);
+    assert.equal(stops, terminal === 'before-start' ? 0 : 1);
     await lifecycle.close();
+    assert.equal(stops, { 'before-start': 0, stopped: 1, 'cleanup-failed': 2 }[terminal]);
     assert.equal(engineStops, 1);
-    assert.equal(stops, 1, `${terminal}: quit must close retained storage exactly once`);
-    retired = true;
-    await assert.rejects(
-      runtime.prepareRuntime({
-        dataRoot: resolve('synthetic-profile'),
-        onStorageReady: async () => {},
-      }),
-      /Synthetic new attempt/,
-    );
-    assert.equal(stops, 2);
-  }
-});
-
-test('Windows storage starts on a free port, and a readiness failure names its cause and replaces retained PostgreSQL on that port only on the next explicit retry', async (t) => {
-  const source = await readFile(new URL('../runtime/index.mjs', import.meta.url), 'utf8');
-  const functions = source
-    .slice(
-      source.indexOf('export async function finishRuntime('),
-      source.indexOf('async function stopComputer('),
-    )
-    .replaceAll('export ', '')
-    .replace("const { default: pg } = await import('pg');", '');
-  const { availablePort, replaceContainer } = await import('../runtime/index.mjs');
-  const taken = createServer();
-  await new Promise((listening) => taken.listen(0, '127.0.0.1', listening));
-  t.after(() => taken.close());
-  for (const [failure, expectedCode] of [
-    ['pg_isready', 'NOD_DATABASE_NOT_READY'],
-    ['connect', 'NOD_DATABASE_CONNECTION_FAILED'],
-    ['query', 'NOD_DATABASE_CONNECTION_FAILED'],
-    ['stopped', 'NOD_DATABASE_STOPPED'],
-    ['memory', 'NOD_DATABASE_OUT_OF_MEMORY'],
-    ['wsl', 'NOD_DATABASE_NOT_READY'],
-  ]) {
-    const containers = new Map();
-    const commands = [];
-    const connections = [];
-    let fault = 'workspace';
-    let created = 0;
-    let stopped = 0;
-    const runtime = runInNewContext(
-      `${functions}; ({ finishRuntime, prepareRuntime, stopRuntime })`,
-      {
-        resolve,
-        join,
-        process: { platform: 'win32' },
-        preparing: new Map(),
-        storageReady: new Map(),
-        replaceContainer,
-        availablePort,
-        ensureNetwork: async () => {},
-        protectNetworks: '',
-        waitFor: async (operation) => operation(),
-        removeStaleImages: async () => {},
-        pg: {
-          Client: class {
-            constructor({ connectionString }) {
-              connections.push(new URL(connectionString).port);
-            }
-            async connect() {
-              if (['connect', 'stopped', 'memory', 'wsl'].includes(fault))
-                throw Object.assign(
-                  new Error(`Synthetic ${fault} failure: synthetic-fixture-password`),
-                  { code: 'ECONNRESET' },
-                );
-            }
-            async query() {
-              if (fault === 'query') throw new Error('Synthetic query failure');
-            }
-            async end() {}
-          },
-        },
-        prepare: async (options, started) => {
-          started();
-          return runtime.finishRuntime({
-            ...options,
-            resourcesPath: 'synthetic-resources',
-            assets: 'synthetic-assets',
-            identity: 'fixture',
-            manifest: {
-              images: ['postgres', 'workspace', 'browser'].map((name) => ({
-                name,
-                id: `sha256:${name}`,
-              })),
-            },
-            saved: { port: taken.address().port, password: 'synthetic-fixture-password' },
-            controlRoot: 'synthetic-control',
-            path: 'synthetic-path',
-            dockerEnvironment: {},
-            runGuest: async () => {},
-            status: options.onStatus,
-            prepareImage: async (name) => {
-              if (name === fault) throw new Error(`Synthetic ${name} startup failure`);
-            },
-            runDocker: async (args, options) => {
-              commands.push(args);
-              if (options?.timeout === 10_000) {
-                assert.ok(['inspect', 'exec'].includes(args[0]));
-                if (fault === 'wsl')
-                  throw new Error('Synthetic WSL check failure: synthetic-fixture-password');
-              }
-              if (args[0] === 'container' && args[1] === 'inspect') {
-                if (!containers.has(args[2])) throw new Error('Absent synthetic container');
-                return JSON.stringify([containers.get(args[2])]);
-              }
-              if (args[0] === 'run') {
-                const name = args[args.indexOf('--name') + 1];
-                containers.set(name, {
-                  Id: `synthetic-container-${++created}`,
-                  Image: args.find((value) => value.startsWith('sha256:')),
-                  State: { Running: true },
-                  Config: { Labels: { 'dev.nod.desktop.experiment': 'true' } },
-                  Mounts: args.flatMap((value, index) => {
-                    if (value !== '--volume') return [];
-                    const [Name, Destination] = args[index + 1].split(':');
-                    return [{ Type: 'volume', Name, Destination }];
-                  }),
-                });
-              }
-              if (args[0] === 'exec' && args[2] === 'pg_isready' && fault === 'pg_isready')
-                throw new Error('Synthetic pg_isready failure');
-              if (
-                args[0] === 'inspect' &&
-                args.includes('{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}')
-              )
-                return fault === 'memory'
-                  ? 'exited 137 true'
-                  : fault === 'stopped'
-                    ? 'exited 1 false'
-                    : 'running 0 false';
-              if (args[0] === 'inspect') return 'true';
-              return '';
-            },
-          });
-        },
-        stopComputer: async () => {
-          stopped++;
-        },
-      },
-    );
-    const lifecycle = createDesktopLifecycle({
-      prepareRuntime: (options) =>
-        runtime.prepareRuntime({ ...options, dataRoot: resolve('synthetic-profile') }),
-      validateStart: async () => {},
-      startEngine: async () => {},
-      stopEngine: async () => {},
-      onRuntimeStatus() {},
-    });
-    const postgres = () => containers.get('nod-postgres-fixture').Id;
-    try {
-      await assert.rejects(lifecycle.start(), /Synthetic workspace startup failure/);
-      const original = postgres();
-      fault = 'browser';
-      await assert.rejects(lifecycle.start({ retry: true }), /Synthetic browser startup failure/);
-      assert.equal(postgres(), original);
-      fault = failure;
-      await assert.rejects(lifecycle.start({ retry: true }), (error) => {
-        assert.equal(error.code, expectedCode);
-        assert.match(error.details, new RegExp(`Synthetic ${failure} failure`));
-        assert.ok(!JSON.stringify(error).includes('synthetic-fixture-password'));
-        return true;
-      });
-      assert.equal(postgres(), original);
-      assert.equal(stopped, 0);
-      const attempted = commands.length;
-      fault = undefined;
-      await assert.rejects(lifecycle.start());
-      assert.equal(commands.length, attempted);
-      await lifecycle.start({ retry: true });
-      assert.notEqual(
-        postgres(),
-        original,
-        `${failure}: explicit retry must replace failed PostgreSQL`,
-      );
-      const launches = commands.filter(
-        (args) => args[0] === 'run' && args.includes('nod-postgres-fixture'),
-      );
-      assert.equal(launches.length, 2);
-      assert.deepEqual(launches[1], launches[0]);
-      const published = launches[0][launches[0].indexOf('--publish') + 1];
-      assert.notEqual(published, `127.0.0.1:${taken.address().port}:5432`);
-      assert.deepEqual(new Set(connections), new Set([published.split(':')[1]]));
-      assert.equal(stopped, 0);
-    } finally {
-      await lifecycle.close();
-    }
-    assert.equal(stopped, 1);
+    assert.equal(databaseCloses, 1);
   }
 });
 
@@ -5539,26 +5207,28 @@ test('the Windows guest starts Docker and keeps waiting when a readiness check h
   assert.deepEqual((await windows.read()).commands, [['info'], ['dockerd'], ['info']]);
 });
 
-test('runtime hands off verified storage before browser readiness and fences failed or aborted handoffs', async (t) => {
-  const { finishRuntime } = await import('../runtime/index.mjs');
+test('the computer starts without PostgreSQL unless a data move is pending, a failed move stays pending, and a stopped container gets fresh images once', async (t) => {
+  const { computerNames, finishRuntime } = await import('../runtime/index.mjs');
   const { default: pg } = await import('pg');
   for (const outcome of [
     'ready',
-    'callback-failed',
-    'aborted-handoff',
     'aborted',
+    'move-failed',
     'windows-ready',
     'windows-failed',
     'windows-damaged',
+    'repaired',
+    'stopped',
   ]) {
     await t.test(outcome, async (t) => {
-      const root = await mkdtemp(join(tmpdir(), 'nod-storage-ready-'));
+      const root = await mkdtemp(join(tmpdir(), 'nod-computer-ready-'));
       t.after(() => rm(root, { recursive: true, force: true }));
+      const names = computerNames(root);
+      const identity = names.workspace.slice('nod-workspace-'.length);
       const signal = new AbortController();
       const windows = outcome.startsWith('windows-') ? await windowsImageFixture(t) : undefined;
       if (windows) {
         windows.run('start');
-        assert.deepEqual((await windows.read()).images, {});
         if (outcome === 'windows-failed') await windows.wrong('browser');
         if (outcome === 'windows-damaged')
           await writeFile(
@@ -5567,34 +5237,23 @@ test('runtime hands off verified storage before browser readiness and fences fai
           );
       }
       const calls = [];
-      let storage;
-      let callbacks = 0;
-      let verified = false;
-      let release;
-      let blocked;
-      let continueSetup;
-      let handedOff;
-      const handoff = new Promise((resolve) => {
-        continueSetup = resolve;
-      });
-      const handed = new Promise((resolve) => {
-        handedOff = resolve;
-      });
-      const browser = new Promise((resolve) => {
-        release = resolve;
-      });
-      const waiting = new Promise((resolve) => {
-        blocked = resolve;
-      });
+      let moved = 0;
+      const database = {
+        url: 'postgresql://nod:synthetic-host-password@127.0.0.1:1/nod',
+        password: 'synthetic-host-password',
+        pendingMove: outcome === 'move-failed',
+        moved: async () => {
+          moved++;
+          database.pendingMove = false;
+        },
+      };
       t.mock.method(pg.Client.prototype, 'connect', async () => {
         calls.push('database-connect');
       });
-      t.mock.method(pg.Client.prototype, 'query', async (query) => {
-        assert.equal(query, 'SELECT 1');
-        verified = true;
-      });
-      t.mock.method(pg.Client.prototype, 'end', async () => {
-        calls.push('database-end');
+      t.mock.method(pg.Client.prototype, 'end', async () => {});
+      let blocked;
+      const waiting = new Promise((resolve) => {
+        blocked = resolve;
       });
       const created = new Set();
       const runDocker = async (args) => {
@@ -5618,52 +5277,56 @@ test('runtime hands off verified storage before browser readiness and fences fai
           ]);
         }
         if (args[0] === 'run') created.add(args[args.indexOf('--name') + 1]);
+        if (args[0] === 'rm') for (const name of args.slice(1)) created.delete(name);
         if (args[0] === 'container' && args[1] === 'inspect') {
           if (!created.has(args[2])) throw new Error('Absent fixture container');
           return JSON.stringify([
             {
               Id: args[2],
-              Image: 'sha256:postgres',
               State: { Running: true },
               Config: { Labels: { 'dev.nod.desktop.experiment': 'true' } },
-              Mounts: [
-                {
-                  Type: 'volume',
-                  Name: 'nod-postgres-fixture',
-                  Destination: '/var/lib/postgresql/data',
-                },
-              ],
+              Mounts: [],
             },
           ]);
         }
-        if (args[0] === 'inspect') return 'true';
-        if (args[0] === 'exec' && args[1] === 'nod-browser-fixture') {
+        if (args[0] === 'exec' && args.includes('pg_dump'))
+          throw new Error('Synthetic dump failure synthetic-host-password synthetic-old-password');
+        if (args[0] === 'image' && args[1] === 'ls')
+          return ['postgres', 'workspace', 'browser', 'old-base']
+            .map((name) => `sha256:${name}`)
+            .join('\n');
+        if (args[0] === 'inspect')
+          return (outcome === 'stopped' && args[3] === names.workspace) ||
+            (outcome === 'repaired' && args[3] === names.browser && runs(names.browser) === 1)
+            ? 'false'
+            : 'true';
+        if (args[0] === 'exec' && args[1] === names.browser && outcome === 'aborted') {
           blocked();
-          if (outcome === 'callback-failed') release();
-          await Promise.race([
-            browser,
-            new Promise((_, reject) =>
-              signal.signal.addEventListener('abort', () => reject(signal.signal.reason), {
-                once: true,
-              }),
-            ),
-          ]);
+          await new Promise((_, reject) =>
+            signal.signal.addEventListener('abort', () => reject(signal.signal.reason), {
+              once: true,
+            }),
+          );
         }
         return '';
       };
-      let settled = false;
-      const operation = finishRuntime({
+      const runs = (name) =>
+        calls.filter(
+          (command) => Array.isArray(command) && command[0] === 'run' && command.includes(name),
+        ).length;
+      let onMoved = 0;
+      const result = finishRuntime({
         dataRoot: root,
         resourcesPath: root,
         assets: root,
-        identity: 'fixture',
+        identity,
         manifest: {
           images: ['postgres', 'workspace', 'browser'].map((name) => ({
             name,
             id: `sha256:${name}`,
           })),
         },
-        saved: { port: 54329, password: 'synthetic-fixture-password' },
+        saved: { port: 54329, password: 'synthetic-old-password' },
         controlRoot: root,
         docker: join(root, 'docker-fixture'),
         path: process.env.PATH,
@@ -5677,149 +5340,124 @@ test('runtime hands off verified storage before browser readiness and fences fai
         status() {},
         prepareImage: async (name) => {
           calls.push(['prepare-image', name]);
-          if (name !== 'postgres') await handed;
           windows?.run('image', name);
         },
-        async onStorageReady(runtime) {
-          callbacks++;
-          if (windows)
-            assert.deepEqual(Object.keys((await windows.read()).images), ['synthetic:postgres']);
-          assert.equal(verified, true);
-          assert.ok(calls.includes('database-end'));
-          assert.equal(
-            calls.some(
-              (command) =>
-                Array.isArray(command) &&
-                command[0] === 'run' &&
-                command.includes('nod-workspace-fixture'),
-            ),
-            false,
-          );
-          assert.equal(runtime.env, runtime.environment);
-          assert.equal(new URL(runtime.env.DATABASE_URL).port, '54329');
-          assert.equal(runtime.env.WORKSPACE_CONTAINER, 'nod-workspace-fixture');
-          if (process.platform !== 'win32')
-            assert.ok((await stat(join(root, 'bin/docker'))).isFile());
-          storage = runtime;
-          handedOff();
-          if (outcome === 'callback-failed') throw new Error('Synthetic engine startup failed');
-          await handoff;
+        database,
+        onMoved: async () => {
+          onMoved++;
         },
       }).then(
-        (runtime) => {
-          settled = true;
-          return runtime;
-        },
-        (error) => {
-          settled = true;
-          throw error;
-        },
-      );
-      const result = operation.then(
         (runtime) => ({ runtime }),
         (error) => ({ error }),
       );
-      try {
-        if (outcome === 'callback-failed') {
-          const failed = await result;
-          assert.match(failed.error?.message ?? '', /Synthetic engine startup failed/);
-          assert.equal(
-            calls.some(
-              (command) =>
-                Array.isArray(command) &&
-                command[0] === 'run' &&
-                command.includes('nod-browser-fixture'),
-            ),
-            false,
-          );
-        } else {
-          await Promise.race([
-            handed,
-            waiting.then(() => {
-              throw new Error('Browser started before storage handoff');
-            }),
-            result.then((value) => {
-              throw value.error ?? new Error('Runtime completed before storage handoff');
-            }),
-          ]);
-          assert.deepEqual(
-            calls.filter((command) => Array.isArray(command) && command[0] === 'prepare-image'),
-            [
-              ['prepare-image', 'postgres'],
-              ['prepare-image', 'workspace'],
-              ['prepare-image', 'browser'],
-            ],
-          );
-          if (outcome === 'aborted-handoff') {
-            signal.abort(new Error('Synthetic setup cancelled during handoff'));
-            continueSetup();
-            assert.equal((await result).error, signal.signal.reason);
-            assert.equal(
-              calls.some(
-                (command) =>
-                  Array.isArray(command) &&
-                  command[0] === 'run' &&
-                  command.includes('nod-workspace-fixture'),
-              ),
-              false,
-            );
-            return;
-          }
-          continueSetup();
-          if (outcome === 'windows-failed' || outcome === 'windows-damaged') {
-            assert.ok((await result).error);
-            assert.ok(storage);
-            assert.equal(callbacks, 1);
-            if (outcome === 'windows-damaged')
-              assert.equal(
-                (await windows.read()).commands.some(
-                  (command) => command[0] === 'load' && command.at(-1).endsWith('/browser.tar.zst'),
-                ),
-                false,
-              );
-            assert.equal(
-              calls.some(
-                (command) =>
-                  Array.isArray(command) &&
-                  command[0] === 'run' &&
-                  command.includes('nod-browser-fixture'),
-              ),
-              false,
-            );
-            return;
-          }
-          await Promise.race([
-            waiting,
-            result.then((value) => {
-              throw value.error ?? new Error('Runtime completed before browser gate');
-            }),
-          ]);
-          assert.equal(callbacks, 1);
-          assert.ok(storage);
-          assert.equal(settled, false);
-          if (outcome === 'aborted') signal.abort(new Error('Synthetic setup cancelled'));
-          else release();
-          const finished = await result;
-          if (outcome === 'aborted') {
-            assert.equal(finished.error?.name, 'AbortError');
-            assert.equal(finished.error?.cause, signal.signal.reason);
-          } else assert.equal(finished.runtime, storage);
-        }
-        assert.equal(callbacks, 1);
-        assert.equal(
-          calls.some(
-            (command) =>
-              Array.isArray(command) &&
-              ['volume', 'network'].includes(command[0]) &&
-              command[1] === 'rm',
-          ),
-          false,
-        );
-      } finally {
-        continueSetup();
-        release();
-        await result;
+      if (outcome === 'aborted') {
+        await waiting;
+        signal.abort(new Error('Synthetic setup cancelled'));
       }
+      const { runtime, error } = await result;
+      assert.equal(onMoved, 0);
+      assert.equal(moved, 0);
+      assert.equal(calls.includes('database-connect'), outcome === 'move-failed');
+      assert.ok(
+        !calls.some(
+          (command) =>
+            Array.isArray(command) &&
+            ['volume', 'network'].includes(command[0]) &&
+            command[1] === 'rm',
+        ),
+      );
+      if (outcome === 'move-failed') {
+        assert.equal(error.code, 'NOD_DATABASE_MOVE_FAILED');
+        assert.match(error.details, /Synthetic dump failure/);
+        assert.doesNotMatch(
+          startupErrorDetails(error),
+          /synthetic-host-password|synthetic-old-password/,
+        );
+        assert.equal(database.pendingMove, true);
+        assert.equal(runs(names.postgres), 1);
+        assert.equal(runs(names.workspace), 0);
+        assert.deepEqual(
+          calls.filter((command) => command[0] === 'prepare-image'),
+          [['prepare-image', 'postgres']],
+        );
+        return;
+      }
+      assert.equal(runs(names.postgres), 0);
+      assert.equal(
+        calls.some((command) => Array.isArray(command) && command.includes('pg_isready')),
+        false,
+      );
+      assert.equal(
+        calls.some((command) => command[0] === 'prepare-image' && command[1] === 'postgres'),
+        false,
+      );
+      const removal = calls.findIndex(
+        (command) => Array.isArray(command) && command.join(' ') === `rm --force ${names.postgres}`,
+      );
+      assert.ok(removal >= 0);
+      assert.ok(
+        removal <
+          calls.findIndex(
+            (command) =>
+              Array.isArray(command) && command[0] === 'run' && command.includes(names.workspace),
+          ),
+      );
+      if (windows)
+        assert.deepEqual(
+          Object.keys((await windows.read()).images).sort(),
+          outcome === 'windows-damaged'
+            ? ['synthetic:workspace']
+            : ['synthetic:browser', 'synthetic:workspace'],
+        );
+      if (outcome === 'windows-failed' || outcome === 'windows-damaged') {
+        assert.ok(error);
+        assert.equal(runs(names.browser), 0);
+        return;
+      }
+      if (outcome === 'aborted') {
+        assert.equal(error?.name, 'AbortError');
+        assert.equal(error?.cause, signal.signal.reason);
+        return;
+      }
+      const prepared = (name) =>
+        calls.filter((command) => command[0] === 'prepare-image' && command[1] === name).length;
+      if (outcome === 'stopped') {
+        assert.equal(error?.code, 'NOD_CONTAINER_STOPPED');
+        assert.match(error.message, /workspace/);
+        assert.equal(runs(names.workspace), 2);
+        assert.equal(prepared('workspace'), 2);
+        return;
+      }
+      if (outcome === 'repaired') {
+        const repair = calls.findIndex(
+          (command) =>
+            Array.isArray(command) &&
+            command.join(' ') === `rm --force ${names.workspace} ${names.browser}`,
+        );
+        const rerun = calls.findIndex(
+          (command, index) =>
+            index > repair && command[0] === 'run' && command.includes(names.workspace),
+        );
+        assert.ok(repair >= 0 && rerun > repair);
+        assert.deepEqual(
+          calls
+            .slice(repair, rerun)
+            .filter((command) => command[0] === 'image' && command[1] === 'rm'),
+          [['image', 'rm', '--force', 'sha256:workspace', 'sha256:browser', 'sha256:old-base']],
+        );
+        assert.equal(prepared('workspace'), 2);
+        assert.equal(prepared('browser'), 2);
+        assert.equal(runs(names.browser), 2);
+      } else assert.equal(runs(names.workspace), 1);
+      assert.equal(error, undefined);
+      assert.deepEqual(Object.keys(runtime).sort(), ['close', 'environment']);
+      assert.deepEqual(Object.keys(runtime.environment).sort(), [
+        'DOCKER_CONFIG',
+        'DOCKER_CONTEXT',
+        'DOCKER_HOST',
+        'PATH',
+      ]);
+      if (process.platform !== 'win32') assert.ok((await stat(join(root, 'bin/docker'))).isFile());
     });
   }
 });

@@ -177,7 +177,7 @@ If your browser resets or blocks permission, the switch turns off. Once your bro
 
 On desktop, enabling notifications sends a confirmation. If it does not appear, allow Nod in your computer’s notification settings and check Focus or Do Not Disturb.
 
-Notifications use Nod's name and icon. In the web app, they announce a new reply without showing its contents. Keep the Nod tab open to receive them while it is in the background. Select a notification to return to its message. Ordinary browser tabs may also show the browser’s name; the operating system controls that attribution.
+Notifications use Nod's name and icon and are silent. In the desktop app, once notifications are on, turn on **Play a sound** in **Settings → Notifications** if you want one; your computer's notification settings can still mute it. In the web app, they announce a new reply without showing its contents. Keep the Nod tab open to receive them while it is in the background. Select a notification to return to its message. Ordinary browser tabs may also show the browser’s name; the operating system controls that attribution.
 
 When you return to Chat with unread replies, a **New messages** divider marks where they begin and Chat opens there. It stays for that visit, even after you reach the latest reply and clear the unread badge. Selecting a notification still opens that specific message. Replies arriving while you are already at the bottom do not add a divider or move you away.
 
@@ -201,7 +201,7 @@ To answer in your own words, type in **Type your own answer** at the bottom of t
 
 An action that needs your approval appears as a card with Nod's question and two choices: the action and a refusal, such as **Cancel**, both in the question's language. An email or message shows the app, the recipients, subject or channel and the text instead, with the refusal and the action as buttons below it. Once you answer, the card stays in the conversation, greyed out, with what you chose and what happened. While a sign-in waits for a verification code, a card under Nod's message asks you to send the code by itself in the message box. In Nod web and desktop, a payment that waits for your card's security code shows the same card; the code is the only card detail Nod takes there, and [Approve payment](/trust/payments/) takes it too.
 
-Nod doesn't ask for passwords or card numbers in chat. It uses a saved login or a private form instead. See [Vault](/trust/vault/).
+Nod doesn't ask for passwords or card numbers in chat. It uses a saved login, or shows you the website's page to sign in yourself. See [Vault](/trust/vault/).
 
 ## Start a fresh chat
 
@@ -292,8 +292,6 @@ A request, task or schedule run that stops on an unexpected error outside the mo
 In Telegram and WhatsApp, the draft arrives as text. Reply "send" to share the summary, without a diagnostic report, since you can't review one there. To add the report, send the same draft from its card in Nod on your computer. Nod sends it only when your reply clearly asks for that, and otherwise asks you to confirm first. Nothing is sent until you click **Send report** or reply to send it.
 
 **Include diagnostic report** starts selected for every feedback category until you change it. It adds recent messages, tool inputs and results, errors, and app activity to help fix problems and improve Nod. Known secrets and recognized personal details are masked, but redaction can miss information.
-
-When a private sign-in choice fails a safety check, the report can include a fixed reason, such as a changed control or a covered button. This reason contains no page text, selector, website address or account value.
 
 Select **Review** to inspect the **Chat**, **Activity** and **Connections** tabs. Tool activity groups each input with its result and status. **Download** saves the same redacted report as a JSON file. Untick the checkbox to leave it out. Nod remembers your choice for your account on this device, including after sending or discarding a draft.
 

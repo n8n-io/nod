@@ -56,8 +56,7 @@ export function rehypeLocalLinks() {
       }
       if (node.type !== 'text' || index === undefined || !parent) return;
       const parts: (Text | Element)[] = [];
-      const pattern =
-        /(?<![\w/:])\/(?:api\/artifacts|vault|credentials)\/[A-Za-z0-9_-]+(?:[?#][^\s<>"'\[\]()]+)?/g;
+      const pattern = /(?<![\w/:])\/api\/artifacts\/[A-Za-z0-9_-]+(?:[?#][^\s<>"'\[\]()]+)?/g;
       let cursor = 0;
       for (const match of node.value.matchAll(pattern)) {
         if (match.index > cursor)

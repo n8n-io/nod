@@ -56,7 +56,6 @@ import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts'
 import { privateEmailResult } from './integration-result.ts';
 import { createMailCheck } from './mail-check.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
-import type { PasswordManager } from '../ports/password-manager.ts';
 import type { Trash } from '../ports/trash.ts';
 import type { DesktopControl } from '../ports/desktop.ts';
 import { desktopTrash } from '../providers/trash.ts';
@@ -82,11 +81,6 @@ import { createWhatsAppLinkedTransport } from '../providers/chat-sdk/whatsapp.ts
 import { combineMessagingTransports } from '../providers/chat-sdk/combined.ts';
 import { createChatSdkSetupVerifier } from '../providers/chat-sdk/settings.ts';
 import { createContainerBrowserComputer } from '../providers/container-browser/index.ts';
-import {
-  createOnePassword,
-  desktopOnePassword,
-  forkedOnePassword,
-} from '../providers/onepassword/index.ts';
 import { createComposioProvider } from '../providers/composio/integrations.ts';
 import { createComposioProxy } from '../providers/composio/proxy.ts';
 import {
@@ -132,7 +126,7 @@ import type { FlightSearch } from '../ports/flights.ts';
 import { createAgentRuntime } from '../runtime/index.ts';
 import { coreSkills } from '../runtime/prompt.ts';
 import { createApp } from './app.ts';
-import { credentialRequestKey, traceKey } from './access.ts';
+import { traceKey } from './access.ts';
 import { createWorkAdmission, createWorkConsumers } from './work-admission.ts';
 import { createWritingStyleLearning } from './writing-style.ts';
 import { createChatVerification } from './chat-verification.ts';
@@ -224,9 +218,7 @@ import {
   lockThread,
   reactToAssistantMessage,
   resumeAfterConnection,
-  resumeAfterCredentials,
   resumeAfterPayment,
-  retryCredentials,
   startThreadWorkers,
   stopSignal,
   stopThreadWorkers,
@@ -266,7 +258,6 @@ export interface ApplicationAdapters {
   integrations: IntegrationProvider;
   observations?: ObservationProvider[];
   keyStore: CredentialKeyStore;
-  passwordManager?: PasswordManager;
   trash?: Trash;
   desktop?: DesktopControl;
   keepAwake?: KeepAwake;
@@ -355,6 +346,7 @@ export function modelEnvironment(
 
 export function createDefaultAdapters(
   env: Record<string, string | undefined> = process.env,
+  computer?: { ready(signal?: AbortSignal): Promise<void>; available(): boolean },
 ): ApplicationAdapters {
   const bootstrap = modelEnvironment(env);
   const { provider } = bootstrap;
@@ -536,9 +528,10 @@ export function createDefaultAdapters(
       configRoot: join(dataRoot, 'pi'),
       traces,
     }),
-    computer: createContainerBrowserComputer({ dataRoot, container: env.BROWSER_CONTAINER }),
-    passwordManager: createOnePassword({
-      open: desktopMode ? desktopOnePassword() : forkedOnePassword(env.NOD_APP_VERSION || 'source'),
+    computer: createContainerBrowserComputer({
+      dataRoot,
+      container: env.BROWSER_CONTAINER,
+      ready: computer?.ready,
     }),
     trash: desktopMode ? desktopTrash() : undefined,
     desktop: desktopMode ? desktopControl() : undefined,
@@ -546,6 +539,8 @@ export function createDefaultAdapters(
     workspace: createDockerWorkspace({
       container: env.WORKSPACE_CONTAINER || 'nod-workspace',
       workspaceRoot: join(dataRoot, 'workspaces'),
+      ready: computer?.ready,
+      available: computer?.available,
     }),
     localSpeech,
     speechInputFormat: (voice) => {
@@ -744,7 +739,6 @@ export async function createApplication(
     channels?: boolean;
     heartbeat?: boolean;
     rateLimit?: boolean;
-    runtimeReady?: Promise<void>;
     starting?: (step: string) => void;
   } = {},
 ) {
@@ -780,7 +774,6 @@ async function initializeApplication(
     channels?: boolean;
     heartbeat?: boolean;
     rateLimit?: boolean;
-    runtimeReady?: Promise<void>;
     starting?: (step: string) => void;
   },
   diagnostics: {
@@ -855,28 +848,6 @@ async function initializeApplication(
   const admission = createWorkAdmission();
   const consumers = createWorkConsumers();
   const closing = new AbortController();
-  if (options.runtimeReady) await consumers.pause();
-  const runtimeReady =
-    options.runtimeReady?.then(() => {
-      if (!closing.signal.aborted) return consumers.resume();
-    }) ?? Promise.resolve();
-  void runtimeReady.catch(() => {});
-  async function prepareRuntime(signal: AbortSignal) {
-    const lifetime = AbortSignal.any([signal, closing.signal]);
-    lifetime.throwIfAborted();
-    let aborted: () => void;
-    try {
-      await Promise.race([
-        runtimeReady,
-        new Promise<never>((_, reject) => {
-          aborted = () => reject(lifetime.reason);
-          lifetime.addEventListener('abort', aborted, { once: true });
-        }),
-      ]);
-    } finally {
-      lifetime.removeEventListener('abort', aborted!);
-    }
-  }
   const privacyNotice = await loadPrivacyNoticeFile(process.env.NOD_PRIVACY_NOTICE_FILE);
   await mkdir(dataRoot, { recursive: true, mode: 0o700 });
   options.starting?.('database');
@@ -1380,7 +1351,6 @@ async function initializeApplication(
       await sweepArtifacts();
       await sweepExpiredTurns().catch((error) => logFailure('turn_lease_sweep', error));
       await tasks.wakeDue().catch((error) => logFailure('task_wake', error));
-      await vault.forgetExpiredHolds().catch((error) => logFailure('vault_expiry', error));
     },
     due: () => proactivity.due(),
   });
@@ -1508,49 +1478,16 @@ async function initializeApplication(
   vault = await createVault(pool, {
     signal: closing.signal,
     analytics: captureAnalytics,
-    refresh,
     keyStore: adapters.keyStore,
-    requestKey: Buffer.from(await credentialRequestKey(dataRoot), 'base64url'),
-    resume: resumeAfterCredentials,
-    retry: retryCredentials,
     inject: computer.injectCredentials,
     page: computer.currentPage,
-    signInMethods: computer.signInMethods,
-    selectSignInMethod: computer.selectSignInMethod,
-    checkMethods: async (turn, methods) => {
-      for (const { selector, page } of methods) {
-        const step = { action: 'click' as const, selector };
-        const verdict = await trust.check(
-          turn,
-          'NOD_browser',
-          browserStepArgs({ step, page, typed: [], subagent: false }),
-        );
-        if (verdict.confirm)
-          throw new Error(
-            'This control needs the normal browser confirmation before it can run. Choose only sign-in methods covered by the owner’s request.',
-          );
-      }
-    },
-    emailCode: (input, signal) => integrations.emailCode(ownerId, input, signal),
     icon,
-    passwordManager: adapters.passwordManager,
     onOwnerUse: (entry, client) => vaultAccess.ownerUse(entry, client),
-    onUse: (use, client) =>
-      vaultAccess.used(
-        { threadId: use.threadId, turnId: use.turnId },
-        {
-          origin: use.origin,
-          reason: use.reason,
-          ...(use.entryId ? { itemId: use.entryId } : {}),
-        },
-        client,
-      ),
   });
   const chatVerification = await createChatVerification(pool, {
     ownerId,
     present: communication.present,
     keyStore: adapters.keyStore,
-    submitCode: vault.submitChatCode,
     submitPayment: (turnId, code, paymentId) => payments.submitCode(turnId, code, paymentId),
     refresh,
   });
@@ -2295,7 +2232,7 @@ async function initializeApplication(
     turn: TurnRef,
     target: {
       origin: string;
-      kind: 'sign_in' | 'form';
+      kind: 'sign_in';
       account?: string;
       itemId?: string;
     },
@@ -2602,6 +2539,7 @@ async function initializeApplication(
       consumers,
       artifacts,
       writeArtifact: workspace.writeArtifact.bind(workspace),
+      workspaceAvailable: () => workspace.available?.() !== false,
       readArtifact: workspace.readArtifact.bind(workspace),
       cardImage: previews?.image ? (url, signal) => previews.image!(url, signal) : undefined,
       mapTile: previews?.mapTile
@@ -2610,7 +2548,6 @@ async function initializeApplication(
       mailCheck,
       executeConfirmation: approvals.executeConfirmed,
       stoppedOutcomes: approvals.stoppedOutcomes,
-      credentialRequestStatuses: vault.requestStatuses,
       bindVerificationQuestion: chatVerification.bindQuestion,
       reactToMessage: reactions.react,
       proactivity: proactivity.context,
@@ -3098,104 +3035,48 @@ async function initializeApplication(
         await show(image);
         return result;
       },
-      requestCredential: async (turn, input, admit) => {
-        if (input.kind === 'method') {
-          const origin = credentialOrigin(input.origin);
-          const access = await permitVault(turn, { origin, kind: 'sign_in' }, admit);
-          if ('question' in access) return { [appConfirmation]: access.question };
-          await admit?.(true);
-          return vault.request(turn, ownerId, {
-            origin,
-            label: input.label,
-            kind: 'method',
-            methods: input.methods,
-          });
-        }
-        const { savedLoginId, ...request } = input;
+      requestCredential: async (turn, { savedLoginId, ...request }, admit) => {
         const origin = credentialOrigin(request.origin);
-        if (request.kind === 'otp' && !request.emailCode) {
-          const login = await vault.authenticatorLogin(turn, ownerId, origin, savedLoginId);
-          if (login) {
-            const access = await permitVault(
-              turn,
-              {
-                origin,
-                kind: 'sign_in',
-                itemId: login.id,
-                account: [login.label, login.usernameHint].filter(Boolean).join(' · '),
-              },
-              admit,
-            );
-            if ('question' in access) return { [appConfirmation]: access.question };
-            if (await vault.fillAuthenticatorCode(turn, ownerId, login.id, request)) {
-              await vaultAccess.record(turn, {
-                action: 'code',
-                origin,
-                reason: access.reason,
-                itemId: login.id,
-                itemKind: 'login',
-                ...(access.basis ? { basis: access.basis } : {}),
-              });
-              return { filled: true as const };
-            }
-          }
-        }
-        const origins = credentialOrigins(origin);
-        const saved = (await vault.list(ownerId)).filter((entry) => origins.includes(entry.origin));
-        const chosen =
-          savedLoginId !== undefined
-            ? saved.find((entry) => entry.id === savedLoginId)
-            : saved.length === 1
-              ? saved[0]
-              : undefined;
+        const saved = async () =>
+          (await vault.list(ownerId)).filter((entry) =>
+            credentialOrigins(origin).includes(entry.origin),
+          );
+        const login =
+          request.kind === 'otp'
+            ? await vault.authenticatorLogin(turn, ownerId, origin, savedLoginId)
+            : await saved().then((entries) =>
+                savedLoginId !== undefined
+                  ? entries.find((entry) => entry.id === savedLoginId)
+                  : entries.length === 1
+                    ? entries[0]
+                    : undefined,
+              );
+        const handoff = async () => {
+          await admit?.(true);
+          return { handoff: true as const };
+        };
+        if (!login) return handoff();
         const access = await permitVault(
           turn,
           {
             origin,
-            kind:
-              request.kind === 'otp'
-                ? request.emailCode
-                  ? 'sign_in'
-                  : 'form'
-                : chosen
-                  ? 'sign_in'
-                  : 'form',
-            ...(chosen
-              ? {
-                  itemId: chosen.id,
-                  account: [chosen.label, chosen.usernameHint].filter(Boolean).join(' · '),
-                }
-              : {}),
+            kind: 'sign_in',
+            itemId: login.id,
+            account: [login.label, login.usernameHint].filter(Boolean).join(' · '),
           },
           admit,
         );
         if ('question' in access) return { [appConfirmation]: access.question };
-        const ask = async (entry: typeof request) => {
-          await admit?.(true);
-          return vault.request(turn, ownerId, entry);
-        };
-        const filled = async (itemId?: string) => {
-          await vaultAccess.record(turn, {
-            action: request.kind === 'otp' ? 'code' : 'sign_in',
-            origin,
-            reason: request.kind === 'otp' ? 'mailbox' : access.reason,
-            ...(itemId ? { itemId, itemKind: 'login' as const } : {}),
-            ...(access.basis ? { basis: access.basis } : {}),
-          });
-          return { filled: true as const };
-        };
-        if (request.kind === 'otp')
-          return (await vault.fillEmailCode(turn, ownerId, request)) ? filled() : ask(request);
-        if (savedLoginId !== undefined)
-          return (await vault.fillSaved(turn, ownerId, savedLoginId, request))
-            ? filled(savedLoginId)
-            : ask(request);
-        const selected = await vault.fillSelected(turn, ownerId, request);
-        if (selected) return filled();
-        if (selected === undefined && chosen) {
-          if (await vault.fillSaved(turn, ownerId, chosen.id, request)) return filled(chosen.id);
-        }
-        return ask(request);
+        if (!(await vault.fill(turn, ownerId, login.id, request))) return handoff();
+        await vaultAccess.record(turn, {
+          action: request.kind === 'otp' ? 'code' : 'sign_in',
+          origin,
+          reason: access.reason,
+          itemId: login.id,
+          itemKind: 'login',
+          ...(access.basis ? { basis: access.basis } : {}),
+        });
+        return { filled: true as const };
       },
       localFiles: localFiles.available,
       computerUse: computerUse.available,
@@ -3507,6 +3388,7 @@ async function initializeApplication(
     activity: activity.current,
     planningTasks: onboardingSuggestions.planning,
     computer,
+    saveLogin: (login) => vault.saveLogin(login),
     configuration: () => {
       const alternative = alternativeModel(adapters.models);
       return configuration({
@@ -3581,7 +3463,6 @@ async function initializeApplication(
     developerIds,
     turnTraceIds,
     start: welcome,
-    prepare: prepareRuntime,
     onboardingMissing: async () => (adapters.model.configured ? null : 'brain'),
     traces: adapters.traces?.available ?? false,
     onTraces: (enabled) => adapters.traces?.configure({ enabled }),
@@ -3829,7 +3710,6 @@ async function initializeApplication(
     const failures: unknown[] = [];
     for (const close of [
       () => adapters.integrationBrowser?.close(),
-      () => adapters.passwordManager?.close(),
       () => adapters.localSpeech?.close(),
       () => channels?.close(),
       () => activity.close(),

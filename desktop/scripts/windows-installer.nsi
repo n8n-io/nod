@@ -94,6 +94,9 @@ Function ${UN}CloseNod
     StrCpy $1 1
     Goto nod_check
   nod_closed:
+  System::Call 'Kernel32::SetEnvironmentVariable(t "NOD_INSTALL_DIR", t "$INSTDIR")i'
+  nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process -Filter 'Name=''postgres.exe''' | Where-Object { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$env:NOD_INSTALL_DIR + '\', 'OrdinalIgnoreCase') } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"`
+  Pop $0
   ClearErrors
 FunctionEnd
 !macroend

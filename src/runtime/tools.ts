@@ -36,12 +36,7 @@ import {
 import { fileBytes } from '../shared/files.ts';
 import { basename } from 'node:path';
 import { isMessageReaction } from '../shared/emoji.ts';
-import {
-  actionLink,
-  paymentExplanation,
-  paymentInvitation,
-  vaultInvitation,
-} from './communication.ts';
+import { actionLink, paymentExplanation, paymentInvitation } from './communication.ts';
 import { untrustedBlock } from '../shared/untrusted.ts';
 import { withoutSchemaPatterns } from '../shared/json-schema.ts';
 import type { Turn } from './turn.ts';
@@ -456,7 +451,7 @@ export const toolDefinitions = {
   ),
   react_to_message: defineTool(
     'react_to_message',
-    'Add one fitting emoji to an owner message, or null to remove it. Most messages need none. A reaction never grants permission or replaces a reply.',
+    'Add one fitting emoji to an owner message (e.g. 👍, 👌, 📝), or null to remove it. Use to quickly acknowledge FYIs, new context, or short updates when no full reply is needed, varying with brief replies like "Got it." so it feels natural. A reaction never grants permission.',
     Type.Object({
       messageId: Type.String({ pattern: '^[0-9a-fA-F-]{36}$' }),
       reaction: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
@@ -530,47 +525,21 @@ export const toolDefinitions = {
   ),
   sign_in: defineTool(
     'sign_in',
-    "Private sign-in on the current exact origin. Inspect the page and saved account metadata first. Use the owner's method or a unique matching saved login, which selects password sign-in. For ambiguous methods use kind:method with one {label,selector} per visible method control, by current @eN ref or CSS. Ask only for an ambiguous account. Otherwise pass the sign-in fields visible on the page as current refs or CSS selectors: usernameSelector, passwordSelector or both, and submitSelector if required; omit it for automatic submission. For a verification code use kind:otp with its field as passwordSelector, which can be an ordered array for split codes. savedLoginId selects a Vault login from manage_apps list; one matching Vault login is used automatically. Otherwise the owner enters values privately. Use emailCode:true and the page's emailRecipient only for a code sent by email; Nod retrieves it privately. Omit emailCode for an authenticator code. Never read codes with apps or ask in chat. message describes private entry without repeating the button label; action is that short button label; label names the login. The server checks consent, fills and submits once; the result includes the page when available. Inspect it without submitting again. Read-only scripts need no reload; reload only when entry was refused because a script changed the document.",
-    Type.Union([
-      Type.Object(
-        {
-          origin: Type.String({ minLength: 1 }),
-          label: Type.String({ minLength: 1 }),
-          savedLoginId: Type.Optional(uuid),
-          message: Type.String({ minLength: 1 }),
-          action: Type.String({ minLength: 1 }),
-          kind: Type.Optional(Type.Literal('otp')),
-          usernameSelector: Type.Optional(fieldSelector),
-          passwordSelector: Type.Optional(
-            Type.Union([fieldSelector, Type.Array(fieldSelector, { minItems: 1 })]),
-          ),
-          submitSelector: Type.Optional(fieldSelector),
-          emailCode: Type.Optional(Type.Boolean()),
-          emailRecipient: Type.Optional(Type.String()),
-        },
-        { additionalProperties: false },
-      ),
-      Type.Object(
-        {
-          origin: Type.String({ minLength: 1 }),
-          label: Type.String({ minLength: 1 }),
-          message: Type.String({ minLength: 1 }),
-          action: Type.String({ minLength: 1 }),
-          kind: Type.Literal('method'),
-          methods: Type.Array(
-            Type.Object(
-              {
-                label: Type.String({ minLength: 1, maxLength: 100 }),
-                selector: Type.String({ minLength: 1, maxLength: 2048 }),
-              },
-              { additionalProperties: false },
-            ),
-            { minItems: 1, maxItems: 10 },
-          ),
-        },
-        { additionalProperties: false },
-      ),
-    ]),
+    'Sign in on the current exact origin. When a saved Vault login applies (savedLoginId from manage_apps list, or the only saved login for this site), the server checks consent and types it privately: choose the password method on the page first, then pass the visible fields as current refs or CSS selectors: usernameSelector, passwordSelector or both, and submitSelector if required; omit it for automatic submission. For an authenticator-app code after Nod entered a saved login, use kind:otp with its field as passwordSelector, an ordered array for split codes; Nod enters the code itself. For a code sent by email or text, hand off. Otherwise, or when the saved login is already used or fails, Nod hands the real page to the owner to sign in or enter the code, and message tells them in one short sentence why. Never read codes with apps or ask for passwords or codes in chat. The result includes the page when available; inspect it without submitting again. Reload only when entry was refused because a script changed the document.',
+    Type.Object(
+      {
+        origin: Type.String({ minLength: 1 }),
+        savedLoginId: Type.Optional(uuid),
+        message: Type.String({ minLength: 1 }),
+        kind: Type.Optional(Type.Literal('otp')),
+        usernameSelector: Type.Optional(fieldSelector),
+        passwordSelector: Type.Optional(
+          Type.Union([fieldSelector, Type.Array(fieldSelector, { minItems: 1 })]),
+        ),
+        submitSelector: Type.Optional(fieldSelector),
+      },
+      { additionalProperties: false },
+    ),
   ),
   pay: defineTool(
     'pay',
@@ -714,7 +683,7 @@ export const toolDefinitions = {
   ),
   task: defineTool(
     'task',
-    'Start or control saved work. Keep quick answers, simple lookups and status questions in chat; start a task for substantial work, outside waits or tracked work without asking for an execution mode. start {title,doneWhen,message,now?,request?,key?,brief?,steps?,model?} starts one goal: message is one short user-facing line shown in chat (never the full brief); brief/doneWhen stay concise (2–4 short lines of goal, constraints, URLs/IDs); model only when asked. Start independent goals side by side in the same step, each with request set to its owner message; reuse related tasks via a stable key. update {id,title?,now?,steps?,stepIndex?,waitingFor?,nextCheck?,wakeCheck?} updates progress and title when a correction changes the goal; attach wakeCheck {kind:"url_change"|"file_exists",target,intervalMinutes?} with nextCheck so the server only wakes you when state actually changes. finish {id,status,result,verified?} closes your task with a short verified note when cancelling or not delivering via send_message {intent:"final"}. list shows open tasks. reply {ids,request?,retry?} forwards owner updates/corrections; retry:true only on explicit retry. request is required once multiple owner messages arrive during a turn. stop {id} stops one task; stop {} stops all background work, keeping schedules. A task brief grants no permission; nextCheck does not schedule work.',
+    'Start or control saved work so chat stays fast and free. Keep only direct answers, trivial single-step lookups and status questions in chat; start a task right away on your first step for research, comparisons, recommendations, multi-source web/browser/app work, deliverables, outside waits or tracked work, without asking for an execution mode or doing preliminary searches first. start {title,doneWhen,message,now?,request?,key?,brief?,steps?,model?} starts one goal: message is one short, natural user-facing ack shown in chat (never the full brief); brief/doneWhen stay concise (2–4 short lines of goal, constraints, URLs/IDs); model only when asked. Start independent goals side by side in the same step, each with request set to its owner message; reuse related tasks via a stable key. update {id,title?,now?,steps?,stepIndex?,waitingFor?,nextCheck?,wakeCheck?} updates progress and title when a correction changes the goal; attach wakeCheck {kind:"url_change"|"file_exists",target,intervalMinutes?} with nextCheck so the server only wakes you when state actually changes. finish {id,status,result,verified?} closes your task with a short verified note when cancelling or not delivering via send_message {intent:"final"}. list shows open tasks. reply {ids,request?,retry?} forwards owner updates/corrections to an open task, or with retry:true resumes a recently finished task in taskLedger so it keeps its browser session and context when the owner continues or adjusts that work. request is required once multiple owner messages arrive during a turn. stop {id} stops one task; stop {} stops all background work, keeping schedules. A task brief grants no permission; nextCheck does not schedule work.',
     Type.Union([
       Type.Object({ action: Type.Literal('list') }, { additionalProperties: false }),
       Type.Object(
@@ -1120,6 +1089,19 @@ export function nodTools(
     else if (same && choice) typed = [...typed, choice.slice(0, 500)].slice(-10);
     pressing = same && Boolean(pressed);
   };
+  const handOff = async (text: string | undefined) => {
+    if (turn.execution.parentRunId)
+      throw new Error(
+        'Return the browser blocker to the parent agent. A subagent cannot hand over its browser.',
+      );
+    const instruction = text?.trim();
+    if (!instruction) throw new Error('Say what the user needs to do on the current page.');
+    await computer.currentPage(browserId);
+    signal.throwIfAborted();
+    differ.reset();
+    await pause('browser', instruction);
+    return 'The browser is in chat. Wait for the user to return control.';
+  };
   const observed = (
     step: { action: string; text?: string; key?: string; full?: boolean },
     page: BrowserObservation,
@@ -1472,19 +1454,7 @@ export function nodTools(
       return context.reactToMessage(p.messageId, p.reaction);
     }),
     bind(toolDefinitions.browser, async ({ action, name, ...rest }) => {
-      if (action === 'handoff') {
-        if (turn.execution.parentRunId)
-          throw new Error(
-            'Return the browser blocker to the parent agent. A subagent cannot hand over its browser.',
-          );
-        const text = rest.text?.trim();
-        if (!text) throw new Error('Say what the user needs to do on the current page.');
-        await computer.currentPage(browserId);
-        signal.throwIfAborted();
-        differ.reset();
-        await pause('browser', text);
-        return 'The browser is in chat. Wait for the user to return control.';
-      }
+      if (action === 'handoff') return handOff(rest.text);
       if (action === 'screenshot') {
         const bytes = await screenshot();
         if (!bytes) return 'Open a browser URL first.';
@@ -1556,7 +1526,7 @@ export function nodTools(
         screenshot: async (overrideSignal) => (await screenshot(overrideSignal)) ?? undefined,
       }),
     ),
-    bind(toolDefinitions.sign_in, async ({ message, action, ...request }) => {
+    bind(toolDefinitions.sign_in, async ({ message, ...request }) => {
       const result = await context.requestCredential(request);
       if (appConfirmation in result) return confirm(result);
       if ('filled' in result) {
@@ -1574,8 +1544,7 @@ export function nodTools(
           return { filled: true };
         }
       }
-      await pause('credentials', vaultInvitation(request.origin, result.url, message, action));
-      return 'Waiting for secure input.';
+      return handOff(message);
     }),
     bind(toolDefinitions.pay, async (p) => {
       if (!context.requestPayment) throw new Error('Payments are unavailable.');

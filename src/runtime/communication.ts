@@ -20,23 +20,6 @@ export function actionLink(url: unknown, message: unknown) {
   return `[${plain(message)}](<${url}>)`;
 }
 
-export function vaultInvitation(
-  origin: string,
-  url: string | undefined,
-  message: string,
-  action: string,
-) {
-  const site = new URL(origin);
-  if (!['https:', 'http:'].includes(site.protocol) || site.username || site.password)
-    throw new Error('The sign-in site is unavailable.');
-  if (!url || !/^\/(?:vault|credentials)\/[A-Za-z0-9_-]{1,256}$/.test(url))
-    throw new Error('The Vault link is unavailable.');
-  const text = plain(message);
-  const label = plain(action);
-  if (!text || !label) throw new Error('Describe the secure step and its button.');
-  return `${text} [${label}](${url})`;
-}
-
 export function paymentExplanation(message: string) {
   const text = message.trim();
   if (!text) throw new Error('Describe the payment step.');

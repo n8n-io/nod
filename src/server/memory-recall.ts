@@ -38,6 +38,7 @@ export function createMemoryRecall(options: {
     pool: options.pool,
     ownerId: options.ownerId,
     standing: true,
+    includeTurns: false,
   });
   async function ask(
     instructions: string,
@@ -91,8 +92,7 @@ export function createMemoryRecall(options: {
         return bounded;
       });
     if (!notes.length && !recent.length && !context.relatedConversation?.length) return;
-    const fallback = await options.memory.find({ query: context.prompt });
-    const selectionDeadline = AbortSignal.timeout(1_000);
+    const planDeadline = AbortSignal.timeout(1_000);
     const parsed = planSchema.safeParse(
       options.curator.configured && canContinue()
         ? await ask(
@@ -105,7 +105,7 @@ export function createMemoryRecall(options: {
               notes: notes.map(({ path, text, status, fact }) => ({ path, text, status, fact })),
             },
             signal,
-            selectionDeadline,
+            planDeadline,
           )
         : undefined,
     );
@@ -113,7 +113,7 @@ export function createMemoryRecall(options: {
       ? parsed.data
       : {
           mode: 'recall' as const,
-          paths: fallback.map((note) => note.path),
+          paths: (await options.memory.find({ query: context.prompt })).map((note) => note.path),
           queries: [],
         };
     if (plan.mode === 'none') return;
@@ -132,46 +132,58 @@ export function createMemoryRecall(options: {
     const searches: MemoryBrief['searches'] = [];
     let truncated = false;
     const queries = [...new Set([context.prompt.slice(0, 4000), ...plan.queries])].slice(0, 5);
-    for (const query of queries) {
-      let cursor: string | undefined;
-      for (let page = 0; page < (plan.mode === 'aggregate' ? 5 : 1); page++) {
-        signal.throwIfAborted();
-        const result = await search({ query, cursor });
-        for (const message of result.messages) {
-          if (message.id === context.currentMessageId || unsafe(message.text)) continue;
-          if (plan.mode === 'personalize' && message.role !== 'user') continue;
-          if (messages.size >= 100 && !messages.has(message.id)) {
-            truncated = true;
-            continue;
-          }
-          messages.set(message.id, {
-            id: message.id,
-            role: message.role,
-            text: message.text.slice(0, 1200),
-            at: message.created_at.toISOString(),
-            shortened: message.shortened || message.text.length > 1200,
-          });
+    const collect = (query: string, result: Awaited<ReturnType<typeof search>>) => {
+      for (const message of result.messages) {
+        if (message.id === context.currentMessageId || unsafe(message.text)) continue;
+        if (plan.mode === 'personalize' && message.role !== 'user') continue;
+        if (messages.size >= 100 && !messages.has(message.id)) {
+          truncated = true;
+          continue;
         }
-        if (searches.at(-1)?.query === query) searches.pop();
-        searches.push({
-          query,
-          totalMatches: result.totalMatches,
-          complete: result.complete,
-          nextCursor: result.nextCursor,
+        messages.set(message.id, {
+          id: message.id,
+          role: message.role,
+          text: message.text.slice(0, 1200),
+          at: message.created_at.toISOString(),
+          shortened: message.shortened || message.text.length > 1200,
         });
-        if (!result.nextCursor || messages.size >= 100) break;
-        cursor = result.nextCursor;
       }
-      if (messages.size >= 100) break;
+      if (searches.at(-1)?.query === query) searches.pop();
+      searches.push({
+        query,
+        totalMatches: result.totalMatches,
+        complete: result.complete,
+        nextCursor: result.nextCursor,
+      });
+    };
+    if (plan.mode === 'aggregate') {
+      for (const query of queries) {
+        let cursor: string | undefined;
+        for (let page = 0; page < 5; page++) {
+          signal.throwIfAborted();
+          const result = await search({ query, cursor });
+          collect(query, result);
+          if (!result.nextCursor || messages.size >= 100) break;
+          cursor = result.nextCursor;
+        }
+        if (messages.size >= 100) break;
+      }
+    } else {
+      signal.throwIfAborted();
+      const results = await Promise.all(queries.map((query) => search({ query })));
+      for (let index = 0; index < queries.length; index++) {
+        collect(queries[index], results[index]);
+      }
     }
     let candidates = [...messages.values()];
+    const rankDeadline = AbortSignal.timeout(1_000);
     const ranked = rankSchema.safeParse(
       options.curator.configured && canContinue() && (facts.length || candidates.length)
         ? await ask(
             rankInstructions,
             { request, mode: plan.mode, notes: facts, messages: candidates },
             signal,
-            selectionDeadline,
+            rankDeadline,
           )
         : undefined,
     );

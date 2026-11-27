@@ -348,23 +348,17 @@ export function ApprovalCard({ approval, disabled = false, onAnswer, children }:
   );
 }
 
-export function CodeRequestCard({ kind }: { kind: 'otp' | 'payment' }) {
-  const otp = kind === 'otp';
+export function CodeRequestCard() {
   return (
-    <ActionCard
-      label={otp ? 'Waiting for a verification code' : 'Waiting for a security code'}
-      title={otp ? 'Verification code' : 'Card security code'}
-    >
+    <ActionCard label="Waiting for a security code" title="Card security code">
       <div className="code-card-slots" aria-hidden="true">
-        {Array.from({ length: otp ? 6 : 3 }, (_, index) => (
+        {Array.from({ length: 3 }, (_, index) => (
           <span key={index} />
         ))}
       </div>
       <p className="code-card-hint">
         <ArrowDown size={16} aria-hidden="true" />
-        {otp
-          ? 'Send the code by itself in the message box. Nod enters it privately and hides it in this chat.'
-          : 'Send the 3- or 4-digit code from your card by itself in the message box.'}
+        Send the 3- or 4-digit code from your card by itself in the message box.
       </p>
     </ActionCard>
   );

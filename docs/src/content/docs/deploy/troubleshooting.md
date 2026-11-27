@@ -117,16 +117,17 @@ Before another import, Nod removes a partial disk only from a generated folder n
 
 Startup repairs the private computer instead of stopping:
 
+- If the workspace or browser stops right after it starts, Nod deletes its container images and loads them again from the runtime files. It does this once per start. Your data stays.
 - If WSL no longer lists a completed computer, Nod registers its saved disk again. Your data stays.
 - If that disk is gone or WSL can't open it, Nod sets up a new computer and leaves the old disk where it was.
-- If the saved configuration is missing, damaged or invalid while WSL still lists the computer, Nod can't open its database. It removes that computer, which deletes its data, and sets up a new one.
-- If WSL lists the computer but still reports it as installing or uninstalling, its disk is unfinished. Nod removes it, which deletes its data, and sets up a new one.
+- If the saved configuration is missing, damaged or invalid while WSL still lists the computer, Nod can't open it. It removes that computer, which deletes its workspace files, and sets up a new one. Conversations and settings stay in your database, unless its data had not moved out of that computer yet.
+- If WSL lists the computer but still reports it as installing or uninstalling, its disk is unfinished. Nod removes it, which deletes its workspace files, and sets up a new one.
 
 If setup needs more disk space, select a folder on another drive or free space. A different folder on the same drive still needs space for both the setup files and the private computer. Nod keeps a verified download for the next attempt.
 
 On a Mac, setup keeps runtime files that passed their checks, even if a later download fails. **Try again** checks and reuses those files. It does not remove a verified image while the private computer loads it.
 
-On Windows, database errors show whether PostgreSQL stopped, reached a memory limit, or failed its TCP check inside WSL. If PostgreSQL answers inside WSL, the error names the Windows connection that failed. Open **Technical details** to read the original error, its code, its stack, and available native command output. These details also appear in the startup log. Saved secrets are removed.
+Database errors name the step that failed: reading its saved settings (`NOD_DATABASE_STATE_INVALID`), finding free disk space (`NOD_DATABASE_STORAGE_FULL`), creating the database (`NOD_DATABASE_SETUP_FAILED`), starting it (`NOD_DATABASE_START_FAILED`), connecting to it (`NOD_DATABASE_CONNECTION_FAILED`), or moving data out of the private computer (`NOD_DATABASE_MOVE_FAILED`). A failed move changes nothing; select **Try again** or open Nod again to retry it. Before a move, Nod checks for free disk space of about twice the data's size plus 256 MB and reports `NOD_DATABASE_STORAGE_FULL` when there isn't enough. Open **Technical details** to read the original error, its code, its stack, the last lines of the database log and available native command output. These details also appear in the startup log. Saved secrets are removed.
 
 During use, Nod waits up to 30 seconds for each query reply after it gets a database connection. The wait for a connection has a separate timeout. If the connection stops returning data, Nod closes it and reports the failure. Nod does not repeat the failed work. After the connection is restored, a new request can use a new connection. Check the result of an action before you ask Nod to do it again.
 
@@ -148,15 +149,15 @@ Nod versions before 0.7.0 on Windows can't install their own updates. Quit Nod f
 
 ### Windows says WSL is missing
 
-Nod says it could not start WSL 2 when WSL is missing, when Windows has not turned on its virtual machine feature, or when WSL needs an update. The message ends with the error from Windows, in your language.
+Nod needs WSL 2 only for its workspace and browser. Chat, apps, memory and schedules work without it. Nod says it could not start WSL 2 when WSL is missing, when Windows has not turned on its virtual machine feature, or when WSL needs an update. The message ends with the error from Windows, in your language.
 
-Select **Install WSL** in Nod, approve the administrator request, restart the PC and open Nod again. This installs or updates WSL and turns on the features it needs. A device policy can block WSL installation. If the Windows error says virtualization is turned off, turn it on in your PC's firmware settings first.
+When WSL is missing, Nod starts installing it once after setup. Approve the administrator request, then restart the PC. If you declined or the install failed, select **Install WSL** in Nod's notice. This installs or updates WSL and turns on the features it needs. A device policy can block WSL installation. If the Windows error says virtualization is turned off, turn it on in your PC's firmware settings first.
 
 A recognized WSL location conflict, access error, or import error keeps its specific cause. These errors do not offer **Install WSL**.
 
-### PostgreSQL fails after a Mac VM kernel update
+### Moving data fails after a Mac VM kernel update
 
-Ubuntu kernels `7.0.0-42` and `7.0.0-43` can block signals inside containers. The PostgreSQL user-switch process then waits forever, and Nod reports `NOD_DATABASE_CONNECTION_FAILED`.
+Ubuntu kernels `7.0.0-42` and `7.0.0-43` can block signals inside containers. When Nod starts the old PostgreSQL inside the private computer to move your data, its user-switch process then waits forever, and Nod reports `NOD_DATABASE_MOVE_FAILED`.
 
 Install a Nod build with the container profile repair, then quit and reopen Nod. The repair keeps AppArmor active and preserves the database volume. It also prevents further automatic kernel changes and VM restarts. A restart alone does not repair the old profile. Do not delete the VM or database to fix this failure.
 

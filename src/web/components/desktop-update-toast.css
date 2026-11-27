@@ -1,13 +1,28 @@
-.desktop-update-toast {
+.desktop-toasts {
+  --toast-top: calc(var(--page-top) + var(--shell-heading-height) + 16px);
   position: fixed;
   z-index: 40;
+  top: var(--toast-top);
   right: 24px;
-  bottom: 24px;
+  display: grid;
+  gap: 12px;
+  justify-items: end;
+  max-height: calc(100dvh - var(--toast-top) - 16px);
+  overflow-y: auto;
+}
+:root[data-desktop='true'] .desktop-toasts {
+  --toast-top: calc(
+    var(--desktop-titlebar-height) + var(--page-top) + var(--shell-heading-height) + 16px
+  );
+}
+.desktop-toasts:empty {
+  display: none;
+}
+.desktop-update-toast {
   display: flex;
   gap: 12px;
   width: min(360px, calc(100vw - 32px));
-  max-height: calc(100dvh - 48px);
-  overflow-y: auto;
+
   padding: 16px;
   border: 1px solid var(--border);
   border-radius: var(--card-radius);
@@ -54,12 +69,8 @@
   gap: 8px;
   margin-top: 12px;
 }
-body:has(.feedback-toast) .desktop-update-toast {
-  bottom: 92px;
-}
 @media (max-width: 480px) {
-  .desktop-update-toast {
+  .desktop-toasts {
     right: 16px;
-    bottom: 16px;
   }
 }

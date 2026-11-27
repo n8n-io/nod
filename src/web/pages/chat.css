@@ -767,7 +767,7 @@ button.message-work:is(:hover, :focus-visible) {
 }
 .chat-page .message .message-text {
   font-size: var(--text-body);
-  line-height: 1.6;
+  line-height: 1.5;
   font-kerning: normal;
   font-variant-ligatures: common-ligatures;
 }
@@ -803,7 +803,7 @@ button.message-work:is(:hover, :focus-visible) {
   overflow-wrap: normal;
 }
 .chat-page .message .message-text strong {
-  font-weight: 500;
+  font-weight: 700;
 }
 .chat-page .message .message-text h1,
 .chat-page .message .message-text h2,

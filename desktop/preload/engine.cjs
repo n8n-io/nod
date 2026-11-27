@@ -52,6 +52,9 @@ const localRuntime = remote
         return () => ipcRenderer.removeListener('nod:status', receive);
       },
       prepare: (options) => invoke('nod:prepare', options),
+      installWsl: () => invoke('nod:runtime:install-wsl'),
+      importRuntime: () => invoke('nod:runtime:import'),
+      chooseComputerDirectory: () => invoke('nod:runtime:choose-folder'),
       setup: () => invoke('nod:setup:get'),
       completePreferences: () => invoke('nod:setup:preferences'),
       reconcileSetup: () => invoke('nod:setup:reconcile'),

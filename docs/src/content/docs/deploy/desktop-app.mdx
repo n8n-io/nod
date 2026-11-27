@@ -40,10 +40,10 @@ The server owns account onboarding. Electron owns device preferences and local s
 | State                                               | Owner                     |
 | --------------------------------------------------- | ------------------------- |
 | Account onboarding and model connections            | The connected server      |
-| Theme, notifications and launch at login            | The desktop app           |
+| Theme, notifications, sound and launch at login     | The desktop app           |
 | Device setup progress and local runtime preparation | The local desktop profile |
 
-The web app selects a browser, remote desktop or local desktop adapter from the preload contract. Contract version 1 names the desktop mode. Only local mode exposes runtime preparation, device setup and setup reconciliation. Preference changes use a separate command that accepts only theme, notifications and launch at login. Native handlers check the owning main frame and mode before a command runs.
+The web app selects a browser, remote desktop or local desktop adapter from the preload contract. Contract version 1 names the desktop mode. Only local mode exposes runtime preparation, device setup and setup reconciliation. Preference changes use a separate command that accepts only theme, notifications, notification sound and launch at login. Native handlers check the owning main frame and mode before a command runs.
 
 ```mermaid
 flowchart LR
@@ -65,33 +65,33 @@ Desktop settings format 2 stores device setup progress without account completio
 ```mermaid
 flowchart LR
   window[Nod window]:::accent -- per-launch token --> server[Nod server<br/>Electron]
+  server --> db[(PostgreSQL)]
   server --> provider[Model provider]:::muted
   subgraph computer [Private Linux computer]
-    db[(PostgreSQL)]
     workspace[Workspace<br/>container]
     browser[Browser<br/>container]
   end
-  server --> db
   server --> workspace
   server --> browser
 ```
 
+Your data lives in PostgreSQL, which runs on your computer next to the Nod server. Chat, connected apps, memory, schedules, Telegram and WhatsApp need only these two. The private Linux computer runs code and web pages in isolation, so only the workspace and browser need it. It starts in the background, and chat doesn't wait for it, except once while Nod moves data that is still inside the private computer.
+
 <Tabs syncKey="os">
 <TabItem label="Mac" icon="apple">
 
-- Electron runs the app window and the Nod server. While you use 1Password, a separate helper talks to the 1Password app; it's the only Nod process allowed to load 1Password's library.
+- Electron runs the app window and the Nod server.
 - When you turn on [computer use](/connect/computer-use/), which is experimental, Nod runs [agent-desktop](https://github.com/vercel-labs/agent-desktop) by Vercel Labs, bundled in the app, to read app windows through macOS accessibility and act on them in the background where it can, bringing an app forward for some steps. Nod runs one command at a time, keeps its working files in Nod's private profile folder, and needs the Accessibility and, for window pictures, Screen Recording permissions you grant in System Settings.
 - Lima and Apple's Virtualization framework run a private Ubuntu virtual machine. New installations use Ubuntu 26.04 LTS, including the systemd fixes for a [first-boot login-session race](https://github.com/lima-vm/lima/issues/5570) that could otherwise stall startup for several minutes. Existing installations keep their guest and data. The VM gets half your memory, between 3 and 6 GiB, and a 24 GiB disk that grows as it's used. Its first boot installs the matching firewall packages from the runtime pack, and uses Ubuntu's package servers only if that installation fails.
-- The VM holds PostgreSQL and separate workspace and browser containers. Docker runs only inside the VM.
+- The VM holds separate workspace and browser containers. Docker runs only inside the VM.
 - The VM keeps automatic security updates for other packages. Automatic updates cannot replace its Linux kernel, GRUB, or shim, or restart the VM. Kernel security fixes need a tested, explicit upgrade. A new runtime pack does not upgrade an existing VM's kernel.
-- At each start, Nod loads its container protection before it starts PostgreSQL. The profile keeps Docker's restrictions and permits signals and process tracing with the exact `docker-default//&unconfined` stacked peer. This repairs the [Ubuntu kernel regression](https://github.com/containerd/containerd/issues/14485) without disabling AppArmor or its namespace restrictions. Existing installations receive the repair and keep their data.
+- At each start, Nod loads its container protection before it starts any container. The profile keeps Docker's restrictions and permits signals and process tracing with the exact `docker-default//&unconfined` stacked peer. This repairs the [Ubuntu kernel regression](https://github.com/containerd/containerd/issues/14485) without disabling AppArmor or its namespace restrictions. Existing installations receive the repair and keep their data.
 
 </TabItem>
 <TabItem label="Windows" icon="seti:windows">
 
-- Electron runs the app window and the Nod server. While you use 1Password, a separate helper talks to the 1Password app.
-- A private WSL 2 distribution named `nod-<profile>` holds PostgreSQL and separate workspace and browser containers. Docker runs only inside it.
-- Nod reaches PostgreSQL through WSL's localhost forwarding, on a loopback port it picks free at each launch.
+- Electron runs the app window and the Nod server.
+- A private WSL 2 distribution named `nod-<profile>` holds separate workspace and browser containers. Docker runs only inside it.
 - Nod doesn't change your default WSL distribution or global WSL settings.
 - [Computer use](/connect/computer-use/), experimental here, runs the bundled agent-desktop through Windows UI Automation. It needs no permission, and can't operate apps that run as administrator.
 
@@ -99,7 +99,7 @@ flowchart LR
 <TabItem label="Linux (preview)" icon="linux">
 
 - A Flatpak runs Electron, the Nod server and the same Lima runtime as the Mac, with QEMU and KVM instead of Apple's Virtualization framework. Install the [Linux x64 preview](/get-started/install-desktop/#linux), or [build the Flatpak](/contribute/desktop-releases/#build-a-linux-flatpak).
-- The VM, its firewall rules, container protection and the PostgreSQL, workspace and browser containers are the same as on a Mac. Docker runs only inside the VM, and Nod never uses a Docker installation on your computer.
+- The VM, its firewall rules, container protection and the workspace and browser containers are the same as on a Mac. Docker runs only inside the VM, and Nod never uses a Docker installation on your computer.
 - Nod needs `/dev/kvm`. Without hardware virtualization it refuses to start its private computer rather than fall back to slow emulation.
 - The VM files live in `~/.nod-desktop`, as on a Mac. Saved keys use your desktop's Secret Service, such as GNOME Keyring or KWallet; Nod refuses to save keys when no secret store is available.
 - A Flatpak installed from a Nod repository updates itself through the Flatpak portal, once such a repository is published; none is yet. A Flatpak installed from a bundle file has no repository, so install the next release bundle to update it. An RPM install shows a notice that says to run `sudo dnf upgrade nod`, but the command needs a `dnf` package repository, which is not published yet. See [Update Nod](/get-started/install-desktop/#update-nod).
@@ -111,15 +111,23 @@ flowchart LR
 
 The workspace and browser have separate networks, no access to your home folder, no Docker socket and no model keys. Model requests go to the provider you connect, or to a [local model](/connect/local-models/) server you run.
 
+## Your database
+
+The app includes PostgreSQL 17 for Mac, Windows and Linux. Nod creates the database in the profile's `database` folder on first launch, which takes about a second. It listens only on `127.0.0.1`, on a port Nod picks at each launch, and needs a password that stays in the profile folder. Nod starts it before the server and stops it when you quit. If Nod quit unexpectedly, the next launch stops the old database process first.
+
+If a profile's data is still inside the private computer, Nod moves it once. It starts the private computer, copies every table into the new database in one transaction, and checks that each table has the same number of rows. Only then does Nod use the new database. Before copying, Nod checks for free disk space of about twice the data's size plus 256 MB. If the copy fails, nothing changes; select **Try again** or open Nod again to retry. The old database stays on the private computer's disk.
+
+When the private computer can't start, Nod keeps running. A tool that needs the workspace or browser waits while the computer starts, or reports why it can't. Nod shows the cause with **Try again**, or **Install WSL** on Windows.
+
 ## Onboarding during startup
 
-On a new desktop profile, choose **Get started** to start a local assistant or **Connect to a server**. The private computer and its database start in the background as soon as the welcome screen opens, so they are often ready by the time you continue. On a new profile with no saved keys, Nod's own service starts then too. When the profile has saved keys, the service, and any request to unlock them, waits until you select **Get started**. If the service is still starting when you continue, Nod already shows the email step and turns on its Connect buttons when the service is ready. Choosing a server stops the local computer when the app restarts. Nod waits for PostgreSQL and the server when needed, then continues at the email step. Email is offered before model selection and can be skipped. The workspace and browser continue starting during onboarding. A model is required to finish local desktop setup, and Nod tries to turn on Open at login when setup finishes. Usage data sharing is on by default for a new profile and can be turned off in **Settings → Privacy & data**. Conversation traces, other apps, Telegram and WhatsApp are optional.
+On a new desktop profile, choose **Get started** to start a local assistant or **Connect to a server**. The database and the private computer start as soon as the welcome screen opens. The database is ready in seconds; the private computer keeps starting in the background. On a new profile with no saved keys, Nod's own service starts then too. When the profile has saved keys, the service, and any request to unlock them, waits until you select **Get started**. If the service is still starting when you continue, Nod already shows the email step and turns on its Connect buttons when the service is ready. Choosing a server stops the local computer when the app restarts. Nod waits for the database and the server when needed, then continues at the email step. Email is offered before model selection and can be skipped. Onboarding never waits for the workspace or browser, and chat opens as soon as setup finishes. A model is required to finish local desktop setup, and Nod tries to turn on Open at login when setup finishes. Usage data sharing is on by default for a new profile and can be turned off in **Settings → Privacy & data**. Conversation traces, other apps, Telegram and WhatsApp are optional.
 
 Before the server starts, the native window saves only the usage data setting and whether Welcome was completed. After the ordinary account API accepts that choice, Nod records its acknowledgment. The email step preview stays visible until the main window can show its account choices or an actionable error. That handoff does not wait for the full app catalog, workspace or browser. A restart does not repeat Welcome or overwrite the saved analytics choice; the temporary marker is removed when device setup progress is saved. Sign-ins, keys and connections use the normal server and storage from the beginning; there is no separate setup backend or credential transfer. The first chat opens with a short greeting and idea cards, under the normal chat and memory rules.
 
 When local setup finishes, Nod tries to turn on Open at login and checks it with the operating system. On Linux, Open at login adds `io.n8n.Nod.desktop` to your autostart folder, `$XDG_CONFIG_HOME/autostart` or `~/.config/autostart`. In the Flatpak the entry runs `flatpak run io.n8n.Nod`; in the RPM it runs `nod`. If the operating system blocks this setting, setup still finishes. A restart does not repeat this attempt. A settings storage error still requires a retry. You can turn it off in **Settings → General**. The first stored chat introduction offers an explicit choice to enable notifications. Rendering the introduction does not change the saved preference. macOS may ask for permission; your system settings control delivery. Existing notification choices are preserved. Enabling delivery does not authorize app monitoring or scheduled work. If alerts are blocked, allow Nod in the computer’s notification settings. The web app uses the same onboarding. A completed installation keeps its choices and skips onboarding after an update.
 
-If the user finishes first, an animated Nod logo stays visible until the workspace and browser are ready and completion has been saved. If the services are already ready, chat opens directly without a preparation screen. Runtime failures offer an explicit retry without clearing saved connections. The logo uses the same bounce as Welcome while work continues and pauses on an error. While the runtime pack downloads, the logo's dot travels around its ring as the download progresses, and the screen shows the percentage and the time left, estimated from the last 45 seconds. If no data arrives for five seconds, the dot fades and the screen says Nod is waiting for the network. The Dock icon, or the taskbar button on Windows, shows the same progress. On a Mac, the Dock icon bounces once when Nod is ready for you to carry on, if you're using another app. Assistive technology reads the same progress. The screen groups detailed startup events into a few messages, while diagnostics keep the individual stages. If completion reports a missing setup requirement, onboarding returns to the relevant step. If notifications are enabled and Nod is not focused, a single notification announces when setup is ready.
+If you finish before the server is ready, an animated Nod logo stays visible until it is ready and completion has been saved. Otherwise chat opens directly. After an update from a version that kept the database inside the private computer, the logo stays until the private computer has started and the data has moved. Database and server failures offer an explicit retry without clearing saved connections. The logo uses the same bounce as Welcome while work continues and pauses on an error. While the runtime pack downloads during that move, the logo's dot travels around its ring as the download progresses, and the screen shows the percentage and the time left, estimated from the last 45 seconds. If no data arrives for five seconds, the dot fades and the screen says Nod is waiting for the network. The Dock icon, or the taskbar button on Windows, shows the same progress. On a Mac, the Dock icon bounces once when Nod is ready for you to carry on, if you're using another app. Assistive technology reads the same progress. The screen groups detailed startup events into a few messages, while diagnostics keep the individual stages. If completion reports a missing setup requirement, onboarding returns to the relevant step. If notifications are enabled and Nod is not focused, a single notification announces when setup is ready.
 
 ## The runtime pack
 
@@ -153,30 +161,33 @@ App connections use Nod's connection service. The private installation identity 
 <Tabs syncKey="os">
 <TabItem label="Mac" icon="apple">
 
-| What                            | Where                                                 |
-| ------------------------------- | ----------------------------------------------------- |
-| App settings and profile        | `~/Library/Application Support/nod/profiles/local`    |
-| Private VM, database, workspace | `~/.nod-desktop/<profile>`                            |
-| Runtime packs                   | `~/Library/Application Support/nod/runtime/<release>` |
+| What                     | Where                                                       |
+| ------------------------ | ----------------------------------------------------------- |
+| App settings and profile | `~/Library/Application Support/nod/profiles/local`          |
+| Database                 | `~/Library/Application Support/nod/profiles/local/database` |
+| Private VM and workspace | `~/.nod-desktop/<profile>`                                  |
+| Runtime packs            | `~/Library/Application Support/nod/runtime/<release>`       |
 
 </TabItem>
 <TabItem label="Windows" icon="seti:windows">
 
-| What                          | Where                            |
-| ----------------------------- | -------------------------------- |
-| App settings and profile      | `%APPDATA%\nod\profiles\local`   |
-| Private computer and database | WSL distribution `nod-<profile>` |
+| What                     | Where                                   |
+| ------------------------ | --------------------------------------- |
+| App settings and profile | `%APPDATA%\nod\profiles\local`          |
+| Database                 | `%APPDATA%\nod\profiles\local\database` |
+| Private computer         | WSL distribution `nod-<profile>`        |
 
 Windows file permissions protect the profile folder. Uninstalling removes the app but keeps the profile and the distribution.
 
 </TabItem>
 <TabItem label="Linux (preview)" icon="linux">
 
-| What                            | Where                                                                                                        |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| App settings and profile        | `~/.var/app/io.n8n.Nod/config/nod/profiles/local`                                                            |
-| Private VM, database, workspace | `~/.nod-desktop/<profile>`                                                                                   |
-| Runtime packs                   | `$XDG_DATA_HOME/nod/runtime/<release>`, or `~/.var/app/io.n8n.Nod/data/nod/runtime/<release>` in the Flatpak |
+| What                     | Where                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| App settings and profile | `~/.var/app/io.n8n.Nod/config/nod/profiles/local`                                                            |
+| Database                 | `~/.var/app/io.n8n.Nod/config/nod/profiles/local/database`                                                   |
+| Private VM and workspace | `~/.nod-desktop/<profile>`                                                                                   |
+| Runtime packs            | `$XDG_DATA_HOME/nod/runtime/<release>`, or `~/.var/app/io.n8n.Nod/data/nod/runtime/<release>` in the Flatpak |
 
 To remove Nod completely, choose **Remove all data** first, then run `flatpak uninstall --delete-data io.n8n.Nod`. If you only uninstall, the private computer stays in `~/.nod-desktop` and the runtime packs stay too. `--delete-data` removes the runtime packs along with the rest of the app's data directory.
 
@@ -254,12 +265,12 @@ If a manual update check fails, choose **Try again** or **Not now** and keep usi
 
 The Windows app has a few extra needs.
 
-| Need    | Detail                                                                                      |
-| ------- | ------------------------------------------------------------------------------------------- |
-| System  | Windows 11 x64 with hardware virtualization                                                 |
-| WSL     | WSL 2 with default localhost forwarding or mirrored networking. Nod offers **Install WSL**. |
-| Disk    | At least 20 GB free                                                                         |
-| Signing | Signed by n8n GmbH. SmartScreen can still warn about a new release.                         |
+| Need    | Detail                                                                                                                                                                 |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| System  | Windows 11 x64 with hardware virtualization                                                                                                                            |
+| WSL     | WSL 2 for the workspace and browser. When it's missing, Nod installs it once after setup; approve the administrator request and restart the PC. Chat works without it. |
+| Disk    | At least 20 GB free                                                                                                                                                    |
+| Signing | Signed by n8n GmbH. SmartScreen can still warn about a new release.                                                                                                    |
 
 Inside Nod's distribution, drive mounts and Windows process access are turned off. Closing the window keeps Nod in the tray. **Quit Nod** stops only its own distribution.
 
@@ -306,6 +317,8 @@ The packaged engine includes only the packages in `dependencies` and what they d
 | Run the app without packaging       | `pnpm run desktop:dev`                                                                   |
 | Replay onboarding                   | `pnpm --dir desktop start --onboarding`                                                  |
 | Use a fresh, throwaway profile      | `NOD_DESKTOP_USER_DATA=/tmp/nod-onboarding-review pnpm --dir desktop start --onboarding` |
+
+The first unpackaged start downloads the PostgreSQL build for your computer into `postgres/` at the repository root, checks its SHA-256 and reuses it afterwards. Packaged builds include it.
 
 `NOD_DESKTOP_USER_DATA` works in development and in the deliberately marked [isolated test build](/contribute/desktop-releases/#test-a-local-mac-build). Normal packaged apps always use their own profile.
 

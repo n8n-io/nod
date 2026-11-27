@@ -14,7 +14,6 @@ import { turnOrigin } from './approvals.ts';
 import { turnChainSql } from './turn-chain.ts';
 import { credentialOrigin, VaultError } from './vault.ts';
 
-type Kind = 'sign_in' | 'form';
 type Row = {
   id: string;
   at: Date;
@@ -143,28 +142,11 @@ export async function createVaultAccess(
     await log(await root(turn, database), entry, database);
   }
 
-  async function used(
-    turn: TurnRef,
-    entry: { origin: string; reason: 'entered' | 'picked'; itemId?: string },
-    database: Pool | PoolClient = pool,
-  ) {
-    await log(
-      await root(turn, database),
-      {
-        action: 'sign_in',
-        origin: entry.origin,
-        reason: entry.reason,
-        ...(entry.itemId ? { itemId: entry.itemId, itemKind: 'login' as const } : {}),
-      },
-      database,
-    );
-  }
-
   async function authorize(
     turn: TurnRef,
     target: {
       origin: string;
-      kind: Kind;
+      kind: 'sign_in';
       account?: string;
       itemId?: string;
     },
@@ -174,7 +156,6 @@ export async function createVaultAccess(
     const work = await turnOrigin(turn.turnId);
     if (!work) throw new Error('This turn is no longer running.');
     const chain = await root(turn);
-    if (target.kind === 'form') return { ok: true, reason: 'entered' };
     const args = {
       origin,
       kind: target.kind,
@@ -210,7 +191,7 @@ export async function createVaultAccess(
     const { origin } = z
       .object({
         origin: z.string().max(2048),
-        kind: z.enum(['sign_in', 'form']).optional(),
+        kind: z.literal('sign_in').optional(),
         itemId: z.string().max(100).optional(),
       })
       .strict()
@@ -374,7 +355,6 @@ export async function createVaultAccess(
     ownerUse,
     authorize,
     record,
-    used,
     allow,
     activity,
     within,

@@ -17,7 +17,6 @@ import type {
   IntegrationEvent,
   IntegrationService,
   IntegrationSession,
-  VerificationEmail,
 } from '../src/ports/integrations.ts';
 import { runProcess } from '../src/providers/process.ts';
 import { fixtureChannelCredentials } from './e2e-channels.ts';
@@ -803,7 +802,6 @@ export function createIntegrationFixture(
     }
   >();
   const sessions = new Map<string, IntegrationSession>();
-  const verificationMail = new Map<SignupVariant, VerificationEmail>();
   const accountEmail = (account: { service: IntegrationService; number: number }) =>
     options.data && ['gmail', 'googlecalendar'].includes(account.service)
       ? options.data.accountEmail
@@ -1498,19 +1496,6 @@ export function createIntegrationFixture(
           }
         : { active: false, service: 'unknown' };
     },
-    async verificationEmails(accountId, query, signal) {
-      signal.throwIfAborted();
-      const account = accounts.get(accountId);
-      if (!options.signup || !account?.active || account.service !== 'gmail') return;
-      const messages = [...verificationMail.values()].filter(
-        (message) =>
-          message.recipients.includes(query.recipient) &&
-          message.receivedAt >= query.after &&
-          message.receivedAt <= query.before,
-      );
-      audit('fixture_signup_mailbox_read', { matched: messages.length === 1 });
-      return messages;
-    },
     async deleteAccount(id) {
       accounts.delete(id);
     },
@@ -1588,19 +1573,6 @@ export function createIntegrationFixture(
           timestamp: message.date,
         },
       };
-    },
-    signupCodeSent(alternate: boolean) {
-      if (!options.signup) return;
-      const variant = alternate ? 'alternate' : 'base';
-      const input = fixtureSignup[variant];
-      verificationMail.set(variant, {
-        id: randomUUID(),
-        receivedAt: Date.now(),
-        sender: 'verify@transactional.example.com',
-        recipients: [input.recipient],
-        authenticatedDomain: 'example.com',
-        text: `Your email verification code is ${input.code}.`,
-      });
     },
     register(app: FastifyInstance) {
       app.addHook('onSend', async (_request, _reply, payload) => {

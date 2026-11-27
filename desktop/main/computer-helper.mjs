@@ -806,6 +806,11 @@ export function createComputerHelper({
 
   async function keyboardFocus(request) {
     const at = check(request.ref, ref, 'ref');
+    if (await hasFocus(at)) return { ...request, noSecureFocus: true };
+    if (request.keepFocus)
+      throw new Error(
+        'STALE_REF: That field lost keyboard focus since this step was checked, so Nod typed nothing.',
+      );
     const focus = await guarded(request, focusArgs(at)).catch((error) => {
       if (
         error.delivery !== 'not_delivered' ||

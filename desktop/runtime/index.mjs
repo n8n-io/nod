@@ -19,6 +19,7 @@ import { cpus as hostCpus, homedir, totalmem } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pipeline } from 'node:stream/promises';
+import { moveDatabase } from './database.mjs';
 import { guestConfiguration, protectGuest, protectNetworks } from './guest-config.mjs';
 import {
   assetHash,
@@ -30,7 +31,6 @@ import {
 export { installRuntimeArchive } from './assets.mjs';
 
 const preparing = new Map();
-const storageReady = new Map();
 const shellQuote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 
 async function fileHash(path) {
@@ -566,7 +566,8 @@ async function prepare(options, onComputerStart, progress = {}) {
     signal,
     status,
     prepareImage,
-    onStorageReady: options.onStorageReady,
+    database: options.database,
+    onMoved: options.onMoved,
     runtimeReady: runtimeAssets.done,
   });
 }
@@ -735,62 +736,35 @@ export async function replaceContainer(
   }
 }
 
-export async function finishRuntime({
-  dataRoot,
-  resourcesPath,
-  assets,
-  manifest,
+export function computerNames(dataRoot) {
+  const root = resolve(dataRoot);
+  const identity = createHash('sha256')
+    .update(process.platform === 'win32' ? root.toLowerCase() : root)
+    .digest('hex')
+    .slice(0, 12);
+  return {
+    workspace: `nod-workspace-${identity}`,
+    browser: `nod-browser-${identity}`,
+    postgres: `nod-postgres-${identity}`,
+  };
+}
+
+async function moveComputerDatabase({
+  database,
+  names,
   identity,
   saved,
-  controlRoot,
-  docker,
-  path,
   dockerEnvironment,
   runDocker,
-  runGuest,
+  image,
+  images,
   signal,
   status,
-  prepareImage,
-  onStorageReady,
-  runtimeReady,
 }) {
-  status('starting', 'Preparing secure storage and tools…', 'storage');
-  const images = {};
-  const loadImage = (name) => {
-    images[name] = Promise.resolve().then(() => prepareImage?.(name));
-    images[name].catch(() => {});
-  };
-  loadImage('postgres');
-  const names = {
-    workspace: `nod-workspace-${identity}`,
-    browser: `nod-browser-${identity}`,
-    postgres: `nod-postgres-${identity}`,
-  };
-  for (const [role, subnet, bridge] of [
-    ['control', '172.31.80.0/24', 'nod-control'],
-    ['workspace', '172.31.81.0/24', 'nod-workspace'],
-    ['browser', '172.31.82.0/24', 'nod-browser'],
-  ]) {
-    const name = `nod-${role}-${identity}`;
-    await ensureNetwork(runDocker, { name, subnet, bridge });
-  }
-  await runGuest(protectNetworks);
-  const volumes = {
-    postgres: `nod-postgres-${identity}`,
-    browser: `nod-browser-${identity}`,
-    workspace: `nod-workspace-${identity}`,
-    tools: `nod-tools-${identity}`,
-  };
-  for (const volume of Object.values(volumes)) await runDocker(['volume', 'create', volume]);
-  const image = (name) => manifest.images.find((item) => item.name === name).id;
+  status('starting', 'Opening your saved data…', 'storage');
   await images.postgres;
-  loadImage('workspace');
-  loadImage('browser');
-  const storage = storageReady.get(resolve(dataRoot));
-  const port =
-    process.platform === 'win32' ? (storage?.port ?? (await availablePort())) : saved.port;
-  status('starting', 'Starting your database…', 'storage');
-  const postgres = await replaceContainer(
+  const port = process.platform === 'win32' ? await availablePort() : saved.port;
+  await replaceContainer(
     runDocker,
     names.postgres,
     image('postgres'),
@@ -810,16 +784,11 @@ export async function finishRuntime({
       '--env',
       'POSTGRES_PASSWORD',
       '--volume',
-      `${volumes.postgres}:/var/lib/postgresql/data`,
+      `nod-postgres-${identity}:/var/lib/postgresql/data`,
     ],
-    {
-      env: { ...dockerEnvironment, POSTGRES_PASSWORD: saved.password },
-      remember: true,
-      reuse: storage?.postgres,
-    },
+    { env: { ...dockerEnvironment, POSTGRES_PASSWORD: saved.password } },
   );
-  const databaseUrl = `postgresql://nod:${saved.password}@127.0.0.1:${port}/nod`;
-  status('starting', 'Waiting for your database to be ready…', 'storage');
+  const source = `postgresql://nod:${saved.password}@127.0.0.1:${port}/nod`;
   try {
     await waitFor(
       () =>
@@ -839,80 +808,121 @@ export async function finishRuntime({
     const { default: pg } = await import('pg');
     await waitFor(
       async () => {
-        const client = new pg.Client({
-          connectionString: databaseUrl,
-          connectionTimeoutMillis: 5000,
-          query_timeout: 5000,
-        });
+        const client = new pg.Client({ connectionString: source, connectionTimeoutMillis: 5000 });
         try {
           await client.connect();
-          await client.query('SELECT 1');
         } finally {
           await client.end().catch(() => {});
         }
       },
-      { signal, attempts: 12, interval: 1000 },
+      { signal, attempts: 30, interval: 1000 },
     );
-  } catch (error) {
-    if (storage) storage.postgres = undefined;
-    signal?.throwIfAborted();
-    let details = [error.code, error.stack || error.message, error.details]
-      .filter(Boolean)
-      .join('\n')
-      .replaceAll(saved.password, '[redacted]');
-    let message = 'Nod could not connect to its local PostgreSQL database.';
-    let code = 'NOD_DATABASE_CONNECTION_FAILED';
-    if (process.platform === 'win32') {
-      const [inspection, readiness] = await Promise.allSettled([
+    status('starting', 'Moving your saved data to this computer…', 'storage');
+    await moveDatabase({
+      source,
+      target: database.url,
+      signal,
+      space: database.ensureSpace,
+      schema: (section) =>
         runDocker(
           [
-            'inspect',
-            '--format',
-            '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}',
+            'exec',
             names.postgres,
+            'pg_dump',
+            '--username',
+            'nod',
+            '--dbname',
+            'nod',
+            '--no-owner',
+            '--no-privileges',
+            `--section=${section}`,
           ],
-          { timeout: 10_000 },
+          { timeout: 300_000 },
         ),
-        runDocker(
-          ['exec', names.postgres, 'pg_isready', '-h', '127.0.0.1', '-U', 'nod', '-d', 'nod'],
-          { timeout: 10_000 },
-        ),
-      ]);
-      signal?.throwIfAborted();
-      const [state, exitCode, outOfMemory] =
-        inspection.status === 'fulfilled' ? inspection.value.trim().split(' ') : [];
-      details += `\n\nWSL container check:\n${
-        inspection.status === 'fulfilled'
-          ? inspection.value
-          : inspection.reason.details || inspection.reason.stack || inspection.reason.message
-      }\n\nWSL TCP check:\n${
-        readiness.status === 'fulfilled'
-          ? readiness.value
-          : readiness.reason.details || readiness.reason.stack || readiness.reason.message
-      }`;
-      if (outOfMemory === 'true') {
-        code = 'NOD_DATABASE_OUT_OF_MEMORY';
-        message =
-          'PostgreSQL stopped after it reached a memory limit. Close other apps before you retry.';
-      } else if (state && state !== 'running') {
-        code = 'NOD_DATABASE_STOPPED';
-        message = `PostgreSQL is not running in WSL (state: ${state}, exit code: ${exitCode}).`;
-      } else if (readiness.status === 'fulfilled') {
-        message = `PostgreSQL accepts TCP connections inside WSL, but Windows could not complete the database check at 127.0.0.1:${port}.`;
-      } else {
-        code = 'NOD_DATABASE_NOT_READY';
-        message = state
-          ? 'PostgreSQL does not answer TCP checks inside WSL.'
-          : 'Nod could not check PostgreSQL inside WSL.';
-      }
-    }
+    });
+  } catch (cause) {
+    signal?.throwIfAborted();
+    if (cause.code === 'NOD_DATABASE_STORAGE_FULL') throw cause;
     throw Object.assign(
       new Error(
-        `${message} Quit Nod and open it again. If this repeats${process.platform === 'win32' ? ', restart Windows' : ', restart your computer'}. Keep your app data.`,
+        'Nod could not move your saved data out of its private computer. Your data is unchanged. Select Try again.',
       ),
-      { code, details: details.replaceAll(saved.password, '[redacted]') },
+      {
+        code: 'NOD_DATABASE_MOVE_FAILED',
+        details: [cause.code, cause.stack || cause.message, cause.details]
+          .filter(Boolean)
+          .join('\n')
+          .replaceAll(saved.password, '[redacted]')
+          .replaceAll(database.password, '[redacted]'),
+      },
     );
   }
+  await database.moved();
+}
+
+export async function finishRuntime({
+  dataRoot,
+  resourcesPath,
+  assets,
+  manifest,
+  identity,
+  saved,
+  controlRoot,
+  docker,
+  path,
+  dockerEnvironment,
+  runDocker,
+  runGuest,
+  signal,
+  status,
+  prepareImage,
+  database,
+  onMoved,
+  runtimeReady,
+}) {
+  status('starting', 'Preparing secure storage and tools…', 'storage');
+  const images = {};
+  const loadImage = (name) => {
+    images[name] = Promise.resolve().then(() => prepareImage?.(name));
+    images[name].catch(() => {});
+  };
+  const moving = database?.pendingMove === true;
+  if (moving) loadImage('postgres');
+  const names = computerNames(dataRoot);
+  for (const [role, subnet, bridge] of [
+    ['control', '172.31.80.0/24', 'nod-control'],
+    ['workspace', '172.31.81.0/24', 'nod-workspace'],
+    ['browser', '172.31.82.0/24', 'nod-browser'],
+  ]) {
+    const name = `nod-${role}-${identity}`;
+    await ensureNetwork(runDocker, { name, subnet, bridge });
+  }
+  await runGuest(protectNetworks);
+  const volumes = {
+    browser: `nod-browser-${identity}`,
+    workspace: `nod-workspace-${identity}`,
+    tools: `nod-tools-${identity}`,
+  };
+  for (const volume of Object.values(volumes)) await runDocker(['volume', 'create', volume]);
+  const image = (name) => manifest.images.find((item) => item.name === name).id;
+  if (moving) {
+    await moveComputerDatabase({
+      database,
+      names,
+      identity,
+      saved,
+      dockerEnvironment,
+      runDocker,
+      image,
+      images,
+      signal,
+      status,
+    });
+    await onMoved?.();
+  }
+  await runDocker(['rm', '--force', names.postgres]).catch(() => {});
+  loadImage('workspace');
+  loadImage('browser');
   const wrapperRoot = join(controlRoot, 'bin');
   if (process.platform !== 'win32') {
     await mkdir(wrapperRoot, { recursive: true, mode: 0o700 });
@@ -945,109 +955,119 @@ exec "$docker" "$@"
       { mode: 0o700 },
     );
   }
-  const env = {
-    PATH:
-      process.platform === 'win32'
-        ? path
-        : [wrapperRoot, join(assets, 'docker-host/docker'), path].join(delimiter),
-    ...(process.platform === 'win32'
-      ? {
-          NOD_WSL_DISTRIBUTION: dockerEnvironment.NOD_WSL_DISTRIBUTION,
-          TEMP: dockerEnvironment.TEMP,
-          TMP: dockerEnvironment.TMP,
-        }
-      : {}),
-    DOCKER_HOST: dockerEnvironment.DOCKER_HOST,
-    DOCKER_CONFIG: dockerEnvironment.DOCKER_CONFIG,
-    DOCKER_CONTEXT: '',
-    NOD_DATA_ROOT: dataRoot,
-    BROWSER_CONTAINER: names.browser,
-    WORKSPACE_CONTAINER: names.workspace,
-    DATABASE_URL: databaseUrl,
-  };
   const runtime = {
-    env,
-    environment: env,
-    postgres,
-    port,
+    environment: {
+      PATH:
+        process.platform === 'win32'
+          ? path
+          : [wrapperRoot, join(assets, 'docker-host/docker'), path].join(delimiter),
+      ...(process.platform === 'win32'
+        ? {
+            NOD_WSL_DISTRIBUTION: dockerEnvironment.NOD_WSL_DISTRIBUTION,
+            TEMP: dockerEnvironment.TEMP,
+            TMP: dockerEnvironment.TMP,
+          }
+        : {}),
+      DOCKER_HOST: dockerEnvironment.DOCKER_HOST,
+      DOCKER_CONFIG: dockerEnvironment.DOCKER_CONFIG,
+      DOCKER_CONTEXT: '',
+    },
     close: () => stopRuntime({ dataRoot, resourcesPath }),
   };
   signal?.throwIfAborted();
-  await onStorageReady?.(runtime);
-  signal?.throwIfAborted();
-  status('starting', 'Preparing your workspace…', 'workspace');
-  await images.workspace;
-  await replaceContainer(
-    runDocker,
-    names.workspace,
-    image('workspace'),
-    [
+  const startContainers = async () => {
+    status('starting', 'Preparing your workspace…', 'workspace');
+    await images.workspace;
+    await replaceContainer(
+      runDocker,
+      names.workspace,
+      image('workspace'),
+      [
+        '--network',
+        `nod-workspace-${identity}`,
+        '--init',
+        '--cap-drop',
+        'ALL',
+        '--security-opt',
+        'no-new-privileges:true',
+        '--pids-limit',
+        '1024',
+        '--memory',
+        '2g',
+        '--cpus',
+        '2',
+        '--volume',
+        `${volumes.workspace}:/workspace`,
+        '--volume',
+        `${volumes.tools}:/home/node`,
+        '--entrypoint',
+        '/usr/bin/sleep',
+      ],
+      { command: ['infinity'] },
+    );
+    status('starting', 'Preparing your browser…', 'browser');
+    await images.browser;
+    await replaceContainer(runDocker, names.browser, image('browser'), [
       '--network',
-      `nod-workspace-${identity}`,
+      `nod-browser-${identity}`,
       '--init',
       '--cap-drop',
       'ALL',
       '--security-opt',
       'no-new-privileges:true',
+      '--read-only',
       '--pids-limit',
-      '1024',
+      '768',
       '--memory',
       '2g',
       '--cpus',
       '2',
+      '--shm-size',
+      '256m',
+      '--tmpfs',
+      '/tmp:size=1g',
+      '--tmpfs',
+      '/home/node:uid=1000,gid=1000,mode=700,size=256m',
       '--volume',
-      `${volumes.workspace}:/workspace`,
-      '--volume',
-      `${volumes.tools}:/home/node`,
-      '--entrypoint',
-      '/usr/bin/sleep',
-    ],
-    { command: ['infinity'] },
-  );
-  status('starting', 'Preparing your browser…', 'browser');
-  await images.browser;
-  await replaceContainer(runDocker, names.browser, image('browser'), [
-    '--network',
-    `nod-browser-${identity}`,
-    '--init',
-    '--cap-drop',
-    'ALL',
-    '--security-opt',
-    'no-new-privileges:true',
-    '--read-only',
-    '--pids-limit',
-    '768',
-    '--memory',
-    '2g',
-    '--cpus',
-    '2',
-    '--shm-size',
-    '256m',
-    '--tmpfs',
-    '/tmp:size=1g',
-    '--tmpfs',
-    '/home/node:uid=1000,gid=1000,mode=700,size=256m',
-    '--volume',
-    `${volumes.browser}:/data`,
-  ]);
-  await waitFor(
-    async () => {
-      if (
-        (await runDocker(['inspect', '--format', '{{.State.Running}}', names.browser])) !== 'true'
-      )
-        throw Object.assign(new Error('Nod’s local browser stopped during setup. Try again.'), {
-          code: 'NOD_CONTAINER_STOPPED',
-        });
-      return runDocker([
-        'exec',
-        names.browser,
-        'node',
-        '-e',
-        'const s=require("node:net").connect("/data/control.sock");s.on("connect",()=>{s.end();process.exit(0)});s.on("error",(e)=>{console.error("The browser did not answer: "+e.message);process.exit(1)})',
-      ]);
-    },
-    { signal },
-  );
+      `${volumes.browser}:/data`,
+    ]);
+    await waitFor(
+      async () => {
+        for (const [name, label] of [
+          [names.workspace, 'workspace'],
+          [names.browser, 'local browser'],
+        ])
+          if ((await runDocker(['inspect', '--format', '{{.State.Running}}', name])) !== 'true')
+            throw Object.assign(new Error(`Nod’s ${label} stopped during setup. Try again.`), {
+              code: 'NOD_CONTAINER_STOPPED',
+            });
+        return runDocker([
+          'exec',
+          names.browser,
+          'node',
+          '-e',
+          'const s=require("node:net").connect("/data/control.sock");s.on("connect",()=>{s.end();process.exit(0)});s.on("error",(e)=>{console.error("The browser did not answer: "+e.message);process.exit(1)})',
+        ]);
+      },
+      { signal },
+    );
+  };
+  try {
+    await startContainers();
+  } catch (error) {
+    if (error.code !== 'NOD_CONTAINER_STOPPED') throw error;
+    status('starting', 'Repairing your private computer…', 'workspace');
+    await runDocker(['rm', '--force', names.workspace, names.browser]);
+    const damaged = new Set(
+      (await runDocker(['image', 'ls', '--quiet', '--no-trunc']))
+        .split('\n')
+        .filter((id) => id && id !== image('postgres')),
+    );
+    if (damaged.size) await runDocker(['image', 'rm', '--force', ...damaged]);
+    loadImage('workspace');
+    loadImage('browser');
+    await startContainers();
+  }
   await runtimeReady;
   await removeStaleImages(runDocker, runGuest, manifest).catch(() => {});
   status('ready', 'Your private computer is ready.', 'ready');
@@ -1062,17 +1082,7 @@ export function prepareRuntime(options) {
     preparing.set(
       key,
       prepare(
-        {
-          ...options,
-          ...(options.onStorageReady
-            ? {
-                onStorageReady: async (runtime) => {
-                  await options.onStorageReady(runtime);
-                  storageReady.set(key, runtime);
-                },
-              }
-            : {}),
-        },
+        options,
         () => {
           computerMayBeRunning = true;
         },
@@ -1080,7 +1090,7 @@ export function prepareRuntime(options) {
       )
         .catch(async (error) => {
           if (error && typeof error === 'object') error.step ??= progress.step;
-          if (computerMayBeRunning && !storageReady.has(key)) {
+          if (computerMayBeRunning) {
             try {
               await stopRuntime(options);
             } catch (cleanupError) {
@@ -1115,7 +1125,6 @@ export function prepareRuntime(options) {
 
 export async function stopRuntime(options) {
   await stopComputer(options);
-  storageReady.delete(resolve(options.dataRoot || options.root));
 }
 
 export async function removeProfile(options) {

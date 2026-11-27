@@ -11,7 +11,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 While Vault is empty, it lists the ways to fill it: import passwords, add a login or a card, or sign in to a website.
 
-If you stop the task while a private form waits for its submit button, Nod stops the private entry too. This applies to saved logins, private forms and card entry. **Stopped before entry** means that no values were entered in that step. An interrupted private operation may have reached the website. Nod does not repeat it. Check the result on the website before you start a new attempt.
+If you stop the task while Nod enters a saved login or card, Nod stops the private entry too. **Stopped before entry** means that no values were entered in that step. An interrupted private operation may have reached the website. Nod does not repeat it. Check the result on the website before you start a new attempt.
 
 ## Add a login
 
@@ -33,29 +33,23 @@ If Nod has a specific reason for a failed save or update, the form shows it. Pas
 
 **Import from a password manager.** Select **Add → Import passwords** and choose a CSV exported from Chrome, 1Password or another password manager. Nod imports the website logins and skips archived items. Authenticator keys come along when the export has them, as 1Password and Bitwarden exports do, and a login you already saved gets its missing key. Passkeys, cookies and other items aren't imported. Delete the exported file afterwards, because it isn't encrypted.
 
-**Add one during a task.** When a task needs a login you haven't saved, Nod opens a private **Sign in** form. Its fields use the website's own names, such as **Username** or **Email address**; an account the site took on an earlier page gets a generic label. Enter the account and password, then select **Save and continue**. Nod saves both under the website's name, even when the site took the account on an earlier page, and types only the fields that page asks for. The values never pass through chat or the model.
+## Sign in on the website
 
-Select the sign-in action in chat to open the private form beside the conversation. On a narrow window it fills the chat area. Close it with **Escape** or the close button; unsent values are cleared. Reopen the action to read the current status. Closing the panel does not cancel an entry already submitted to the website. Browser handoff links still open a standalone private form.
+When a task needs a login you haven't saved, Nod opens the website's own sign-in page in [its live browser](/use/browser/#take-over-the-browser) in chat. The panel's title shows the page's address, such as **discord.com**, with a lock for a secure page. Check it before you type.
 
-When a website offers several sign-in methods, Nod uses the method you chose or, if one saved login uniquely applies, that login with the website's password method. If the method remains ambiguous, Nod shows the choices it found on that page. Each choice is one of the website's own buttons or links. A button that another website draws inside the page, such as an embedded Google button, is never a choice. Nod can still click it in its browser after the usual check. Select one to continue in Nod's browser. Email, password and verification-code steps appear in the same private panel as the website asks for them. A choice opens the website's real control; it does not mean sign-in succeeded.
+<Steps>
 
-Each method choice expires 30 minutes after Nod issues its link. If the page or control changes, Nod refuses the old choice. A result that cannot be confirmed stays **unknown** and is never replayed automatically. Select **Check sign-in result**. If you return to chat, ask Nod to inspect the website before another private entry. A used link cannot submit again. The panel follows fresh steps from the same task and browser for up to 30 minutes; a new task needs its own private link.
+1. Sign in as you would in your own browser, including any code or method the website asks for.
+2. Select **Return to Nod**. Nod looks at the page and carries on.
+3. To let Nod sign in by itself next time, select **Save login to Vault**. Nod saves the website's address with the account and password you typed. If that account is already in Vault, Nod updates its password and keeps its name. If you typed only the password and Vault holds one login for the website, Nod updates that login. The button appears only for HTTPS websites and addresses on your computer.
+
+</Steps>
+
+Nod doesn't watch or act while you have the browser, and a password you type there is hidden from the model and from what Nod reads on the page afterwards. Nod's server keeps it only to offer the save. Nod's browser stays signed in for later tasks, so you usually sign in once. A saved login lets a scheduled run sign in again after the website signs Nod out.
+
+To use a login from 1Password or another password manager, copy it into the page, or import a CSV into Vault.
 
 If a browser check stops a saved login, the error keeps its safe reason and recovery step. For example, after a page script runs, Nod must reload the page before a new private entry. The previous entry cannot run again.
-
-A private form stays available while its task waits for you. It stops accepting input once used, when Nod asks for a newer one, when Nod starts on a newer message in the same conversation, or when you select **Stop**. A scheduled run or background task has its own session, so chatting with Nod never closes its form.
-
-If a newer chat message closes your form, the old link expires. Ask Nod for a new sign-in form if you still need it.
-
-## Use a login from 1Password
-
-In the private **Sign in** form, select **Use 1Password**. The first time, enter your 1Password account name as it appears at the top of the 1Password sidebar. Approve the request in 1Password, then choose the login. Nod saves a copy in Vault, with its authenticator key, and signs in.
-
-This needs the 1Password 8 app alongside Nod's runtime, signed in, with **Settings → Developer → Integrate with other apps** turned on. It works with a local desktop assistant or source install. A desktop client connected to a remote server doesn't give that server access to the client's 1Password app. You can import a CSV into Vault instead.
-
-- **What Nod reads.** To list them, the helper reads the logins 1Password itself would fill on the website in front of you, on your computer. Only the one you choose is copied to Vault, and the model never sees the list or any value.
-- **Where it runs.** A small helper process talks to 1Password; the Nod server never loads 1Password's code. 1Password's approval lets that helper read your account until it's idle for 10 minutes or you lock 1Password, and Nod closes it after 10 idle minutes.
-- **Why a copy.** Scheduled and background tasks can then sign in without waiting for you to approve in 1Password. If you change the password in 1Password, choose the login from 1Password again the next time Nod asks, and the copy is updated.
 
 ## How sign-in works
 
@@ -75,7 +69,7 @@ sequenceDiagram
   Nod-->>You: Here are the numbers
 ```
 
-Nod picks the account, the fields and the submit button. The private form asks for the fields Nod picked, so a page that shows the username and password together asks for both at once. Before the server opens a private form or uses a saved login, it checks that each one is on the page. If one is missing, it refuses the step, enters nothing and Nod reads the page again. The server enters and submits in one private step that Nod can't watch, then Nod carries on with the live page.
+Nod picks the account, the fields and the submit button. Before the server uses a saved login, it checks that each one is on the page. If one is missing, it refuses the step, enters nothing and Nod reads the page again. The server enters and submits in one private step that Nod can't watch, then Nod carries on with the live page.
 
 Some websites disable the submit button while they check a field. Nod waits up to 30 seconds for the button to become enabled. If it stays disabled, the page changes or the browser closes, Nod stops the private step. It does not activate the disabled control or repeat the submission. A failed private entry can keep the page unreadable until you reload it.
 
@@ -86,8 +80,6 @@ Some websites disable the submit button while they check a field. Nod waits up t
 | Password or code   | Only whether the private step finished                                                 |
 | Authenticator key  | Nothing; Nod enters the current code itself                                            |
 | Page after sign-in | The live page, with the password and codes removed from text and masked in screenshots |
-
-The private sign-in page shows you the full username of each saved login it can open, so you can pick the right account.
 
 ## Website matching
 
@@ -103,13 +95,15 @@ A login works on its saved origin: the protocol, host and port. It also works on
 
 Only domains with a known public or private suffix get this match. Other subdomains, repeated `www` prefixes, local addresses, IP addresses and unknown suffixes keep exact matching.
 
-The private panel shows the destination host and port. Your approval stays bound to the destination and account shown. An approval for `example.com` does not approve `www.example.com`.
+The question shows the destination host and port. Your approval stays bound to the destination and account shown. An approval for `example.com` does not approve `www.example.com`.
 
 The browser checks the real origin of each field against the current sign-in request, including fields inside frames. The saved entry keeps its original address.
 
 ## When Nod asks first
 
-- **Which account.** Nod reuses the one saved login that fits. If several could apply and you haven't said which, it asks.
+These checks run before Nod uses a saved login. Signing in yourself on the page needs no check.
+
+- **Which account.** Nod reuses the one saved login that fits, or the one you named. If several could apply and you haven't said which, or a saved login doesn't get through, Nod shows you the website's page to sign in yourself.
 - **Whether to sign in.** The same [checker](/trust/approvals/) that decides app actions checks whether your recent messages or [your rules](/trust/approvals/#your-rules) need this website. If not, or if a rule says to ask first, Nod asks, for example "Sign in to reports.example.com?". Mentioning a domain isn't consent.
 - **Scheduled runs** are checked against the instruction that created the schedule and your rules.
 - **Background work** Nod starts itself is checked against your [standing instruction](/trust/approvals/#standing-instructions) and your rules. If they don't need this website, or a rule says to ask first, Nod asks you first.
@@ -120,15 +114,15 @@ When a saved login needs your approval, Nod uses its saved name and username hin
 
 ## Verification codes
 
-**From an authenticator app.** When a saved login holds an authenticator key, Nod enters the current code itself when the website asks for one, after the same check as signing in with that login. It uses the key only for the account the task signed in with, or the login it named, and only once per sign-in; if the website asks again, Nod opens the private form. The key never leaves the Nod server.
+**From an authenticator app.** When a saved login holds an authenticator key, Nod enters the current code itself when the website asks for one, after the same check as signing in with that login. It uses the key for the saved login Nod signed in with in the same task. If Nod didn't sign in, it uses the login you named or the website's only login with a key. It enters one code per sign-in; if the website asks again, Nod shows you the page. A code sent by email or text message is always yours to type on the page. The key never leaves the Nod server.
 
-**By email.** When a website emails you a code, Nod can fetch it privately from your connected mailbox. The server checks the sender, recipient, time and account before entering it, and the model never sees it. It reads only mail that arrived after Nod entered your sign-in details on that site, or after the task started, allowing 30 seconds for clock differences and going back at most five and a half minutes. It waits up to a minute for the email to arrive. Otherwise, enter the code in the private form, or send it by itself, such as `482913`, in the chat where Nod asked, including Telegram or WhatsApp. Nod submits it privately and keeps it out of the chat history. A code stays pending until the work that asked for it stops or finishes. For 10 minutes after that, Nod still refuses a code sent by itself or at the end of a message, and keeps it out of the chat history. While a code is pending, Nod refuses a message with the code and other words, in any language, such as "mi código es 482913", and a message with another number of three or more digits, such as a question about invoice NS-1042. It doesn't submit that message or show it to the model, and asks you to send the code by itself. When Nod reads mail through your apps, a separate model check (a decision service, or your connection's smaller model) checks each email before Nod's model sees it, and hides the content of any email that gives access to an account: a one-time or verification code, a sign-in or magic link, a password-reset or account-recovery link, a temporary or initial password, backup or recovery codes, or an API key or access token. Mail that only mentions your accounts, such as a receipt or a new sign-in alert without a code or link, stays visible. OpenAI Decisions and the smaller model can check several emails together, with a separate decision for each. If a check fails or its decisions are incomplete, Nod hides those emails too. The check reads up to 8,000 characters, the start and end of a longer email, and like any model it can miss one, so treat it as a strong guard rather than a guarantee. An email Nod downloads as a file isn't checked.
+**By email or text message.** Nod shows you the page to enter the code yourself.
 
-![The private Enter verification code form for example.com, with one code field and a Continue button.](../../../assets/screens/verify-code-page.png)
+When Nod reads mail through your apps, a separate model check (a decision service, or your connection's smaller model) checks each email before Nod's model sees it, and hides the content of any email that gives access to an account: a one-time or verification code, a sign-in or magic link, a password-reset or account-recovery link, a temporary or initial password, backup or recovery codes, or an API key or access token. Mail that only mentions your accounts, such as a receipt or a new sign-in alert without a code or link, stays visible. OpenAI Decisions and the smaller model can check several emails together, with a separate decision for each. If a check fails or its decisions are incomplete, Nod hides those emails too. The check reads up to 8,000 characters, the start and end of a longer email, and like any model it can miss one, so treat it as a strong guard rather than a guarantee. An email Nod downloads as a file isn't checked.
 
-## Private steps from Telegram or WhatsApp
+## Signing in from Telegram or WhatsApp
 
-Private forms never open in a chat app. Finish the step in the same conversation in Nod's web or desktop app, and Nod replies in the original chat. See [Telegram and WhatsApp](/use/channels/).
+A chat app can't show the page, so Nod asks you to open Nod on your computer or the web. Sign in there and select **Return to Nod**, and Nod replies in the original chat. See [Telegram and WhatsApp](/use/channels/).
 
 ## Review and change access
 
@@ -164,7 +158,7 @@ If you set the key yourself, keep a copy somewhere safe. Saved logins can't be r
 
 ## Where this is enforced
 
-[`src/server/vault-access.ts`](https://github.com/n8n-io/nod/blob/main/src/server/vault-access.ts) (permission and activity) · [`src/server/authenticator.ts`](https://github.com/n8n-io/nod/blob/main/src/server/authenticator.ts) (authenticator codes) · [`src/providers/onepassword`](https://github.com/n8n-io/nod/tree/main/src/providers/onepassword) (1Password helper) · [`src/server/vault-use.ts`](https://github.com/n8n-io/nod/blob/main/src/server/vault-use.ts) (one use) · [`src/server/vault-crypto.ts`](https://github.com/n8n-io/nod/blob/main/src/server/vault-crypto.ts) (encryption) · [`src/providers/agent-browser`](https://github.com/n8n-io/nod/tree/main/src/providers/agent-browser) (origin checks and private entry)
+[`src/server/vault-access.ts`](https://github.com/n8n-io/nod/blob/main/src/server/vault-access.ts) (permission and activity) · [`src/server/authenticator.ts`](https://github.com/n8n-io/nod/blob/main/src/server/authenticator.ts) (authenticator codes) · [`src/server/vault-use.ts`](https://github.com/n8n-io/nod/blob/main/src/server/vault-use.ts) (one use) · [`src/server/vault-crypto.ts`](https://github.com/n8n-io/nod/blob/main/src/server/vault-crypto.ts) (encryption) · [`src/providers/agent-browser`](https://github.com/n8n-io/nod/tree/main/src/providers/agent-browser) (origin checks and private entry)
 
 ## Related resources
 

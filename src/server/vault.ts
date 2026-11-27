@@ -1,5 +1,5 @@
 import { transaction } from './transaction.ts';
-import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
@@ -7,9 +7,8 @@ import { parse as parseDomain } from 'tldts';
 import { openVaultValue, sealVaultValue } from './vault-crypto.ts';
 import { authenticatorCode } from './authenticator.ts';
 import { authenticatorKey } from '../shared/authenticator-key.ts';
-import { captureSecureEntry, createVaultUses, VaultUseError } from './vault-use.ts';
+import { createVaultUses, VaultUseError } from './vault-use.ts';
 import type {
-  CredentialRequest,
   VaultEntry,
   VaultEntryDetails,
   VaultEntryPassword,
@@ -20,20 +19,18 @@ import type {
   VaultImportResult,
   VaultPaymentCard,
 } from '../shared/contracts.ts';
-import type { BrowserAction, BrowserPage, CredentialSubmission } from '../ports/computer.ts';
+import type {
+  BrowserAction,
+  BrowserPage,
+  CredentialInput,
+  CredentialSubmission,
+} from '../ports/computer.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
-import { PasswordManagerError, type PasswordManager } from '../ports/password-manager.ts';
 import type { SiteIcon } from '../ports/link-preview.ts';
-import {
-  normalizedEmail,
-  verificationRecipient,
-  type EmailCodeRequest,
-  type PrivateEmailCode,
-} from './email-code.ts';
 import { ownerId as owner } from './config.ts';
 import { logFailure } from './failure-log.ts';
 import type { TurnRef } from './thread.ts';
-import { browserOf, turnChainSql, waitingTurnSql } from './turn-chain.ts';
+import { browserOf, turnChainSql } from './turn-chain.ts';
 import { loopbackHost } from '../shared/loopback.ts';
 import type { CaptureAnalytics } from './analytics.ts';
 import { lockKey, lockSetup, locksTable } from './locks.ts';
@@ -85,23 +82,13 @@ const cardSecret = z.object({
   expiryYear: cardFields.expiryYear,
 });
 type CardSecret = z.infer<typeof cardSecret>;
-const submissionInput = z
-  .object({
-    username: z.string().optional(),
-    password: z.string().min(1).optional(),
-    code: z.string().min(1).optional(),
-  })
-  .strict();
 const requestInput = z
   .object({
     origin: z.string().max(2048),
-    label: z.string().trim().min(1).max(100),
-    kind: z.enum(['identifier', 'password', 'otp']).optional(),
+    kind: z.literal('otp').optional(),
     usernameSelector: z.string().min(1).optional(),
     passwordSelector: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
     submitSelector: z.string().min(1).optional(),
-    emailCode: z.boolean().optional(),
-    emailRecipient: z.string().trim().min(3).optional(),
   })
   .strict()
   .transform((input) => ({
@@ -113,50 +100,10 @@ const requestInput = z
           ? ('password' as const)
           : ('identifier' as const),
   }));
-type CredentialInput = z.output<typeof requestInput>;
 type SignInInput = z.input<typeof requestInput>;
-const methodInput = z
-  .object({
-    origin: z.string().max(2048),
-    label: z.string().trim().min(1).max(100),
-    kind: z.literal('method'),
-    methods: z
-      .array(
-        z
-          .object({
-            label: z.string().trim().min(1).max(100),
-            selector: z.string().min(1).max(2048),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(10),
-  })
-  .strict();
-type MethodInput = z.infer<typeof methodInput>;
-type StoredInspection = Required<Pick<CredentialRequest, 'fields'>> & {
-  origin: string;
-  methods?: { id: string; label: string }[];
-  document?: string;
-};
-export type CredentialInjection = CredentialInput & {
-  threadId: string;
-  username?: string;
-  password?: string;
-  code?: string;
-};
-type VaultUse = {
-  turnId: string;
-  threadId: string;
-  origin: string;
-  entryId?: string;
-  reason: 'entered' | 'picked';
-};
 type VaultOptions = {
   signal?: AbortSignal;
   analytics?: CaptureAnalytics;
-  refresh?(): void;
-  onUse?(use: VaultUse, client: PoolClient): Promise<void>;
   onOwnerUse?(
     entry: {
       action: 'reveal';
@@ -166,26 +113,10 @@ type VaultOptions = {
     },
     client?: PoolClient,
   ): Promise<void>;
-  resume(turnId: string, client: PoolClient): Promise<void>;
-  retry(turnId: string): Promise<void>;
-  inject(input: CredentialInjection, signal?: AbortSignal): Promise<CredentialSubmission | void>;
+  inject(input: CredentialInput, signal?: AbortSignal): Promise<CredentialSubmission | void>;
   keyStore: CredentialKeyStore;
-  requestKey: Buffer;
   page?(threadId: string, step?: BrowserAction): Promise<BrowserPage>;
-  signInMethods?(
-    threadId: string,
-    origin: string,
-    methods: MethodInput['methods'],
-  ): Promise<{ document: string; methods: { id: string; label: string; page: BrowserPage }[] }>;
-  checkMethods?(turn: TurnRef, methods: { selector: string; page: BrowserPage }[]): Promise<void>;
-  selectSignInMethod?(
-    threadId: string,
-    input: { origin: string; document: string; methodId: string },
-    signal?: AbortSignal,
-  ): Promise<void>;
-  emailCode?(input: EmailCodeRequest, signal: AbortSignal): Promise<PrivateEmailCode | undefined>;
   icon?(origin: string): Promise<SiteIcon | null>;
-  passwordManager?: PasswordManager;
 };
 type EntryRow = {
   id: string;
@@ -207,41 +138,6 @@ type CardRow = {
   ciphertext: string;
   updated_at: Date;
 };
-type RequestRow = {
-  id: string;
-  thread_id: string;
-  browser_id: string | null;
-  turn_id: string;
-  root_turn_id: string;
-  owner_id: string;
-  origin: string;
-  label: string;
-  kind: CredentialRequest['kind'];
-  token_hash: string;
-  status: 'pending' | 'consumed' | 'superseded' | 'retried';
-  operation_status?: 'running' | 'submitted' | 'uncertain' | 'not_entered';
-  selectors: CredentialInput | MethodInput;
-  flow_id: string | null;
-  flow_expires_at: Date | null;
-  created_at: Date;
-  inspection: StoredInspection;
-};
-type RequestStatusRow = Pick<RequestRow, 'status' | 'operation_status'> & {
-  current_step: boolean;
-};
-type SelectionRow = {
-  id: string;
-  root_turn_id: string;
-  owner_id: string;
-  origin: string;
-  entry_id: string | null;
-  login_label: string;
-  ciphertext: string;
-  blocked: boolean;
-  expires_at: Date;
-  credential_entered_at: Date | null;
-  kind: 'identifier' | 'password';
-};
 
 export async function sealedDataExists(pool: Pick<Pool, 'query'>) {
   const tables = (
@@ -255,7 +151,6 @@ export async function sealedDataExists(pool: Pick<Pool, 'query'>) {
           'vault_app_grants',
           'channel_settings',
           'channel_session_keys',
-          'credential_account_selections',
         ],
       ],
     )
@@ -304,7 +199,6 @@ async function verifyKey(pool: Pool, key: Buffer) {
               'vault_app_grants',
               'channel_settings',
               'channel_session_keys',
-              'credential_account_selections',
             ],
           ],
         )
@@ -367,10 +261,6 @@ export class VaultError extends Error {
   ) {
     super(message);
   }
-}
-
-function storedSelectors({ emailRecipient: _emailRecipient, ...input }: CredentialInput) {
-  return JSON.stringify(input);
 }
 
 function credentialUrl(value: string) {
@@ -563,8 +453,6 @@ function cardVersion(entry: CardRow) {
 }
 
 export async function createVault(pool: Pool, options: VaultOptions) {
-  if (!Buffer.isBuffer(options.requestKey) || options.requestKey.length !== 32)
-    throw new Error('Invalid private request key.');
   await pool.query(`
     ${locksTable};
     CREATE TABLE IF NOT EXISTS vault_entries (
@@ -577,29 +465,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       ciphertext text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS vault_cards_owner ON vault_cards(owner_id);
-    CREATE TABLE IF NOT EXISTS credential_requests (
-      id text PRIMARY KEY, token_hash text NOT NULL UNIQUE, owner_id text NOT NULL,
-      thread_id uuid NOT NULL REFERENCES threads(id), turn_id uuid NOT NULL REFERENCES turns(id), root_turn_id uuid NOT NULL REFERENCES turns(id),
-      origin text NOT NULL, label text NOT NULL, kind text NOT NULL, status text NOT NULL DEFAULT 'pending',
-      selectors jsonb NOT NULL, inspection jsonb NOT NULL, failed_at timestamptz
-    );
-    ALTER TABLE credential_requests ADD COLUMN IF NOT EXISTS browser_id text;
-    ALTER TABLE credential_requests ADD COLUMN IF NOT EXISTS flow_id text;
-    ALTER TABLE credential_requests ADD COLUMN IF NOT EXISTS flow_expires_at timestamptz;
-    ALTER TABLE credential_requests ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
-    CREATE INDEX IF NOT EXISTS credential_requests_flow ON credential_requests(owner_id,flow_id,created_at DESC);
-    CREATE TABLE IF NOT EXISTS credential_account_selections (
-      id text NOT NULL, root_turn_id uuid NOT NULL REFERENCES turns(id), owner_id text NOT NULL, origin text NOT NULL,
-      entry_id text, ciphertext text NOT NULL, blocked boolean NOT NULL DEFAULT false, expires_at timestamptz NOT NULL,
-      login_label text NOT NULL DEFAULT '', credential_entered_at timestamptz,
-      PRIMARY KEY(root_turn_id,owner_id,origin)
-    );
-    CREATE INDEX IF NOT EXISTS credential_requests_turn ON credential_requests(turn_id);
-    ALTER TABLE credential_account_selections ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'identifier';
     CREATE INDEX IF NOT EXISTS vault_entries_owner ON vault_entries(owner_id);
-    CREATE TABLE IF NOT EXISTS password_manager_accounts (
-      owner_id text PRIMARY KEY, account text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now()
-    );
   `);
   const uses = await createVaultUses(pool, owner, options.analytics, options.signal);
   let keyPromise: Promise<Buffer> | undefined;
@@ -620,19 +486,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       });
     return keyPromise;
   };
-  const forgetExpiredHolds = () =>
-    pool
-      .query(
-        `UPDATE credential_account_selections SET ciphertext='',blocked=true,login_label=''
-       WHERE owner_id=$1 AND login_label<>'' AND expires_at<=now()`,
-        [owner],
-      )
-      .then(
-        () => undefined,
-        (error: unknown) => logFailure('vault_hold_cleanup', error),
-      );
-  await forgetExpiredHolds();
-
   async function list(ownerId = owner, client?: PoolClient) {
     const { rows } = await (client ?? pool).query<EntryRow>(
       'SELECT * FROM vault_entries WHERE owner_id = $1 ORDER BY updated_at DESC',
@@ -723,8 +576,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const authenticator = savedAuthenticator(input.authenticatorKey);
     const credentialKey = await key();
     const existing = await database.query<EntryRow>(
-      'SELECT * FROM vault_entries WHERE owner_id=$1 AND origin=$2 FOR UPDATE',
-      [ownerId, origin],
+      'SELECT * FROM vault_entries WHERE owner_id=$1 AND origin=ANY($2::text[]) FOR UPDATE',
+      [ownerId, credentialOrigins(origin)],
     );
     const matching = existing.rows.flatMap((candidate) => {
       try {
@@ -743,11 +596,10 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       if (password === secret.password && key === secret.authenticator)
         return { entry: metadata(entry, input.username) };
       const { rows } = await database.query<EntryRow>(
-        'UPDATE vault_entries SET label=$3,ciphertext=$4,updated_at=now() WHERE id=$1 AND owner_id=$2 AND ciphertext=$5 RETURNING *',
+        'UPDATE vault_entries SET ciphertext=$3,updated_at=now() WHERE id=$1 AND owner_id=$2 AND ciphertext=$4 RETURNING *',
         [
           entry.id,
           ownerId,
-          input.label,
           sealCredential(credentialKey, entry, {
             username: input.username,
             password,
@@ -1067,17 +919,17 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     return rows[0]?.id;
   }
 
-  async function selection(
+  async function lastEntry(
+    database: Pick<PoolClient, 'query'>,
     rootTurnId: string,
-    ownerId: string,
     origin: string,
-    database: Pick<PoolClient, 'query'> = pool,
   ) {
-    const result = await database.query<SelectionRow>(
-      'SELECT * FROM credential_account_selections WHERE root_turn_id=$1 AND owner_id=$2 AND origin=$3',
-      [rootTurnId, ownerId, origin],
+    const { rows } = await database.query<{ item_id: string | null; created_at: Date }>(
+      `SELECT item_id,created_at FROM vault_uses WHERE owner_id=$1 AND root_turn_id=$2 AND origin=ANY($3::text[])
+       AND kind IN ('identifier','password') AND status<>'not_entered' ORDER BY created_at DESC LIMIT 1`,
+      [owner, rootTurnId, credentialOrigins(origin)],
     );
-    return result.rows[0];
+    return rows[0];
   }
 
   async function automaticUse(
@@ -1111,993 +963,111 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     return Boolean(rowCount);
   }
 
-  async function rememberSelection(
-    database: Pick<PoolClient, 'query'>,
-    value: {
-      rootTurnId: string;
-      ownerId: string;
-      origin: string;
-      entryId: string | null;
-      username: string;
-      password?: string;
-      loginLabel?: string;
-      expiresAt: Date;
-      blocked: boolean;
-      enteredAt?: number;
-      kind?: 'identifier' | 'password';
-    },
-  ) {
-    const entry = { id: randomUUID(), owner_id: value.ownerId, origin: value.origin };
-    const ciphertext = sealCredential(await key(), entry, {
-      username: value.username,
-      password: value.password ?? '',
-    });
-    await database.query(
-      `INSERT INTO credential_account_selections(id,root_turn_id,owner_id,origin,entry_id,ciphertext,blocked,expires_at,login_label,credential_entered_at,kind)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(root_turn_id,owner_id,origin) DO UPDATE
-       SET id=excluded.id,entry_id=excluded.entry_id,ciphertext=excluded.ciphertext,blocked=excluded.blocked,expires_at=excluded.expires_at,login_label=excluded.login_label,credential_entered_at=excluded.credential_entered_at,kind=excluded.kind`,
-      [
-        entry.id,
-        value.rootTurnId,
-        value.ownerId,
-        value.origin,
-        value.entryId,
-        ciphertext,
-        value.blocked,
-        value.expiresAt,
-        value.loginLabel ?? '',
-        value.enteredAt === undefined ? null : new Date(value.enteredAt),
-        value.kind ?? 'identifier',
-      ],
-    );
-  }
-
-  async function stagedUsername(selected: SelectionRow | undefined) {
-    if (!selected || new Date(selected.expires_at).getTime() <= Date.now()) return undefined;
-    return openCredential(await key(), selected).username;
-  }
-
   async function inspectRequest(threadId: string, raw: SignInInput) {
     const input = requestInput.parse(raw);
     const origin = credentialOrigin(input.origin);
     const page = await options.page?.(threadId);
     if (page && page.origin !== origin)
-      throw new VaultError(
-        'The login page origin changed. Request a new secure sign-in step.',
-        409,
-      );
+      throw new VaultError('The login page origin changed. Read the page again.', 409);
     const kind = input.kind;
     const target = kind === 'identifier' ? input.usernameSelector : input.passwordSelector;
-    const usernameSelector = kind === 'password' ? input.usernameSelector : undefined;
+    const usernameSelector = kind === 'otp' ? undefined : input.usernameSelector;
     if (!target)
       throw new VaultError('Choose a visible sign-in field from the current browser page.', 409);
     if (Array.isArray(target) && (kind !== 'otp' || new Set(target).size !== target.length))
       throw new VaultError('Choose each code field once, in code order.', 409);
-    if (usernameSelector === target)
+    if (kind === 'password' && usernameSelector === target)
       throw new VaultError('Choose different fields for the username and password.', 409);
-    const resolved: CredentialInput = {
-      origin,
-      label: input.label,
-      kind,
-      ...(input.submitSelector ? { submitSelector: input.submitSelector } : {}),
-      ...(kind === 'identifier'
-        ? { usernameSelector: input.usernameSelector! }
-        : { passwordSelector: target, ...(usernameSelector ? { usernameSelector } : {}) }),
-      ...(kind === 'otp' && input.emailCode !== undefined ? { emailCode: input.emailCode } : {}),
-      ...(kind === 'otp' && input.emailRecipient ? { emailRecipient: input.emailRecipient } : {}),
-    };
-    const siteLabel = async (selector: string, fallback = '') => {
-      const controls = (await options.page?.(threadId, { action: 'fill', selector }))?.controls;
-      if (controls?.length === 0)
+    for (const selector of [input.submitSelector, usernameSelector, ...[target].flat()])
+      if (
+        selector &&
+        (await options.page?.(threadId, { action: 'fill', selector }))?.controls?.length === 0
+      )
         throw new VaultError(
-          'This sign-in step names a field or button that is not on the current page, so nothing was entered. Read the page again and request the step with its current controls.',
+          'This sign-in step names a field or button that is not on the current page, so nothing was entered. Read the page again and call sign_in with its current controls.',
           409,
         );
-      return controls?.[0]?.name?.trim() || fallback;
-    };
-    for (const selector of [input.submitSelector, ...[target].flat().slice(1)])
-      if (selector) await siteLabel(selector);
-    const targetLabel = await siteLabel(
-      [target].flat()[0]!,
-      kind === 'identifier'
-        ? 'Email, phone or username'
-        : kind === 'otp'
-          ? 'Verification code'
-          : 'Password',
-    );
-    const inspection: StoredInspection = {
-      origin,
-      fields: [
-        ...(usernameSelector
-          ? [
-              {
-                kind: 'identifier' as const,
-                selector: usernameSelector,
-                label: await siteLabel(usernameSelector, 'Email, phone or username'),
-              },
-            ]
-          : []),
-        ...[target].flat().map((selector) => ({ kind, selector, label: targetLabel })),
-      ],
-    };
-    return { input: resolved, inspection };
+    return { ...input, origin, usernameSelector };
   }
 
-  async function requestToken(id: string, ownerId = owner) {
-    return createHmac('sha256', options.requestKey)
-      .update(JSON.stringify(['nod-sign-in', ownerId, id]))
-      .digest('base64url');
-  }
-
-  async function inspectMethods(turn: TurnRef, raw: MethodInput) {
-    const input = methodInput.parse(raw);
-    input.origin = credentialOrigin(input.origin);
-    if (!options.signInMethods || !options.selectSignInMethod)
-      throw new VaultError('Sign-in method selection is unavailable.', 409);
-    if (new Set(input.methods.map((method) => method.selector)).size !== input.methods.length)
-      throw new VaultError('Choose each sign-in method once.', 409);
-    const observed = await options.signInMethods(browserOf(turn), input.origin, input.methods);
-    if (
-      !observed.document ||
-      observed.methods.length !== input.methods.length ||
-      new Set(observed.methods.map((method) => method.id)).size !== observed.methods.length ||
-      observed.methods.some(
-        (method) => !method.id || !method.label.trim() || method.page.origin !== input.origin,
-      )
-    )
-      throw new VaultError('The sign-in methods could not be checked. Read the page again.', 409);
-    await options.checkMethods?.(
-      turn,
-      observed.methods.map((method, index) => ({
-        selector: input.methods[index]!.selector,
-        page: method.page,
-      })),
-    );
-    return {
-      input,
-      inspection: {
-        origin: input.origin,
-        fields: [],
-        document: observed.document,
-        methods: observed.methods.map(({ id, label }) => ({ id, label })),
-      } as StoredInspection,
-    };
-  }
-
-  async function request(
-    turn: TurnRef,
-    ownerId: string,
-    raw: SignInInput | MethodInput,
-  ): Promise<{ url: string }> {
-    if (!(await currentTurn(pool, turn, ownerId)))
-      throw new VaultError('This task can no longer request credentials.', 409);
-    const { input, inspection } =
-      raw.kind === 'method'
-        ? await inspectMethods(turn, raw)
-        : await inspectRequest(browserOf(turn), raw);
-    const id = randomUUID();
-    const token = await requestToken(id, ownerId);
-    const hash = tokenHash(token);
-    await forgetExpiredHolds();
-    const closed = await transaction(async (client) => {
-      await lockKey(client, `thread:${ownerId}`);
-      if (!(await currentTurn(client, turn, ownerId, ' FOR NO KEY UPDATE OF u')))
-        throw new VaultError('This task can no longer request credentials.', 409);
-      const root = await rootTurn(client, turn, ownerId);
-      if (!root) throw new VaultError('This task can no longer request credentials.', 409);
-      const previous = (
-        await client.query<Pick<RequestRow, 'flow_id' | 'flow_expires_at'>>(
-          `${turnChainSql()}
-         SELECT r.flow_id,r.flow_expires_at FROM credential_requests r
-         LEFT JOIN vault_uses v ON v.id=r.id AND v.owner_id=r.owner_id
-         WHERE r.owner_id=$2 AND r.thread_id=$3 AND r.turn_id IN (SELECT id FROM chain)
-         AND r.root_turn_id=$4 AND COALESCE(r.browser_id,r.thread_id::text)=$5
-         AND r.flow_id IS NOT NULL AND r.flow_expires_at>now()
-         AND ((r.status='consumed' AND v.status='submitted') OR r.status='retried')
-         ORDER BY r.created_at DESC,r.id DESC LIMIT 1`,
-          [turn.turnId, ownerId, turn.threadId, root, browserOf(turn)],
-        )
-      ).rows[0];
-      const superseded = await client.query<{ kind: string; origin: string }>(
-        "UPDATE credential_requests SET status='superseded' WHERE thread_id=$1 AND owner_id=$2 AND status='pending' AND COALESCE(browser_id,thread_id::text)=$3 RETURNING kind,origin",
-        [turn.threadId, ownerId, browserOf(turn)],
-      );
-      await client.query(
-        `INSERT INTO credential_requests (id,token_hash,thread_id,turn_id,root_turn_id,owner_id,origin,label,kind,selectors,inspection,browser_id,flow_id,flow_expires_at)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-        [
-          id,
-          hash,
-          turn.threadId,
-          turn.turnId,
-          root,
-          ownerId,
-          input.origin,
-          input.label,
-          input.kind,
-          input.kind === 'method' ? JSON.stringify(input) : storedSelectors(input),
-          JSON.stringify(inspection),
-          browserOf(turn),
-          previous?.flow_id ?? id,
-          previous?.flow_expires_at ?? new Date(Date.now() + 30 * 60_000),
-        ],
-      );
-      return superseded.rows;
-    }, pool);
-    for (const row of closed) captureSecureEntry(options.analytics, row, 'superseded');
-    captureSecureEntry(options.analytics, input, 'requested');
-    return { url: `/vault/${token}` };
-  }
-
-  async function flow(token: string) {
-    const source = (
-      await pool.query<RequestRow & { operation_status: string }>(
-        `SELECT r.*,v.status AS operation_status FROM credential_requests r
-       LEFT JOIN vault_uses v ON v.id=r.id AND v.owner_id=r.owner_id
-       WHERE r.token_hash=$1 AND r.owner_id=$2 AND r.flow_expires_at>now()`,
-        [tokenHash(token), owner],
-      )
-    ).rows[0];
-    if (!source) return {};
-    if (
-      !(source.status === 'consumed' && source.operation_status === 'submitted') &&
-      source.status !== 'retried' &&
-      source.status !== 'superseded'
-    )
-      return {};
-    const next = (
-      await pool.query<{ id: string; token_hash: string }>(
-        `SELECT r.id,r.token_hash FROM credential_requests r JOIN turns u ON u.id=r.turn_id AND u.owner_id=r.owner_id
-       WHERE r.owner_id=$1 AND r.flow_id=$2 AND r.root_turn_id=$3 AND r.thread_id=$4
-       AND COALESCE(r.browser_id,r.thread_id::text)=$5 AND r.flow_expires_at>now()
-       AND r.status='pending' AND ${waitingTurnSql('u', 'credentials')}
-       ORDER BY r.created_at DESC,r.id DESC LIMIT 1`,
-        [
-          owner,
-          source.flow_id,
-          source.root_turn_id,
-          source.thread_id,
-          source.browser_id ?? source.thread_id,
-        ],
-      )
-    ).rows[0];
-    if (!next || next.id === source.id) return {};
-    const nextId = await requestToken(next.id);
-    return tokenHash(nextId) === next.token_hash ? { nextId } : {};
-  }
-
-  function tokenHash(token: string) {
-    if (!/^[A-Za-z0-9_-]{43}$/.test(token))
-      throw new VaultError('Credential request not found.', 404);
-    return createHash('sha256').update(token).digest('hex');
-  }
-
-  async function lockRequest(
-    client: PoolClient,
-    hash: string,
-    condition = "r.status='pending'",
-    allowExpired = false,
-  ) {
-    await lockKey(client, `thread:${owner}`);
-    const { rows } = await client.query<RequestRow>(
-      `SELECT r.* FROM credential_requests r JOIN turns u ON u.id=r.turn_id AND u.owner_id=r.owner_id
-       WHERE r.token_hash=$1 AND r.owner_id=$2 AND ${condition} ${allowExpired ? '' : "AND (r.kind<>'method' OR r.created_at>now()-interval '30 minutes')"} AND ${waitingTurnSql('u', 'credentials')}
-       FOR UPDATE OF r`,
-      [hash, owner],
-    );
-    return rows[0];
-  }
-
-  function requestStatus(row: RequestStatusRow): CredentialRequest['status'] {
-    if (row.operation_status === 'submitted') return 'filled';
-    if (row.operation_status === 'uncertain') return 'uncertain';
-    if (row.operation_status === 'running') return 'entering';
-    return row.status === 'pending' && row.current_step ? 'pending' : 'expired';
-  }
-
-  async function requestStatuses(threadId: string, sessionId: string, turnIds: string[]) {
-    if (!turnIds.length) return [];
-    const { rows } = await pool.query<
-      RequestStatusRow & Pick<RequestRow, 'turn_id' | 'origin' | 'label' | 'kind'>
-    >(
-      `SELECT r.turn_id,r.origin,r.label,r.kind,r.status,v.status AS operation_status,
-        r.status='pending' AND (r.kind<>'method' OR r.created_at>now()-interval '30 minutes')
-        AND ${waitingTurnSql('u', 'credentials')} AS current_step
-       FROM credential_requests r JOIN turns u
-         ON u.id=r.turn_id AND u.owner_id=r.owner_id AND u.thread_id=r.thread_id
-       LEFT JOIN vault_uses v ON v.id=r.id AND v.owner_id=r.owner_id AND r.status='consumed'
-       WHERE r.owner_id=$1 AND r.thread_id=$2 AND u.session_id=$3 AND r.turn_id=ANY($4::uuid[])
-       ORDER BY r.created_at DESC,r.id DESC`,
-      [owner, threadId, sessionId, turnIds],
-    );
-    return rows.map((row) => ({
-      turnId: row.turn_id,
-      origin: row.origin,
-      label: row.label,
-      kind: row.kind,
-      status: requestStatus(row),
-      ...(row.operation_status === 'not_entered' ? { notEntered: true } : {}),
-    }));
-  }
-
-  async function describe(token: string): Promise<CredentialRequest> {
-    await forgetExpiredHolds();
-    const { rows } = await pool.query<RequestRow & { current_step: boolean }>(
-      `SELECT r.*,v.status AS operation_status,r.status='pending' AND (r.kind<>'method' OR r.created_at>now()-interval '30 minutes') AND EXISTS(SELECT 1 FROM turns u WHERE u.id=r.turn_id AND u.owner_id=r.owner_id
-        AND ${waitingTurnSql('u', 'credentials')}) AS current_step
-       FROM credential_requests r LEFT JOIN vault_uses v
-         ON v.id=r.id AND v.owner_id=r.owner_id AND r.status='consumed'
-       WHERE r.token_hash=$1 AND r.owner_id=$2`,
-      [tokenHash(token), owner],
-    );
-    const row = rows[0];
-    if (!row) throw new VaultError('Credential request not found.', 404);
-    const status = requestStatus(row);
-    let savedEntries: CredentialRequest['savedEntries'];
-    let username: string | undefined;
-    if (status === 'pending' && (row.kind === 'identifier' || row.kind === 'password')) {
-      const chosen = await selection(row.root_turn_id, row.owner_id, row.origin);
-      const selected = chosen?.kind === 'identifier' ? chosen : undefined;
-      username = await stagedUsername(selected);
-      const entries = await pool.query<EntryRow>(
-        'SELECT e.* FROM vault_entries e WHERE e.owner_id=$1 AND e.origin=ANY($2::text[]) ORDER BY e.updated_at DESC',
-        [row.owner_id, credentialOrigins(row.origin)],
-      );
-      const matches =
-        row.kind === 'password' && selected && username === undefined ? [] : entries.rows;
-      savedEntries = [];
-      const credentialKey = matches.length ? await key() : Buffer.alloc(0);
-      for (const entry of matches) {
-        let secret: ReturnType<typeof openCredential>;
-        try {
-          secret = openCredential(credentialKey, entry);
-        } catch {
-          continue;
-        }
-        if (
-          row.kind === 'password' &&
-          (!secret.password || (username !== undefined && secret.username !== username))
-        )
-          continue;
-        savedEntries.push({ ...metadata(entry), username: secret.username });
-      }
-    }
-    const manager =
-      options.passwordManager &&
-      status === 'pending' &&
-      (row.kind === 'identifier' || row.kind === 'password')
-        ? {
-            name: options.passwordManager.name,
-            ...(await managerAccount().then((account) => (account ? { account } : {}))),
-          }
-        : undefined;
-    return {
-      id: token,
-      turnId: row.turn_id,
-      origin: row.origin,
-      label: row.label,
-      kind: row.kind,
-      fields: row.inspection.fields,
-      ...(row.kind === 'method' ? { methods: row.inspection.methods ?? [] } : {}),
-      status,
-      ...(row.operation_status === 'not_entered' ? { notEntered: true } : {}),
-      ...(savedEntries ? { savedEntries } : {}),
-      ...(row.kind === 'password' && username ? { username } : {}),
-      ...(manager ? { passwordManager: manager } : {}),
-    };
-  }
-
-  async function managerAccount() {
-    return (
-      await pool.query<{ account: string }>(
-        'SELECT account FROM password_manager_accounts WHERE owner_id=$1',
-        [owner],
-      )
-    ).rows[0]?.account;
-  }
-
-  async function managedRequest(token: string) {
-    const manager = options.passwordManager;
-    if (!manager) throw new VaultError('No password manager is available here.', 404);
-    const row = (
-      await pool.query<RequestRow>(
-        `SELECT r.* FROM credential_requests r JOIN turns u ON u.id=r.turn_id AND u.owner_id=r.owner_id
-         WHERE r.token_hash=$1 AND r.owner_id=$2 AND r.status='pending' AND r.kind IN ('identifier','password')
-         AND ${waitingTurnSql('u', 'credentials')}`,
-        [tokenHash(token), owner],
-      )
-    ).rows[0];
-    if (!row)
-      throw new VaultError(
-        'This request is expired, already used, or belongs to an earlier task step.',
-        409,
-      );
-    return { manager, row };
-  }
-
-  function managerFailure(name: string, error: unknown): never {
-    if (!(error instanceof PasswordManagerError)) throw error;
-    throw new VaultError(
-      error.reason === 'unavailable'
-        ? `Nod can’t reach ${name} on this computer. Open ${name}, sign in, and turn on Settings → Developer → Integrate with other apps. (${error.message})`
-        : error.message,
-      error.reason === 'missing' ? 409 : 502,
-    );
-  }
-
-  async function managedLogins(token: string, raw: unknown) {
-    const { account } = z
-      .object({ account: z.string().trim().min(1).max(200) })
-      .strict()
-      .parse(raw);
-    const { manager, row } = await managedRequest(token);
-    const logins = await manager
-      .logins(account, row.origin)
-      .catch((error: unknown) => managerFailure(manager.name, error));
-    await pool.query(
-      `INSERT INTO password_manager_accounts(owner_id,account) VALUES($1,$2)
-       ON CONFLICT(owner_id) DO UPDATE SET account=excluded.account,updated_at=now()`,
-      [owner, account],
-    );
-    return { logins };
-  }
-
-  async function useManaged(token: string, raw: unknown) {
-    const { account, id } = z
-      .object({ account: z.string().trim().min(1).max(200), id: z.string().min(1).max(300) })
-      .strict()
-      .parse(raw);
-    const { manager, row } = await managedRequest(token);
-    const secret = await manager
-      .login(account, row.origin, id)
-      .catch((error: unknown) => managerFailure(manager.name, error));
-    const saved = await transaction(
-      (client) =>
-        saveEntry(
-          owner,
-          {
-            label: secret.title.trim().slice(0, 100) || new URL(row.origin).hostname,
-            origin: row.origin,
-            username: secret.username,
-            password: secret.password,
-            ...(secret.authenticatorKey && authenticatorKey(secret.authenticatorKey)
-              ? { authenticatorKey: secret.authenticatorKey }
-              : {}),
-          },
-          client,
-        ),
-      pool,
-    );
-    if (saved.operation) track('login', saved.operation, 'user');
-    return consume(token, { kind: 'saved', entryId: saved.entry.id });
-  }
-
-  type LoginSource =
-    | { kind: 'saved'; entryId: string }
-    | { kind: 'selection'; selected: SelectionRow }
-    | { kind: 'form'; values: z.infer<typeof submissionInput> }
-    | { kind: 'email'; code: PrivateEmailCode; selected?: SelectionRow; since: number }
-    | { kind: 'authenticator'; entryId: string };
-
-  async function enterLogin(
-    turn: TurnRef,
-    ownerId: string,
-    raw: SignInInput,
-    source: LoginSource,
-    request?: RequestRow,
-  ) {
+  async function fill(turn: TurnRef, ownerId: string, entryId: string, raw: SignInInput) {
     if (ownerId !== owner) throw new VaultError('This task belongs to another owner.', 409);
-    await forgetExpiredHolds();
-    const { input } = await inspectRequest(browserOf(turn), raw);
-    const root = request?.root_turn_id ?? (await rootTurn(pool, turn, ownerId));
+    const input = await inspectRequest(browserOf(turn), raw);
+    const root = await rootTurn(pool, turn, ownerId);
     if (!root) throw new VaultError('This task can no longer use credentials.', 409);
-    const encryptionKey =
-      input.kind === 'otp' && source.kind !== 'authenticator' ? undefined : await key();
-    const use = {
-      id: request?.id,
-      ownerId,
-      rootTurnId: root,
-      turnId: turn.turnId,
-      origin: input.origin,
-      kind: input.kind,
-      itemId: undefined as string | undefined,
-    };
-    let selected: SelectionRow | undefined;
-    let entryId: string | null = null;
-    let secret = { username: '', password: '', code: undefined as string | undefined };
-    let label: string | undefined;
-    let heldPassword = '';
-    let heldLabel = '';
-    let authenticator = '';
-    let savedOperation: 'create' | 'update' | undefined;
-    const result = await uses.run(use, {
-      prepare: async (client) => {
-        if (request) {
-          if (!(await lockRequest(client, request.token_hash)))
-            throw new VaultError(
-              'This request is expired, already used, or belongs to an earlier task step.',
-              409,
-            );
-        }
-        const active = request
-          ? undefined
-          : await currentTurn(client, turn, ownerId, ' FOR UPDATE OF u NOWAIT');
-        if (!request && !active) throw new VaultError('This task step is no longer active.', 409);
-        selected = await selection(root, ownerId, input.origin, client);
-        if (
-          source.kind === 'saved' &&
-          selected?.kind === 'password' &&
-          selected.entry_id !== source.entryId
-        )
-          selected = undefined;
-        if (
-          source.kind === 'selection' &&
-          (selected?.id !== source.selected.id || selected?.entry_id !== source.selected.entry_id)
-        )
-          throw new VaultError('This selected account changed.', 409);
-        const staged =
-          selected && encryptionKey && selected.expires_at.getTime() > Date.now()
-            ? openCredential(encryptionKey, selected)
-            : undefined;
-        if (source.kind === 'email') {
-          if (
-            (source.selected
-              ? selected?.id !== source.selected.id ||
-                selected.expires_at.getTime() <= Date.now() ||
-                selected.credential_entered_at?.getTime() !==
-                  source.selected.credential_entered_at?.getTime()
-              : selected !== undefined) ||
-            !(await source.code.current(client))
-          )
-            throw new VaultError('This verification step changed.', 409);
-          if (
-            selected?.entry_id &&
-            !(
-              await client.query(
-                'SELECT id FROM vault_entries WHERE id=$1 AND owner_id=$2 AND origin=ANY($3::text[]) FOR SHARE',
-                [selected.entry_id, ownerId, credentialOrigins(input.origin)],
-              )
-            ).rowCount
-          )
-            throw new VaultError('This saved login is no longer available.', 409);
-          if (await automaticUse(client, root, input.origin, 'otp', null, source.since))
-            return false;
-          secret.code = source.code.code;
-        } else if (source.kind === 'authenticator') {
-          if (input.kind !== 'otp')
-            throw new VaultError('An authenticator key can only enter a verification code.', 409);
+    const credentialKey = await key();
+    let secret: ReturnType<typeof openCredential> | undefined;
+    const result = await uses.run(
+      {
+        ownerId,
+        rootTurnId: root,
+        turnId: turn.turnId,
+        origin: input.origin,
+        kind: input.kind,
+        itemId: entryId,
+      },
+      {
+        prepare: async (client) => {
+          if (!(await currentTurn(client, turn, ownerId, ' FOR UPDATE OF u NOWAIT')))
+            throw new VaultError('This task step is no longer active.', 409);
           const row = (
             await client.query<EntryRow>(
               'SELECT * FROM vault_entries WHERE id=$1 AND owner_id=$2 AND origin=ANY($3::text[]) FOR SHARE',
-              [source.entryId, ownerId, credentialOrigins(input.origin)],
+              [entryId, ownerId, credentialOrigins(input.origin)],
             )
           ).rows[0];
-          if (!row) throw new VaultError('This saved login is no longer available.', 409);
-          if (selected && selected.expires_at.getTime() <= Date.now())
-            throw new VaultError('This sign-in took too long. Start it again.', 409);
-          if (selected?.entry_id && selected.entry_id !== row.id)
-            throw new VaultError(
-              'Choose the saved login that matches the account already entered.',
-              409,
-            );
-          authenticator = openCredential(encryptionKey!, row).authenticator ?? '';
-          if (!authenticator)
-            throw new VaultError('This saved login has no authenticator key.', 409);
-          entryId = row.id;
-          use.itemId = row.id;
+          if (!row) throw new VaultError('This saved login is no longer available.', 404);
+          secret = openCredential(credentialKey, row);
+          const value =
+            input.kind === 'otp'
+              ? secret.authenticator
+              : input.kind === 'identifier'
+                ? secret.username
+                : secret.password;
+          if (!value) return false;
+          const entered = await lastEntry(client, root, input.origin);
+          const bound =
+            input.kind === 'otp' || (input.kind === 'password' && !input.usernameSelector);
+          if (bound && entered?.item_id && entered.item_id !== row.id) return false;
+          const since = input.kind === 'otp' ? entered?.created_at.getTime() : undefined;
           if (
             await automaticUse(
               client,
               root,
               input.origin,
-              'otp',
-              row.id,
-              selected?.credential_entered_at?.getTime(),
-            )
-          )
-            return false;
-        } else if (source.kind === 'form') {
-          const values = source.values;
-          if (
-            input.kind === 'password' &&
-            !input.usernameSelector &&
-            values.username &&
-            staged &&
-            values.username !== staged.username
-          )
-            throw new VaultError('This password step belongs to the login you already chose.', 409);
-          secret = {
-            username: values.username || staged?.username || '',
-            password: values.password ?? '',
-            code: values.code,
-          };
-          label = input.label;
-          if ((input.kind === 'identifier' || input.usernameSelector) && !secret.username)
-            throw new VaultError('Enter the email, phone number or username.');
-          if (input.kind === 'password' && !secret.password)
-            throw new VaultError('Enter the password.');
-          if (input.kind === 'otp' && !secret.code)
-            throw new VaultError('Enter the verification code.');
-          if (input.kind === 'identifier') {
-            heldPassword = secret.password;
-            heldLabel = label;
-          }
-        } else {
-          if (!['identifier', 'password'].includes(input.kind))
-            throw new VaultError(
-              'Choose a saved login or enter the current verification code.',
-              409,
-            );
-          entryId = source.kind === 'saved' ? source.entryId : (selected?.entry_id ?? null);
-          if (
-            !request &&
-            selected &&
-            (selected.blocked || !staged || selected.entry_id !== entryId)
-          )
-            return false;
-          if (entryId) {
-            const row = (
-              await client.query<EntryRow>(
-                'SELECT * FROM vault_entries WHERE id=$1 AND owner_id=$2 AND origin=ANY($3::text[]) FOR SHARE',
-                [entryId, ownerId, credentialOrigins(input.origin)],
-              )
-            ).rows[0];
-            if (!row) throw new VaultError('No saved password is available for this website.', 404);
-            secret = { ...openCredential(encryptionKey!, row), code: undefined };
-          } else {
-            if (!staged || (input.kind === 'password' && !selected?.login_label))
-              throw new VaultError('This saved sign-in step is no longer available.', 409);
-            secret = { ...staged, code: undefined };
-            label = selected?.login_label;
-          }
-          if (
-            input.kind === 'password' &&
-            selected &&
-            (!staged || staged.username !== secret.username)
-          )
-            throw new VaultError(
-              'Choose the saved login that matches the account already entered.',
-              409,
-            );
-          if (input.kind === 'identifier' && !secret.username)
-            throw new VaultError('This login has no username. Enter it in the form.', 409);
-          if (input.kind === 'password' && !secret.password) {
-            if (request) throw new VaultError('Enter the password in the secure form.', 409);
-            await rememberSelection(client, {
-              rootTurnId: root,
-              ownerId,
-              origin: input.origin,
-              entryId,
-              username: secret.username,
-              expiresAt: selected?.expires_at ?? new Date(Date.now() + 10 * 60_000),
-              blocked: false,
-              enteredAt: selected?.credential_entered_at?.getTime(),
-            });
-            return false;
-          }
-          if (input.kind === 'identifier' && selected && !entryId) {
-            heldPassword = secret.password;
-            heldLabel = selected.login_label;
-          }
-          use.itemId = entryId ?? selected?.id;
-          if (
-            !request &&
-            !(input.kind === 'identifier' && selected?.kind === 'identifier') &&
-            (await automaticUse(
-              client,
-              root,
-              input.origin,
               input.kind,
-              use.itemId ?? null,
-              undefined,
-              browserOf(turn),
-            ))
+              row.id,
+              since,
+              input.kind === 'otp' ? undefined : browserOf(turn),
+            )
           )
             return false;
-        }
-        if (request)
-          await client.query("UPDATE credential_requests SET status='consumed' WHERE id=$1", [
-            request.id,
-          ]);
-        if (selected && input.kind !== 'otp')
-          await client.query(
-            'UPDATE credential_account_selections SET blocked=true,credential_entered_at=NULL,ciphertext=$2,login_label=$3 WHERE id=$1',
-            [
-              selected.id,
-              input.kind === 'password'
-                ? sealCredential(encryptionKey!, selected, {
-                    username: staged?.username ?? secret.username,
-                    password: '',
-                  })
-                : selected.ciphertext,
-              input.kind === 'password' ? '' : selected.login_label,
-            ],
-          );
-      },
-      perform: async (signal) => {
-        await options.inject(
-          {
-            ...input,
-            threadId: browserOf(turn),
-            ...(input.kind === 'otp'
-              ? { code: authenticator ? authenticatorCode(authenticator) : secret.code }
-              : input.kind === 'identifier'
-                ? { username: secret.username }
-                : {
-                    username: input.usernameSelector ? secret.username : undefined,
-                    password: secret.password,
-                  }),
-          },
-          signal,
-        );
-        return true;
-      },
-      complete: async (client) => {
-        if (request) await lockKey(client, `thread:${owner}`);
-        if (input.kind !== 'otp') {
-          if (
-            (source.kind === 'form' && (input.kind === 'password' || !heldPassword)) ||
-            (source.kind === 'selection' && input.kind === 'password' && !entryId)
-          ) {
-            const saved = await saveEntry(
-              ownerId,
-              {
-                label: label ?? input.label,
-                origin: input.origin,
-                username: secret.username,
-                password: input.kind === 'password' ? secret.password : '',
-              },
-              client,
-            );
-            entryId = saved.entry.id;
-            savedOperation = saved.operation;
-          }
-          await rememberSelection(client, {
-            rootTurnId: root,
-            ownerId,
-            origin: input.origin,
-            entryId,
-            username: secret.username,
-            password: heldPassword,
-            loginLabel: heldLabel,
-            expiresAt: selected?.expires_at ?? new Date(Date.now() + 10 * 60_000),
-            blocked: source.kind === 'form' && input.kind === 'password',
-            enteredAt: (
-              await client.query<{ at: Date }>('SELECT clock_timestamp() AS at')
-            ).rows[0]!.at.getTime(),
-            kind: input.kind,
-          });
-          if (request && source.kind === 'form' && entryId)
-            await client.query('UPDATE vault_uses SET item_id=$2 WHERE id=$1 AND owner_id=$3', [
-              request.id,
-              entryId,
-              ownerId,
-            ]);
-        }
-        if (request) {
-          await options.onUse?.(
+        },
+        perform: async (signal) => {
+          await options.inject(
             {
-              ...turn,
+              threadId: browserOf(turn),
               origin: input.origin,
-              ...(entryId ? { entryId } : {}),
-              reason: source.kind === 'form' ? 'entered' : 'picked',
+              kind: input.kind,
+              ...(input.usernameSelector ? { usernameSelector: input.usernameSelector } : {}),
+              ...(input.passwordSelector ? { passwordSelector: input.passwordSelector } : {}),
+              ...(input.submitSelector ? { submitSelector: input.submitSelector } : {}),
+              ...(input.kind === 'otp'
+                ? { code: authenticatorCode(secret!.authenticator!) }
+                : input.kind === 'identifier'
+                  ? { username: secret!.username }
+                  : {
+                      ...(input.usernameSelector ? { username: secret!.username } : {}),
+                      password: secret!.password,
+                    }),
             },
-            client,
+            signal,
           );
-          if (
-            (
-              await client.query(
-                `SELECT 1 FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND ${waitingTurnSql('u', 'credentials')}`,
-                [request.turn_id, ownerId],
-              )
-            ).rowCount
-          )
-            await options.resume(request.turn_id, client);
-        }
+          return true;
+        },
       },
-    });
-    if (savedOperation) track('login', savedOperation, 'user');
+    );
     return result === true;
-  }
-
-  async function consume(token: string, source: LoginSource, hashed = false) {
-    const row = (
-      await pool.query<RequestRow>(
-        'SELECT * FROM credential_requests WHERE token_hash=$1 AND owner_id=$2',
-        [hashed ? token : tokenHash(token), owner],
-      )
-    ).rows[0];
-    if (!row || row.status !== 'pending' || row.kind === 'method')
-      throw new VaultError(
-        'This request is expired, already used, or belongs to an earlier task step.',
-        409,
-      );
-    try {
-      await enterLogin(
-        { threadId: row.thread_id, turnId: row.turn_id, browserId: row.browser_id ?? undefined },
-        row.owner_id,
-        requestInput.parse(row.selectors),
-        source,
-        row,
-      );
-      return { ok: true };
-    } catch (error) {
-      if (source.kind === 'saved' && error instanceof VaultError && error.statusCode === 404) {
-        const fresh = await inspectRequest(
-          row.browser_id ?? row.thread_id,
-          requestInput.parse(row.selectors),
-        );
-        const id = randomUUID();
-        const token = await requestToken(id);
-        await uses.transaction(async (client) => {
-          if (!(await lockRequest(client, row.token_hash)))
-            throw new VaultError('This request is no longer open.', 409);
-          const selected = await selection(row.root_turn_id, row.owner_id, row.origin, client);
-          await rememberSelection(client, {
-            rootTurnId: row.root_turn_id,
-            ownerId: row.owner_id,
-            origin: row.origin,
-            entryId: null,
-            username: (await stagedUsername(selected)) ?? '',
-            expiresAt: new Date(Date.now() + 10 * 60_000),
-            blocked: true,
-          });
-          await client.query("UPDATE credential_requests SET status='superseded' WHERE id=$1", [
-            row.id,
-          ]);
-          await client.query(
-            `INSERT INTO credential_requests(id,token_hash,thread_id,turn_id,root_turn_id,owner_id,origin,label,kind,selectors,inspection,browser_id,flow_id,flow_expires_at)
-            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-            [
-              id,
-              tokenHash(token),
-              row.thread_id,
-              row.turn_id,
-              row.root_turn_id,
-              row.owner_id,
-              row.origin,
-              row.label,
-              fresh.input.kind,
-              storedSelectors(fresh.input),
-              JSON.stringify(fresh.inspection),
-              row.browser_id,
-              row.flow_id,
-              row.flow_expires_at,
-            ],
-          );
-        });
-        captureSecureEntry(options.analytics, row, 'superseded');
-        captureSecureEntry(
-          options.analytics,
-          { kind: fresh.input.kind, origin: row.origin },
-          'requested',
-        );
-        return {
-          ok: false,
-          retryUrl: `/vault/${token}`,
-          error: 'That saved login is no longer available. Enter a new login.',
-        };
-      }
-      await pool
-        .query("UPDATE credential_requests SET failed_at=now() WHERE id=$1 AND status='pending'", [
-          row.id,
-        ])
-        .then((failed) => {
-          if (failed.rowCount) captureSecureEntry(options.analytics, row, 'failed');
-        })
-        .catch((failure: unknown) => logFailure('vault_failure_state', failure));
-      throw error;
-    } finally {
-      options.refresh?.();
-    }
-  }
-
-  async function selectMethod(token: string, raw: unknown) {
-    const { methodId } = z
-      .object({ methodId: z.string().min(1).max(200) })
-      .strict()
-      .parse(raw);
-    const hash = tokenHash(token);
-    const row = (
-      await pool.query<RequestRow>(
-        'SELECT * FROM credential_requests WHERE token_hash=$1 AND owner_id=$2',
-        [hash, owner],
-      )
-    ).rows[0];
-    if (
-      !row ||
-      row.kind !== 'method' ||
-      !row.inspection.methods?.some((method) => method.id === methodId) ||
-      !row.inspection.document ||
-      !options.selectSignInMethod
-    )
-      throw new VaultError('This sign-in method is unavailable. Request a fresh step.', 409);
-    try {
-      await uses.run(
-        {
-          id: row.id,
-          ownerId: owner,
-          rootTurnId: row.root_turn_id,
-          turnId: row.turn_id,
-          origin: row.origin,
-          kind: 'method',
-        },
-        {
-          prepare: async (client) => {
-            const current = await lockRequest(client, hash);
-            if (!current || current.id !== row.id)
-              throw new VaultError('This sign-in request is expired or already used.', 409);
-            await client.query("UPDATE credential_requests SET status='consumed' WHERE id=$1", [
-              row.id,
-            ]);
-          },
-          perform: (signal) =>
-            options.selectSignInMethod!(
-              row.browser_id ?? row.thread_id,
-              {
-                origin: row.origin,
-                document: row.inspection.document!,
-                methodId,
-              },
-              signal,
-            ),
-          complete: async (client) => {
-            await lockKey(client, `thread:${owner}`);
-            if (
-              (
-                await client.query(
-                  `SELECT 1 FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND ${waitingTurnSql('u', 'credentials')}`,
-                  [row.turn_id, owner],
-                )
-              ).rowCount
-            )
-              await options.resume(row.turn_id, client);
-          },
-        },
-      );
-      return { ok: true };
-    } finally {
-      options.refresh?.();
-    }
-  }
-
-  async function submit(token: string, raw: unknown, hashed = false) {
-    return consume(token, { kind: 'form', values: submissionInput.parse(raw) }, hashed);
-  }
-
-  async function selectSaved(token: string, raw: unknown) {
-    const { entryId } = z
-      .object({ entryId: z.string().min(1).max(100) })
-      .strict()
-      .parse(raw);
-    return consume(token, { kind: 'saved', entryId });
-  }
-
-  async function retry(token: string) {
-    const row = await uses.transaction(async (client) => {
-      const request = await lockRequest(
-        client,
-        tokenHash(token),
-        "((r.status='consumed' AND EXISTS(SELECT 1 FROM vault_uses v WHERE v.id=r.id AND v.status='uncertain')) OR (r.status='pending' AND (r.failed_at IS NOT NULL OR (r.kind='method' AND r.created_at<=now()-interval '30 minutes'))))",
-        true,
-      );
-      if (!request)
-        throw new VaultError(
-          'This request can no longer be retried. Return to the latest task step.',
-          409,
-        );
-      await client.query(
-        "UPDATE credential_requests r SET status='retried',flow_expires_at=now()+interval '30 minutes' WHERE turn_id=$1 AND owner_id=$2 AND (status='pending' OR (status='consumed' AND EXISTS(SELECT 1 FROM vault_uses v WHERE v.id=r.id AND v.owner_id=$2 AND v.status='uncertain')))",
-        [request.turn_id, owner],
-      );
-      return request;
-    });
-    await options.retry(row.turn_id);
-    return { ok: true };
-  }
-
-  async function fillSaved(turn: TurnRef, ownerId: string, entryId: string, raw: SignInInput) {
-    return enterLogin(turn, ownerId, raw, { kind: 'saved', entryId });
   }
 
   async function authenticatorLogin(
@@ -2116,134 +1086,17 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     );
     if (!rows.length) return undefined;
     const credentialKey = await key();
-    let candidates = rows.flatMap((entry) => {
+    const entered = (await lastEntry(pool, root, origin))?.item_id;
+    const candidates = rows.filter((entry) => {
+      if ((entered && entry.id !== entered) || (savedLoginId && entry.id !== savedLoginId))
+        return false;
       try {
-        const { username, authenticator } = openCredential(credentialKey, entry);
-        return authenticator ? [{ entry, username }] : [];
+        return Boolean(openCredential(credentialKey, entry).authenticator);
       } catch {
-        return [];
+        return false;
       }
     });
-    const selected = await selection(root, ownerId, origin);
-    if (selected && selected.expires_at.getTime() <= Date.now()) return undefined;
-    if (selected?.entry_id)
-      candidates = candidates.filter(({ entry }) => entry.id === selected.entry_id);
-    else if (selected) {
-      const account = await stagedUsername(selected);
-      candidates =
-        account === undefined ? [] : candidates.filter(({ username }) => username === account);
-    }
-    if (savedLoginId !== undefined)
-      candidates = candidates.filter(({ entry }) => entry.id === savedLoginId);
-    return candidates.length === 1 ? metadata(candidates[0]!.entry) : undefined;
-  }
-
-  async function fillAuthenticatorCode(
-    turn: TurnRef,
-    ownerId: string,
-    entryId: string,
-    raw: SignInInput,
-  ) {
-    if (raw.kind !== 'otp' || raw.emailCode) return false;
-    return enterLogin(turn, ownerId, raw, { kind: 'authenticator', entryId });
-  }
-
-  async function fillSelected(turn: TurnRef, ownerId: string, raw: SignInInput) {
-    await forgetExpiredHolds();
-    const root = await rootTurn(pool, turn, ownerId);
-    const selected = root
-      ? await selection(root, ownerId, credentialOrigin(raw.origin))
-      : undefined;
-    if (!selected || selected.kind === 'password') return undefined;
-    if (!options.page || raw.kind === 'otp') return false;
-    try {
-      return await enterLogin(turn, ownerId, raw, { kind: 'selection', selected });
-    } catch (error) {
-      if (error instanceof VaultUseError && (error.statusCode === 502 || error.notEntered))
-        throw error;
-      return false;
-    }
-  }
-
-  async function fillEmailCode(turn: TurnRef, ownerId: string, raw: SignInInput) {
-    if (
-      ownerId !== owner ||
-      !options.page ||
-      !options.emailCode ||
-      raw.kind !== 'otp' ||
-      raw.emailCode !== true
-    )
-      return false;
-    try {
-      await forgetExpiredHolds();
-      const origin = credentialOrigin(raw.origin);
-      const started = await currentTurn(pool, turn, ownerId);
-      const root = started ? await rootTurn(pool, turn, ownerId) : undefined;
-      if (!root) return false;
-      const selected = await selection(root, ownerId, origin);
-      if (selected && selected.expires_at.getTime() <= Date.now()) return false;
-      const anchor = (selected?.credential_entered_at ?? started?.started_at)?.getTime();
-      if (!anchor || anchor > Date.now()) return false;
-      const since = Math.max(anchor, Date.now() - 5 * 60_000);
-      if (await automaticUse(pool, root, origin, 'otp', null, since)) return false;
-      const fresh = await inspectRequest(browserOf(turn), raw);
-      const shown = fresh.input.emailRecipient?.toLowerCase();
-      const username = verificationRecipient(
-        shown ? (/[*•]/.test(shown) ? { recipientHint: shown } : { recipient: shown }) : {},
-        selected ? normalizedEmail(openCredential(await key(), selected).username) : undefined,
-      );
-      if (!username) return false;
-      const signal = AbortSignal.timeout(60_000);
-      const code = await Promise.race([
-        options
-          .emailCode(
-            { recipient: username, origin, after: since - 30_000, before: Date.now() },
-            signal,
-          )
-          .catch(() => undefined),
-        new Promise<undefined>((resolve) =>
-          signal.addEventListener('abort', () => resolve(undefined), { once: true }),
-        ),
-      ]);
-      if (signal.aborted || !code || !/^\d{4,8}$/.test(code.code)) return false;
-      return await enterLogin(turn, ownerId, fresh.input, {
-        kind: 'email',
-        code,
-        selected,
-        since,
-      });
-    } catch (error) {
-      if (error instanceof VaultUseError && (error.statusCode === 502 || error.notEntered))
-        throw error;
-      return false;
-    }
-  }
-
-  async function submitChatCode(
-    ownerId: string,
-    turnId: string,
-    text: string,
-    requestId: string,
-  ): Promise<{ status: 'submitted' | 'invalid' | 'unavailable'; notEntered?: boolean }> {
-    if (ownerId !== owner) return { status: 'unavailable' };
-    const code = text.trim();
-    if (!/^\d{4,8}$/.test(code)) return { status: 'invalid' };
-    try {
-      const { rows } = await pool.query<{ token_hash: string }>(
-        `SELECT r.token_hash FROM credential_requests r JOIN turns u ON u.id=r.turn_id AND u.owner_id=r.owner_id
-         WHERE r.id=$1 AND r.turn_id=$2 AND r.owner_id=$3 AND r.kind='otp' AND r.status='pending'
-         AND ${waitingTurnSql('u', 'credentials')}`,
-        [requestId, turnId, ownerId],
-      );
-      if (rows.length !== 1) return { status: 'unavailable' };
-      await submit(rows[0].token_hash, { code }, true);
-      return { status: 'submitted' };
-    } catch (error) {
-      return {
-        status: 'unavailable',
-        ...(error instanceof VaultUseError && error.notEntered ? { notEntered: true } : {}),
-      };
-    }
+    return candidates.length === 1 ? metadata(candidates[0]!) : undefined;
   }
 
   function siteIcon(origin: string) {
@@ -2385,80 +1238,32 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         for (const row of removed.rows) track(row.kind, 'delete', 'user');
         return { ok: true };
       });
-      scope.get<{ Params: { id: string } }>('/api/credential-requests/:id', async (request) =>
-        describe(request.params.id),
-      );
-      scope.get<{ Params: { id: string } }>('/api/credential-requests/:id/flow', async (request) =>
-        flow(request.params.id),
-      );
-      scope.post<{ Params: { id: string } }>(
-        '/api/credential-requests/:id/method',
-        async (request) => selectMethod(request.params.id, request.body),
-      );
-      scope.get<{ Params: { id: string } }>(
-        '/api/credential-requests/:id/status',
-        async (request) => {
-          const { rows } = await pool.query<RequestStatusRow>(
-            `SELECT r.status,v.status AS operation_status,r.status='pending' AND (r.kind<>'method' OR r.created_at>now()-interval '30 minutes') AND EXISTS(
-               SELECT 1 FROM turns u WHERE u.id=r.turn_id AND u.owner_id=r.owner_id
-               AND ${waitingTurnSql('u', 'credentials')}) AS current_step
-             FROM credential_requests r LEFT JOIN vault_uses v
-               ON v.id=r.id AND v.owner_id=r.owner_id AND r.status='consumed'
-             WHERE r.token_hash=$1 AND r.owner_id=$2`,
-            [tokenHash(request.params.id), owner],
-          );
-          if (!rows[0]) throw new VaultError('Credential request not found.', 404);
-          return {
-            status: requestStatus(rows[0]),
-            ...(rows[0].operation_status === 'not_entered' ? { notEntered: true } : {}),
-          };
-        },
-      );
-      scope.post<{ Params: { id: string } }>(
-        '/api/credential-requests/:id/retry',
-        async (request) => retry(request.params.id),
-      );
-      scope.post<{ Params: { id: string } }>(
-        '/api/credential-requests/:id/saved',
-        async (request) => selectSaved(request.params.id, request.body),
-      );
-      scope.post<{ Params: { id: string } }>(
-        '/api/credential-requests/:id/password-manager',
-        async (request) => managedLogins(request.params.id, request.body),
-      );
-      scope.post<{ Params: { id: string } }>(
-        '/api/credential-requests/:id/password-manager/use',
-        async (request) => useManaged(request.params.id, request.body),
-      );
-      scope.post<{ Params: { id: string } }>(
-        '/api/credential-requests/:id',
-        { bodyLimit: 16_384 },
-        async (request) => submit(request.params.id, request.body),
-      );
     });
   }
 
   return {
     uses,
     registerRoutes,
-    saveLogin: (input: {
+    saveLogin: async (input: {
       origin: string;
       label: string;
       username: string;
       password: string;
       authenticatorKey?: string;
-    }) => save(owner, passwordInput.parse(input)),
-    request,
-    requestStatuses,
+    }) => {
+      if (!input.username) {
+        const { rows } = await pool.query<EntryRow>(
+          'SELECT * FROM vault_entries WHERE owner_id=$1 AND origin=ANY($2::text[])',
+          [owner, credentialOrigins(input.origin)],
+        );
+        if (rows.length === 1)
+          input = { ...input, username: openCredential(await key(), rows[0]!).username };
+      }
+      return save(owner, passwordInput.parse(input), 'user');
+    },
     list,
-    readCredential,
-    fillSaved,
-    fillSelected,
+    fill,
     authenticatorLogin,
-    fillAuthenticatorCode,
-    fillEmailCode,
-    submitChatCode,
-    forgetExpiredHolds,
     paymentCards,
     paymentCard,
   };

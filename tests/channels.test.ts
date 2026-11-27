@@ -11,9 +11,7 @@ import pg from 'pg';
 import { markdownToPlainText } from 'chat';
 import { channelReply, createChannels } from '../src/server/channels.ts';
 import { createAgentReactionService } from '../src/server/agent-reactions.ts';
-import { createChatVerification } from '../src/server/chat-verification.ts';
 import { createCommunication } from '../src/server/communication.ts';
-import { createVault } from '../src/server/vault.ts';
 import { locksTable } from '../src/server/locks.ts';
 import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import { MessagingAttachmentError, type MessagingTransport } from '../src/ports/messaging.ts';
@@ -4513,7 +4511,7 @@ async function fixtureTurn(
 }
 
 test(
-  'channel verification stays private before inbox persistence and fences duplicate delivery across restart',
+  'channel code refusals stay private before inbox persistence and fence duplicate delivery across restart',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
     const schema = `test_channel_codes_${randomUUID().replaceAll('-', '')}`;
@@ -4524,24 +4522,10 @@ test(
       options: `-c search_path=${schema}`,
     });
     const threadId = await createFixtureTables(pool, 'local-development');
-    const turnId = await fixtureTurn(pool, threadId, 'local-development', 'web');
     const accepted: Array<{ clientMessageId: string; channel: string }> = [];
     const submitted: string[] = [];
     const sent: Array<{ channelId: string; accountId: string; threadId: string; text: string }> =
       [];
-    let injections = 0;
-    let modelReady = true;
-    let voiceHold: Promise<void> | undefined;
-    let voiceStarted: (() => void) | undefined;
-    let verification: Awaited<ReturnType<typeof createChatVerification>> | undefined;
-    let beginHeld!: () => void;
-    let releaseHeld!: () => void;
-    const heldStarted = new Promise<void>((resolve) => {
-      beginHeld = resolve;
-    });
-    const heldReleased = new Promise<void>((resolve) => {
-      releaseHeld = resolve;
-    });
     function transport(accountId = 'fixture-account'): MessagingTransport {
       return {
         channels: ['telegram', 'whatsapp'].map((id) => ({
@@ -4563,13 +4547,6 @@ test(
                 senderId: 'fixture-owner',
                 threadId: 'fixture-thread',
                 ...input,
-                ...(input.voice
-                  ? {
-                      attachments: [
-                        { ...attachment('voice.ogg', 'audio/ogg', 'synthetic voice'), voice: true },
-                      ],
-                    }
-                  : {}),
                 sentAt: new Date(),
               },
             ],
@@ -4587,60 +4564,30 @@ test(
       const channels = await createChannels(pool, {
         ownerId: 'local-development',
         transport: transport(),
-        modelConfigured: () => modelReady,
-        verificationPending: async (channel) =>
-          Boolean((await verification?.pending(channel))?.length),
-        media: createChannelMedia({
-          artifacts: {
-            storeArtifact: async () => {
-              throw new Error('Private voice must not be stored.');
-            },
-          },
-          speech: {
-            transcribe: async () => {
-              voiceStarted?.();
-              await voiceHold;
-              return '481927';
-            },
-          },
-        }),
+        modelConfigured: () => true,
         present: async (thread) => {
-          assert.equal(modelReady, true);
           assert.equal(thread, threadId);
-          return 'Usa o pedido de verificação na conversa correspondente.';
+          return 'Abre o pagamento na Nod.';
         },
         intervalMs: 600000,
         subscribe: () => () => {},
         acceptVerification: async (text, input) => {
-          if (verification) return verification.accept(text, input);
           accepted.push(input);
-          if (text === '111111')
-            throw Object.assign(new Error('Ambiguous fixture code 111111.'), { statusCode: 409 });
-          if (text === '222222') throw new Error('Provider failed with code 222222.');
-          if (text !== '483729' && text !== '123456') {
-            const client = await pool.connect();
-            try {
-              await client.query('BEGIN');
-              await input.persistOrdinary(client);
-              await client.query('COMMIT');
-            } catch (error) {
-              await client.query('ROLLBACK');
-              throw error;
-            } finally {
-              client.release();
-            }
-            return;
+          if (text === '111')
+            throw Object.assign(new Error('Payment fixture refused 111.'), { statusCode: 409 });
+          if (text === '222') throw new Error('Provider failed with code 222.');
+          const client = await pool.connect();
+          try {
+            await client.query('BEGIN');
+            await input.persistOrdinary(client);
+            await client.query('COMMIT');
+          } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+          } finally {
+            client.release();
           }
-          if (text === '123456') {
-            beginHeld();
-            await heldReleased;
-          }
-          const stored = await pool.query(
-            "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,'local-development','user','Verification code sent securely.',$2,$3) ON CONFLICT(id) DO NOTHING",
-            [input.clientMessageId, threadId, turnId],
-          );
-          if (stored.rowCount) injections++;
-          return { turnId, messageText: 'Verification code sent securely.' };
+          return undefined;
         },
         submit: async (text, sourceId, client, channel) => {
           submitted.push(text);
@@ -4659,49 +4606,15 @@ test(
         payload: { messageId, text, ...extra },
       });
     try {
-      await send('foreign', '483729', 'telegram', { senderId: 'someone-else' });
-      await send('foreign-account', '483729', 'telegram', { accountId: 'another-account' });
+      await send('foreign', '111', 'telegram', { senderId: 'someone-else' });
+      await send('foreign-account', '111', 'telegram', { accountId: 'another-account' });
       assert.equal(accepted.length, 0);
       assert.equal((await pool.query('SELECT * FROM channel_inbox')).rowCount, 0);
 
-      await pool.query(
-        "ALTER TABLE channel_inbox ADD CONSTRAINT fixture_insert_failure CHECK(provider <> 'telegram')",
-      );
-      const interrupted = await send('private-code', '483729');
-      assert.equal(interrupted.statusCode, 503);
-      assert.doesNotMatch(interrupted.body, /483729/);
-      assert.equal(injections, 1);
-      assert.equal((await pool.query('SELECT * FROM channel_inbox')).rowCount, 0);
-      await fixture.app.close();
-      await pool.query('ALTER TABLE channel_inbox DROP CONSTRAINT fixture_insert_failure');
-      fixture = await open();
-      const retried = await Promise.all([
-        send('private-code', '483729'),
-        send('private-code', '483729'),
-      ]);
-      assert.ok(retried.every((response) => response.statusCode === 200));
-      await fixture.channels.drain();
-      assert.equal(injections, 1);
-      assert.equal(new Set(accepted.map((input) => input.clientMessageId)).size, 1);
-      const row = (await pool.query('SELECT * FROM channel_inbox')).rows[0];
-      assert.equal(row.text, 'Verification code sent securely.');
-      assert.equal(row.state, 'submitted');
-      assert.equal(row.turn_id, turnId);
-      assert.equal(row.message_id, accepted[0].clientMessageId);
+      const refused = await send('refused-code', '111');
+      assert.equal(refused.statusCode, 200);
+      assert.doesNotMatch(refused.body, /Payment fixture/);
       assert.match(accepted[0].channel, /^telegram:[a-f0-9]{32}$/);
-      assert.deepEqual(submitted, []);
-      const calls = accepted.length;
-      await send('private-code', 'changed duplicate body');
-      assert.equal(accepted.length, calls);
-
-      assert.equal((await send('private-code', '483729', 'whatsapp')).statusCode, 200);
-      assert.match(accepted.at(-1)!.channel, /^whatsapp:[a-f0-9]{32}$/);
-      assert.notEqual(accepted.at(-1)!.clientMessageId, accepted[0].clientMessageId);
-      assert.equal(injections, 2);
-
-      const ambiguous = await send('ambiguous-code', '111111');
-      assert.equal(ambiguous.statusCode, 200);
-      assert.doesNotMatch(ambiguous.body, /111111|Ambiguous fixture/);
       await fixture.channels.drain();
       assert.equal(sent.length, 1);
       assert.deepEqual(
@@ -4710,7 +4623,7 @@ test(
       );
       const guidance = (
         await pool.query(
-          "SELECT i.text,i.state,i.turn_id,m.role,m.turn_id AS reply_turn_id FROM channel_inbox i JOIN channel_outbox o USING(source_id) JOIN messages m ON m.id=o.message_id WHERE i.source_id='channel:telegram:fixture-account:ambiguous-code'",
+          "SELECT i.text,i.state,i.turn_id,m.role,m.turn_id AS reply_turn_id FROM channel_inbox i JOIN channel_outbox o USING(source_id) JOIN messages m ON m.id=o.message_id WHERE i.source_id='channel:telegram:fixture-account:refused-code'",
         )
       ).rows[0];
       assert.deepEqual(guidance, {
@@ -4723,20 +4636,17 @@ test(
       await fixture.app.close();
       fixture = await open();
       const acceptedBeforeDuplicate = accepted.length;
-      await Promise.all([
-        send('ambiguous-code', '111111'),
-        send('ambiguous-code', 'changed duplicate body'),
-      ]);
+      await Promise.all([send('refused-code', '111'), send('refused-code', 'changed duplicate')]);
       await fixture.channels.drain();
       assert.equal(accepted.length, acceptedBeforeDuplicate);
       assert.equal(sent.length, 1);
-      const unavailable = await send('unavailable-code', '222222');
+      const unavailable = await send('unavailable-code', '222');
       assert.equal(unavailable.statusCode, 503);
-      assert.doesNotMatch(unavailable.body, /222222|Provider failed/);
+      assert.doesNotMatch(unavailable.body, /222|Provider failed/);
       await fixture.channels.drain();
       const privateRows = (await pool.query('SELECT text FROM channel_inbox')).rows;
-      assert.equal(privateRows.length, 3);
-      assert.doesNotMatch(JSON.stringify(privateRows), /483729|111111|222222/);
+      assert.equal(privateRows.length, 1);
+      assert.doesNotMatch(JSON.stringify(privateRows), /111|222/);
       assert.deepEqual(submitted, []);
 
       assert.equal((await send('ordinary-number', '2026')).statusCode, 200);
@@ -4750,238 +4660,7 @@ test(
         ).rows[0].text,
         '2026',
       );
-
-      const keyStore = {
-        id: 'fixture',
-        configured: true,
-        getKey: async () => Buffer.alloc(32, 71),
-      };
-      let vaultInjections = 0;
-      const vault = await createVault(pool, {
-        requestKey: Buffer.alloc(32, 42),
-        keyStore,
-        page: async () => ({ url: 'https://1.1.1.1/login', origin: 'https://1.1.1.1' }),
-        inject: async (input) => {
-          assert.equal(input.code, '481927');
-          vaultInjections++;
-        },
-        resume: async () => {},
-        retry: async () => {},
-      });
-      verification = await createChatVerification(pool, {
-        ownerId: 'local-development',
-        keyStore,
-        submitCode: vault.submitChatCode,
-        refresh() {},
-      });
-      const codeTurnId = await fixtureTurn(
-        pool,
-        threadId,
-        'local-development',
-        accepted[0].channel,
-        null,
-        'running',
-      );
-      await pool.query('UPDATE turns SET started_at=now() WHERE id=$1', [codeTurnId]);
-      await vault.request({ threadId, turnId: codeTurnId }, 'local-development', {
-        origin: 'https://1.1.1.1',
-        label: 'Fixture sign-in',
-        kind: 'otp',
-        passwordSelector: '#code',
-      });
-      await send('early-code', 'The code is 481 927');
-      await fixture.channels.drain();
-      assert.equal(vaultInjections, 0);
-      await pool.query(
-        "UPDATE turns SET status='waiting',waiting_reason='credentials',finished_at=now() WHERE id=$1",
-        [codeTurnId],
-      );
-      modelReady = false;
-      assert.equal((await send('vault-code', '', 'telegram', { voice: true })).statusCode, 200);
-      modelReady = true;
-      await fixture.channels.drain();
-      assert.equal(vaultInjections, 1);
-      assert.deepEqual(submitted, ['2026']);
-      const oldQuestion = randomUUID();
-      await pool.query(
-        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,'local-development','assistant','Synthetic code question',$2,$3)",
-        [oldQuestion, threadId, codeTurnId],
-      );
-      await pool.query(
-        "INSERT INTO channel_outbox(message_id,source_id,state,provider_message_id,provider_message_ids) VALUES($1,'channel:telegram:fixture-account:private-code','sent','native-old-question',ARRAY['native-old-question'])",
-        [oldQuestion],
-      );
-      const nextCodeTurn = await fixtureTurn(
-        pool,
-        threadId,
-        'local-development',
-        accepted[0].channel,
-        null,
-        'running',
-      );
-      await pool.query('UPDATE turns SET background=true,started_at=now() WHERE id=$1', [
-        nextCodeTurn,
-      ]);
-      await vault.request({ threadId, turnId: nextCodeTurn }, 'local-development', {
-        origin: 'https://1.1.1.1',
-        label: 'Other synthetic sign-in',
-        kind: 'otp',
-        passwordSelector: '#code',
-      });
-      await pool.query(
-        "UPDATE turns SET status='waiting',waiting_reason='credentials',finished_at=now() WHERE id=$1",
-        [nextCodeTurn],
-      );
-      for (const target of ['native-old-question', 'unknown-native-question']) {
-        await send(`reply-${target}`, '481927', 'telegram', { replyToMessageId: target });
-        await fixture.channels.drain();
-        assert.equal(vaultInjections, 1);
-      }
-      const nextQuestion = randomUUID();
-      await pool.query(
-        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,'local-development','assistant','Other synthetic code question',$2,$3)",
-        [nextQuestion, threadId, nextCodeTurn],
-      );
-      await pool.query(
-        "INSERT INTO channel_outbox(message_id,source_id,state,provider_message_id,provider_message_ids) VALUES($1,'channel:telegram:fixture-account:private-code','sent','native-current-question',ARRAY['native-current-question'])",
-        [nextQuestion],
-      );
-      await verification.bindQuestion(nextCodeTurn, nextQuestion);
-      await send('reply-current-code', '481927', 'telegram', {
-        replyToMessageId: 'native-current-question',
-      });
-      await fixture.channels.drain();
-      assert.equal(vaultInjections, 2);
-      await pool.query(
-        "UPDATE turns SET status='running',waiting_reason=NULL,finished_at=NULL WHERE id=$1",
-        [nextCodeTurn],
-      );
-      await vault.request({ threadId, turnId: nextCodeTurn }, 'local-development', {
-        origin: 'https://1.1.1.1',
-        label: 'Next step in the same sign-in',
-        kind: 'otp',
-        passwordSelector: '#code',
-      });
-      await pool.query(
-        "UPDATE turns SET status='waiting',waiting_reason='credentials',finished_at=now() WHERE id=$1",
-        [nextCodeTurn],
-      );
-      await send('reply-closed-same-turn', '481927', 'telegram', {
-        replyToMessageId: 'native-current-question',
-      });
-      await fixture.channels.drain();
-      assert.equal(vaultInjections, 2);
-      const finalQuestion = randomUUID();
-      await pool.query(
-        "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,'local-development','assistant','Next synthetic code question',$2,$3)",
-        [finalQuestion, threadId, nextCodeTurn],
-      );
-      await pool.query(
-        "INSERT INTO channel_outbox(message_id,source_id,state,provider_message_id,provider_message_ids) VALUES($1,'channel:telegram:fixture-account:private-code','sent','native-next-question',ARRAY['native-next-question'])",
-        [finalQuestion],
-      );
-      await verification.bindQuestion(nextCodeTurn, finalQuestion);
-      await send('reply-next-code', '481927', 'telegram', {
-        replyToMessageId: 'native-next-question',
-      });
-      await fixture.channels.drain();
-      assert.equal(vaultInjections, 3);
-      assert.doesNotMatch(
-        JSON.stringify(
-          (await pool.query('SELECT text FROM channel_inbox UNION ALL SELECT text FROM messages'))
-            .rows,
-        ),
-        /481927/,
-      );
-      await pool.query(
-        "UPDATE turns SET status='running',waiting_reason=NULL,finished_at=NULL WHERE id=$1",
-        [nextCodeTurn],
-      );
-      await vault.request({ threadId, turnId: nextCodeTurn }, 'local-development', {
-        origin: 'https://1.1.1.1',
-        label: 'Synthetic held voice',
-        kind: 'otp',
-        passwordSelector: '#code',
-      });
-      await pool.query(
-        "UPDATE turns SET status='waiting',waiting_reason='credentials',finished_at=now() WHERE id=$1",
-        [nextCodeTurn],
-      );
-      modelReady = false;
-      assert.equal(
-        (
-          await send('unknown-native-voice', '', 'telegram', {
-            voice: true,
-            replyToMessageId: 'unknown-native-question',
-          })
-        ).statusCode,
-        200,
-      );
-      await fixture.channels.drain();
-      assert.equal(
-        (
-          await pool.query(
-            "SELECT o.state FROM channel_outbox o JOIN channel_inbox i USING(source_id) WHERE i.source_id LIKE '%:unknown-native-voice'",
-          )
-        ).rows[0].state,
-        'sent',
-      );
-      let releaseVoice!: () => void;
-      const beganVoice = new Promise<void>((resolve) => {
-        voiceStarted = resolve;
-      });
-      voiceHold = new Promise<void>((resolve) => {
-        releaseVoice = resolve;
-      });
-      const voice = send('closed-during-voice', '', 'telegram', { voice: true });
-      await beganVoice;
-      await pool.query(
-        "UPDATE credential_requests SET status='submitted' WHERE turn_id=$1 AND status='pending'",
-        [nextCodeTurn],
-      );
-      modelReady = true;
-      releaseVoice();
-      assert.equal((await voice).statusCode, 200);
-      await fixture.channels.drain();
-      assert.equal(vaultInjections, 3);
-      assert.deepEqual(submitted, ['2026']);
-      assert.deepEqual(
-        (
-          await pool.query(
-            "SELECT state,text FROM channel_inbox WHERE source_id LIKE '%:closed-during-voice'",
-          )
-        ).rows,
-        [{ state: 'discarded', text: '' }],
-      );
-      assert.doesNotMatch(
-        JSON.stringify(
-          (await pool.query('SELECT text FROM channel_inbox UNION ALL SELECT text FROM messages'))
-            .rows,
-        ),
-        /481927/,
-      );
-      verification = undefined;
-
-      const held = send('revoked-code', '123456');
-      await Promise.race([
-        heldStarted,
-        held.then(() => {
-          throw new Error('Expected pending verification.');
-        }),
-      ]);
-      await fixture.channels.replaceTransport(transport('new-account'));
-      releaseHeld();
-      assert.equal((await held).statusCode, 503);
-      assert.equal(
-        (
-          await pool.query(
-            "SELECT * FROM channel_inbox WHERE source_id='channel:telegram:fixture-account:revoked-code'",
-          )
-        ).rowCount,
-        0,
-      );
     } finally {
-      releaseHeld();
       await fixture.app.close();
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);

@@ -46,7 +46,7 @@ These sources guide the design. They do not prove the quality of each generated 
 Pi is the agent harness Nod runs on. It keeps the transcript, calls the model and runs tools. Nod's adapter is in [`src/providers/pi/`](https://github.com/n8n-io/nod/tree/main/src/providers/pi). The runtime in [`src/runtime/index.ts`](https://github.com/n8n-io/nod/blob/main/src/runtime/index.ts) runs sessions in parallel. Each session runs one turn at a time:
 
 - Conversation turns share the thread's saved session. The server hands it to one turn at a time.
-- Background sessions save their transcript too. A reply or secure form continues that session.
+- Background sessions save their transcript too. A reply, payment approval or **Return to Nod** continues that session.
 - Subagents use temporary in-memory Pi sessions and run in parallel.
 
 Owner replies and corrections steer unfinished work until the owner cancels or replaces it. Completed earlier requests are context, not a queue.
@@ -120,8 +120,6 @@ Normal sessions start with native workspace tools, common Nod tools, `codemode` 
 
 Below 65,536 tokens, the `apps` and `send_message` tools stay loaded with the workspace tools and `nod_tool_search`, so connected apps are reachable and a scheduled run can deliver its result without a search. Connected MCP server tools still load through search. Each search loads one other detailed tool and removes the previous selection. The search result names the loaded tool; its full schema appears in the next model call. Core guides are read through `skills` instead of being included in every request. Saved memory, task lists and older chat context are available through their tools. The first request keeps up to two recent complete exchanges within 4,000 characters. An exchange starts with an owner message and includes its assistant updates. The current instruction, rules and reply target stay complete. Every model gets a small connected MCP account index with guide names and revision hashes. Full server guides load through skills read when needed. A guide change updates the index, so a persistent session can read the new version.
 
-Sign-in form status guidance enters a request only when the session has an earlier form status to interpret.
-
 For `openrouter/free` and `openrouter/auto`, Nod uses an 8,192-token working window because the router can select a model with a smaller window than its catalog entry. It keeps the selected router ID. It does not select a replacement model or connection.
 
 Working limits come from [`src/providers/pi/context.ts`](https://github.com/n8n-io/nod/blob/main/src/providers/pi/context.ts). Model registration, Pi sessions and provider requests use the same effective context and output limits. The same policy sets compaction, safety margins and tool output bounds. The turn runtime and capability reports also use this policy. An audio model and its text companion share the smaller context and output limits. An explicit request can use less output.
@@ -164,7 +162,7 @@ Tool definitions live in [`src/runtime/tools.ts`](https://github.com/n8n-io/nod/
 | `ask_user`                                                          | Asks one question and ends the turn as waiting.                                                                                                               |
 | `react_to_message`                                                  | Reacts to the user's message with one emoji, on web, Telegram and WhatsApp, such as when a message only gives context.                                        |
 | `browser`                                                           | Drives the private browser: open, snapshot, click, fill, evaluate, download and handoff.                                                                      |
-| `sign_in`                                                           | Enters a Vault login or code into the page without showing it to the model, then returns the page that follows.                                               |
+| `sign_in`                                                           | Enters a saved Vault login or authenticator code without showing it to the model, or hands you the page to sign in.                                           |
 | `pay`                                                               | Submits a Vault card at checkout after your approval. Submission does not establish that payment succeeded.                                                   |
 | `apps`                                                              | Runs an action on a connected account, after the trust check.                                                                                                 |
 | `computer`                                                          | Uses native apps on macOS, Windows and Linux (experimental) through their accessibility tree, when the owner turns on [computer use](/connect/computer-use/). |

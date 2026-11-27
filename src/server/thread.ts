@@ -187,6 +187,21 @@ const burstCoalesceMs = (() => {
     : 900;
 })();
 
+const delayedDrains = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleDelayedWake(threadId: string, startAfter: Date) {
+  const delay = Math.max(0, startAfter.getTime() - Date.now()) + 15;
+  if (delay > 10_000) return;
+  const previous = delayedDrains.get(threadId);
+  if (previous) clearTimeout(previous);
+  const timer = setTimeout(() => {
+    if (delayedDrains.get(threadId) === timer) delayedDrains.delete(threadId);
+    if (drainWorker && !stopping) boss.notifyWorker(drainWorker);
+  }, delay);
+  timer.unref();
+  delayedDrains.set(threadId, timer);
+}
+
 export type TurnSource = 'user' | 'schedule' | 'event' | 'resume' | 'task';
 export const ownerStarted = (turn = 'u') => `${turn}.source IN ('user','task','resume')`;
 export interface TurnRef {
@@ -281,6 +296,7 @@ export interface ThreadDependencies {
     signal?: AbortSignal,
   ) => Promise<void>;
   readArtifact?: (threadId: string, path: string, maxBytes: number) => Promise<Uint8Array>;
+  workspaceAvailable?: () => boolean;
   cardImage?: (url: string, signal: AbortSignal) => Promise<PreviewImage | null>;
   mapTile?: (
     zoom: number,
@@ -294,11 +310,6 @@ export interface ThreadDependencies {
     signal: AbortSignal,
   ) => Promise<{ prompt: string } | undefined>;
   stoppedOutcomes?: (turnId: string) => Promise<string[]>;
-  credentialRequestStatuses?: (
-    threadId: string,
-    sessionId: string,
-    turnIds: string[],
-  ) => Promise<NonNullable<RuntimeContext['credentialRequests']>>;
   bindVerificationQuestion?: (
     turnId: string,
     messageId: string,
@@ -450,6 +461,7 @@ async function sendDrain(client: PoolClient | undefined, threadId: string, start
     },
   );
   if (!startAfter) afterCommit(client ?? {}, () => drainWorker && boss.notifyWorker(drainWorker));
+  else afterCommit(client ?? {}, () => scheduleDelayedWake(threadId, startAfter));
 }
 
 async function insertEvent(
@@ -1452,26 +1464,8 @@ export async function resumeTurn(
   return resumed;
 }
 
-export async function resumeAfterCredentials(turnId: string, client?: PoolClient) {
-  await resumeTurn(
-    turnId,
-    `credentials:${turnId}`,
-    'The secure credential step has completed. Inspect the current browser and continue the request you were working on. Do not repeat completed external actions.',
-    true,
-    client,
-  );
-}
-
 export async function resumeAfterPayment(turnId: string, prompt: string, client?: PoolClient) {
   await resumeTurn(turnId, `credentials:${turnId}`, prompt, true, client);
-}
-
-export async function retryCredentials(turnId: string) {
-  await resumeTurn(
-    turnId,
-    `credentials-retry:${turnId}`,
-    'The owner asked you to check the previous secure sign-in step. It may have reached the website. Inspect the current browser and check its result before you request a fresh link. Do not repeat a completed or uncertain external action.',
-  );
 }
 
 export const activeHandoffSql = `u.status='waiting' AND u.waiting_reason='question' AND u.handoff_browser_id IS NOT NULL
@@ -2144,21 +2138,12 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
     ),
   ]);
   const preference = preferences.rows[0];
-  const historyTurnIds = [
-    ...new Set<string>(
-      history.rows.flatMap((message) =>
-        message.role === 'assistant' && typeof message.turnId === 'string' ? [message.turnId] : [],
-      ),
-    ),
-  ];
-  const [related, credentialRequests] = await Promise.all([
+  const related =
     !turn.background && sourceMessageId && dependencies.recall
-      ? dependencies
+      ? await dependencies
           .recall(String(turn.prompt ?? ''), history.rows[0]?.createdAt, sourceMessageId)
           .catch(() => [])
-      : [],
-    dependencies.credentialRequestStatuses?.(threadId, turn.session_id, historyTurnIds) ?? [],
-  ]);
+      : [];
   const timeZone: string | undefined = preference?.time_zone || undefined;
   return {
     sourceMessageId,
@@ -2200,7 +2185,6 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
             })),
           }
         : {}),
-      ...(credentialRequests.length ? { credentialRequests } : {}),
       ...(related.length ? { relatedConversation: related } : {}),
       conversationLanguage: language,
       ...(learnedSkills?.length ? { learnedSkills } : {}),
@@ -2549,15 +2533,18 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       operation.throwIfAborted();
       const value = await inlineAppResult(
         result,
-        async (text) =>
-          workspaceReference(
+        async (text) => {
+          if (dependencies.workspaceAvailable?.() === false)
+            throw new Error('Nod’s workspace is unavailable right now');
+          return workspaceReference(
             await stage(
               randomUUID(),
               `${action.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80)}.json`,
               Buffer.from(text),
               operation,
             ),
-          ),
+          );
+        },
         dependencies.mailCheck ?? noMailCheck,
         operation,
         nested,
@@ -3344,6 +3331,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
 
 export async function stopThreadWorkers() {
   stopping = true;
+  for (const timer of delayedDrains.values()) clearTimeout(timer);
+  delayedDrains.clear();
   cancelTurnOperations();
   for (const controller of running.values()) controller.abort();
   await boss.stop({ graceful: true, timeout: 5000 });

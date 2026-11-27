@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { OnboardingStep } from '../../../../shared/onboarding';
 import { OnboardingFrame } from '../frame';
 import { Button, Notice } from '../../../components/ui';
@@ -9,11 +9,9 @@ import { Messages } from '../motion';
 
 export function DesktopPreferencesSetup({
   onReady,
-  notice,
   steps,
 }: {
   onReady(): void;
-  notice?: ReactNode;
   steps: readonly OnboardingStep[];
 }) {
   const [error, setError] = useState('');
@@ -67,7 +65,6 @@ export function DesktopPreferencesSetup({
           </Notice>
         )}
       </section>
-      {notice}
     </OnboardingFrame>
   );
 }

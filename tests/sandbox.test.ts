@@ -541,7 +541,10 @@ test('connected CLIs run only their sealed install with a clean environment', as
   }
 });
 
-function fakeDocker(check: (args: string[]) => Promise<{ code: number; stderr?: string }>) {
+function fakeDocker(
+  check: (args: string[]) => Promise<{ code: number; stderr?: string }>,
+  ready?: (signal?: AbortSignal) => Promise<void>,
+) {
   const launches: Array<{
     workdir: string;
     request: Promise<{ args: string[] }>;
@@ -599,6 +602,7 @@ function fakeDocker(check: (args: string[]) => Promise<{ code: number; stderr?: 
     container: 'nod-workspace-fixture',
     workspaceRoot: '/synthetic',
     spawn: launch,
+    ready,
   });
   const session = workspace.open({
     threadId: 'fixture',
@@ -607,6 +611,36 @@ function fakeDocker(check: (args: string[]) => Promise<{ code: number; stderr?: 
   });
   return { launches, workspace, session, exit };
 }
+
+test('workspace commands wait for the private computer and fail with its reason', async () => {
+  const { createComputerReadiness } = await import('../src/server/computer-readiness.ts');
+  const starting = createComputerReadiness();
+  const failed = createComputerReadiness();
+  const waiting = fakeDocker(async () => ({ code: 0 }), starting.ready);
+  const refused = fakeDocker(async () => ({ code: 0 }), failed.ready);
+  try {
+    const command = execute(waiting.session, 'ok');
+    const stopping = new AbortController();
+    const stopped = waiting.session.exec('ok', { signal: stopping.signal });
+    await new Promise(setImmediate);
+    assert.equal(waiting.launches.length, 0);
+    stopping.abort(new Error('Stopped by the owner.'));
+    await assert.rejects(stopped, /Stopped by the owner/);
+    starting.update({ ready: true });
+    assert.equal(await command, '');
+    assert.equal(waiting.launches.length, 1);
+    failed.update({ error: { code: 'NOD_WSL_REQUIRED', message: 'WSL 2 is not installed.' } });
+    await assert.rejects(
+      execute(refused.session, 'ok'),
+      (error: Error & { code?: string }) =>
+        error.code === 'NOD_WSL_REQUIRED' && error.message.includes('WSL 2 is not installed.'),
+    );
+    assert.equal(refused.launches.length, 0);
+  } finally {
+    await waiting.workspace.dispose();
+    await refused.workspace.dispose();
+  }
+});
 
 test('an uncertain command is stopped once and the workspace keeps working', async () => {
   const docker = fakeDocker(async () => ({ code: 0 }));
@@ -2388,6 +2422,48 @@ test('computer use refuses blocked apps, keeps browsers view-only and acts only 
   });
   assert.equal(computer.needsCheck('COMPUTER_TYPE', replacing), true);
   assert.equal(replacing.replacesText, true);
+  findings[0]!.states = ['focused'];
+  await computer.execute(
+    turn,
+    'COMPUTER_TYPE',
+    await computer.prepare(turn, 'COMPUTER_TYPE', { ref: '@sfind001:e1', text: 'Testing' }),
+  );
+  const appending = await computer.prepare(turn, 'COMPUTER_TYPE', {
+    ref: '@sfind001:e1',
+    text: ' — done',
+  });
+  assert.equal(appending.replacesText, false);
+  assert.equal(
+    (await computer.prepare(turn, 'COMPUTER_SET_VALUE', { ref: '@sfind001:e1', text: 'New' }))
+      .replacesText,
+    true,
+  );
+  delete findings[0]!.states;
+  await assert.rejects(
+    computer.execute(turn, 'COMPUTER_TYPE', appending),
+    (error: Error & { notRun?: boolean }) =>
+      error.notRun === true && /keyboard focus changed/.test(error.message),
+  );
+  findings[0]!.states = ['focused'];
+  await computer.execute(
+    turn,
+    'COMPUTER_FOCUS',
+    await computer.prepare(turn, 'COMPUTER_FOCUS', { ref: '@sfind001:e1' }),
+  );
+  const afterFocus = await computer.prepare(turn, 'COMPUTER_TYPE', {
+    ref: '@sfind001:e1',
+    text: 'All new',
+  });
+  assert.equal(afterFocus.replacesText, true);
+  await computer.execute(turn, 'COMPUTER_TYPE', afterFocus);
+  const typedOn = await computer.prepare(turn, 'COMPUTER_TYPE', {
+    ref: '@sfind001:e1',
+    text: ' and more',
+  });
+  assert.equal(typedOn.replacesText, false);
+  await computer.execute(turn, 'COMPUTER_TYPE', typedOn);
+  assert.equal(calls.at(-1)?.keepFocus, true);
+  delete findings[0]!.states;
   const renamed = await computer.prepare(turn, 'COMPUTER_PRESS', { ref: '@sdraft01:e1' });
   window.children[0]!.name = 'Delete';
   await assert.rejects(computer.execute(turn, 'COMPUTER_PRESS', renamed), /control changed/);

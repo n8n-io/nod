@@ -2320,6 +2320,102 @@ test('the simulated owner selects a sign-in method through the private form', as
   }
 });
 
+test('the simulated owner signs in on the handed-over page, types a fresh code and saves the login', async () => {
+  const run = async (user: Parameters<typeof createSession>[0]['user'], code = '') => {
+    const posted: Array<{ path: string; body: unknown }> = [];
+    let waiting = true;
+    const stack = {
+      waiting: (alias: string) => `${alias}.status='waiting'`,
+      pool: {
+        query: async (sql: string) => {
+          if (sql.includes('AS waiting FROM turns')) {
+            const rows = [{ id: 'turn', waiting_reason: 'question', handoff: true, waiting }];
+            waiting = false;
+            return { rows, rowCount: 1 };
+          }
+          if (sql.includes("role='assistant'"))
+            return {
+              rows: [{ text: 'Sign in to Ryde on the page, then select Return to Nod.' }],
+              rowCount: 1,
+            };
+          if (sql.includes('FROM turn_events') || sql.includes('information_schema'))
+            return { rows: [{}], rowCount: 1 };
+          return { rows: [], rowCount: 0 };
+        },
+      },
+      request: async (path: string, init?: RequestInit) => {
+        if (path === '/api/state') return Response.json({ threadId: 'thread' });
+        if (path.startsWith('/api/browser-handoff/stream?')) {
+          posted.push({ path, body: 'view' });
+          return new Response(new ReadableStream({ start: (stream) => stream.close() }));
+        }
+        posted.push({ path, body: JSON.parse(String(init?.body)) });
+        return Response.json(
+          path === '/api/browser-handoff/done'
+            ? { ok: true, savableLogin: { host: 'rewards.ryde.example.org' } }
+            : { ok: true },
+        );
+      },
+    } as unknown as Stack;
+    const session = createSession({
+      stack,
+      user,
+      world: { state: { code } },
+      deadline: Date.now() + 5000,
+      pageWaitMs: 0,
+    });
+    await session.say('How many points do I have?');
+    return { posted: posted.slice(1), interactions: session.interactions };
+  };
+  const login = { username: 'alex@example.com', password: 'Synthetic-Pass-1!' };
+  const field = (text: string) => [
+    { type: 'key', key: 'Control+a' },
+    { type: 'text', text },
+  ];
+  const view = { path: '/api/browser-handoff/stream?turnId=turn', body: 'view' };
+  const signedIn = await run({ signIn: login, saveLogin: true });
+  assert.deepEqual(signedIn.posted, [
+    view,
+    {
+      path: '/api/browser-handoff',
+      body: { turnId: 'turn', inputs: [...field(login.username), { type: 'key', key: 'Tab' }] },
+    },
+    {
+      path: '/api/browser-handoff',
+      body: { turnId: 'turn', inputs: [...field(login.password), { type: 'key', key: 'Enter' }] },
+    },
+    { path: '/api/browser-handoff/done', body: { turnId: 'turn' } },
+    { path: '/api/browser-handoff/save-login', body: { turnId: 'turn' } },
+  ]);
+  assert.deepEqual(
+    signedIn.interactions.map((item) => [item.kind, item.entered]),
+    [['handoff', ['login']]],
+  );
+  const coded = await run(
+    { signIn: login, secrets: (_text, world: { state: { code: string } }) => world.state.code },
+    '482913',
+  );
+  assert.deepEqual(coded.posted, [
+    view,
+    {
+      path: '/api/browser-handoff',
+      body: { turnId: 'turn', inputs: [...field('482913'), { type: 'key', key: 'Enter' }] },
+    },
+    { path: '/api/browser-handoff/done', body: { turnId: 'turn' } },
+  ]);
+  const unable = await run({ signInReply: "I don't know that password." });
+  assert.deepEqual(unable.posted, [
+    { path: '/api/messages', body: { text: "I don't know that password." } },
+  ]);
+  assert.deepEqual(
+    unable.interactions.map((item) => [item.kind, item.reply]),
+    [['handoff', "I don't know that password."]],
+  );
+  const stuck = await run({});
+  assert.deepEqual(stuck.posted, []);
+  assert.equal(stuck.interactions.at(-1)?.kind, 'unanswered');
+});
+
 test('asking the user to sign in in the browser is not asking for a secret in chat', () => {
   const safe = [
     "I won't type your password in by hand. Could you sign in here: [Open browser](/browser)?",

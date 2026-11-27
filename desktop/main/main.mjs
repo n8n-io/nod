@@ -6,7 +6,6 @@ import {
   dialog,
   ipcMain,
   Menu,
-  MessageChannelMain,
   nativeImage,
   nativeTheme,
   net,
@@ -25,7 +24,17 @@ import {
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { appendFile, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  access,
+  appendFile,
+  mkdir,
+  open,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { homedir, uptime } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -228,7 +237,8 @@ let welcomePassed = false;
 let welcomeNavigation = false;
 let transferringWelcome;
 let welcomeTransferError;
-let engineRuntimeReady = false;
+let engineReady = false;
+let computerState;
 let enginePreferencesReady = false;
 let preparing;
 let onboardingCompleted = false;
@@ -268,7 +278,12 @@ let clientPartition = 'persist:nod-app';
 let replayingProductOnboarding = process.argv.includes('--onboarding');
 let stopNotifications;
 let unreadBadge;
-let preferences = { theme: 'system', notifications: false, launchAtLogin: false };
+let preferences = {
+  theme: 'system',
+  notifications: false,
+  notificationSound: false,
+  launchAtLogin: false,
+};
 const displayedNotifications = new Set();
 let status = {
   platform: process.platform,
@@ -327,7 +342,45 @@ let chatReadCursors = createChatReadCursorStore(join(profileRoot, 'chat-read-cur
 });
 
 const lifecycle = createDesktopLifecycle({
-  prepareRuntime: async ({ signal, onStatus, onStorageReady }) => {
+  openDatabase: async ({ signal }) => {
+    await mkdir(profileRoot, { recursive: true, mode: 0o700 });
+    const started = Date.now();
+    const { openDatabase } = await import(
+      pathToFileURL(join(engineRoot, 'desktop', 'runtime', 'database.mjs')).href
+    );
+    try {
+      const database = await openDatabase({
+        dataRoot: profileRoot,
+        resourcesPath: engineRoot,
+        signal,
+        onEvent: ({ event, error, details }) =>
+          void writeDiagnostic(
+            [
+              event === 'database_restarted'
+                ? 'Database restarted after it stopped.'
+                : 'Database restart failed.',
+              details,
+            ]
+              .filter(Boolean)
+              .join('\n'),
+            { event, ...(error ? { error } : {}) },
+          ).catch(() => {}),
+      });
+      knownSecrets.add(database.password);
+      await writeDiagnostic(`Database opened. ${diagnosticFields({ ms: Date.now() - started })}`, {
+        event: 'database_ready',
+        durationMs: Date.now() - started,
+      }).catch(() => {});
+      return database;
+    } catch (error) {
+      await writeDiagnostic(
+        `Database failed. ${diagnosticFields({ code: error.code, ms: Date.now() - started })}`,
+        { event: 'database_failed', error, durationMs: Date.now() - started },
+      ).catch(() => {});
+      throw error;
+    }
+  },
+  prepareRuntime: async ({ signal, onStatus, database, onMoved }) => {
     await mkdir(profileRoot, { recursive: true, mode: 0o700 });
     await writeDiagnostic('Preparing local runtime.', { event: 'runtime_prepare' }).catch(() => {});
     const started = Date.now();
@@ -349,9 +402,14 @@ const lifecycle = createDesktopLifecycle({
           step = typeof value === 'string' ? value : value?.message;
           onStatus(value);
         },
-        onStorageReady: async (storage) => {
+        database,
+        onMoved: async () => {
           phase = 'engine';
-          await onStorageReady(storage);
+          await writeDiagnostic(
+            `Saved data moved. ${diagnosticFields({ ms: Date.now() - started })}`,
+            { event: 'database_moved', durationMs: Date.now() - started },
+          ).catch(() => {});
+          await onMoved();
           phase = 'runtime';
         },
       });
@@ -389,6 +447,7 @@ const lifecycle = createDesktopLifecycle({
         () => {},
       );
     if (
+      !engineReady &&
       preparing &&
       !engineFailure &&
       !welcomeTransferError &&
@@ -404,13 +463,69 @@ const lifecycle = createDesktopLifecycle({
         secondsLeft: value.secondsLeft,
         needsRuntimeArchive: false,
       });
-    else
-      update({
-        runtime,
-        ...(runtime.phase === 'error' ? { error: runtime.message, details: runtime.details } : {}),
-      });
+    else update({ runtime });
+  },
+  onRuntime: (value) => {
+    computerState = value.error
+      ? {
+          error: {
+            code: typeof value.error.code === 'string' ? value.error.code : undefined,
+            message: bounded(value.error.message),
+          },
+        }
+      : { environment: value.environment };
+    sendComputerState();
+    preloadPendingUpdate();
+    if (engineReady && computerState.error?.code === 'NOD_WSL_REQUIRED') void installWslOnce();
   },
 });
+
+let wslInstall;
+let wslInstalled = false;
+
+async function installWslOnce() {
+  if (process.platform !== 'win32' || remoteConnection || quitting) return;
+  if (!welcomePassed && !onboardingCompleted) return;
+  if (wslInstalled) {
+    update({
+      runtime: {
+        ...status.runtime,
+        message:
+          'Restart your PC to finish installing WSL. Nod’s browser and workspace start after that.',
+        needsWsl: false,
+      },
+    });
+    return;
+  }
+  if (wslInstall) return;
+  const marker = join(profileRoot, 'wsl-install.json');
+  wslInstall = (async () => {
+    if (
+      await access(marker).then(
+        () => true,
+        () => false,
+      )
+    )
+      return;
+    await writeFile(marker, JSON.stringify({ requestedAt: new Date().toISOString() }), {
+      mode: 0o600,
+    });
+    const { installWsl } = await import(
+      pathToFileURL(join(engineRoot, 'desktop/runtime/windows.mjs')).href
+    );
+    await lifecycle.install(async (options) => {
+      await installWsl(options);
+      wslInstalled = true;
+    });
+  })().catch(
+    (error) => void writeDiagnostic(`WSL install failed. ${error.message}`).catch(() => {}),
+  );
+}
+
+function sendComputerState() {
+  if (engine && engineReady && computerState)
+    engine.postMessage({ type: 'nod-runtime', ...computerState });
+}
 
 const readinessNotice = createReadinessNotice({
   notify: async (eligible) => {
@@ -418,11 +533,10 @@ const readinessNotice = createReadinessNotice({
     if (!eligible() || quitting || !preferences.notifications || foregroundWindow()) return false;
     if (!Notification.isSupported() || isQuietTime(saved.preferences)) return true;
     const notification = new Notification({
+      silent: !preferences.notificationSound,
       title: 'Nod is ready',
       icon: notificationIcon,
-      body: onboardingCompleted
-        ? 'Your workspace and browser are ready.'
-        : 'Your computer is ready. Come back to finish setup.',
+      body: onboardingCompleted ? 'You can chat with Nod now.' : 'Come back to finish setup.',
     });
     displayedNotifications.add(notification);
     notification.on('show', () => {
@@ -451,13 +565,13 @@ function focusedEngineWindow() {
 
 function updateReadinessNotice() {
   void readinessNotice.update({
-    runtimePhase: engineRuntimeReady ? status.runtime.phase : 'preparing',
+    runtimePhase: engineReady ? 'ready' : 'preparing',
     guided: guidedStartup,
     enabled: preferences.notifications,
     foreground: foregroundWindow(),
     quitting,
     completed: onboardingCompleted,
-    engineReady: Boolean(engine) && engineRuntimeReady && status.phase === 'ready',
+    engineReady: Boolean(engine) && engineReady && status.phase === 'ready',
   });
 }
 
@@ -554,6 +668,7 @@ function applyPreferences(saved) {
   preferences = {
     theme: saved.theme,
     notifications: saved.notifications,
+    notificationSound: saved.notificationSound,
     launchAtLogin: saved.launchAtLogin,
   };
   nativeTheme.themeSource = saved.theme;
@@ -709,6 +824,7 @@ async function notifyAssistantMessage(message, threadId) {
   )
     return;
   const notification = new Notification({
+    silent: !preferences.notificationSound,
     title: 'Nod',
     icon: notificationIcon,
     body: assistantNotificationPreview(message, knownSecrets),
@@ -742,6 +858,7 @@ async function notifyAssistantMessage(message, threadId) {
 function showNotificationConfirmation() {
   if (!preferences.notifications || quitting || !Notification.isSupported()) return;
   const notification = new Notification({
+    silent: !preferences.notificationSound,
     title: 'Nod',
     icon: notificationIcon,
     body: 'Notifications are on.',
@@ -930,6 +1047,11 @@ function trustedAppURL(value) {
 
 function allowSetup(event) {
   if (!isSetup(event)) throw new Error('This action is unavailable.');
+}
+
+function allowLocalRuntime(event) {
+  if (!isSetup(event) && !(isEngine(event) && !remoteConnection))
+    throw new Error('This action is unavailable.');
 }
 
 async function openExternal(value) {
@@ -1172,7 +1294,7 @@ function showEngine({ focus = true } = {}) {
   if (
     !enginePreferencesReady ||
     !engineOrigin ||
-    (onboardingCompleted && !engineRuntimeReady) ||
+    (onboardingCompleted && !engineReady) ||
     (!onboardingCompleted && !welcomePassed)
   ) {
     showSettings('general', true);
@@ -1433,29 +1555,6 @@ function baseEnvironment() {
       .filter((key) => typeof process.env[key] === 'string')
       .map((key) => [key, process.env[key]]),
   );
-}
-
-function openOnePassword(owner) {
-  const helper = utilityProcess.fork(
-    join(engineRoot, 'desktop', 'main', 'onepassword.mjs'),
-    [app.getVersion()],
-    {
-      cwd: engineRoot,
-      env: Object.fromEntries(
-        ['HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'SYSTEMROOT', 'TMPDIR', 'TEMP', 'TMP']
-          .concat(['PATH', 'LANG'])
-          .filter((key) => typeof process.env[key] === 'string')
-          .map((key) => [key, process.env[key]]),
-      ),
-      stdio: 'ignore',
-      serviceName: 'Nod 1Password',
-      allowLoadingUnsignedLibraries: true,
-    },
-  );
-  const { port1, port2 } = new MessageChannelMain();
-  helper.postMessage({ type: 'nod-1password-port' }, [port2]);
-  owner.postMessage({ type: 'nod-1password-port' }, [port1]);
-  owner.once('exit', () => helper.kill());
 }
 
 async function answerComputer(child, { id, request }) {
@@ -1876,7 +1975,7 @@ async function startRemote(connection) {
   authToken = connected.token;
   engineBound = true;
   enginePreferencesReady = true;
-  engineRuntimeReady = true;
+  engineReady = true;
   onboardingCompleted = true;
   welcomePassed = true;
   const id = createHash('sha256').update(`${connected.url}\0${connected.owner}`).digest('hex');
@@ -1957,7 +2056,7 @@ async function stopEngine() {
   void computerHelper.cancel().catch(() => {});
   stayAwake(false);
   enginePreferencesReady = false;
-  engineRuntimeReady = false;
+  engineReady = false;
   stopNotifications?.();
   stopNotifications = undefined;
   unreadBadge?.stop();
@@ -2019,9 +2118,10 @@ async function transferWelcome() {
     welcomeNavigation = true;
     welcomePassed = true;
     welcomeTransferError = undefined;
+    if (computerState?.error?.code === 'NOD_WSL_REQUIRED') void installWslOnce();
     update({
-      phase: engineRuntimeReady ? 'ready' : 'preparing',
-      message: engineRuntimeReady ? 'Nod is running on your computer.' : status.runtime.message,
+      phase: engineReady ? 'ready' : 'preparing',
+      message: engineReady ? 'Nod is running on your computer.' : status.runtime.message,
       error: undefined,
     });
     if (pendingFeedback || foregroundWindow()) showEngine();
@@ -2041,7 +2141,7 @@ async function transferWelcome() {
 async function saveRendererSettings(event, value) {
   if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
   if (quitting) throw new Error('Nod is closing.');
-  const allowed = ['theme', 'notifications', 'launchAtLogin'];
+  const allowed = ['theme', 'notifications', 'notificationSound', 'launchAtLogin'];
   if (isEngine(event) && value?.onboardingCompleted === true && Object.keys(value).length === 1) {
     if (!remoteConnection) await reconcileLocalSetup(true);
     else if (!(await accountSetupComplete()))
@@ -2136,38 +2236,39 @@ async function reconcileLocalSetup(required = false) {
   updateReadinessNotice();
 }
 
-async function finishEnginePreparation(pending = false) {
+async function finishEnginePreparation() {
   await appPreferences.sync();
   if (quitting || !engine) throw new Error(engineFailure || 'Nod is closing.');
   await reconcileLocalSetup();
   if (quitting || !engine) throw new Error(engineFailure || 'Nod is closing.');
-  if (!pending && !engineRuntimeReady) {
-    engine.postMessage({ type: 'nod-runtime-ready' });
-    engineRuntimeReady = true;
-  }
+  engineReady = true;
+  sendComputerState();
+  if (computerState?.error?.code === 'NOD_WSL_REQUIRED') void installWslOnce();
   update({
-    phase: pending ? 'preparing' : 'ready',
-    stage: pending ? status.runtime.stage : 'ready',
-    message: pending ? status.runtime.message : 'Nod is running on your computer.',
-    progress: pending ? status.runtime.progress : undefined,
-    secondsLeft: pending ? status.runtime.secondsLeft : undefined,
+    phase: 'ready',
+    stage: 'ready',
+    message: 'Nod is running on your computer.',
+    progress: undefined,
+    secondsLeft: undefined,
     engineReady: true,
   });
   if (!welcomeTransferError) await transferWelcome().catch(() => {});
   if (welcomeTransferError)
     update({ phase: 'error', error: welcomeTransferError, message: welcomeTransferError });
-  if ((!pending && onboardingCompleted) || welcomePassed) {
+  if (onboardingCompleted || welcomePassed) {
     if (pendingFeedback || foregroundWindow()) showEngine();
     else if (setupWindow && !setupWindow.isDestroyed()) showEngine({ focus: false });
   }
   synchronizeNotifications();
-  if (!pending && pendingPreload) {
-    const assets = pendingPreload;
-    pendingPreload = undefined;
-    void preloadUpdateImages(assets);
-  }
   updateReadinessNotice();
   return status;
+}
+
+function preloadPendingUpdate() {
+  if (!pendingPreload || !computerState?.environment) return;
+  const assets = pendingPreload;
+  pendingPreload = undefined;
+  void preloadUpdateImages(assets);
 }
 
 function reportUpdateStatus(phase, progress) {
@@ -2532,6 +2633,7 @@ async function notifyUpdate(candidate) {
   ({ notifications } = await settings.get());
   if (quietTime || !notifications || quitting || focusedEngineWindow()) return 'quiet';
   const notification = new Notification({
+    silent: !preferences.notificationSound,
     title: `Nod ${candidate.version} is ${candidate.command ? 'available' : 'ready'}`,
     icon: notificationIcon,
     body: candidate.command
@@ -2838,12 +2940,12 @@ async function validateStart() {
   if (quitting) throw new Error('Nod is closing.');
 }
 
-async function startEngine({ runtime, signal, pending = false }) {
+async function startEngine({ database, signal }) {
   void writeDiagnostic('Starting the background service.', { event: 'engine_start' }).catch(
     () => {},
   );
   if (engineFailure) throw new Error(engineFailure);
-  if (engine && enginePreferencesReady) return finishEnginePreparation(pending);
+  if (engine && enginePreferencesReady) return finishEnginePreparation();
   if (engine) {
     if (!(await confirmRestart()))
       throw Object.assign(new Error('Restart Nod when it finishes its current work.'), {
@@ -2874,7 +2976,11 @@ async function startEngine({ runtime, signal, pending = false }) {
   const providerEnvironment = await settings.environment();
   const owner = await profileOwner();
   if (providerEnvironment.NOD_VAULT_KEY) knownSecrets.add(providerEnvironment.NOD_VAULT_KEY);
-  if (runtime.env.DATABASE_URL) knownSecrets.add(runtime.env.DATABASE_URL);
+  knownSecrets.add(database.url);
+  const { computerNames } = await import(
+    pathToFileURL(join(engineRoot, 'desktop', 'runtime', 'index.mjs')).href
+  );
+  const containers = computerNames(profileRoot);
   const { nodBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
   const tracesToken =
     typeof nodBuild?.tracesToken === 'string' ? nodBuild.tracesToken : process.env.NOD_TRACES_TOKEN;
@@ -2884,7 +2990,9 @@ async function startEngine({ runtime, signal, pending = false }) {
   const started = Date.now();
   const environment = {
     ...baseEnvironment(),
-    ...runtime.env,
+    DATABASE_URL: database.url,
+    BROWSER_CONTAINER: containers.browser,
+    WORKSPACE_CONTAINER: containers.workspace,
     ...providerEnvironment,
     NODE_ENV: 'production',
     PORT: String(port),
@@ -2897,7 +3005,6 @@ async function startEngine({ runtime, signal, pending = false }) {
     NOD_OS_VERSION: process.getSystemVersion(),
     NOD_DESKTOP_OWNER_ID: owner,
     NOD_DESKTOP_AUTH_TOKEN: authToken,
-    NOD_DESKTOP_RUNTIME_PENDING: 'true',
     NOD_ANALYTICS_ENABLED: String(!testInstall && analytics.enabled),
     NOD_ANALYTICS_ENVIRONMENT: analyticsEnvironment(nodBuild),
     NOD_PUBLIC_URL: engineOrigin,
@@ -2938,7 +3045,6 @@ async function startEngine({ runtime, signal, pending = false }) {
         ).catch(() => {});
       }
     }
-    if (engine === child && message?.type === 'nod-1password-open') openOnePassword(child);
     if (engine === child && message?.type === 'nod-trash') void moveToTrash(child, message);
     if (engine === child && message?.type === 'nod-computer') void answerComputer(child, message);
     if (
@@ -2954,7 +3060,7 @@ async function startEngine({ runtime, signal, pending = false }) {
   let diagnostics = '';
   let failure = '';
   child.stderr?.on('data', (chunk) => {
-    if (enginePreferencesReady && engineRuntimeReady) return;
+    if (enginePreferencesReady && engineReady) return;
     diagnostics = (diagnostics + chunk.toString()).slice(-4000);
     const lines = diagnostics.split('\n');
     diagnostics = lines.pop() || '';
@@ -2973,7 +3079,6 @@ async function startEngine({ runtime, signal, pending = false }) {
     if (!closingEngine)
       failure =
         (status.phase === 'error' && status.error) ||
-        (status.runtime.phase === 'error' && status.runtime.message) ||
         failure ||
         `Nod’s background service stopped${enginePreferencesReady ? '' : ' before it was ready'}${Number.isInteger(code) ? ` (code ${code})` : ''}. Try again to restart it.`;
     stopNotifications?.({ clear: closingEngine || quitting });
@@ -2992,7 +3097,7 @@ async function startEngine({ runtime, signal, pending = false }) {
     engineOrigin = '';
     engineBound = false;
     authToken = '';
-    engineRuntimeReady = false;
+    engineReady = false;
     update({ engineReady: false });
     if (status.phase !== 'updating') {
       void persistCurrentZoomFactor().catch(
@@ -3056,7 +3161,7 @@ async function startEngine({ runtime, signal, pending = false }) {
     );
   }
   enginePreferencesReady = true;
-  return finishEnginePreparation(pending);
+  return finishEnginePreparation();
 }
 
 async function prepare(options = {}) {
@@ -3089,7 +3194,8 @@ async function prepare(options = {}) {
       needsRuntimeArchive: false,
       needsStorage: false,
     });
-    return lifecycle.start({ retry: options?.retry === true });
+    await lifecycle.start({ retry: options?.retry === true });
+    return status;
   })()
     .catch((error) => {
       void writeDiagnostic(
@@ -3139,10 +3245,10 @@ function replayOnboarding() {
   return status;
 }
 
-async function chooseComputerDirectory() {
+async function chooseComputerDirectory(parent = setupWindow) {
   if (process.platform !== 'win32' || lifecycle.busy || quitting || !status.runtime.needsStorage)
     throw new Error('This setup action is unavailable.');
-  const chosen = await dialog.showOpenDialog(setupWindow, {
+  const chosen = await dialog.showOpenDialog(parent, {
     title: 'Choose a folder for Nod’s private computer',
     buttonLabel: 'Use this folder',
     properties: ['openDirectory', 'createDirectory'],
@@ -3160,9 +3266,9 @@ async function chooseComputerDirectory() {
   return prepare({ retry: true });
 }
 
-async function importRuntime() {
+async function importRuntime(parent = setupWindow) {
   if (lifecycle.busy || quitting) throw new Error('Wait for Nod to finish its current setup step.');
-  const chosen = await dialog.showOpenDialog(setupWindow, {
+  const chosen = await dialog.showOpenDialog(parent, {
     title: 'Choose the Nod Runtime pack',
     buttonLabel: 'Install runtime',
     properties: ['openFile'],
@@ -3185,7 +3291,7 @@ async function importRuntime() {
     return prepare();
   } catch (error) {
     void writeDiagnostic(error.message).catch(() => {});
-    if (onboardingCompleted)
+    if (onboardingCompleted && !engineReady)
       update({
         phase: 'error',
         message: bounded(error.message),
@@ -3328,7 +3434,7 @@ else {
             });
             void updateEvent('download-finished', { version, target: 'runtime', verified: true });
             report('preparing');
-            if (!engine || closingEngine) pendingPreload = assets;
+            if (!computerState?.environment || closingEngine) pendingPreload = assets;
             else await preloadUpdateImages(assets, signal);
           },
           restart: restartForUpdate,
@@ -3658,7 +3764,8 @@ else {
           typeof value !== 'object' ||
           Array.isArray(value) ||
           Object.keys(value).some(
-            (key) => !['theme', 'notifications', 'launchAtLogin'].includes(key),
+            (key) =>
+              !['theme', 'notifications', 'notificationSound', 'launchAtLogin'].includes(key),
           )
         )
           throw new Error('These preferences are not supported.');
@@ -3694,8 +3801,11 @@ else {
           showEngine();
           if (enginePreferencesReady && status.runtime.phase !== 'error') return status;
         }
-        if (engineRuntimeReady || (!options?.retry && enginePreferencesReady && preparing))
+        if (engineReady && options?.retry === true && status.runtime.phase === 'error') {
+          void lifecycle.warmup({ retry: true }).catch(() => {});
           return status;
+        }
+        if (engineReady || (!options?.retry && enginePreferencesReady && preparing)) return status;
         return prepare(options);
       });
       ipcMain.handle('nod:warmup', async (event) => {
@@ -3706,14 +3816,15 @@ else {
         void lifecycle.warmup().catch(() => {});
       });
       ipcMain.handle('nod:runtime:import', (event) => {
-        allowSetup(event);
-        return importRuntime();
+        allowLocalRuntime(event);
+        return importRuntime(BrowserWindow.fromWebContents(event.sender) ?? setupWindow);
       });
       ipcMain.handle('nod:runtime:install-wsl', async (event) => {
-        allowSetup(event);
+        allowLocalRuntime(event);
         if (process.platform !== 'win32' || lifecycle.busy || quitting || !status.runtime.needsWsl)
           throw new Error('This setup action is unavailable.');
-        const { response } = await dialog.showMessageBox(setupWindow, {
+        const parent = BrowserWindow.fromWebContents(event.sender) ?? setupWindow;
+        const { response } = await dialog.showMessageBox(parent, {
           type: 'question',
           message: 'Install Windows Subsystem for Linux?',
           detail:
@@ -3728,17 +3839,17 @@ else {
           pathToFileURL(join(engineRoot, 'desktop/runtime/windows.mjs')).href
         );
         await lifecycle.install(installWsl, { warmup: false });
-        update({
-          phase: 'error',
-          message: 'Restart your PC, then open Nod again.',
-          error: 'Restart your PC, then open Nod again.',
-          needsWsl: false,
-        });
+        const restart = 'Restart your PC, then open Nod again.';
+        if (engineReady)
+          update({
+            runtime: { ...status.runtime, phase: 'error', message: restart, needsWsl: false },
+          });
+        else update({ phase: 'error', message: restart, error: restart, needsWsl: false });
         return status;
       });
       ipcMain.handle('nod:runtime:choose-folder', (event) => {
-        allowSetup(event);
-        return chooseComputerDirectory();
+        allowLocalRuntime(event);
+        return chooseComputerDirectory(BrowserWindow.fromWebContents(event.sender) ?? setupWindow);
       });
       ipcMain.handle('nod:chat-read:get', (event, ownerId, threadId) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
