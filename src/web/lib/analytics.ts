@@ -34,7 +34,7 @@ type AnalyticsEvents = {
     step: OnboardingStep;
     direction: 'forward' | 'back';
   };
-  onboarding_step_skipped: { step: 'email' };
+  onboarding_step_skipped: { step: 'email' | 'notifications' };
   onboarding_profile_answered: {
     scope: ProfileScope | 'skipped';
     role_owner: boolean;
@@ -192,7 +192,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     step: onboardingSteps,
     direction: ['forward', 'back'],
   },
-  onboarding_step_skipped: { step: ['email'] },
+  onboarding_step_skipped: { step: ['email', 'notifications'] },
   onboarding_profile_answered: {
     scope: [...profileScopes.map((option) => option.id), 'skipped'],
     role_owner: booleans,

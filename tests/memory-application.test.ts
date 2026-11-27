@@ -690,14 +690,6 @@ test(
             headers,
             payload: { onboardingCompleted: true },
           });
-        const introduction = async () =>
-          (
-            await application.app.inject({
-              method: 'GET',
-              url: '/api/onboarding/introduction',
-              headers,
-            })
-          ).json();
         assert.deepEqual(await application.integrations.connectedApps(), []);
         assert.equal((await session()).settings.onboardingCompleted, false);
         const turnsBefore = (await pool.query('SELECT count(*) FROM turns')).rows[0].count;
@@ -705,7 +697,6 @@ test(
         model.configured = false;
         assert.equal((await complete()).statusCode, 409);
         assert.equal((await session()).settings.onboardingCompleted, false);
-        assert.deepEqual(await introduction(), { messageId: null });
         assert.equal(onboardingInboxReads, 0);
         model.configured = true;
         assert.equal((await complete()).statusCode, 200);
@@ -731,7 +722,6 @@ test(
             ),
           'First-chat suggestions without an inbox',
         );
-        assert.equal(typeof (await introduction()).messageId, 'string');
         assert.deepEqual(await application.integrations.connectedApps(), []);
         assert.equal(onboardingInboxReads, 0);
         assert.equal(contexts.length, openedBefore);

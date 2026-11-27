@@ -37,7 +37,6 @@ import { MessageBubble, WorkLabel, type MessageWork } from '../components/messag
 import { conversationFiles } from '../components/attachment-card';
 import { ArtifactWorkspace } from '../components/artifact-drawer';
 import { PrivateEntryWorkspace } from '../components/private-entry';
-import { ChatNotifications } from '../components/chat-notifications';
 import { BrandMark } from '../components/brand';
 import { FeedbackLauncher } from '../components/feedback-discovery';
 import { Button, Notice } from '../components/ui';
@@ -905,14 +904,10 @@ export function Chat({
   const [welcoming, setWelcoming] = useState(
     () => allMessages.length === 0 && !working && state.configuration.llmReady,
   );
-  const introduction = usePageData<{ messageId: string | null }>('/api/onboarding/introduction');
   useEffect(() => {
     if (!welcoming) return;
     void post('/api/account/welcome', {})
-      .then(() => {
-        void introduction.refresh();
-        return refresh();
-      })
+      .then(() => refresh())
       .catch((cause) => setError(errorMessage(cause)))
       .finally(() => setWelcoming(false));
   }, []);
@@ -2616,9 +2611,6 @@ export function Chat({
                           : undefined
                       }
                     />
-                  )}
-                  {message.id === introduction.data?.messageId && (
-                    <ChatNotifications ownerId={ownerId} messageId={message.id} />
                   )}
                 </Fragment>
               ))}

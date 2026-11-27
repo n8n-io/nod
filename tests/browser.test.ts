@@ -7831,7 +7831,6 @@ describe('interface components', { concurrency: interfaceLanes }, () => {
           if (url === '/api/speech') return Response.json({ transcription: true, transcriptionFormat: speechFormat });
           if (url === '/api/apps') return Response.json([]);
           if (url === '/api/trust') return Response.json({});
-          if (url === '/api/onboarding/introduction') return Response.json({ messageId: null });
           assert.equal(url, '/api/messages/audio');
           const body = options.body.get('message');
           const file = options.body.get('file');
@@ -8037,7 +8036,6 @@ describe('interface components', { concurrency: interfaceLanes }, () => {
         if (path === '/api/apps') return Response.json([]);
         if (path === '/api/trust') return Response.json({});
         if (path === '/api/speech') return Response.json({ transcription: true });
-        if (path === '/api/onboarding/introduction') return Response.json({ messageId: null });
         assert.equal(path, '/api/messages');
         const message = JSON.parse(options.body);
         requests.push(message);
@@ -8230,7 +8228,6 @@ describe('interface components', { concurrency: interfaceLanes }, () => {
         if (path === '/api/apps') return Response.json([]);
         if (path === '/api/trust') return Response.json({});
         if (path === '/api/speech') return Response.json({ transcription: true });
-        if (path === '/api/onboarding/introduction') return Response.json({ messageId: null });
         if (path === '/api/messages/around/' + older.id) {
           aroundChecks++;
           if (!retired && state.hiddenMessageCount === 152 && aroundChecks === 2)
@@ -8419,7 +8416,6 @@ describe('interface components', { concurrency: interfaceLanes }, () => {
         if (path === '/api/apps') return Response.json([]);
         if (path === '/api/trust') return Response.json({});
         if (path === '/api/speech') return Response.json({ transcription: true });
-        if (path === '/api/onboarding/introduction') return Response.json({ messageId: null });
         if (path === '/api/messages/around/' + olderReply.id)
           return Response.json([target, olderReply]);
         if (String(path).startsWith('/api/messages?'))
@@ -8525,7 +8521,6 @@ describe('interface components', { concurrency: interfaceLanes }, () => {
         if (path === '/api/apps') return Response.json([]);
         if (path === '/api/trust') return Response.json({});
         if (path === '/api/speech') return Response.json({ transcription: true });
-        if (path === '/api/onboarding/introduction') return Response.json({ messageId: null });
         if (path === '/api/messages/around/' + focusTarget.id) {
           focusChecks++;
           if (focusChecks === 1) return Response.json([focusTarget]);
@@ -8605,7 +8600,6 @@ describe('interface components', { concurrency: interfaceLanes }, () => {
           if (path === '/api/apps') return Response.json([]);
           if (path === '/api/trust') return Response.json({});
           if (path === '/api/speech') return Response.json({ transcription: true });
-          if (path === '/api/onboarding/introduction') return Response.json({ messageId: null });
           if (path === '/api/messages/around/' + pendingTarget.id)
             return new Promise(resolve => { releaseFocus = resolve; });
           if (String(path).startsWith('/api/messages?')) {
@@ -8697,7 +8691,6 @@ describe('interface components', { concurrency: interfaceLanes }, () => {
         if (path === '/api/apps') return Response.json([]);
         if (path === '/api/trust') return Response.json({});
         if (path === '/api/speech') return Response.json({ transcription: true });
-        if (path === '/api/onboarding/introduction') return Response.json({ messageId: null });
         throw new Error('Unexpected request: ' + path);
       };
       const { createElement, act, StrictMode } = await import('react');
@@ -8851,7 +8844,6 @@ describe('interface components', { concurrency: interfaceLanes }, () => {
         if (path === '/api/apps') return Response.json([]);
         if (path === '/api/trust') return Response.json({});
         if (path === '/api/speech') return Response.json({ transcription: true });
-        if (path === '/api/onboarding/introduction') return Response.json({ messageId: null });
         if (path === '/api/thread/stop') {
           stops++;
           return Response.json({});

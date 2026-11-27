@@ -41,7 +41,7 @@ export function Welcome({
   local = desktopRuntimeAvailable() ||
     ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname),
   note = true,
-}: StepProps & { actionLabel?: string; local?: boolean; note?: boolean }) {
+}: Omit<StepProps, 'ownerId'> & { actionLabel?: string; local?: boolean; note?: boolean }) {
   useEffect(() => {
     const press = (event: KeyboardEvent) => {
       const surface =

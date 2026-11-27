@@ -587,6 +587,7 @@ test('About accepts multiple choices and records only confirmed sharing', async 
   await act(async () =>
     root.render(
       createElement(About, {
+        ownerId: 'synthetic-owner',
         arrived: 'forward',
         quiet: true,
         onNext: () => completed++,
@@ -615,6 +616,7 @@ test('About accepts multiple choices and records only confirmed sharing', async 
     await act(async () =>
       root.render(
         createElement(About, {
+          ownerId: 'synthetic-owner',
           arrived: 'back',
           quiet: true,
           onNext: () => completed++,
@@ -742,6 +744,7 @@ test('Join sends fixed answers only with a matching confirmed share', async (t) 
     act(async () =>
       root.render(
         createElement(Join, {
+          ownerId: 'synthetic-owner',
           arrived: 'forward',
           onNext: () => completed++,
           onBack() {},
@@ -7155,32 +7158,37 @@ async function notificationPage(t: import('node:test').TestContext) {
   };
 }
 
+async function notificationStep(f: Awaited<ReturnType<typeof notificationPage>>) {
+  const { Notifications } = await import('../src/web/pages/onboarding/steps/notifications.tsx');
+  return f.createElement(Notifications, {
+    key: f.owner(),
+    ownerId: f.owner(),
+    arrived: 'back',
+    onNext() {},
+    onBack() {},
+  });
+}
+
 test('browser notification permission requires an explicit owned choice and rejects denial, unsupported construction and stale consent', async (t) => {
   const f = await notificationPage(t);
-  const { BrowserNotificationPrompt } =
-    await import('../src/web/components/browser-notifications.tsx');
   const { browserNotificationStatus } = await import('../src/web/lib/browser-notifications.ts');
-  const render = () =>
-    f.render(f.createElement(BrowserNotificationPrompt, { key: f.owner(), ownerId: f.owner() }));
+  const render = async () => f.render(await notificationStep(f));
   await render();
   assert.equal(f.permissionRequests(), 0);
   assert.equal(f.notifications.length, 0);
-  await f.click(1);
+  await f.click(0);
   assert.equal(f.permissionRequests(), 0);
   assert.equal(browserNotificationStatus(f.owner()).choice, 'dismissed');
-  await f.render(null);
-  await render();
-  assert.equal(f.document.querySelectorAll('button').length, 0);
   f.setOwner('notification-owner-two');
   await render();
-  assert.equal(f.document.querySelectorAll('button').length, 2);
+  assert.equal(browserNotificationStatus(f.owner()).choice, null);
   f.respondPermission(async () => 'default');
-  await f.click(0);
+  await f.click(1);
   assert.equal(f.permissionRequests(), 1);
   assert.equal(browserNotificationStatus(f.owner()).enabled, false);
   assert.equal(f.notifications.length, 0);
   f.respondPermission(async () => 'denied');
-  await f.click(0);
+  await f.click(1);
   assert.equal(f.permissionRequests(), 2);
   assert.equal(browserNotificationStatus(f.owner()).enabled, false);
   assert.equal(f.notifications.length, 0);
@@ -7189,7 +7197,7 @@ test('browser notification permission requires an explicit owned choice and reje
   let answer: (permission: NotificationPermission) => void = () => {};
   f.respondPermission(() => new Promise((resolve) => (answer = resolve)));
   await render();
-  await f.click(0);
+  await f.click(1);
   f.setOwner('notification-owner-four');
   await render();
   await f.act(async () => answer('granted'));
@@ -7197,12 +7205,12 @@ test('browser notification permission requires an explicit owned choice and reje
   assert.equal(browserNotificationStatus(f.owner()).enabled, false);
   assert.equal(f.notifications.length, 0);
   f.failConstruction(true);
-  await f.click(0);
+  await f.click(1);
   assert.equal(browserNotificationStatus(f.owner()).enabled, false);
   assert.equal(f.notifications.length, 0);
   assert.ok(f.document.querySelector('[role="alert"]'));
   f.failConstruction(false);
-  await f.click(0);
+  await f.click(1);
   assert.equal(f.permissionRequests(), 3);
   assert.equal(browserNotificationStatus(f.owner()).enabled, true);
   assert.equal(f.notifications.length, 1);
@@ -7332,9 +7340,8 @@ test('browser reply alerts skip initial history, replay, user messages, quiet ti
   assert.equal(f.notifications.length, 4);
 });
 
-test('native notification introduction waits for the owner choice and keeps dismissal scoped', async (t) => {
+test('native notification setup step saves only an explicit opt-in', async (t) => {
   const f = await notificationPage(t);
-  const { ChatNotifications } = await import('../src/web/components/chat-notifications.tsx');
   let enabled = false;
   const writes: unknown[] = [];
   f.native({
@@ -7346,27 +7353,17 @@ test('native notification introduction waits for the owner choice and keeps dism
       return { notifications: enabled };
     },
   });
-  const render = () =>
-    f.render(
-      f.createElement(ChatNotifications, {
-        ownerId: f.owner(),
-        messageId: '123e4567-e89b-42d3-a456-426614174000',
-      }),
-    );
+  const render = async () => f.render(await notificationStep(f));
   await render();
   assert.deepEqual(writes, []);
   assert.equal(f.permissionRequests(), 0);
-  await f.click(1);
+  await f.click(0);
+  assert.deepEqual(writes, []);
   await f.render(null);
   await render();
-  assert.equal(f.document.querySelectorAll('button').length, 0);
   assert.deepEqual(writes, []);
-  f.setOwner('notification-native-owner-next');
-  await render();
-  assert.equal(f.document.querySelectorAll('button').length, 2);
-  await f.click(0);
+  await f.click(1);
   assert.deepEqual(writes, [{ notifications: true }]);
-  assert.equal(f.document.querySelectorAll('button').length, 0);
   assert.equal(f.permissionRequests(), 0);
 });
 
@@ -7428,17 +7425,14 @@ test('browser notification re-enablement fails closed when an existing opt-in ca
 
 test('browser notifications close after delayed display when consent or their owning scope ends', async (t) => {
   const f = await notificationPage(t);
-  const { BrowserNotificationPrompt } =
-    await import('../src/web/components/browser-notifications.tsx');
   const { useBrowserNotifications } = await import('../src/web/hooks/use-browser-notifications.ts');
   const { setBrowserNotifications } = await import('../src/web/lib/browser-notifications.ts');
   let grant: (permission: NotificationPermission) => void = () => {};
   f.respondPermission(() => new Promise((resolve) => (grant = resolve)));
   f.delayShow(true);
-  const prompt = () =>
-    f.render(f.createElement(BrowserNotificationPrompt, { key: f.owner(), ownerId: f.owner() }));
+  const prompt = async () => f.render(await notificationStep(f));
   await prompt();
-  await f.click(0);
+  await f.click(1);
   await f.act(async () => f.window.dispatchEvent(new f.window.Event('focus')));
   await f.act(async () => grant('granted'));
   assert.equal(f.permissionRequests(), 1);
@@ -7453,7 +7447,7 @@ test('browser notifications close after delayed display when consent or their ow
   const confirmationVisibility = [disabledConfirmation.visible, reenabledConfirmation.visible];
   f.setOwner('notification-delayed-owner');
   await prompt();
-  await f.click(0);
+  await f.click(1);
   const retiredConfirmation = f.notifications.at(-1)!;
   await f.render(null);
   assert.equal(retiredConfirmation.closed, 0);
@@ -7461,7 +7455,7 @@ test('browser notifications close after delayed display when consent or their ow
   assert.equal(retiredConfirmation.visible, false);
   f.setOwner('notification-active-owner');
   await prompt();
-  await f.click(0);
+  await f.click(1);
   const activeConfirmation = f.notifications.at(-1)!;
   activeConfirmation.show();
   assert.equal(activeConfirmation.visible, true);
@@ -7588,9 +7582,8 @@ test('browser notification support requires shared locking before asking for per
   assert.equal(f.permissionRequests(), 0);
 });
 
-test('native notification introduction recovers settings-read failures before saving opt-in', async (t) => {
+test('native notification setup step recovers settings-read failures before saving opt-in', async (t) => {
   const f = await notificationPage(t);
-  const { ChatNotifications } = await import('../src/web/components/chat-notifications.tsx');
   let reads = 0;
   const writes: unknown[] = [];
   f.native({
@@ -7605,20 +7598,15 @@ test('native notification introduction recovers settings-read failures before sa
       return value;
     },
   });
-  await f.render(
-    f.createElement(ChatNotifications, {
-      ownerId: f.owner(),
-      messageId: 'notification-retry-introduction',
-    }),
-  );
+  await f.render(await notificationStep(f));
   assert.ok(f.document.querySelector('[role="alert"]'));
   assert.equal(reads, 1);
   assert.deepEqual(writes, []);
-  await f.click(0);
+  await f.click(1);
   assert.equal(reads, 2);
   assert.deepEqual(writes, []);
   assert.equal(f.document.querySelector('[role="alert"]'), null);
-  await f.click(0);
+  await f.click(1);
   assert.deepEqual(writes, [{ notifications: true }]);
   assert.equal(f.permissionRequests(), 0);
 });

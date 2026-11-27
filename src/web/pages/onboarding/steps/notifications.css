@@ -1,0 +1,76 @@
+.ob-notify {
+  padding-left: 44px;
+}
+.ob-notify-banner {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  max-width: 380px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.08);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.ob-notify-banner img {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.ob-notify-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.ob-notify-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ob-notify-head span {
+  color: var(--muted-foreground);
+}
+.ob-notify-note {
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.ob-notify-banner[data-platform='windows'] {
+  display: grid;
+  gap: 10px;
+  max-width: 364px;
+  padding: 10px 14px 16px;
+  border-radius: 8px;
+  font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+}
+.ob-notify-app {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.ob-notify-app img {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+}
+.ob-notify-app > span {
+  flex: 1;
+}
+.ob-notify-content {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.ob-notify-banner[data-platform='windows'] .ob-notify-content img {
+  width: 48px;
+  height: 48px;
+  border-radius: 4px;
+}
+.ob-notify-banner[data-platform='windows'] strong {
+  font-weight: 600;
+}

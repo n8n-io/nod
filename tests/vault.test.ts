@@ -2342,9 +2342,14 @@ await changed();
 await waitForModel(()=>!document.querySelector('.ob-brain-connected details'));
 assert.ok(document.querySelector('[data-step="brain"]'));
 await act(async()=>button('Continue').click());
+await waitFor(()=>document.querySelector('[data-step="notifications"]'));
+const savesBeforeNotifications=saves;
+await act(async()=>button('Not now').click());
 await waitFor(()=>document.querySelector('[data-step="join"]'));
+assert.equal(saves,savesBeforeNotifications,'Not now saves no notification preference');
+assert.equal((await store.get()).notifications,false);
 assert.ok(calls.includes('/api/onboarding/profile'));
-assert.equal(document.querySelector('.ob-dots').getAttribute('aria-label'),'Step 4 of 4');
+assert.equal(document.querySelector('.ob-dots').getAttribute('aria-label'),'Step 5 of 5');
 completionFailure=new Error('Synthetic account save failed.');
 const beforeFinish=completions;
 await act(async()=>button('Continue').click());
@@ -2949,7 +2954,8 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
 };
 const {sessionStore}=await import('./src/web/lib/session.ts');
 await sessionStore.refresh();restore();
-const {BrowserNotificationSettings,BrowserNotificationPrompt}=await import('./src/web/components/browser-notifications.tsx');
+const {BrowserNotificationSettings}=await import('./src/web/components/browser-notifications.tsx');
+const {Notifications}=await import('./src/web/pages/onboarding/steps/notifications.tsx');
 const notice=()=>document.querySelector('[role="switch"][aria-label="Notifications"]');
 await remount(createElement(BrowserNotificationSettings,{ownerId:owner}));
 const startNotifications=count('local_setting_changed');
@@ -2957,7 +2963,7 @@ await click(notice());check('BN1-enabled',count('local_setting_changed')===start
 await click(button('Send test notification'));check('BN1-test-not-change',count('local_setting_changed')===startNotifications+1);
 await click(notice());check('BN1-disabled',count('local_setting_changed')===startNotifications+2);
 window.localStorage.removeItem('nod.browser-notifications.'+owner);
-await remount(createElement(BrowserNotificationPrompt,{ownerId:owner}));
+await remount(createElement(Notifications,{ownerId:owner,arrived:'back',onNext(){},onBack(){}}));
 await click(button('Not now'));check('BN1-dismissed',count('local_setting_changed')===startNotifications+3);
 await remount(createElement(BrowserNotificationSettings,{ownerId:owner}));
 permission='default';await click(notice());await waitFor(()=>releasePermission);
@@ -3131,7 +3137,6 @@ window.fetch=globalThis.fetch=async(url,options={})=>{
  if(url==='/api/speech')return Response.json({transcription:false});
  if(url==='/api/apps')return Response.json([]);
  if(url==='/api/trust')return Response.json({});
- if(url==='/api/onboarding/introduction')return Response.json({messageId:null});
  if(url==='/api/uploads/renew'){
   const ids=JSON.parse(options.body).ids;renewals.push({ids,owner:options.headers.get('X-nod-Account')});
   if(holdRenewals)await new Promise(resolve=>releaseRenewal=resolve);
