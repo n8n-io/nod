@@ -17,7 +17,7 @@ export class ApiError extends Error {
 }
 
 const routeWords = new Set(
-  'accounts activity archive around audio authorize azure catalog commands complete connect connections context details disconnect discovery done endpoints entries export forget icon import instance introduction keep-out keys limit mcp model model-setup navigate notes oauth opened pairing prepare preview profile reaction reconnect refresh renew report reset restore retry routes schedule-draft screen search selection sessions setup-cancel setup-return setup-status skills status steps stop stream suggestions survey-seen telegram updates-email voices welcome whatsapp work'.split(
+  'accounts activity archive around audio authorize azure catalog commands complete connect connections context details disconnect discovery done endpoints entries export forget icon import instance introduction keep-out keys limit mcp model model-setup navigate nextcloud notes oauth opened pairing prepare preview profile reaction reconnect refresh renew report reset restore retry routes schedule-draft screen search selection sessions setup-cancel setup-return setup-status skills status steps stop stream suggestions survey-seen telegram updates-email voices welcome whatsapp work'.split(
     ' ',
   ),
 );

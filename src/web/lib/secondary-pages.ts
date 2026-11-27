@@ -122,6 +122,13 @@ export function channelSetupBody(
   policyConfirmed: boolean,
 ) {
   const webhookUrl = fields.webhookUrl?.trim() || undefined;
+  if (provider === 'nextcloud')
+    return {
+      serverUrl: fields.serverUrl?.trim(),
+      login: fields.login?.trim(),
+      appPassword: fields.appPassword?.trim(),
+      ownerUser: fields.ownerUser?.trim(),
+    };
   if (provider === 'telegram')
     return {
       botToken: fields.botToken?.trim(),

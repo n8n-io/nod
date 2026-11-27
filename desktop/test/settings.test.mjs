@@ -5149,11 +5149,11 @@ test('closing the app leaves Nod on and turning it off names what stops first', 
   upcoming = {
     running: [{ source: 'schedule', visible: false, task: false }],
     next: { title: 'Synthetic briefing', at: new Date(Date.now() + 3_600_000).toISOString() },
-    channels: ['telegram'],
+    channels: ['telegram', 'nextcloud'],
   };
   await f.turnOff();
   assert.equal(prompts.length, 1);
-  for (const named of ['a scheduled task', 'Synthetic briefing', 'Telegram'])
+  for (const named of ['a scheduled task', 'Synthetic briefing', 'Telegram', 'Nextcloud Talk'])
     assert.ok(prompts[0].detail.includes(named), named);
   assert.equal(f.children[0].killed, undefined);
   unavailable = true;

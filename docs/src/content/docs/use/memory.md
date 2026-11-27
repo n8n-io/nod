@@ -118,6 +118,6 @@ While editing a note, press Command/Ctrl+Enter to save. Escape keeps unsaved edi
 ## Related resources
 
 - [Chat with Nod](/use/chat/)
-- [Telegram and WhatsApp](/use/channels/)
+- [Chat apps](/use/channels/)
 - [Your data and privacy](/trust/privacy/)
 - [How memory works](/how-it-works/memory/)

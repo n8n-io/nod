@@ -16,6 +16,7 @@ export interface MessagingChannel {
   allowedSenderIds: string[];
   replyWindowMs?: number;
   supportsAttachments?: boolean;
+  supportsProgress?: boolean;
   available?: boolean;
   error?: string;
   presenceMs?: number;

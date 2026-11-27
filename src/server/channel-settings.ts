@@ -6,6 +6,9 @@ import { openVaultValue, sealVaultValue } from './vault-crypto.ts';
 import { transaction } from './transaction.ts';
 import {
   ChannelSetupFailure,
+  nextcloudMissing,
+  nextcloudServer,
+  nextcloudUserId,
   telegramSecret,
   telegramUserId,
   type ChannelSetupConfiguration,
@@ -19,7 +22,8 @@ import type {
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { ChannelPairingRequest } from '../ports/messaging.ts';
 
-const providerSchema = z.enum(['telegram', 'whatsapp']);
+const providerSchema = z.enum(['telegram', 'whatsapp', 'nextcloud']);
+const providers = providerSchema.options;
 const linkedModes = new Set(['linked', 'bot', 'self-chat']);
 export type ChannelConnectionObservation = {
   channel: ChannelProvider;
@@ -32,6 +36,7 @@ function managedConfigurationReady(provider: ChannelProvider, values: Record<str
       /^\d+:[A-Za-z0-9_-]+$/.test(values.TELEGRAM_BOT_TOKEN ?? '') &&
       telegramSecret.test(values.TELEGRAM_WEBHOOK_SECRET_TOKEN ?? '')
     );
+  if (provider === 'nextcloud') return !nextcloudMissing(values).length;
   if (values.WHATSAPP_POLICY_CONFIRMED !== 'true') return false;
   if (linkedModes.has(values.WHATSAPP_MODE ?? '')) return true;
   return (
@@ -75,9 +80,18 @@ export function channelConnectionObservations(
         : whatsapp.mode === 'webhook'
           ? 'configured_unverified'
           : 'setup_pending';
+  const nextcloud = channels.find((channel) => channel.provider === 'nextcloud');
+  const nextcloudState: ChannelConnectionObservation['state'] = !nextcloud?.enabled
+    ? 'disabled'
+    : managed.nextcloud
+      ? managedConfigurationReady('nextcloud', managed.nextcloud)
+        ? 'configured_unverified'
+        : 'setup_pending'
+      : 'connected';
   return [
     { channel: 'telegram', state: telegramState },
     { channel: 'whatsapp', state: whatsappState },
+    { channel: 'nextcloud', state: nextcloudState },
   ];
 }
 
@@ -151,10 +165,17 @@ const fields: Record<ChannelProvider, Set<string>> = {
     'WHATSAPP_PAIRING_CODE_HASH',
     'WHATSAPP_PAIRING_EXPIRES_AT',
   ]),
+  nextcloud: new Set([
+    'NEXTCLOUD_ENABLED',
+    'NEXTCLOUD_URL',
+    'NEXTCLOUD_USER',
+    'NEXTCLOUD_APP_PASSWORD',
+    'NEXTCLOUD_ALLOWED_USER',
+  ]),
 };
 export function managedChannelEnvironment(environment: Record<string, string | undefined>) {
   const managed: Partial<Record<ChannelProvider, Record<string, string>>> = {};
-  for (const provider of ['telegram', 'whatsapp'] as const) {
+  for (const provider of providers) {
     const values = Object.fromEntries(
       [...fields[provider]]
         .filter((name) => !name.includes('_PAIRING_') && name !== 'WHATSAPP_ALLOWED_LID')
@@ -167,6 +188,15 @@ export function managedChannelEnvironment(environment: Record<string, string | u
       if (values[name] !== undefined && !['true', 'false'].includes(values[name]))
         throw new Error(`${name} must be true, false or empty.`);
     values[enabled] ??= 'true';
+    if (provider === 'nextcloud') {
+      if (values.NEXTCLOUD_URL && !nextcloudServer(values.NEXTCLOUD_URL))
+        throw new Error('NEXTCLOUD_URL must be an HTTPS address without credentials or a query.');
+      for (const name of ['NEXTCLOUD_USER', 'NEXTCLOUD_ALLOWED_USER'])
+        if (values[name] && !nextcloudUserId.test(values[name]))
+          throw new Error(`${name} must be a Nextcloud user ID.`);
+      managed[provider] = values;
+      continue;
+    }
     const mode = `${provider.toUpperCase()}_MODE`;
     values[mode] ??= provider === 'telegram' ? 'polling' : 'cloud';
     if (
@@ -375,10 +405,10 @@ export async function createChannelSettings(
       observed = options.observed?.();
     } catch {}
     const rows = (await store.read()).filter((row) => !managed[row.provider]);
-    for (const provider of ['telegram', 'whatsapp'] as const) {
+    for (const provider of providers) {
       const values = managed[provider];
       if (!values) continue;
-      const mode = values[`${provider.toUpperCase()}_MODE`];
+      const mode = provider === 'nextcloud' ? 'polling' : values[`${provider.toUpperCase()}_MODE`];
       const linked = provider === 'whatsapp' && linkedModes.has(mode ?? '');
       const summary = summarySchema.parse({
         provider,
@@ -387,6 +417,9 @@ export async function createChannelSettings(
         mode: linked ? 'linked' : mode === 'polling' ? 'polling' : 'webhook',
         ...(provider === 'telegram' && telegramUserId.test(values.TELEGRAM_ALLOWED_USER_ID ?? '')
           ? { allowedUserId: values.TELEGRAM_ALLOWED_USER_ID }
+          : {}),
+        ...(provider === 'nextcloud' && nextcloudUserId.test(values.NEXTCLOUD_ALLOWED_USER ?? '')
+          ? { pairedUser: values.NEXTCLOUD_ALLOWED_USER }
           : {}),
       });
       rows.push({ provider, enabled: summary.enabled, ciphertext: null, summary });
@@ -578,6 +611,7 @@ export async function createChannelSettings(
     const provider = providerSchema.safeParse(request.channelId);
     if (
       !provider.success ||
+      provider.data === 'nextcloud' ||
       !pairingRequestSchema.safeParse(request).success ||
       !pairingSender[provider.data].safeParse(request).success
     )

@@ -132,7 +132,7 @@ Leave every variable for a channel blank or unset to manage it in **Channels**. 
 
 Setting any nonempty variable for a channel makes that entire channel server-managed. Its environment configuration takes precedence over saved settings. The app shows this state and prevents configuration edits or removal.
 
-Set `TELEGRAM_ENABLED=false` or `WHATSAPP_ENABLED=false` to disable a channel explicitly. Otherwise, supplying channel settings enables it. Remove or clear every variable for that channel to return to its previous saved setup. Credentials from the environment are never copied into the database.
+Set `TELEGRAM_ENABLED=false`, `WHATSAPP_ENABLED=false` or `NEXTCLOUD_ENABLED=false` to disable a channel explicitly. Otherwise, supplying channel settings enables it. Remove or clear every variable for that channel to return to its previous saved setup. Credentials from the environment are never copied into the database.
 
 | Variable                        | What it does                                                                                                                                                       | Default                                 |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------- |
@@ -149,10 +149,17 @@ Set `TELEGRAM_ENABLED=false` or `WHATSAPP_ENABLED=false` to disable a channel ex
 | `WHATSAPP_PHONE_NUMBER_ID`      | The ID of the business sender number.                                                                                                                              | Empty                                   |
 | `WHATSAPP_VERIFY_TOKEN`         | The token Meta sends when it verifies the webhook.                                                                                                                 | Empty                                   |
 | `WHATSAPP_ALLOWED_NUMBER`       | Your personal number, with country code, 7 to 15 digits. Required for Cloud API. With `linked`, a second phone that can write to Nod besides **Message yourself**. | Empty                                   |
+| `NEXTCLOUD_ENABLED`             | `true` enables Nextcloud Talk; `false` disables it. Either value makes the channel server-managed.                                                                 | Unset; follows supplied configuration   |
+| `NEXTCLOUD_URL`                 | The HTTPS address of your Nextcloud server, including a subpath if it has one, such as `https://cloud.example.com`.                                                | Empty                                   |
+| `NEXTCLOUD_USER`                | The user ID of the separate Nextcloud account Nod writes from.                                                                                                     | Empty                                   |
+| `NEXTCLOUD_APP_PASSWORD`        | An app password for that account, from **Personal settings → Security**.                                                                                           | Empty                                   |
+| `NEXTCLOUD_ALLOWED_USER`        | Your own Nextcloud user ID. Nod answers only this account, in its one-to-one Talk conversation. It must differ from `NEXTCLOUD_USER`.                              | Empty                                   |
 
 For QR setup, use **Channels** to scan the code. The `linked` mode does not use the Meta access token, app secret, business phone number ID or webhook token. The saved device keys stay encrypted in the database. See [WhatsApp setup](/use/channels/#set-up-a-channel).
 
 The smallest Telegram configuration needs `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_USER_ID`; it uses polling.
+
+Nextcloud Talk needs all four `NEXTCLOUD_*` values besides `NEXTCLOUD_ENABLED`. Nod opens the one-to-one conversation with `NEXTCLOUD_ALLOWED_USER` when it starts.
 
 ### Telegram webhooks
 

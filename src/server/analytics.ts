@@ -423,10 +423,13 @@ const settings = (section: SettingsSection, operation: SettingsOperation): Analy
   properties: { section, operation },
 });
 const channel =
-  (operation: SettingsOperation | ((provider: 'telegram' | 'whatsapp') => SettingsOperation)) =>
+  (
+    operation:
+      SettingsOperation | ((provider: 'telegram' | 'whatsapp' | 'nextcloud') => SettingsOperation),
+  ) =>
   (request: FastifyRequest): AnalyticsEvent | undefined => {
     const provider = z
-      .enum(['telegram', 'whatsapp'])
+      .enum(['telegram', 'whatsapp', 'nextcloud'])
       .safeParse(
         (request.params as { provider?: string }).provider ??
           (request.routeOptions.url?.includes('/telegram/')

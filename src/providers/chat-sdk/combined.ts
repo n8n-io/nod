@@ -50,23 +50,38 @@ export function combineMessagingTransports(
     async presence(input) {
       await forChannel(input.channelId)?.presence?.(input);
     },
-    async progress(input) {
-      const transport = forChannel(input.channelId);
-      if (!transport?.progress) throw new Error('Channel progress is unavailable.');
-      await transport.progress(input);
-    },
-    async pairing() {
-      const transport = transports.findLast((transport) => transport.pairing);
-      if (!transport?.pairing) throw new Error('QR pairing is unavailable.');
-      return transport.pairing();
-    },
-    async unlink() {
-      for (const transport of transports) await transport.unlink?.();
-    },
-    async cancelPairing(pairingId, restart) {
-      const transport = transports.findLast((transport) => transport.cancelPairing);
-      return (await transport?.cancelPairing?.(pairingId, restart)) ?? false;
-    },
+    ...(transports.some((transport) => transport.progress)
+      ? {
+          async progress(input: Parameters<NonNullable<MessagingTransport['progress']>>[0]) {
+            const transport = forChannel(input.channelId);
+            if (!transport?.progress) throw new Error('Channel progress is unavailable.');
+            await transport.progress(input);
+          },
+        }
+      : {}),
+    ...(transports.some((transport) => transport.pairing)
+      ? {
+          async pairing() {
+            const transport = transports.findLast((transport) => transport.pairing);
+            return transport!.pairing!();
+          },
+        }
+      : {}),
+    ...(transports.some((transport) => transport.unlink)
+      ? {
+          async unlink() {
+            for (const transport of transports) await transport.unlink?.();
+          },
+        }
+      : {}),
+    ...(transports.some((transport) => transport.cancelPairing)
+      ? {
+          async cancelPairing(pairingId: string, restart?: boolean) {
+            const transport = transports.findLast((transport) => transport.cancelPairing);
+            return (await transport?.cancelPairing?.(pairingId, restart)) ?? false;
+          },
+        }
+      : {}),
     async close() {
       const results = await Promise.allSettled(transports.map((transport) => transport.close()));
       if (results.some((result) => result.status === 'rejected'))

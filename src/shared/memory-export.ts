@@ -38,6 +38,7 @@ const channels: Record<string, string> = {
   web: 'Nod web',
   telegram: 'Telegram',
   whatsapp: 'WhatsApp',
+  nextcloud: 'Nextcloud Talk',
 };
 
 const day = (value: string) => value.slice(0, 10);
