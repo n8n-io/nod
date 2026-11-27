@@ -107,6 +107,8 @@ The first time Nod messages you about something on its own, such as a calendar c
 
 Select **Edit schedule** to review its name, instructions and timing together. Timing changes preview the next run without changing the saved schedule. **Save changes** applies only the fields you changed, so renaming a schedule keeps its next run. Editing the complete work instruction supplies a new complete instruction. A name or timing edit keeps the existing work and its permission limits. **Cancel** closes the editor without saving.
 
+**Repeat** can run a schedule every few minutes or hours (choose **Minutes** or **Hours**, then how often under **Every**), every day, on weekdays or weekends, or on one day each week or month. Days 29–31 run only in months that contain that day. For those days, the editor shows **Months without this day are skipped.** For any other timing, choose **Custom (cron)** and enter five cron fields: minute, hour, day of month, month and day of week. For example, `*/30 9-17 * * 1-5` runs every 30 minutes from 9:00 to 17:30 on weekdays. The next run shows before you save, and Nod refuses a cron it can't read.
+
 **Undo** restores the previous values only if no newer change has replaced them. The Undo notice stays available while you hover over it, focus it, or switch away from Nod. If the schedule changes while you edit, your draft stays open so you can review it.
 
 ### Choose a model for a schedule

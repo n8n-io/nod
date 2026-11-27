@@ -63,8 +63,7 @@
 .schedule-editor-timing .schedule-timing-fields[data-columns='3'] {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
-.schedule-editor-timing .schedule-time-zone,
-.schedule-editor-timing .schedule-timing-fields[data-custom] > :first-child {
+.schedule-editor-timing .schedule-time-zone {
   grid-column: 1 / -1;
 }
 .schedule-editor-status {

@@ -31,6 +31,7 @@ import {
   scheduleRunAt,
   scheduleWeekDays,
   type ScheduleFrequency,
+  type ScheduleTiming,
 } from '../lib/schedules';
 
 async function patchSchedule(id: string, body: Record<string, unknown>) {
@@ -233,6 +234,8 @@ function pauseNote(pausing: boolean, title: string) {
 }
 
 const frequencies = [
+  { value: 'minutes', label: 'Minutes' },
+  { value: 'hours', label: 'Hours' },
   { value: 'daily', label: 'Every day' },
   { value: 'weekdays', label: 'Weekdays' },
   { value: 'weekends', label: 'Weekends' },
@@ -270,6 +273,144 @@ function SchedulePicker({
       />
     </div>
   );
+}
+
+const intervals = {
+  minutes: [5, 10, 15, 20, 30],
+  hours: [1, 2, 3, 4, 6, 8, 12],
+};
+
+type TimingDraft = Omit<ScheduleTiming, 'frequency'> & { frequency: ScheduleFrequency | '' };
+
+function draftCron(value: TimingDraft, fallback: string) {
+  if (!value.frequency || value.frequency === 'custom') return value.cron || fallback;
+  try {
+    return scheduleExpression({ ...value, frequency: value.frequency });
+  } catch {
+    return fallback;
+  }
+}
+
+function ScheduleTimingFields({
+  value,
+  initial,
+  allowCustom,
+  disabled,
+  onChange,
+}: {
+  value: TimingDraft;
+  initial?: ScheduleTiming;
+  allowCustom?: boolean;
+  disabled: boolean;
+  onChange(value: Partial<TimingDraft>): void;
+}) {
+  const cronLabel = useId();
+  const interval = value.frequency === 'minutes' || value.frequency === 'hours';
+  const unit = value.frequency === 'minutes' ? 'minutes' : 'hours';
+  const choose = (frequency: ScheduleFrequency | '') => {
+    const same = initial?.frequency === frequency;
+    onChange({
+      frequency,
+      day: same ? initial!.day : '1',
+      interval: same ? initial!.interval : frequency === 'minutes' ? '15' : '1',
+      ...(frequency === 'custom' ? { cron: draftCron(value, initial?.cron ?? '') } : {}),
+    });
+  };
+  return (
+    <>
+      <SchedulePicker
+        label="Repeat"
+        value={value.frequency}
+        options={[
+          ...(value.frequency === '' ? [{ value: '', label: 'Choose frequency' }] : []),
+          ...frequencies,
+          ...(allowCustom ? [{ value: 'custom', label: 'Custom (cron)' }] : []),
+        ]}
+        disabled={disabled}
+        onChange={(frequency) => choose(frequency as ScheduleFrequency | '')}
+      />
+      {interval && (
+        <SchedulePicker
+          label="Every"
+          value={value.interval}
+          options={[...new Set([...intervals[unit], Number(value.interval)])]
+            .sort((a, b) => a - b)
+            .map((count) => ({
+              value: String(count),
+              label:
+                count === 1 ? (unit === 'minutes' ? '1 minute' : '1 hour') : `${count} ${unit}`,
+            }))}
+          disabled={disabled}
+          onChange={(interval) => onChange({ interval })}
+        />
+      )}
+      {value.frequency === 'weekly' && (
+        <SchedulePicker
+          label="Day"
+          value={value.day}
+          options={[1, 2, 3, 4, 5, 6, 0].map((day) => ({
+            value: String(day),
+            label: scheduleWeekDays[day],
+          }))}
+          disabled={disabled}
+          onChange={(day) => onChange({ day })}
+        />
+      )}
+      {value.frequency === 'monthly' && (
+        <SchedulePicker
+          label="Day of month"
+          value={value.day}
+          options={Array.from({ length: 31 }, (_, index) => ({
+            value: String(index + 1),
+            label: String(index + 1),
+          }))}
+          disabled={disabled}
+          onChange={(day) => onChange({ day })}
+        />
+      )}
+      {value.frequency === 'custom' ? (
+        <div className="schedule-timing-field">
+          <label className="field-label" htmlFor={cronLabel}>
+            Cron expression
+          </label>
+          <Input
+            id={cronLabel}
+            value={value.cron}
+            required
+            spellCheck={false}
+            autoComplete="off"
+            disabled={disabled}
+            onChange={(event) => onChange({ cron: event.target.value })}
+          />
+        </div>
+      ) : (
+        !interval && (
+          <Field label="Time">
+            <Input
+              type="time"
+              value={value.time}
+              required
+              disabled={disabled}
+              onChange={(event) => onChange({ time: event.target.value })}
+            />
+          </Field>
+        )
+      )}
+    </>
+  );
+}
+
+function ScheduleTimingHints({ value }: { value: TimingDraft }) {
+  if (value.frequency === 'custom')
+    return (
+      <p className="field-hint">
+        Minute, hour, day of month, month, day of week. For example, <code>*/30 * * * *</code> runs
+        every 30 minutes.
+      </p>
+    );
+  if (value.frequency === 'monthly' && Number(value.day) > 28)
+    return <p className="field-hint">Months without this day are skipped.</p>;
+  return null;
 }
 
 export function PauseSwitch({ schedule, change }: { schedule: Schedule; change: ScheduleChange }) {
@@ -384,6 +525,8 @@ function ScheduleEditorForm({
     draft.frequency !== initial.frequency ||
     draft.time !== initial.time ||
     draft.day !== initial.day ||
+    draft.interval !== initial.interval ||
+    draft.cron !== initial.cron ||
     draft.date !== initial.date ||
     draft.timeZone !== initial.timeZone;
   const dirty =
@@ -394,12 +537,7 @@ function ScheduleEditorForm({
     ...(schedule.kind === 'once'
       ? { runAt: scheduleRunAt(draft.date, draft.time, draft.timeZone) }
       : {
-          cron: scheduleExpression(
-            draft.frequency,
-            draft.time,
-            draft.day,
-            schedule.cron ?? undefined,
-          ),
+          cron: scheduleExpression(draft),
         }),
   });
   useEffect(() => {
@@ -440,7 +578,17 @@ function ScheduleEditorForm({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [draft.frequency, draft.time, draft.day, draft.date, draft.timeZone, timingDirty, schedule]);
+  }, [
+    draft.frequency,
+    draft.time,
+    draft.day,
+    draft.interval,
+    draft.cron,
+    draft.date,
+    draft.timeZone,
+    timingDirty,
+    schedule,
+  ]);
   const zones = [
     ...new Set([schedule.timeZone, 'UTC', ...(Intl.supportedValuesOf?.('timeZone') ?? [])]),
   ].sort();
@@ -513,72 +661,36 @@ function ScheduleEditorForm({
                 ? 3
                 : 2
             }
-            data-custom={
-              (schedule.kind === 'recurring' && draft.frequency === 'custom') || undefined
-            }
           >
             {schedule.kind === 'once' ? (
-              <Field label="Date">
-                <Input
-                  type="date"
-                  value={draft.date}
-                  required
-                  disabled={locked}
-                  onChange={(event) => update({ date: event.target.value })}
-                />
-              </Field>
+              <>
+                <Field label="Date">
+                  <Input
+                    type="date"
+                    value={draft.date}
+                    required
+                    disabled={locked}
+                    onChange={(event) => update({ date: event.target.value })}
+                  />
+                </Field>
+                <Field label="Time">
+                  <Input
+                    type="time"
+                    value={draft.time}
+                    required
+                    disabled={locked}
+                    onChange={(event) => update({ time: event.target.value })}
+                  />
+                </Field>
+              </>
             ) : (
-              <SchedulePicker
-                label="Repeat"
-                value={draft.frequency}
-                options={
-                  initial.frequency === 'custom'
-                    ? [...frequencies, { value: 'custom', label: 'Custom schedule' }]
-                    : frequencies
-                }
+              <ScheduleTimingFields
+                value={draft}
+                initial={initial}
+                allowCustom
                 disabled={locked}
-                onChange={(frequency) =>
-                  update({
-                    frequency: frequency as ScheduleFrequency,
-                    day: initial.frequency === frequency ? initial.day : '1',
-                  })
-                }
+                onChange={(value) => update(value as Partial<ScheduleTiming>)}
               />
-            )}
-            {schedule.kind === 'recurring' && draft.frequency === 'weekly' && (
-              <SchedulePicker
-                label="Day"
-                value={draft.day}
-                options={[1, 2, 3, 4, 5, 6, 0].map((day) => ({
-                  value: String(day),
-                  label: scheduleWeekDays[day],
-                }))}
-                disabled={locked}
-                onChange={(day) => update({ day })}
-              />
-            )}
-            {schedule.kind === 'recurring' && draft.frequency === 'monthly' && (
-              <SchedulePicker
-                label="Day of month"
-                value={draft.day}
-                options={Array.from({ length: 31 }, (_, index) => ({
-                  value: String(index + 1),
-                  label: String(index + 1),
-                }))}
-                disabled={locked}
-                onChange={(day) => update({ day })}
-              />
-            )}
-            {(schedule.kind === 'once' || draft.frequency !== 'custom') && (
-              <Field label="Time">
-                <Input
-                  type="time"
-                  value={draft.time}
-                  required
-                  disabled={locked}
-                  onChange={(event) => update({ time: event.target.value })}
-                />
-              </Field>
             )}
             <div className="schedule-timing-field schedule-time-zone">
               <span className="field-label" id={timeZoneLabel}>
@@ -593,17 +705,7 @@ function ScheduleEditorForm({
               />
             </div>
           </div>
-          {schedule.kind === 'recurring' && draft.frequency === 'custom' && (
-            <p className="field-hint">
-              Custom timing is kept as saved. Choose a repeat option to replace it, or ask Nod to
-              adjust it.
-            </p>
-          )}
-          {schedule.kind === 'recurring' &&
-            draft.frequency === 'monthly' &&
-            Number(draft.day) > 28 && (
-              <p className="field-hint">Months without this day are skipped.</p>
-            )}
+          {schedule.kind === 'recurring' && <ScheduleTimingHints value={draft} />}
           <div
             className="schedule-editor-status"
             role="status"
@@ -696,9 +798,13 @@ function TaskScheduleForm({
   } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [error, setError] = useState('');
-  const [frequency, setFrequency] = useState<ScheduleFrequency | ''>('');
-  const [day, setDay] = useState('1');
-  const [time, setTime] = useState('09:00');
+  const [timing, setTiming] = useState<TimingDraft>({
+    frequency: '',
+    time: '09:00',
+    day: '1',
+    interval: '1',
+    cron: '',
+  });
   const [timeZone, setTimeZone] = useState(format.timeZone);
   const [busy, setBusy] = useState(false);
   const [uncertain, setUncertain] = useState(false);
@@ -727,9 +833,10 @@ function TaskScheduleForm({
     return () => controller.abort();
   }, [taskId, attempt]);
   const valid = Boolean(
-    !uncertain && draft?.title.trim() && draft.prompt.trim() && frequency && time,
+    !uncertain && draft?.title.trim() && draft.prompt.trim() && timing.frequency && timing.time,
   );
   async function submit() {
+    const frequency = timing.frequency;
     if (!valid || !draft || !frequency || submitting.current) return;
     submitting.current = true;
     setBusy(true);
@@ -742,7 +849,7 @@ function TaskScheduleForm({
           title: draft.title.trim(),
           prompt: draft.prompt.trim(),
           kind: 'recurring',
-          cron: scheduleExpression(frequency, time, day),
+          cron: scheduleExpression({ ...timing, frequency }),
           timeZone,
         }),
         signal: AbortSignal.timeout(10000),
@@ -811,44 +918,11 @@ function TaskScheduleForm({
             </Notice>
           )}
           <div className="schedule-timing-fields">
-            <SchedulePicker
-              label="Repeat"
-              value={frequency}
-              options={[{ value: '', label: 'Choose frequency' }, ...frequencies]}
+            <ScheduleTimingFields
+              value={timing}
               disabled={busy}
-              onChange={(value) => {
-                setFrequency(value as ScheduleFrequency);
-                setDay('1');
-              }}
+              onChange={(value) => setTiming((previous) => ({ ...previous, ...value }))}
             />
-            {(frequency === 'weekly' || frequency === 'monthly') && (
-              <SchedulePicker
-                label={frequency === 'weekly' ? 'Day' : 'Day of month'}
-                value={day}
-                options={
-                  frequency === 'weekly'
-                    ? [1, 2, 3, 4, 5, 6, 0].map((day) => ({
-                        value: String(day),
-                        label: scheduleWeekDays[day],
-                      }))
-                    : Array.from({ length: 31 }, (_, index) => ({
-                        value: String(index + 1),
-                        label: String(index + 1),
-                      }))
-                }
-                disabled={busy}
-                onChange={setDay}
-              />
-            )}
-            <Field label="Time">
-              <Input
-                type="time"
-                value={time}
-                required
-                disabled={busy}
-                onChange={(event) => setTime(event.target.value)}
-              />
-            </Field>
             <div className="schedule-timing-field schedule-time-zone">
               <span className="field-label" id={zoneLabel}>
                 Time zone
@@ -868,9 +942,7 @@ function TaskScheduleForm({
               />
             </div>
           </div>
-          {frequency === 'monthly' && Number(day) > 28 && (
-            <p className="field-hint">Months without this day are skipped.</p>
-          )}
+          <ScheduleTimingHints value={timing} />
         </>
       ) : !error ? (
         <p role="status">Loading task instructions…</p>
