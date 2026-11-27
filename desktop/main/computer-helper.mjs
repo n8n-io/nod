@@ -10,6 +10,7 @@ import {
   readdir,
   readFile,
   readlink,
+  realpath,
   rm,
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -348,6 +349,24 @@ async function windowsProgram(path) {
   } finally {
     await file.close();
   }
+}
+
+async function perUserWindowsPrograms(name) {
+  if (!process.env.LOCALAPPDATA) return [];
+  const directory = join(process.env.LOCALAPPDATA, name);
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+  if (!entries.some((entry) => entry.isFile() && entry.name.toLowerCase() === 'update.exe'))
+    return [];
+  const releases = entries
+    .filter((entry) => entry.isDirectory() && /^app-\d+(?:\.\d+){1,3}$/i.test(entry.name))
+    .map((entry) => entry.name)
+    .sort((a, b) => b.localeCompare(a, 'en', { numeric: true }));
+  for (const release of releases) {
+    const path = join(directory, release, name + '.exe');
+    const actual = await realpath(path).catch(() => '');
+    if (actual && actual.toLowerCase() === path.toLowerCase()) return [path];
+  }
+  return [];
 }
 
 function launcher(exec = '') {
@@ -1053,6 +1072,7 @@ export function createComputerHelper({
       for (const paths of [
         async () => [join(root, 'System32', `${name}.exe`), join(root, `${name}.exe`)],
         registered,
+        () => perUserWindowsPrograms(name),
       ])
         for (const path of (await paths()).filter(Boolean)) {
           const windowed = await windowsProgram(path);

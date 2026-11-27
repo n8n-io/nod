@@ -11903,6 +11903,31 @@ test('computer use on Windows starts only windowed programs', async (t) => {
   );
   assert.deepEqual(await desktop.helper.request({ op: 'open', bundle: 'notepad' }), { pid: 9 });
   assert.deepEqual(await desktop.calls(), [`launch ${join(root, 'System32', 'notepad.exe')}`]);
+  const savedLocal = process.env.LOCALAPPDATA;
+  process.env.LOCALAPPDATA = root;
+  t.after(() => {
+    if (savedLocal === undefined) delete process.env.LOCALAPPDATA;
+    else process.env.LOCALAPPDATA = savedLocal;
+  });
+  const appDir = join(root, 'FixtureChat');
+  for (const version of ['9.0', '10.0']) {
+    const release = join(appDir, 'app-' + version);
+    await mkdir(release, { recursive: true });
+    await writeFile(join(release, 'FixtureChat.exe'), program(2));
+  }
+  await assert.rejects(
+    desktop.helper.request({ op: 'locate', bundle: 'FixtureChat' }),
+    /No program/,
+  );
+  await writeFile(join(appDir, 'Update.exe'), program(2));
+  assert.deepEqual(await desktop.helper.request({ op: 'open', bundle: 'FixtureChat' }), { pid: 9 });
+  const newest = join(appDir, 'app-10.0', 'FixtureChat.exe');
+  assert.equal((await desktop.calls()).at(-1), 'launch ' + newest);
+  await writeFile(newest, program(3));
+  await assert.rejects(
+    desktop.helper.request({ op: 'open', bundle: 'FixtureChat' }),
+    /not a windowed app/,
+  );
 });
 
 test('computer use on macOS reaches an app by bundle ID when helper processes share its name', async (t) => {
