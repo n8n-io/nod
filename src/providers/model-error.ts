@@ -40,7 +40,7 @@ export async function modelServiceError(
   secrets: string[] = [],
   detailFields = ['message', 'type', 'code', 'status', 'param'],
 ) {
-  let reason = response.statusText;
+  let reason = modelErrorText(response.statusText, secrets);
   let serviceReason: string | undefined;
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
@@ -68,14 +68,13 @@ export async function modelServiceError(
         const body: unknown = JSON.parse(Buffer.concat(chunks, size).toString('utf8'));
         const text = (value: unknown) =>
           typeof value === 'string' && value.trim()
-            ? value.trim().slice(0, MAX_MODEL_ERROR_TEXT_SIZE)
+            ? modelErrorText(value.trim(), secrets).slice(0, MAX_MODEL_ERROR_TEXT_SIZE)
             : undefined;
         const fieldValue = (value: unknown) =>
           typeof value === 'number' && Number.isFinite(value) ? `${value}` : text(value);
         const fields = (error: Record<string, unknown>, message?: string) =>
           detailFields.flatMap((name) => {
-            const value = name === 'message' && message ? message : error[name];
-            const selected = fieldValue(value);
+            const selected = name === 'message' && message ? message : fieldValue(error[name]);
             return selected ? [`${name}: ${selected}`] : [];
           });
         const parseValidationDetails = (validationDetails: unknown[]) => {
@@ -91,8 +90,8 @@ export async function modelServiceError(
             if (msg) selected.push(`msg: ${msg}`);
             for (const name of detailFields) {
               if (name === 'message' && msg && !entryMessage) continue;
-              const value = name === 'message' && entryMessage ? entryMessage : validation[name];
-              const field = fieldValue(value);
+              const field =
+                name === 'message' && entryMessage ? entryMessage : fieldValue(validation[name]);
               if (field) selected.push(`${name}: ${field}`);
             }
           }
@@ -109,11 +108,13 @@ export async function modelServiceError(
             return { details: selected, reason: selected };
           }
           if (Array.isArray(value)) {
+            let fallback: { details?: string; reason?: string } | undefined;
             for (const entry of value.slice(0, 10)) {
               const parsed = parseError(entry);
-              if (parsed?.details || parsed?.reason) return parsed;
+              if (parsed?.reason) return parsed;
+              fallback ??= parsed;
             }
-            return;
+            return fallback;
           }
           if (!value || typeof value !== 'object') return;
           const envelope = value as Record<string, unknown>;
@@ -133,7 +134,10 @@ export async function modelServiceError(
           } else {
             selected = envelope;
           }
-          if (Array.isArray(selected.detail)) return parseValidationDetails(selected.detail);
+          if (Array.isArray(selected.detail)) {
+            const parsed = parseValidationDetails(selected.detail);
+            if (parsed.details || parsed.reason) return parsed;
+          }
           const message = text(selected.message) ?? text(selected.detail);
           const fallbackReason =
             message ??
@@ -156,12 +160,10 @@ export async function modelServiceError(
       reader.releaseLock();
     }
   }
-  const details = modelErrorText(reason, secrets).slice(0, MAX_MODEL_ERROR_TEXT_SIZE);
+  const details = reason.slice(0, MAX_MODEL_ERROR_TEXT_SIZE);
   return new ModelServiceError(
     `${service} failed (HTTP ${response.status})${reason ? `: ${details}` : '.'}`,
-    serviceReason
-      ? modelErrorText(serviceReason, secrets).slice(0, MAX_MODEL_ERROR_TEXT_SIZE)
-      : undefined,
+    serviceReason?.slice(0, MAX_MODEL_ERROR_TEXT_SIZE),
     Number.isInteger(response.status) && response.status >= 100 && response.status <= 599
       ? response.status
       : undefined,

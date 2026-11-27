@@ -303,6 +303,39 @@ test('model service errors preserve safe provider JSON reasons and hide unsafe r
       expected: 'Quota exceeded: [redacted]',
     },
     {
+      name: 'array continues past metadata-only error',
+      body: [
+        { error: { code: 429, status: 'rate_limit_exceeded' } },
+        { error: { message: 'Quota exceeded' } },
+      ],
+      status: 429,
+      secrets: [],
+      hidden: [],
+      expected: 'message: Quota exceeded',
+    },
+    {
+      name: 'array keeps details-only fallback',
+      body: [
+        { error: { code: 429, status: 'rate_limit_exceeded' } },
+        { error: { type: 'temporary_failure' } },
+      ],
+      status: 429,
+      secrets: [],
+      hidden: [],
+      expected: 'code: 429',
+    },
+    {
+      name: 'array inspection remains bounded',
+      body: [
+        ...Array.from({ length: 10 }, () => ({ error: { code: 429 } })),
+        { error: { message: 'uninspected message' } },
+      ],
+      status: 429,
+      secrets: [],
+      hidden: [],
+      expected: 'code: 429',
+    },
+    {
       name: 'FastAPI string detail',
       body: { detail: `Not authenticated: ${secret}` },
       status: 401,
@@ -319,6 +352,36 @@ test('model service errors preserve safe provider JSON reasons and hide unsafe r
       secrets: [secret],
       hidden: [secret],
       expected: 'field required: [redacted]',
+    },
+    {
+      name: 'empty validation detail falls back to sibling message',
+      body: { message: 'The request could not be validated', detail: [] },
+      status: 422,
+      secrets: [],
+      hidden: [],
+      expected: 'message: The request could not be validated',
+    },
+    {
+      name: 'unrecognized validation detail falls back to sibling message',
+      body: {
+        message: 'The request could not be validated',
+        detail: [{ unrecognized: 'field' }],
+      },
+      status: 422,
+      secrets: [],
+      hidden: [],
+      expected: 'message: The request could not be validated',
+    },
+    {
+      name: 'recognized validation detail takes precedence over sibling message',
+      body: {
+        message: 'The request could not be validated',
+        detail: [{ msg: 'field required' }],
+      },
+      status: 422,
+      secrets: [],
+      hidden: [],
+      expected: 'msg: field required',
     },
     {
       name: 'object detail compatibility',
@@ -371,6 +434,39 @@ test('model service errors preserve safe provider JSON reasons and hide unsafe r
       assert.ok(!failure.reason?.includes(hidden), scenario.name);
     }
   }
+});
+
+test('model service errors redact credentials before truncating provider text', async () => {
+  const { modelServiceError } = await import('../src/providers/model-error.ts');
+  const secret = 'synthetic-cross-boundary-credential/7f3c';
+  const encodedSecret = encodeURIComponent(secret);
+  const prefix = 'x'.repeat(1_990);
+  const failure = await modelServiceError(
+    Response.json(
+      {
+        error: {
+          message: `${prefix}${secret}${encodedSecret}`,
+        },
+      },
+      { status: 400, statusText: 'Synthetic status' },
+    ),
+    'Synthetic service',
+    [secret],
+  );
+  const values = [failure.message, failure.details, failure.reason].filter(
+    (value): value is string => value !== undefined,
+  );
+  assert.ok(failure.details);
+  assert.ok(failure.details.length <= 2_000);
+  assert.ok(failure.reason);
+  assert.ok(failure.reason.length <= 2_000);
+  for (const value of values) {
+    assert.ok(!value.includes(secret));
+    assert.ok(!value.includes(encodedSecret));
+    assert.ok(!value.includes(secret.slice(0, 12)));
+    assert.ok(!value.includes(secret.slice(-12)));
+  }
+  assert.ok(failure.reason.includes('[redacted]'));
 });
 
 test('model service errors fall back to status for malformed, truncated, oversized, and plain-text bodies', async () => {
