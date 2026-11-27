@@ -219,6 +219,8 @@ export async function initializeDatabase() {
     ALTER TABLE preferences ADD COLUMN IF NOT EXISTS local_files_enabled boolean NOT NULL DEFAULT false;
     ALTER TABLE preferences ADD COLUMN IF NOT EXISTS computer_use boolean NOT NULL DEFAULT false;
     ALTER TABLE preferences ADD COLUMN IF NOT EXISTS computer_keep_out text[] NOT NULL DEFAULT '{}';
+    ALTER TABLE preferences ADD COLUMN IF NOT EXISTS phone_offer_dismissed boolean NOT NULL DEFAULT false;
+    ALTER TABLE preferences ADD COLUMN IF NOT EXISTS phone_offer_turn uuid;
     CREATE INDEX IF NOT EXISTS messages_owner_time ON messages(owner_id,created_at);
     CREATE INDEX IF NOT EXISTS messages_thread_time ON messages(thread_id,created_at);
     DROP TABLE IF EXISTS draft_instructions;

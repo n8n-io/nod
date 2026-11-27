@@ -7,6 +7,7 @@ import type { Pool, PoolClient } from 'pg';
 import type { Job, PgBoss } from 'pg-boss';
 import { z } from 'zod';
 import type {
+  ChannelProvider,
   Schedule,
   ScheduleObservation,
   ScheduleRun,
@@ -124,6 +125,10 @@ export interface ScheduleDependencies {
   validateModel?(choice: ModelSelection): ModelSelection;
   sessionUsage?(sessionIds: string[]): Promise<Record<string, WorkUsage & { unpriced: boolean }>>;
   workPricing?(own: ModelSelection | null): WorkPrice | undefined;
+  phoneOffer?: {
+    channels(): Promise<ChannelProvider[]>;
+    saved(client: PoolClient, turnId: string): Promise<void>;
+  };
 }
 
 type WorkPrice = {
@@ -1194,6 +1199,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           ],
         )
       ).rows[0]!;
+      if (provenance?.turnId) await dependencies.phoneOffer?.saved(client, provenance.turnId);
       return { row: await enqueue(client, saved, nextOccurrence(saved)), existing: false };
     }, shared);
     const { row, existing } = created;
@@ -1387,7 +1393,11 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           })?.toISOString() ?? null,
       };
     });
-    app.post('/api/schedules', (request) => create(request.body));
+    app.post('/api/schedules', async (request) => {
+      const schedule = await create(request.body);
+      const phoneOffer = (await dependencies.phoneOffer?.channels()) ?? [];
+      return phoneOffer.length ? { ...schedule, phoneOffer } : schedule;
+    });
     app.patch<{ Params: { id: string } }>('/api/schedules/:id', (request) => {
       const { expectedRevision, ...body } = updateSchema
         .extend({ expectedRevision: z.number().int().nonnegative().optional() })

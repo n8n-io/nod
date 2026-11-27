@@ -281,7 +281,12 @@ export interface AppState {
   messages: Message[];
   turns: Turn[];
   activity?: Activity[];
+  phoneOffer?: PhoneOffer;
   configuration: Configuration;
+}
+export interface PhoneOffer {
+  turnId: string;
+  channels: ChannelProvider[];
 }
 export interface MessageHistoryPage {
   messages: Message[];

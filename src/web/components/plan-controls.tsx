@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
 import { LoaderCircle, Pencil, Plus } from './icons';
-import type { Schedule } from '../../shared/contracts';
+import type { ChannelProvider, Schedule } from '../../shared/contracts';
 import {
   Button,
   Dialog,
@@ -12,6 +12,7 @@ import {
   Notice,
   Switch,
 } from './ui';
+import { PhoneOffer } from './phone-offer';
 import { SearchPicker, type PickerOption } from './search-picker';
 import { TimeZonePicker } from './time-zone-picker';
 import { api, ApiError, errorMessage, requestAccountVersion } from '../lib/api';
@@ -47,7 +48,13 @@ async function patchSchedule(id: string, body: Record<string, unknown>) {
   return saved;
 }
 
-type Toast = { id: number; text: string; kind?: 'info' | 'error'; undo?(): void };
+type Toast = {
+  id: number;
+  text: string;
+  kind?: 'info' | 'error';
+  undo?(): void;
+  phoneOffer?: ChannelProvider[];
+};
 let toast: Toast | null = null;
 const toastListeners = new Set<() => void>();
 function showToast(value: Toast | null) {
@@ -72,7 +79,7 @@ export function PlanToast() {
     () => null,
   );
   useEffect(() => {
-    if (!value || held || !visible) return;
+    if (!value || held || !visible || value.phoneOffer) return;
     const timer = setTimeout(() => {
       if (toast?.id === value.id) showToast(null);
     }, 6000);
@@ -105,6 +112,9 @@ export function PlanToast() {
             </Button>
           )}
         </Notice>
+      )}
+      {value?.phoneOffer && (
+        <PhoneOffer channels={value.phoneOffer} path="form" onAnswered={() => showToast(null)} />
       )}
     </div>
   );
@@ -736,21 +746,24 @@ function TaskScheduleForm({
     setError('');
     let unconfirmed = false;
     try {
-      const saved = await api<Schedule>('/api/schedules', {
-        method: 'POST',
-        body: JSON.stringify({
-          title: draft.title.trim(),
-          prompt: draft.prompt.trim(),
-          kind: 'recurring',
-          cron: scheduleExpression(frequency, time, day),
-          timeZone,
-        }),
-        signal: AbortSignal.timeout(10000),
-      });
+      const { phoneOffer, ...saved } = await api<Schedule & { phoneOffer?: ChannelProvider[] }>(
+        '/api/schedules',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            title: draft.title.trim(),
+            prompt: draft.prompt.trim(),
+            kind: 'recurring',
+            cron: scheduleExpression(frequency, time, day),
+            timeZone,
+          }),
+          signal: AbortSignal.timeout(10000),
+        },
+      );
       pageDataCache.update<Schedule[]>('/api/schedules', (items) => [saved, ...(items ?? [])]);
       void pageDataCache.refresh('/api/schedules', true);
       if (mounted.current) {
-        showToast({ id: Date.now(), text: `Scheduled ${saved.title}.` });
+        showToast({ id: Date.now(), text: `Scheduled ${saved.title}.`, phoneOffer });
         onCreated();
       }
     } catch (cause) {

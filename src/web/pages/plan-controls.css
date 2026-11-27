@@ -147,6 +147,9 @@
   margin: 0;
   padding-block: 4px;
 }
+.plan-toast .phone-offer {
+  margin: 8px 0 0;
+}
 @media (max-width: 640px) {
   .schedule-editor-dialog {
     padding: 24px;

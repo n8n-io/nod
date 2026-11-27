@@ -38,6 +38,7 @@ import { conversationFiles } from '../components/attachment-card';
 import { ArtifactWorkspace } from '../components/artifact-drawer';
 import { PrivateEntryWorkspace } from '../components/private-entry';
 import { ChatNotifications } from '../components/chat-notifications';
+import { PhoneOffer } from '../components/phone-offer';
 import { BrandMark } from '../components/brand';
 import { FeedbackLauncher } from '../components/feedback-discovery';
 import { Button, Notice } from '../components/ui';
@@ -968,6 +969,17 @@ export function Chat({
           ...collapseScreenshotMessages(displayMessages.slice(unreadIndex)),
         ]
       : collapseScreenshotMessages(displayMessages);
+  const phoneOffer = state.phoneOffer;
+  const phoneOfferMessageId =
+    phoneOffer &&
+    !state.turns.some(
+      (turn) =>
+        turn.id === phoneOffer.turnId && ['queued', 'running', 'waiting'].includes(turn.status),
+    )
+      ? visibleMessages.findLast(
+          (message) => message.role === 'assistant' && message.turnId === phoneOffer.turnId,
+        )?.id
+      : undefined;
   const cardQuestions = new Map<string, Message>();
   const questionsOnCard = new Set<string>();
   visibleMessages.forEach((question, index) => {
@@ -2620,6 +2632,9 @@ export function Chat({
                   )}
                   {message.id === introduction.data?.messageId && (
                     <ChatNotifications ownerId={ownerId} messageId={message.id} />
+                  )}
+                  {message.id === phoneOfferMessageId && phoneOffer && (
+                    <PhoneOffer channels={phoneOffer.channels} path="chat" />
                   )}
                 </Fragment>
               ))}

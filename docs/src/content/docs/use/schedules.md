@@ -18,6 +18,12 @@ Ask in chat. For example:
 
 A schedule runs **One time** or is **Recurring**. Nod tells you when it's saved and when it runs next. If you ask for a schedule that's already active with the same name or instruction, timing and watched apps, Nod keeps the one you have instead of adding a copy, and uses the model you named for it, if any. When you hand Nod work that needs follow-up, it can also plan its own check-in, such as "I'll look for a reply on Friday". Check-ins are schedules too.
 
+### Get results on your phone
+
+When you save a new schedule and haven't connected Telegram or WhatsApp yet, Nod asks "Get the result on your phone too?" In chat, the question appears as its own card after Nod's answer. After you schedule a finished task from **Tasks**, it appears under the "Scheduled" confirmation. Select **Telegram** or **WhatsApp** to open that channel's setup in **Channels**, where you connect it yourself. The question never connects anything or changes the schedule.
+
+Select **Not now** to stop the question for good. Nod also stops asking once a channel is connected. It doesn't ask when Nod finds you already have the same schedule, when you change a schedule, or for schedules saved by scheduled runs or background work. If you ignore the question, Nod asks again after your next new schedule.
+
 Nod uses your time zone, saved from your browser the first time you use Nod. Change it in **Settings → General**. If Nod doesn't know your time zone, it asks.
 
 ## Change, pause or delete a schedule
