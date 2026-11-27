@@ -16,7 +16,7 @@ export function PreparedWork({ id }: { id: string }) {
       </Button>
       {error ? (
         <>
-          <Notice>This prepared work is unavailable.</Notice>
+          <Notice>{error}</Notice>
           <Button variant="outline" onClick={() => void refresh()}>
             Try again
           </Button>

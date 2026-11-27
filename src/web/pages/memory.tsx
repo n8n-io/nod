@@ -1547,7 +1547,7 @@ export function Memory({
         </div>
       )}
       {settingError && <Notice>{settingError}</Notice>}
-      {loadError && !view && <Notice>Could not load your memory.</Notice>}
+      {loadError && !view && <Notice>Could not load your memory. {loadError}</Notice>}
       {!view ? (
         loading && <Loading label="Loading memory…" />
       ) : pageMode ? (

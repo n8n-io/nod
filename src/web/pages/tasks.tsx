@@ -56,7 +56,7 @@ const showMessage = (messageId: string) =>
 
 function TaskActivity({ id }: { id: string }) {
   const data = usePageData<TaskDetail>(`/api/tasks/${id}`);
-  if (data.error) return <Notice>Could not load activity.</Notice>;
+  if (data.error) return <Notice>Could not load activity. {data.error}</Notice>;
   const rows: Array<TaskDetail['events'][number] & { count: number }> = [];
   for (const event of data.data?.events ?? []) {
     const last = rows.at(-1);
@@ -381,16 +381,18 @@ export function TaskCard({ task, live }: { task: Task; live?: Activity }) {
 
 function LoadError({
   what,
+  error,
   refreshing,
   retry,
 }: {
   what: string;
+  error?: string;
   refreshing: boolean;
   retry(): Promise<unknown>;
 }) {
   return (
     <Notice>
-      Could not load {what}.{' '}
+      Could not load {what}. {error}{' '}
       <Button variant="ghost" size="sm" disabled={refreshing} onClick={() => void retry()}>
         {refreshing ? 'Retrying…' : 'Try again'}
       </Button>
@@ -443,10 +445,20 @@ export function Scheduled({
         </div>
       </header>
       {schedules.error && (
-        <LoadError what="schedules" refreshing={schedules.refreshing} retry={schedules.refresh} />
+        <LoadError
+          what="schedules"
+          error={schedules.error}
+          refreshing={schedules.refreshing}
+          retry={schedules.refresh}
+        />
       )}
       {tasks.error && (
-        <LoadError what="tasks" refreshing={tasks.refreshing} retry={tasks.refresh} />
+        <LoadError
+          what="tasks"
+          error={tasks.error}
+          refreshing={tasks.refreshing}
+          retry={tasks.refresh}
+        />
       )}
       {open.length > 0 && (
         <div className="saved-plan-list open-task-list">

@@ -459,7 +459,7 @@ function ScheduleRuns({ schedule, resultTurnId }: { schedule: Schedule; resultTu
       <h3>Runs</h3>
       {history.error && (
         <Notice>
-          Could not load runs.{' '}
+          Could not load runs. {history.error}{' '}
           <Button
             variant="ghost"
             size="sm"
@@ -534,8 +534,9 @@ function useScheduleHistory(scheduleId: string) {
       );
       if (!controller.signal.aborted)
         setEarlier({ runs: [...runs, ...next.runs], nextCursor: next.nextCursor });
-    } catch {
-      if (!controller.signal.aborted) setEarlierError('Could not load earlier runs.');
+    } catch (cause) {
+      if (!controller.signal.aborted)
+        setEarlierError(`Could not load earlier runs. ${errorMessage(cause)}`);
     } finally {
       if (!controller.signal.aborted) setLoadingEarlier(false);
     }
