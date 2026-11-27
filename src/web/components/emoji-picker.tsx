@@ -8,7 +8,7 @@ import { currentTheme, subscribeTheme } from '../lib/theme';
 
 const commonReactions = ['👍', '❤️', '😂', '🎉', '😮', '🙏'];
 
-const EmojiCatalog = lazy(async () => {
+export const EmojiCatalog = lazy(async () => {
   const { default: Picker, Categories, EmojiStyle, Theme } = await import('emoji-picker-react');
   const EmojiPicker = (Picker as typeof Picker & { default?: typeof Picker }).default ?? Picker;
   const categoryIcons = {
@@ -22,7 +22,15 @@ const EmojiCatalog = lazy(async () => {
     [Categories.FLAGS]: <Flag size={18} aria-hidden="true" />,
   };
   return {
-    default: function Catalog({ onSelect }: { onSelect(emoji: string, name: string): void }) {
+    default: function Catalog({
+      onSelect,
+      autoFocus = true,
+      skinTones = true,
+    }: {
+      onSelect(emoji: string, name: string): void;
+      autoFocus?: boolean;
+      skinTones?: boolean;
+    }) {
       const theme = useSyncExternalStore(subscribeTheme, currentTheme, () => 'light');
       return (
         <EmojiPicker
@@ -31,7 +39,8 @@ const EmojiCatalog = lazy(async () => {
           width="100%"
           height="100%"
           categoryIcons={categoryIcons}
-          autoFocusSearch
+          autoFocusSearch={autoFocus}
+          skinTonesDisabled={!skinTones}
           searchPlaceholder="Search emoji"
           previewConfig={{ showPreview: false }}
           categories={[

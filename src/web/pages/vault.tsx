@@ -1,4 +1,3 @@
-import { PageTitle } from '../components/page-title';
 import { useEffect, useRef, useState } from 'react';
 import { ActionMenu, ActionMenuItem } from '../components/action-menu';
 import { ChevronRight, CreditCard, Globe, Import, KeyRound, Plus } from '../components/icons';
@@ -236,7 +235,6 @@ export function Vault({ hidden = false }: { hidden?: boolean }) {
     >
       {!pageMode && (
         <header className="page-heading secondary-heading">
-          <PageTitle path="/vault" />
           <div className="secondary-heading-actions">
             <ActionMenu
               label="Add to Vault"

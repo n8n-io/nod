@@ -33,7 +33,6 @@ import {
   useDateFormat,
   type DateFormat,
 } from '../lib/date-format';
-import { PageTitle } from '../components/page-title';
 import { StatementValue } from '../components/statement-value';
 import { Button, Input, Loading, Notice } from '../components/ui';
 import { VaultUse } from '../components/vault-activity';
@@ -900,7 +899,6 @@ export function Usage({ hidden = false }: { hidden?: boolean }) {
   return (
     <div className="content-page secondary-page" hidden={hidden}>
       <header className="page-heading secondary-heading">
-        <PageTitle path="/usage" />
         <div className="secondary-heading-actions">
           <Button
             variant="ghost"

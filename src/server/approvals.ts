@@ -71,6 +71,9 @@ export interface ApprovalRepeat {
   question: string;
 }
 
+const sameChatSql = `(SELECT cm.bot_id FROM messages cm WHERE cm.id=a.confirmation_message_id AND cm.owner_id=a.owner_id)
+  IS NOT DISTINCT FROM $6::uuid`;
+
 export interface ChatConfirmationInput {
   text: string;
   displayText?: string;
@@ -78,6 +81,7 @@ export interface ChatConfirmationInput {
   threadId: string;
   replyToMessageId?: string;
   seenMessageId?: string;
+  botId?: string;
   clientMessageId?: string;
   sourceId?: string;
   hasAttachments?: boolean;
@@ -489,7 +493,7 @@ export async function createApprovals(
                 [current.task_id, ownerId, turn.threadId],
               )
             ).rows[0]
-          : await ownerChatRevision(client, ownerId, turn.threadId);
+          : await ownerChatRevision(client, ownerId, turn.threadId, reply.id);
         if (
           current.task_id
             ? !revision ||
@@ -868,12 +872,19 @@ export async function createApprovals(
         await pool.query(
           `SELECT m.id FROM messages m JOIN turns u ON u.id=m.turn_id WHERE m.owner_id=$1 AND u.owner_id=$1 AND m.thread_id=$2 AND m.role='assistant' AND m.hidden_at IS NULL
            AND (u.channel=$3${delivered ? ` OR ${deliveredSql('m.id', '$1', '$3')}` : ''})
+           AND m.bot_id IS NOT DISTINCT FROM $5::uuid
            AND NOT EXISTS (SELECT 1 FROM messages s WHERE s.id=$4 AND s.owner_id=$1 AND s.thread_id=$2 AND date_trunc('milliseconds',s.created_at)<date_trunc('milliseconds',m.created_at))
            AND NOT EXISTS (SELECT 1 FROM messages n WHERE n.owner_id=$1 AND n.thread_id=$2 AND n.role='assistant' AND n.turn_id IS NULL AND n.delivered_channel=$3 AND n.hidden_at IS NULL
-             AND (n.created_at,n.id)>(m.created_at,m.id)
+             AND n.bot_id IS NOT DISTINCT FROM $5::uuid AND (n.created_at,n.id)>(m.created_at,m.id)
              AND NOT EXISTS (SELECT 1 FROM messages s WHERE s.id=$4 AND s.owner_id=$1 AND s.thread_id=$2 AND date_trunc('milliseconds',s.created_at)<date_trunc('milliseconds',n.created_at)))
            ORDER BY m.created_at DESC,m.id DESC LIMIT 1`,
-          [ownerId, input.threadId, input.channel, input.seenMessageId ?? null],
+          [
+            ownerId,
+            input.threadId,
+            input.channel,
+            input.seenMessageId ?? null,
+            input.botId ?? null,
+          ],
         )
       ).rows[0]?.id;
     if (!target) return undefined;
@@ -881,10 +892,18 @@ export async function createApprovals(
       await pool.query(
         chatConfirmationSql(
           `a.confirmation_message_id=COALESCE((SELECT m.reply_to_message_id FROM messages m
-         WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3 AND m.role='assistant' AND m.turn_id IS NULL AND m.hidden_at IS NULL),$1)`,
+         WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3 AND m.role='assistant' AND m.turn_id IS NULL AND m.hidden_at IS NULL),$1)
+           AND ${sameChatSql}`,
           delivered,
         ),
-        [target, ownerId, input.threadId, input.channel, input.replyToMessageId ?? null],
+        [
+          target,
+          ownerId,
+          input.threadId,
+          input.channel,
+          input.replyToMessageId ?? null,
+          input.botId ?? null,
+        ],
       )
     ).rows[0];
   }
@@ -912,7 +931,7 @@ export async function createApprovals(
     const approval = (
       await client.query(
         `${chatConfirmationSql(
-          input.clicked ? 'a.id=$1 AND a.confirmation_message_id=$5' : 'a.id=$1',
+          `${input.clicked ? 'a.id=$1 AND a.confirmation_message_id=$5' : 'a.id=$1'} AND ${sameChatSql}`,
           await channelsReady(),
         )} FOR UPDATE OF a`,
         [
@@ -921,6 +940,7 @@ export async function createApprovals(
           input.threadId,
           input.channel,
           input.replyToMessageId ?? null,
+          input.botId ?? null,
         ],
       )
     ).rows[0];

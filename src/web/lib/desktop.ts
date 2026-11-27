@@ -138,7 +138,7 @@ type DesktopWindow = Window & {
     setTheme(theme: DesktopPreferences['theme']): Promise<DesktopPreferences>;
     onPreferences(listener: (preferences: DesktopPreferences) => void): () => void;
     onFocusMessage?(
-      listener: (target: { threadId: string; messageId: string } | null) => void,
+      listener: (target: { threadId: string; messageId: string; botId?: string } | null) => void,
     ): () => void;
     getChatReadCursor?(ownerId: string, threadId: string): Promise<ChatReadCursor | null>;
     setChatReadCursor?(ownerId: string, threadId: string, cursor: ChatReadCursor): Promise<void>;
@@ -290,7 +290,7 @@ export function desktopChatReadCursor(ownerId: string, threadId: string) {
 }
 
 export function subscribeDesktopFocusMessage(
-  listener: (target: { threadId: string; messageId: string } | null) => void,
+  listener: (target: { threadId: string; messageId: string; botId?: string } | null) => void,
 ) {
   return (window as DesktopWindow).nodDesktop?.onFocusMessage?.(listener) ?? (() => {});
 }

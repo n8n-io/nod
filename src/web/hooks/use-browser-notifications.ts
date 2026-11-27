@@ -89,4 +89,48 @@ export function useBrowserNotifications(ownerId: string, state: AppState | null)
       })
       .catch(() => {});
   }, [scope, state?.messages, ownerId, preferences]);
+  const botReplies = useRef<Map<string, string> | null>(null);
+  const replies = (state?.bots ?? [])
+    .filter((bot) => bot.latestReply)
+    .map((bot) => `${bot.id}=${bot.latestReply!.at}`)
+    .join();
+  useEffect(() => {
+    if (!state || desktopSettingsAvailable()) return;
+    const latest = new Map(
+      (state.bots ?? []).flatMap((bot) =>
+        bot.latestReply ? [[bot.id, bot.latestReply.at] as const] : [],
+      ),
+    );
+    const previous = botReplies.current;
+    if (previous && !preferences) return;
+    botReplies.current = latest;
+    if (!previous || !browserNotificationStatus(ownerId).enabled) return;
+    const consentGeneration = scope.consentGeneration;
+    const isCurrent = () =>
+      scope.active &&
+      current.current.scope === scope &&
+      scope.consentGeneration === consentGeneration &&
+      sessionStore.getSnapshot().epoch === scope.epoch &&
+      sessionStore.getSnapshot().session?.user?.id === ownerId;
+    for (const [botId, at] of latest) {
+      if ((previous.get(botId) ?? '') >= at || window.location.pathname === `/bot/${botId}`)
+        continue;
+      void deliverBrowserNotification(
+        ownerId,
+        state.threadId,
+        { id: `${botId}:${at}`, createdAt: at },
+        isCurrent,
+        () =>
+          !!current.current.preferences &&
+          !browserNotificationQuietTime(current.current.preferences),
+        botId,
+      )
+        .then((notification) => {
+          if (!notification) return;
+          scope.displayed.add(notification);
+          notification.onclose = () => scope.displayed.delete(notification);
+        })
+        .catch(() => {});
+    }
+  }, [scope, replies, ownerId, preferences]);
 }

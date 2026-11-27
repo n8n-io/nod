@@ -34,6 +34,7 @@ export const messageInput = z
     approvalAnswer: z.object({ approvalId: z.uuid(), approved: z.boolean() }).strict().optional(),
     replyQuote: z.string().trim().min(1).max(4000).optional(),
     seenMessageId: z.uuid().optional(),
+    botId: z.uuid().optional(),
     clientMessageId: z.uuid().optional(),
     threadId: z.uuid().optional(),
     chatClearedAt: z.iso.datetime().nullable().optional(),
@@ -220,8 +221,11 @@ export function registerAudioMessages(app: FastifyInstance, dependencies: AppDep
       const codeLike =
         classifyVerificationReply(text).kind !== 'ordinary' || Boolean(securityCodeIn(text));
       let verificationRequestId = input.verificationRequestId;
-      if (!verificationRequestId && verificationRequests.length) {
-        const eligible = verificationRequests.filter(
+      const chatRequests = verificationRequests.filter(
+        (pending) => (pending.botId ?? null) === (input.botId ?? null),
+      );
+      if (!verificationRequestId && chatRequests.length) {
+        const eligible = chatRequests.filter(
           (pending) => !accepted.replyTurnId || pending.turnId === accepted.replyTurnId,
         );
         if (eligible.length !== 1)

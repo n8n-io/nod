@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { ChatBot, focusMessage } from '../lib/bots';
 import { ArrowDown, Check, ChevronDown, ChevronLeft, ChevronUp } from 'lucide-react';
 import { captureAnalytics } from '../lib/analytics';
 import { errorMessage, post } from '../lib/api';
@@ -252,6 +253,7 @@ export function TaskStackCard({
   onClose(): void;
   onBack?(): void;
 }) {
+  const botId = useContext(ChatBot);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState('');
   const [details, setDetails] = useState(false);
@@ -336,9 +338,7 @@ export function TaskStackCard({
               type="button"
               onClick={() => {
                 captureAnalytics('task_action', { action: 'open_browser' });
-                window.dispatchEvent(
-                  new CustomEvent('nod:focus-message', { detail: { messageId: handoff } }),
-                );
+                focusMessage(handoff, botId);
                 onClose();
               }}
             >
@@ -395,6 +395,7 @@ export function TaskChip({
   running: boolean;
   answerId?: string;
 }) {
+  const botId = useContext(ChatBot);
   const inStack = started(task) || task.status === 'needs_you' || running;
   const state =
     task.status === 'needs_you'
@@ -463,9 +464,7 @@ export function TaskChip({
           );
           return;
         }
-        window.dispatchEvent(
-          new CustomEvent('nod:focus-message', { detail: { messageId: answerId } }),
-        );
+        if (answerId) focusMessage(answerId, botId);
       }}
     >
       {content}

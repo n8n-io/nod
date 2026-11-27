@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { z } from 'zod';
 import { withdrawnSql } from './turn-chain.ts';
 import { isMessageReaction } from '../shared/emoji.ts';
 import { presentationSchema, presentationText } from '../shared/presentation.ts';
@@ -187,7 +188,11 @@ export async function recentOwnerWords(
   threadId: string,
   requestIds: string[],
   taskId: string | null = null,
+  turnId?: string,
 ) {
+  const chat = turnId
+    ? `(SELECT cu.bot_id FROM turns cu WHERE cu.id='${z.uuid().parse(turnId)}'::uuid AND cu.owner_id=$1)`
+    : 'NULL::uuid';
   const { rows } = await pool.query<{
     id: string;
     text: string;
@@ -202,7 +207,8 @@ export async function recentOwnerWords(
      visible AS NOT MATERIALIZED (SELECT m.id,m.created_at FROM messages m
          WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.hidden_at IS NULL
            AND (m.role='user' OR (m.role='assistant' AND m.turn_id IS NOT NULL))
-           AND (m.text<>'' OR m.presentation IS NOT NULL)${
+           AND (m.text<>'' OR m.presentation IS NOT NULL)
+           AND m.bot_id IS NOT DISTINCT FROM ${chat}${
              taskId
                ? ''
                : `
@@ -246,13 +252,13 @@ export async function recentOwnerWords(
            AND a.hidden_at IS NULL AND (a.text<>'' OR a.presentation IS NOT NULL)
            AND (a.created_at,a.id)<(m.created_at,m.id) AND a.created_at>m.created_at-interval '24 hours'
            AND a.created_at>=CASE WHEN m.created_at>=cleared.at THEN cleared.at ELSE '-infinity'::timestamptz END
-           AND t.channel IS NOT DISTINCT FROM u.channel
+           AND t.channel IS NOT DISTINCT FROM u.channel AND a.bot_id IS NOT DISTINCT FROM m.bot_id
          ORDER BY a.created_at DESC,a.id DESC LIMIT 1) implicit ON TRUE
      CROSS JOIN LATERAL (SELECT COALESCE(explicit.id,implicit.id) AS id,COALESCE(explicit.text,implicit.text) AS text,
          CASE WHEN explicit.id IS NOT NULL THEN explicit.presentation ELSE implicit.presentation END AS presentation,
          COALESCE(explicit.withdrawn,implicit.withdrawn) AS withdrawn) r
      WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.role='user' AND m.text<>'' AND m.hidden_at IS NULL
-       AND m.approval_answer IS NULL AND NOT ${withdrawnSql('m')}
+       AND m.approval_answer IS NULL AND NOT ${withdrawnSql('m')} AND m.bot_id IS NOT DISTINCT FROM ${chat}
        AND m.text NOT IN (SELECT task->>'title' FROM messages offer,jsonb_array_elements(offer.suggestions->'tasks') task
          WHERE offer.owner_id=$1 AND offer.thread_id=$2 AND offer.suggestions IS NOT NULL AND task->>'title' IS NOT NULL)
      ORDER BY m.created_at,m.id`,
@@ -307,7 +313,8 @@ export async function validateInstructionRevision(
 ) {
   if (
     change.chat &&
-    (await ownerChatRevision(pool, ownerId, change.chat.threadId)) !== change.chat.id
+    (await ownerChatRevision(pool, ownerId, change.chat.threadId, change.chat.id)) !==
+      change.chat.id
   )
     throw Object.assign(
       new Error(
@@ -368,14 +375,16 @@ export async function ownerChatRevision(
   pool: Pick<Pool, 'query'>,
   ownerId: string,
   threadId: string,
+  sameChatAs: string | null = null,
 ) {
   return (
     await pool.query<{ id: string }>(
       `SELECT m.id FROM messages m WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.role='user' AND m.hidden_at IS NULL
+    AND m.bot_id IS NOT DISTINCT FROM (SELECT x.bot_id FROM messages x WHERE x.id=$3::uuid AND x.owner_id=$1)
     AND EXISTS (SELECT 1 FROM turns s WHERE s.owner_id=$1 AND s.thread_id=m.thread_id AND s.source='user' AND (s.message_id=m.id OR s.id=m.turn_id))
     AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=$1 AND (u.message_id=m.id OR u.id=m.turn_id) AND to_jsonb(u)->>'task_id' IS NOT NULL)
     ORDER BY m.created_at DESC,m.id DESC LIMIT 1`,
-      [ownerId, threadId],
+      [ownerId, threadId, sameChatAs],
     )
   ).rows[0]?.id;
 }

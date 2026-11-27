@@ -29,6 +29,7 @@ export interface HistoryMessage {
   shortened: boolean;
   created_at: Date;
   match?: boolean;
+  chat?: string;
 }
 
 export function createHistorySearch({
@@ -49,18 +50,20 @@ export function createHistorySearch({
     if (around) {
       const { rows } = await pool.query<HistoryMessage>(
         `WITH target AS (
-           SELECT m.created_at,m.id FROM messages m WHERE m.id=$2 AND m.owner_id=$1 AND m.hidden_at IS NULL AND ${activeThreadSql('m')}
+           SELECT m.created_at,m.id,m.bot_id FROM messages m WHERE m.id=$2 AND m.owner_id=$1 AND m.hidden_at IS NULL AND ${activeThreadSql('m')}
            UNION ALL
-           (SELECT m.created_at,m.id FROM turns u JOIN messages m ON m.turn_id=u.id AND m.owner_id=u.owner_id AND m.thread_id=u.thread_id
+           (SELECT m.created_at,m.id,m.bot_id FROM turns u JOIN messages m ON m.turn_id=u.id AND m.owner_id=u.owner_id AND m.thread_id=u.thread_id
             WHERE u.id=$2 AND u.owner_id=$1 AND ${activeThreadSql('u')} AND m.hidden_at IS NULL
             ORDER BY m.created_at,m.id LIMIT 1)),
-         hit AS (SELECT created_at,id FROM target LIMIT 1),
+         hit AS (SELECT created_at,id,bot_id FROM target LIMIT 1),
          nearby AS (
-           (SELECT m.* FROM messages m,hit WHERE m.owner_id=$1 AND m.hidden_at IS NULL AND ${activeThreadSql('m')} AND (m.created_at,m.id)<(hit.created_at,hit.id) ORDER BY m.created_at DESC,m.id DESC LIMIT 5)
+           (SELECT m.* FROM messages m,hit WHERE m.owner_id=$1 AND m.hidden_at IS NULL AND ${activeThreadSql('m')} AND m.bot_id IS NOT DISTINCT FROM hit.bot_id AND (m.created_at,m.id)<(hit.created_at,hit.id) ORDER BY m.created_at DESC,m.id DESC LIMIT 5)
            UNION ALL (SELECT m.* FROM messages m,hit WHERE m.id=hit.id)
-           UNION ALL (SELECT m.* FROM messages m,hit WHERE m.owner_id=$1 AND m.hidden_at IS NULL AND ${activeThreadSql('m')} AND (m.created_at,m.id)>(hit.created_at,hit.id) ORDER BY m.created_at,m.id LIMIT 5))
+           UNION ALL (SELECT m.* FROM messages m,hit WHERE m.owner_id=$1 AND m.hidden_at IS NULL AND ${activeThreadSql('m')} AND m.bot_id IS NOT DISTINCT FROM hit.bot_id AND (m.created_at,m.id)>(hit.created_at,hit.id) ORDER BY m.created_at,m.id LIMIT 5))
          SELECT id,role,CASE WHEN id=(SELECT id FROM hit) THEN text ELSE left(text,6000) END AS text,
-           id<>(SELECT id FROM hit) AND length(text)>6000 AS shortened,turn_id,created_at FROM nearby ORDER BY created_at,id`,
+           id<>(SELECT id FROM hit) AND length(text)>6000 AS shortened,turn_id,created_at,
+           COALESCE((SELECT b.name FROM bots b WHERE b.id=nearby.bot_id AND b.owner_id=$1),'Nod') AS chat
+         FROM nearby ORDER BY created_at,id`,
         [ownerId, around],
       );
       if (!rows.length) throw new Error('This history result is unavailable.');
@@ -137,17 +140,20 @@ export function createHistorySearch({
     const { rows: messages } = await pool.query<HistoryMessage>(
       `WITH terms AS (SELECT replace(plainto_tsquery('english',coalesce($4,''))::text,'&','|')::tsquery AS q),
        thread AS (
-         SELECT m.id,m.owner_id,m.role,m.text,m.turn_id,m.created_at,row_number() OVER (ORDER BY m.created_at,m.id) AS n
+         SELECT m.id,m.owner_id,m.role,m.text,m.turn_id,m.created_at,m.bot_id,
+           row_number() OVER (PARTITION BY m.bot_id ORDER BY m.created_at,m.id) AS n
          FROM messages m WHERE m.owner_id=$1 AND m.hidden_at IS NULL AND ${activeThreadSql('m')}),
-       picked AS (SELECT t.n,ids.place,t.id FROM unnest($2::uuid[]) WITH ORDINALITY ids(id,place) JOIN thread t ON t.id=ids.id),
+       picked AS (SELECT t.n,t.bot_id,ids.place,t.id FROM unnest($2::uuid[]) WITH ORDINALITY ids(id,place) JOIN thread t ON t.id=ids.id),
        shown AS (
          SELECT t.*,bool_or(p.id=t.id) AS match,min(p.place) AS place FROM thread t
-         JOIN picked p ON t.n BETWEEN p.n-$3 AND p.n+$3 GROUP BY t.id,t.owner_id,t.role,t.text,t.turn_id,t.created_at,t.n)
+         JOIN picked p ON t.bot_id IS NOT DISTINCT FROM p.bot_id AND t.n BETWEEN p.n-$3 AND p.n+$3
+         GROUP BY t.id,t.owner_id,t.role,t.text,t.turn_id,t.created_at,t.bot_id,t.n)
        SELECT s.id,s.role,CASE WHEN length(s.text)<=1200 THEN s.text
          ELSE ts_headline('english',s.text,terms.q,'StartSel="",StopSel="",MaxWords=60,MinWords=20,MaxFragments=3,FragmentDelimiter=" … "') END AS text,
          length(s.text)>1200 AS shortened,s.turn_id,s.created_at,
-         split_part(COALESCE(u.channel,'web'),':',1) AS channel,s.match
+         split_part(COALESCE(u.channel,'web'),':',1) AS channel,s.match,COALESCE(b.name,'Nod') AS chat
        FROM shown s CROSS JOIN terms LEFT JOIN turns u ON u.id=s.turn_id AND u.owner_id=$1
+       LEFT JOIN bots b ON b.id=s.bot_id AND b.owner_id=$1
        WHERE TRUE${kept('s')} ORDER BY s.place,s.n`,
       [ownerId, picked.map((row) => row.id), query ? 1 : 0, query ?? null],
     );

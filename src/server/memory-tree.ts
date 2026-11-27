@@ -114,6 +114,7 @@ const entryFields = z.object({
   expires: z.iso.date().optional(),
   fact: factSchema.optional().catch(undefined),
   quote: lines(400).optional().catch(undefined),
+  bot: z.uuid().optional(),
 });
 const evidenced = (entry: z.infer<typeof entryFields>) =>
   entry.sources.length > 0 || !!entry.edited || entry.origin === 'email';
@@ -365,7 +366,7 @@ export function indexLayout(tree: Tree, options: { tentative?: boolean } = {}) {
       )
       .map(
         (entry) =>
-          `${entry.slug}: ${entry.text}${statusOf(entry) === 'tentative' ? ' (tentative)' : ''}`,
+          `${entry.slug}: ${entry.text}${statusOf(entry) === 'tentative' ? ' (tentative)' : ''}${entry.bot ? ` (bot ${entry.bot})` : ''}`,
       );
     if (rows.length) index[target] = rows;
   }
@@ -381,6 +382,7 @@ const brief = (entry: Entry) => ({
   path: pathOf(entry),
   abstract: abstractOf(entry),
   status: statusOf(entry),
+  ...(entry.bot ? { bot: entry.bot } : {}),
 });
 
 export function find(tree: Tree, query: string, within?: Area) {
@@ -420,6 +422,7 @@ export function open(tree: Tree, target: string) {
     path: pathOf(entry),
     text: entry.text,
     status: statusOf(entry),
+    ...(entry.bot ? { bot: entry.bot } : {}),
     evidence: entry.sources.length,
     sources: entry.sources,
     ...(entry.fact ? { fact: entry.fact } : {}),
@@ -456,6 +459,7 @@ export function view(
         learnedFrom: entry.origin === 'email' ? ('email' as const) : null,
         sources: sources(entry),
         ...(entry.fact ? { fact: entry.fact } : {}),
+        ...(entry.bot ? { bot: entry.bot } : {}),
       })),
     archive: tree.archive.toReversed().map((entry) => ({
       path: pathOf(entry),

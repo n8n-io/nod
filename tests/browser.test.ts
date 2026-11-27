@@ -8886,16 +8886,16 @@ describe('interface components', { concurrency: interfaceLanes }, () => {
         await render({ requestedMessage: { id: 'synthetic-send', text: 'Synthetic request' },
           refresh: () => new Promise(resolve => { releaseRefresh = resolve; }) });
         await settle(() => messageRequest && document.querySelector('.message-user'));
-        assert.equal(document.querySelector('.thinking .sr-only')?.textContent, 'Working…');
+        assert.equal(document.querySelector('.thinking .live-line-current')?.textContent, 'Thinking…');
         await act(async () => releaseMessage(Response.json({
           messageId: messageRequest.clientMessageId, turnId: activity.turnId,
         })));
         await settle(() => releaseRefresh);
-        assert.equal(document.querySelector('.thinking .sr-only')?.textContent, 'Working…');
+        assert.equal(document.querySelector('.thinking .live-line-current')?.textContent, 'Thinking…');
         state = { ...state, activity: [activity] };
         await act(async () => releaseRefresh());
         await render();
-        assert.equal(document.querySelector('.thinking .sr-only')?.textContent, 'Working…');
+        assert.equal(document.querySelector('.thinking .live-line-current')?.textContent, 'Thinking…');
         const stop = document.querySelector('[aria-label="Stop all work"]');
         assert.ok(stop && !stop.disabled);
         await act(async () => stop.click());
@@ -8908,8 +8908,7 @@ describe('interface components', { concurrency: interfaceLanes }, () => {
           await render();
           if (line) assert.ok(document.querySelector('.thinking')?.textContent?.includes(line));
           else {
-            assert.equal(document.querySelector('.thinking .sr-only')?.textContent, 'Working…');
-            assert.ok(document.querySelector('.thinking .working-text [aria-hidden="true"]')?.textContent.trim());
+            assert.equal(document.querySelector('.thinking .live-line-current')?.textContent, 'Thinking…');
           }
           assert.ok(document.querySelector('[aria-label="Stop all work"]'));
         }
@@ -8921,7 +8920,7 @@ describe('interface components', { concurrency: interfaceLanes }, () => {
         assert.ok(document.querySelector('[aria-label="Stop all work"]'));
         state = { ...state, activity: [activity, task] };
         await render();
-        assert.equal(document.querySelector('.thinking .sr-only')?.textContent, 'Working…');
+        assert.equal(document.querySelector('.thinking .live-line-current')?.textContent, 'Thinking…');
         assert.ok(!document.querySelector('.thinking').textContent.includes('hotel'));
         state = { ...state, activity: [{ ...activity, doing: 'tool', site: 'example.test', step: 'Comparing prices',
           quietSince: new Date(Date.now() - 150_000).toISOString(), received: true }] };
@@ -9066,18 +9065,24 @@ describe('interface components', { concurrency: interfaceLanes }, () => {
       const events = event => sent.filter(item => item.event === event);
       const settings = () => events('settings_viewed').map(item => item.properties.tab);
       const tabs = () => events('tab_viewed').map(item => [item.properties.page, item.properties.tab]);
-      const sectionLabels = ['General', 'Notifications', 'Models', 'Voice & audio', 'Memory', 'Computer use', 'Privacy & data'];
+      const sections = [['General', 'general'], ['Notifications', 'notifications'], ['Models', 'models'],
+        ['Voice & audio', 'voice'], ['Memory', 'memory'], ['Computer use', 'computer'], ['Privacy & data', 'privacy']];
+      let request = 0;
+      const show = (initialTab, keep = false) => act(async () => root.render(createElement(AccountSettings, {
+        account, open: true, initialTab, openRequest: keep ? request : ++request, onOpenChange() {},
+      })));
+      const frames = () => act(async () => new Promise(resolve => setTimeout(resolve, 60)));
       try {
-        await act(async () => root.render(createElement(AccountSettings, {
-          account, open: true, initialTab: 'General', openRequest: 0, onOpenChange() {},
-        })));
+        await show('General');
         await settle(() => document.querySelector('.memory-panel'));
         assert.deepEqual(settings(), ['general']);
-        const navigation = [...document.querySelectorAll('.settings-nav-item')];
-        assert.deepEqual(navigation.map(item => item.textContent), sectionLabels);
-        for (const item of navigation.slice(1)) await act(async () => item.click());
-        assert.deepEqual(settings(), ['general', 'notifications', 'models', 'voice', 'memory', 'computer', 'privacy']);
-        await act(async () => navigation.at(-1).click());
+        for (const [label, tab] of sections.slice(1)) {
+          await show(label);
+          await settle(() => settings().at(-1) === tab);
+        }
+        assert.deepEqual(settings(), sections.map(([, tab]) => tab));
+        await show('Privacy & data', true);
+        await frames();
         assert.equal(settings().length, 7);
         const scroller = document.querySelector('.settings-scroll');
         Object.defineProperties(scroller, { scrollHeight: { value: 2000 }, clientHeight: { value: 400 } });
@@ -9091,11 +9096,12 @@ describe('interface components', { concurrency: interfaceLanes }, () => {
         assert.equal(settings().at(-1), 'notifications');
         const beforeDisabled = sent.length;
         consent(false);
-        await act(async () => navigation[2].click());
+        await show('Models');
+        await frames();
         assert.equal(sent.length, beforeDisabled);
         consent(true);
-        await act(async () => navigation[3].click());
-        assert.equal(settings().at(-1), 'voice');
+        await show('Voice & audio');
+        await settle(() => settings().at(-1) === 'voice');
         for (const path of ['/settings', '/settings/notifications', '/settings/models', '/settings/voice', '/settings/memory', '/settings/computer-use', '/settings/privacy']) {
           window.history.replaceState(null, '', path);
           capturePageview(path);
@@ -9118,7 +9124,6 @@ describe('interface components', { concurrency: interfaceLanes }, () => {
         window.history.replaceState(null, '', '/tasks');
         await act(async () => root.render(createElement(Scheduled, { onAsk() {} })));
         await settle(() => document.querySelector('.schedule-empty'));
-        assert.equal(document.querySelector('h1').textContent.trim(), 'Scheduled');
         assert.equal(document.querySelector('[role="tab"]'), null);
         assert.deepEqual(tabs(), [['apps', 'all'], ['apps', 'connected']]);
         capturePageview('/tasks');

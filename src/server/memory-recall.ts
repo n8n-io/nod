@@ -146,6 +146,7 @@ export function createMemoryRecall(options: {
           text: message.text.slice(0, 1200),
           at: message.created_at.toISOString(),
           shortened: message.shortened || message.text.length > 1200,
+          ...(message.chat ? { chat: message.chat } : {}),
         });
       }
       if (searches.at(-1)?.query === query) searches.pop();

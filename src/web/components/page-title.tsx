@@ -1,10 +1,18 @@
 import { sidebarItems } from '../lib/navigation';
 
-export function PageTitle({ path }: { path: (typeof sidebarItems)[number]['path'] }) {
-  const item = sidebarItems.find((entry) => entry.path === path)!;
+const subtitles: Record<string, string> = {
+  '/tasks': 'Every schedule in one place.',
+};
+
+export function PageHeader({ path }: { path: string }) {
+  const item = sidebarItems.find((entry) => entry.path === path && entry.path !== '/');
+  if (!item) return null;
   return (
-    <div className="page-title-row">
-      <h1 className="page-title">{item.label}</h1>
-    </div>
+    <header className="chat-header page-header">
+      <div className="chat-header-copy">
+        <h1>{item.label}</h1>
+        {subtitles[path] && <p>{subtitles[path]}</p>}
+      </div>
+    </header>
   );
 }

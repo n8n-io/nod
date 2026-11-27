@@ -153,7 +153,7 @@ export function BrowserScreen({
                   onClick={() => {
                     const id = browserId;
                     setStoppingBrowser(id);
-                    void post('/api/thread/stop')
+                    void post('/api/thread/stop', { all: true })
                       .then(() => {
                         setError('');
                         onStopped(id);

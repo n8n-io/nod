@@ -13,6 +13,7 @@ interface VerificationInput {
   threadId?: string;
   replyToMessageId?: string;
   verificationRequestId?: string;
+  botId?: string;
   receiptOnly?: boolean;
   attachmentIds?: string[];
   signal?: AbortSignal;
@@ -110,7 +111,7 @@ export async function createChatVerification(
 
   async function pending(channel = 'web'): Promise<VerificationRequest[]> {
     const result = await pool.query<VerificationRequest>(
-      `SELECT r.id,u.id AS "turnId",'payment' AS kind
+      `SELECT r.id,u.id AS "turnId",'payment' AS kind,u.bot_id AS "botId"
        FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
        WHERE r.owner_id=$1 AND u.owner_id=$1 AND u.channel=$2
          AND r.status='pending' AND ${waitingTurnSql('u', 'credentials')}
@@ -215,14 +216,23 @@ export async function createChatVerification(
            AND r.status='pending' AND u.channel='web'
            AND ${waitingTurnSql('u', 'credentials')}
            AND ($3::uuid IS NULL OR r.turn_id=$3) AND ($4::text IS NULL OR r.id=$4)
+           AND u.bot_id IS NOT DISTINCT FROM $6::uuid
            ORDER BY u.created_at,r.id LIMIT 2`,
-        [options.ownerId, channel, turnId ?? null, requestId ?? null, thread.id],
+        [
+          options.ownerId,
+          channel,
+          turnId ?? null,
+          requestId ?? null,
+          thread.id,
+          input.botId ?? null,
+        ],
       );
       if (!requests.rowCount) {
         if (requestId) throw conflict(unavailableMessage);
         const waiting = (
-          await client.query<{ channel: string }>(
-            `SELECT u.channel FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
+          await client.query<{ channel: string; elsewhere: boolean }>(
+            `SELECT u.channel,u.bot_id IS DISTINCT FROM $6::uuid AS elsewhere
+             FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
              WHERE r.owner_id=$1 AND u.owner_id=$1 AND r.thread_id=$3 AND r.status='pending'
                AND (u.status IN ('queued','running','waiting')
                  OR COALESCE(u.finished_at,u.created_at)>now()-interval '10 minutes')
@@ -230,15 +240,18 @@ export async function createChatVerification(
                  'u',
                  `newer.created_at>u.created_at AND newer.created_at<now()-interval '10 minutes'`,
                )})
-               AND ($4::boolean OR u.channel=$2) LIMIT 1`,
-            [options.ownerId, channel, thread.id, codeLike, turnId ?? null],
+               AND ($4::boolean OR u.channel=$2)
+             ORDER BY elsewhere,u.created_at DESC,r.id LIMIT 1`,
+            [options.ownerId, channel, thread.id, codeLike, turnId ?? null, input.botId ?? null],
           )
         ).rows[0];
         if (waiting)
           throw conflict(
             waiting.channel !== channel
               ? 'Open the secure payment link in Nod. Nod did not use this code.'
-              : securityCodeOnly,
+              : waiting.elsewhere
+                ? 'Send this code in the chat that asked for it. Nod did not use it.'
+                : securityCodeOnly,
           );
         await input.persistOrdinary?.(client);
         return;

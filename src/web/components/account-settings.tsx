@@ -1,6 +1,6 @@
+import { focusMessage } from '../lib/bots';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import {
-  ArrowLeft,
   ArrowUpRight,
   Bell,
   Brain,
@@ -67,7 +67,6 @@ export function AccountSettings({
   openRequest,
   onOpenChange,
   onReplayOnboarding,
-  onTabChange,
   onOpenSource,
 }: {
   account: AccountControls;
@@ -76,8 +75,7 @@ export function AccountSettings({
   openRequest: number;
   onOpenChange(open: boolean): void;
   onReplayOnboarding?(): void;
-  onTabChange?(tab: AccountTab, replace?: boolean): void;
-  onOpenSource?(messageId: string): void;
+  onOpenSource?(messageId: string, botId?: string): void;
 }) {
   const id = useId();
   const desktop = desktopSettingsAvailable();
@@ -257,11 +255,12 @@ export function AccountSettings({
     if (!open) return;
     const key = `${openRequest}:${section}`;
     if (recorded.current === key) return;
+    if (!recorded.current?.startsWith(`${openRequest}:`) && section !== selected.id) return;
     recorded.current = key;
     captureAnalytics('settings_viewed', {
       tab: section as AnalyticsProperties<'settings_viewed'>['tab'],
     });
-  }, [open, openRequest, section]);
+  }, [open, openRequest, section, selected.id]);
   function trackScroll() {
     const scroller = content.current;
     if (!scroller) return;
@@ -319,11 +318,11 @@ export function AccountSettings({
       runExit(action);
     }
   }
-  const source = (messageId: string, view: MemoryNavigationState) =>
+  const source = (messageId: string, view: MemoryNavigationState, botId?: string) =>
     requestExit(() => {
       memorySourceView.current = { ownerId: account.user.id, view };
-      if (onOpenSource) onOpenSource(messageId);
-      else window.dispatchEvent(new CustomEvent('nod:focus-message', { detail: { messageId } }));
+      if (onOpenSource) onOpenSource(messageId, botId);
+      else focusMessage(messageId, botId);
     });
   return (
     <SettingsDraftContext.Provider value={register}>
@@ -334,11 +333,14 @@ export function AccountSettings({
       >
         {open && (
           <>
-            <aside className="settings-sidebar">
-              <header>
-                <h1 id={`${id}-heading`} ref={title} tabIndex={-1}>
-                  Settings
-                </h1>
+            <div className="settings-main">
+              <header className="chat-header settings-header">
+                <div className="chat-header-copy">
+                  <h1 id={`${id}-heading`} ref={title} tabIndex={-1}>
+                    {settingsSections.find((item) => item.id === section)?.label ?? 'Settings'}
+                  </h1>
+                  <p>Settings</p>
+                </div>
                 {onReplayOnboarding && (
                   <ActionMenu
                     label="Settings options"
@@ -362,38 +364,6 @@ export function AccountSettings({
                   </ActionMenu>
                 )}
               </header>
-              <nav aria-label="Settings categories">
-                {settingsSections.map(({ id: key, label, icon: Icon }) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className="settings-nav-item"
-                    aria-current={section === key ? 'location' : undefined}
-                    onClick={() => {
-                      jump(key, true);
-                      onTabChange?.(label);
-                    }}
-                  >
-                    <Icon size={20} aria-hidden="true" />
-                    <span>{label}</span>
-                    {changed.some((draft) => draft.id.toLowerCase().startsWith(key)) && (
-                      <span className="settings-dirty-dot" aria-label="Unsaved changes" />
-                    )}
-                  </button>
-                ))}
-              </nav>
-              <Button
-                className="settings-back"
-                variant="ghost"
-                onClick={() => requestExit(() => onOpenChange(false))}
-                title="Back"
-                shortcut="Esc"
-              >
-                <ArrowLeft size={18} aria-hidden="true" />
-                Back
-              </Button>
-            </aside>
-            <div className="settings-main">
               <div className="settings-scroll" ref={content} onScroll={trackScroll}>
                 <div className="account-settings-body">
                   {native.error && (

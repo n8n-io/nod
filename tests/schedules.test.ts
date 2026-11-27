@@ -3243,7 +3243,7 @@ test(
       await admin.end();
     });
     await pool.query(`CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text,thread_id uuid,turn_id uuid,role text,text text,
-        attachments jsonb NOT NULL DEFAULT '[]',approval_answer text,suggestions jsonb,created_at timestamptz);
+        attachments jsonb NOT NULL DEFAULT '[]',approval_answer text,suggestions jsonb,bot_id uuid,created_at timestamptz);
       CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text,message_id uuid,withdrawn boolean NOT NULL DEFAULT false);
       CREATE TABLE approvals(owner_id text,source_message_id uuid,action text);
       CREATE TABLE preferences(owner_id text,time_zone text);

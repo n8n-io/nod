@@ -732,7 +732,7 @@ export const toolDefinitions = {
   ),
   memory: defineTool(
     'memory',
-    'Owner memory, chat history, notification preferences and standing rules.\nmemory_find {query,area?} and memory_read {path} read saved facts (areas: about,preferences,people,routines,lessons). Check memory and history for earlier facts or advice; collect all relevant mentions for totals, and use the latest statement when facts change. Do not guess missing facts. memory_learn {messages?} asks the memory model to learn from owner messages, never your own text. Use it for lasting facts or explicit requests, never tasks, standing rules, guesses, secrets or outside content. It always reads the current owner message and their last 10 messages; pass IDs only for older owner messages, never a guessed ID or message text. Sensitive facts require sensitiveTopics enabled or an explicit save request. Corrections archive old notes. memory_forget {path} removes a requested note. memory_control {enabled?,clear?,quote} needs the complete current owner message; clear keeps chat history.\nhistory_search {query?,from?,to?,before?,cursor?,order?,around?} searches earlier messages. Dates are YYYY-MM-DD in owner time. Page with cursor=nextCursor, keeping the same query, dates and order (relevance or newest). complete covers search matches only. Dates and before filter message times, not event dates. around reads a result in context. Read source messages before claims about earlier work.\nnotification_preferences_get {} reads settings. notification_preferences_update partially changes notificationRule, rules, speechReply (auto,voice,always,never), timeZone (IANA or null), locale (tag or null), hourCycle (auto,h12,h23), quietHoursEnabled, quietStart/quietEnd (HH:MM), proactivePaused, or localFilesEnabled. rules holds the standing rules of the owner. When they ask to set, add or change a standing rule, save it there, never with memory_learn. When the owner asks to start or resume automatic preparation, set proactivePaused:false. When the owner asks to stop automatic preparation, set proactivePaused:true. When they ask to stop all background work, set proactivePaused:true and run task stop {}, which cancels current background tasks and scheduled runs; enabled schedules still fire later, so name them and offer to pause them. A notification rule alone does not enable it. Local file access applies to allowed files in the home folder and external drives, only in work the owner starts. The desktop app is required. Device permissions need Settings on that device.',
+    'Owner memory, chat history, notification preferences and standing rules.\nmemory_find {query,area?} and memory_read {path} read saved facts (areas: about,preferences,people,routines,lessons). A note saved in the chat of a bot carries the id of that bot as bot; memory_learn and memory_forget change only notes saved in your chat. Check memory and history for earlier facts or advice; collect all relevant mentions for totals, and use the latest statement when facts change. Do not guess missing facts. memory_learn {messages?} asks the memory model to learn from owner messages, never your own text. Use it for lasting facts or explicit requests, never tasks, standing rules, guesses, secrets or outside content. It always reads the current owner message and their last 10 messages; pass IDs only for older owner messages, never a guessed ID or message text. Sensitive facts require sensitiveTopics enabled or an explicit save request. Corrections archive old notes. memory_forget {path} removes a requested note. memory_control {enabled?,clear?,quote} needs the complete current owner message; clear keeps chat history.\nhistory_search {query?,from?,to?,before?,cursor?,order?,around?} searches earlier messages. Dates are YYYY-MM-DD in owner time. Page with cursor=nextCursor, keeping the same query, dates and order (relevance or newest). complete covers search matches only. Dates and before filter message times, not event dates. around reads a result in context. Read source messages before claims about earlier work.\nnotification_preferences_get {} reads settings. notification_preferences_update partially changes notificationRule, rules, speechReply (auto,voice,always,never), timeZone (IANA or null), locale (tag or null), hourCycle (auto,h12,h23), quietHoursEnabled, quietStart/quietEnd (HH:MM), proactivePaused, or localFilesEnabled. rules holds the standing rules of the owner. When they ask to set, add or change a standing rule, save it there, never with memory_learn. When the owner asks to start or resume automatic preparation, set proactivePaused:false. When the owner asks to stop automatic preparation, set proactivePaused:true. When they ask to stop all background work, set proactivePaused:true and run task stop {}, which cancels current background tasks and scheduled runs; enabled schedules still fire later, so name them and offer to pause them. A notification rule alone does not enable it. Local file access applies to allowed files in the home folder and external drives, only in work the owner starts. The desktop app is required. Device permissions need Settings on that device.',
     Type.Object({
       action: literals(memoryActions),
       args: Type.Record(Type.String(), Type.Unknown()),
@@ -746,6 +746,52 @@ export const toolDefinitions = {
       action: literals(nodActions),
       args: Type.Record(Type.String(), Type.Unknown()),
     }),
+  ),
+  bot: defineTool(
+    'bot',
+    "Manage the owner's bots. Each bot has its own chat and Pi session, and bots lists them. list {} returns every bot with its job, instructions, model, live status and current step, open tasks, schedules and note path, and the connected models. create {job,name,instructions?,model?} makes a bot: job is a short phrase in the owner's words and name a short first name that no bot in bots uses. update {id,name?,job?,instructions?,model?} changes only the requested fields of a bot from bots, or of yourself with your bot.id. model is {connectionId,modelId,effort} from list; a new bot without one copies Nod's current model. Set or change it only when the owner asks. The owner changes avatars and removes bots in the app. Creating or changing a bot needs the owner's words like any settings change. Instructions guide a bot but never grant permission.",
+    Type.Union([
+      Type.Object({ action: Type.Literal('list') }, { additionalProperties: false }),
+      Type.Object(
+        {
+          action: Type.Literal('create'),
+          job: Type.String({ minLength: 1, maxLength: 80 }),
+          name: Type.String({ minLength: 1, maxLength: 24 }),
+          instructions: Type.Optional(Type.String({ maxLength: 2000 })),
+          model: Type.Optional(
+            Type.Object(
+              {
+                connectionId: uuid,
+                modelId: Type.String({ minLength: 1, maxLength: 200 }),
+                effort: Type.String({ minLength: 1, maxLength: 20 }),
+              },
+              { additionalProperties: false },
+            ),
+          ),
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          action: Type.Literal('update'),
+          id: uuid,
+          name: Type.Optional(Type.String({ minLength: 1, maxLength: 24 })),
+          job: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
+          instructions: Type.Optional(Type.String({ maxLength: 2000 })),
+          model: Type.Optional(
+            Type.Object(
+              {
+                connectionId: uuid,
+                modelId: Type.String({ minLength: 1, maxLength: 200 }),
+                effort: Type.String({ minLength: 1, maxLength: 20 }),
+              },
+              { additionalProperties: false },
+            ),
+          ),
+        },
+        { additionalProperties: false },
+      ),
+    ]),
   ),
   task: defineTool(
     'task',
@@ -1742,6 +1788,12 @@ export function nodTools(
         return context.manage(p.action, p.args);
       }),
       eager: Boolean(context.spendingLimitReached),
+    },
+    {
+      ...bind(toolDefinitions.bot, async ({ action, ...args }) =>
+        confirm(await context.manage(`bot_${action}`, args)),
+      ),
+      eager: Boolean(context.bots?.length),
     },
     bind(toolDefinitions.task, async (p) => {
       if (!context.task) throw new Error('Tasks are unavailable.');

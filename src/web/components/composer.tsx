@@ -76,6 +76,8 @@ export type ComposerSendResult =
 
 interface ComposerProps {
   active?: boolean;
+  name?: string;
+  placeholder?: string;
   draftKey?: string;
   privateReply?: boolean;
   restoreReply?(reply: Message['replyTo']): void;
@@ -83,7 +85,7 @@ interface ComposerProps {
   busy?: boolean;
   text: string;
   setText(value: string): void;
-  replyTo: Message['replyTo'];
+  replyTo: (NonNullable<Message['replyTo']> & { from?: string }) | null | undefined;
   replyPreviewPending?: boolean;
   retryReplyPreview?(): void;
   clearReply(): void;
@@ -100,6 +102,8 @@ interface ComposerProps {
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
   {
     active = true,
+    name = 'Nod',
+    placeholder: emptyPlaceholder,
     ready,
     busy = false,
     text,
@@ -177,7 +181,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     submit: () => {},
     upload: (_files: File[], _method: 'paste') => {},
   });
-  const placeholder = busy ? 'Send another message to Nod…' : 'Message Nod…';
+  const placeholder = busy
+    ? `Send another message to ${name}…`
+    : (emptyPlaceholder ?? `Message ${name}…`);
   const currentPlaceholder = useRef(placeholder);
   currentPlaceholder.current = placeholder;
   const extensions = useMemo(
@@ -197,7 +203,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     editorProps: {
       attributes: {
         role: 'textbox',
-        'aria-label': 'Message Nod',
+        'aria-label': `Message ${name}`,
         'aria-multiline': 'true',
         'aria-describedby': 'composer-keyboard-hint',
         class: 'composer-editor message-text',

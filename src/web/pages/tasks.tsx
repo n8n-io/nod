@@ -27,7 +27,6 @@ import { InlineName } from '../components/inline-name';
 import { WorkspaceCommandDialog, WorkspaceCommandLine } from '../components/workspace-command';
 import { pageDataCache } from '../lib/page-data-cache';
 import { api } from '../lib/api';
-import { PageTitle } from '../components/page-title';
 import { NewPlan, PlanToast, ScheduleTask } from '../components/plan-controls';
 import { Button, Loading, Notice } from '../components/ui';
 import { MessageText } from '../components/message';
@@ -434,7 +433,6 @@ export function Scheduled({
     <div className="content-page secondary-page tasks-page">
       <PlanToast />
       <header className="page-heading secondary-heading">
-        <PageTitle path="/tasks" />
         <div className="secondary-heading-actions">
           <Button variant="ghost" size="sm" onClick={() => onAsk('Show my rules')}>
             Rules

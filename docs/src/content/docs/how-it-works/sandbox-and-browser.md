@@ -48,6 +48,7 @@ Pi's native tools (`read`, `bash`, `edit` and `write`) run inside the workspace 
 The tools use the thread's Linux workspace path on every host, including Windows. The runtime converts Windows file paths before it sends file operations to the container.
 
 - Commands run as the unprivileged `node` user, without sudo.
+- A [bot](/use/bots/)'s commands run as its own Linux user, a number Nod gives it when it's created and never reuses, with `bots/<bot ID>` as its working directory and `bots/<bot ID>/.home` as its home. Its path holds only its own and system tools, not `/home/node`. `team` and `bots` are sticky folders, so no other bot can change, rename or delete a bot's note or folder. Before a bot's first command, Nod moves aside a note or folder under its name that another user created, then checks the bot owns its folder. Everyone can read them. Removing a bot stops every process its user runs and deletes its note. On a Mac source install, the workspace is a host folder where Docker doesn't enforce these permissions; the desktop app and self-hosted servers use a volume that does.
 - Bash gets no host environment. It sets the owner's `TZ` when known.
 - No workspace file is loaded as instructions.
 

@@ -98,6 +98,8 @@ const ownSettings = new Set([
   'NOD_memory_forget',
   'NOD_memory_control',
   'NOD_model_select',
+  'NOD_bot_create',
+  'NOD_bot_update',
 ]);
 
 export function trustBasis(

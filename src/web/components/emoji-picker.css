@@ -59,7 +59,8 @@
   color: var(--foreground);
 }
 
-.chat-emoji-popover .EmojiPickerReact {
+.chat-emoji-popover .EmojiPickerReact,
+.avatar-catalog .EmojiPickerReact {
   --epr-bg-color: var(--surface-overlay);
   --epr-text-color: var(--foreground);
   --epr-picker-border-color: transparent;
@@ -97,45 +98,57 @@
 
 .chat-emoji-popover
   .EmojiPickerReact
+  :is(input, button, .epr-emoji-category-label, .epr-status-search-results),
+.avatar-catalog
+  .EmojiPickerReact
   :is(input, button, .epr-emoji-category-label, .epr-status-search-results) {
   font-family: var(--font-sans);
 }
 
-.chat-emoji-popover .EmojiPickerReact input {
+.chat-emoji-popover .EmojiPickerReact input,
+.avatar-catalog .EmojiPickerReact input {
   font-size: var(--text-control);
   font-weight: 400;
 }
 
-.chat-emoji-popover .EmojiPickerReact .epr-emoji-category-label {
+.chat-emoji-popover .EmojiPickerReact .epr-emoji-category-label,
+.avatar-catalog .EmojiPickerReact .epr-emoji-category-label {
   font-size: 12px;
   font-weight: 500;
   text-transform: none;
 }
 
-.chat-emoji-popover .EmojiPickerReact .epr-body {
+.chat-emoji-popover .EmojiPickerReact .epr-body,
+.avatar-catalog .EmojiPickerReact .epr-body {
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }
 
-.chat-emoji-popover .EmojiPickerReact .epr-category-nav {
+.chat-emoji-popover .EmojiPickerReact .epr-category-nav,
+.avatar-catalog .EmojiPickerReact .epr-category-nav {
   padding: 0 8px 8px;
   border-bottom: 1px solid var(--border);
 }
 
-.chat-emoji-popover .EmojiPickerReact .epr-cat-btn {
+.chat-emoji-popover .EmojiPickerReact .epr-cat-btn,
+.avatar-catalog .EmojiPickerReact .epr-cat-btn {
   border-radius: var(--control-radius);
 }
 
-.chat-emoji-popover .EmojiPickerReact .epr-cat-btn:focus::before {
+.chat-emoji-popover .EmojiPickerReact .epr-cat-btn:focus::before,
+.avatar-catalog .EmojiPickerReact .epr-cat-btn:focus::before {
   border: 0;
 }
 
-.chat-emoji-popover .EmojiPickerReact .epr-cat-btn:focus-visible {
+.chat-emoji-popover .EmojiPickerReact .epr-cat-btn:focus-visible,
+.avatar-catalog .EmojiPickerReact .epr-cat-btn:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
 
 .chat-emoji-popover .EmojiPickerReact .epr-cat-btn:hover,
-.chat-emoji-popover .EmojiPickerReact .epr-cat-btn[aria-selected='true'] {
+.chat-emoji-popover .EmojiPickerReact .epr-cat-btn[aria-selected='true'],
+.avatar-catalog .EmojiPickerReact .epr-cat-btn:hover,
+.avatar-catalog .EmojiPickerReact .epr-cat-btn[aria-selected='true'] {
   background: var(--control);
 }

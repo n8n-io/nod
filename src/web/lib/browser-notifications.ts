@@ -1,4 +1,5 @@
 import type { Message, Preferences } from '../../shared/contracts';
+import { navigate } from './navigation';
 import { desktopSettingsAvailable } from './desktop';
 import { captureAnalytics } from './analytics';
 
@@ -181,8 +182,9 @@ export async function deliverBrowserNotification(
   message: Pick<Message, 'id' | 'createdAt'>,
   isCurrent: () => boolean,
   canDeliver: () => boolean = () => true,
+  botId?: string,
 ) {
-  const key = `nod.browser-notifications.last.${JSON.stringify([ownerId, threadId])}`;
+  const key = `nod.browser-notifications.last.${JSON.stringify(botId ? [ownerId, threadId, botId] : [ownerId, threadId])}`;
   const eligible = () =>
     isCurrent() &&
     canDeliver() &&
@@ -216,9 +218,11 @@ export async function deliverBrowserNotification(
       if (!isCurrent()) return;
       window.focus();
       captureAnalytics('notification_opened', { kind: 'reply' });
-      window.dispatchEvent(
-        new CustomEvent('nod:focus-message', { detail: { messageId: message.id } }),
-      );
+      if (botId) navigate(`/bot/${botId}`);
+      else
+        window.dispatchEvent(
+          new CustomEvent('nod:focus-message', { detail: { messageId: message.id } }),
+        );
     };
     return notification;
   };

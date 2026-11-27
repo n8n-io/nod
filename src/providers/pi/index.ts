@@ -74,10 +74,23 @@ function isFinalAnswer(signature: string | undefined) {
   }
 }
 
-function thinkingTitles(text: string) {
-  return [...text.matchAll(/(?:^|\n)[ \t]*\*\*([^*\n]{2,80})\*\*[ \t]*(?=\n)/g)].map((match) =>
-    match[1]!.trim(),
+function thinkingLines(text: string, titled: boolean) {
+  const titles = [...text.matchAll(/(?:^|\n)[ \t]*\*\*([^*\n]{2,80})\*\*[ \t]*(?=\n)/g)].map(
+    (match) => match[1]!.trim(),
   );
+  if (titles.length || titled) return { titled: true, lines: titles };
+  const lines = text
+    .split(/\n\s*\n/)
+    .map((paragraph) => {
+      const plain = paragraph
+        .replace(/[*`#>]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const sentence = (plain.match(/^.{12,}?[.!?:](?=\s|$)/)?.[0] ?? plain).replace(/:$/, '');
+      return sentence.length > 90 ? `${sentence.slice(0, 89).trimEnd()}…` : sentence;
+    })
+    .filter((sentence) => sentence.length >= 12);
+  return { titled: false, lines };
 }
 
 function resources(
@@ -1275,7 +1288,7 @@ export function createPiAgent(options: {
         early.set(call.id, started);
       };
       let textBlock: number | undefined;
-      let thinking = { index: -1, text: '', scanned: 0 };
+      let thinking = { index: -1, text: '', scanned: 0, titled: false };
       let contextExhausted = false;
       let compaction:
         { id: string; started: number; error?: string; requests: AssistantMessage[] } | undefined;
@@ -1355,7 +1368,7 @@ export function createPiAgent(options: {
         }
         if (event.type === 'message_start' && event.message.role === 'assistant') {
           textBlock = undefined;
-          thinking = { index: -1, text: '', scanned: 0 };
+          thinking = { index: -1, text: '', scanned: 0, titled: false };
           input.onEvent({ type: 'message_start' });
         }
         if (event.type === 'turn_start') input.onEvent({ type: 'turn_start' });
@@ -1389,13 +1402,20 @@ export function createPiAgent(options: {
             input.onEvent({ type: 'text_delta', text: update.delta });
           if (update.type === 'thinking_delta' || update.type === 'thinking_end') {
             if (thinking.index !== update.contentIndex)
-              thinking = { index: update.contentIndex, text: '', scanned: 0 };
+              thinking = { index: update.contentIndex, text: '', scanned: 0, titled: false };
             thinking.text =
               update.type === 'thinking_end' ? `${update.content}\n` : thinking.text + update.delta;
-            const end = thinking.text.lastIndexOf('\n') + 1;
-            if (end > thinking.scanned) {
-              for (const title of thinkingTitles(thinking.text.slice(thinking.scanned, end)))
-                input.onEvent({ type: 'thinking', title });
+            const end =
+              update.type === 'thinking_end'
+                ? thinking.text.length
+                : thinking.text.lastIndexOf('\n\n') + 2;
+            if (end > thinking.scanned + 1) {
+              const next = thinkingLines(
+                thinking.text.slice(thinking.scanned, end),
+                thinking.titled,
+              );
+              thinking.titled = next.titled;
+              for (const title of next.lines) input.onEvent({ type: 'thinking', title });
               thinking.scanned = end;
             }
           }

@@ -5,49 +5,6 @@ import { Check, ChevronDown } from './icons';
 
 const quietMinutes = (since: string) => Math.floor((Date.now() - Date.parse(since)) / 60_000);
 
-const idleWords = [
-  'Nodding along…',
-  'Nodding thoughtfully…',
-  'Connecting the nodes…',
-  'Wiring it up…',
-  'Untangling the wires…',
-  'Plugging in…',
-  'Workflowing…',
-  'Tracing the flow…',
-  'Following the thread…',
-  'Joining the dots…',
-  'Lining up the dominoes…',
-  'Lining things up…',
-  'Sketching a plan…',
-  'Doodling on a napkin…',
-  'Mapping it out…',
-  'Picking a path…',
-  'Rummaging…',
-  'Sorting the pile…',
-  'Shuffling the deck…',
-  'Squinting at the details…',
-  'Reading between the lines…',
-  'Turning it over…',
-  'Weighing it up…',
-  'Chasing a hunch…',
-  'Putting two and two together…',
-  'Counting on fingers…',
-  'Rolling up sleeves…',
-  'Looking under the hood…',
-  'Dusting off the toolbox…',
-  'Warming up the gears…',
-  'Oiling the cogs…',
-  'Flipping switches…',
-  'Tuning in…',
-  'Humming quietly…',
-  'Untying knots…',
-  'Nudging the pieces…',
-  'Polishing the plan…',
-  'Gathering threads…',
-  'Finding the right drawer…',
-  'Fitting the puzzle together…',
-];
-
 function useQuietMinutes(since: string, enabled: boolean) {
   const [minutes, setMinutes] = useState(() => quietMinutes(since));
   useEffect(() => {
@@ -57,24 +14,6 @@ function useQuietMinutes(since: string, enabled: boolean) {
     return () => clearInterval(timer);
   }, [since, enabled]);
   return enabled && minutes > 0 ? minutes : 0;
-}
-
-function useIdleWord(enabled: boolean) {
-  const [order] = useState(() => {
-    const words = [...idleWords];
-    for (let index = words.length - 1; index > 0; index--) {
-      const pick = Math.floor(Math.random() * (index + 1));
-      [words[index], words[pick]] = [words[pick]!, words[index]!];
-    }
-    return words;
-  });
-  const [index, setIndex] = useState(0);
-  useEffect(() => {
-    if (!enabled) return;
-    const timer = setInterval(() => setIndex((current) => (current + 1) % order.length), 2500);
-    return () => clearInterval(timer);
-  }, [enabled, order]);
-  return order[index]!;
 }
 
 export function LiveLine({
@@ -100,8 +39,6 @@ export function LiveLine({
         ? `Waiting for ${item.model}`
         : undefined;
   const described = step || (site && `Using ${site}`) || work;
-  const queued = item?.doing === 'queued';
-  const word = useIdleWord(!described && !queued);
   const meta = [step ? site || work : null, minutes ? `${minutes} min` : null]
     .filter(Boolean)
     .join(' · ');
@@ -114,13 +51,10 @@ export function LiveLine({
         <Markdown allowedElements={[]} unwrapDisallowed>
           {described}
         </Markdown>
-      ) : queued ? (
+      ) : item?.doing === 'queued' || item?.doing === 'tool' ? (
         'Working…'
       ) : (
-        <>
-          <span className="sr-only">Working…</span>
-          <span aria-hidden="true">{word}</span>
-        </>
+        'Thinking…'
       )}
       {meta && ` · ${meta}`}
     </span>

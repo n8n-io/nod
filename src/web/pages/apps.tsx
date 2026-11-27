@@ -1,4 +1,3 @@
-import { PageTitle } from '../components/page-title';
 import { useEffect, useId, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { AlertCircle, ListFilter, MessageCircle, Plus, Users, X } from '../components/icons';
@@ -615,7 +614,6 @@ export function Apps({
         {announcement}
       </div>
       <header className="page-heading secondary-heading">
-        <PageTitle path="/apps" />
         <Button
           ref={manualMcpTrigger}
           variant="outline"

@@ -47,7 +47,7 @@ For application changes, start with focused tests and run broader checks only wh
 
 Keep only tests that would catch a real regression in:
 
-- the core harness (one thread and Pi session per owner, sequential turns, stop, interruption, reset, session rebase);
+- the core harness (one thread per owner, one Pi session per chat, sequential turns, stop, interruption, reset, session rebase);
 - sandbox isolation (nothing on the host, no keys in the sandbox, contained paths);
 - safety (approvals, uncertain actions, Vault and sign-in fencing, onboarding task cards);
 - owner isolation (owner scoping, local access, URL guards, redaction);

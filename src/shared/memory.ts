@@ -36,6 +36,8 @@ export interface MemorySource {
   channel: string | null;
   quote?: string;
   canOpenInCurrentChat?: boolean;
+  chat?: string;
+  botId?: string;
 }
 
 export interface MemoryNote {
@@ -49,6 +51,7 @@ export interface MemoryNote {
   learnedFrom: 'email' | null;
   sources: MemorySource[];
   fact?: MemoryFact;
+  bot?: string;
 }
 
 export interface MemoryArchived {

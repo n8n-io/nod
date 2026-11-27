@@ -21,6 +21,8 @@ export function analyticsRoute(value: string) {
     const path = new URL(value, `https://${analyticsHost}`).pathname.replace(/\/$/, '') || '/';
     if (/^\/payments\/[^/]+$/.test(path)) return '/payments';
     if (preparedWorkId(path)) return '/prepared';
+    if (/^\/bot\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path))
+      return '/';
     if (
       [
         '/settings/models',

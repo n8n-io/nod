@@ -44,6 +44,8 @@ const settings = new Set([
   'NOD_memory_forget',
   'NOD_memory_control',
   'NOD_model_select',
+  'NOD_bot_create',
+  'NOD_bot_update',
 ]);
 const signIns = new Set(['NOD_sign_in', 'NOD_vault_allow']);
 const grants = {

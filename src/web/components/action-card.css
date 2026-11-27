@@ -344,12 +344,13 @@ button.choice-card-row[aria-disabled='true'] {
 }
 .chat-page .message .message-bubble:has(> .message-body > .action-card) {
   width: 100%;
-  max-width: 600px;
+  max-width: min(calc(100% - var(--message-action-space, 0px)), 600px);
 }
 .chat-page .message .message-bubble > .message-body:has(> .action-card) {
   flex: 1;
   width: 100%;
   padding: 0;
+  border-color: transparent;
   border-radius: 16px;
   background: transparent;
   overflow: visible;

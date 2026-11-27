@@ -93,11 +93,14 @@ export function createMemoryService(options: {
     return { tree: parse(object?.bytes), bytes: object?.bytes, version: object?.version ?? null };
   }
 
-  async function edit<T>(change: (tree: Tree) => T, { allowDisabled = false } = {}): Promise<T> {
+  async function edit<T>(
+    change: (tree: Tree) => T,
+    { allowDisabled = false, chat }: { allowDisabled?: boolean; chat?: string | null } = {},
+  ): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       const current = await load();
       if (!current.tree.enabled && !allowDisabled) throw new Error('Memory is turned off.');
-      const result = change(current.tree);
+      const result = chat === undefined ? change(current.tree) : within(current.tree, chat, change);
       const bytes = render(current.tree);
       if (current.bytes ? Buffer.from(current.bytes).equals(bytes) : isEmpty(current.tree))
         return result;
@@ -108,6 +111,46 @@ export function createMemoryService(options: {
         if (!(error instanceof ObjectStoreConflict) || attempt === 2) throw error;
       }
     }
+  }
+
+  function within<T>(tree: Tree, chat: string | null, change: (tree: Tree) => T) {
+    const mine = (entry: Entry) => (entry.bot ?? null) === chat;
+    const others = tree.entries.filter((entry) => !mine(entry));
+    const othersArchived = tree.archive.filter((entry) => !mine(entry));
+    const skills = tree.skills;
+    const known = new Set(tree.entries.map(pathOf));
+    const taken = new Set(others.map(pathOf));
+    const archived = new Set(othersArchived.map((entry) => `${pathOf(entry)}@${entry.archived}`));
+    const before = new Map(others.map((entry) => [pathOf(entry), JSON.stringify(entry)]));
+    const filed = new Set(tree.archive.map((entry) => `${pathOf(entry)}@${entry.archived}`));
+    const result = change(tree);
+    const edited = tree.entries.some((entry) => {
+      const previous = before.get(pathOf(entry));
+      return previous !== undefined && previous !== JSON.stringify(entry);
+    });
+    if (
+      edited ||
+      tree.archive.some(
+        (entry) => before.has(pathOf(entry)) && !filed.has(`${pathOf(entry)}@${entry.archived}`),
+      )
+    )
+      throw new Error(
+        'That note was saved in another chat. You can change only your own notes. Nothing was saved.',
+      );
+    tree.entries = [
+      ...others,
+      ...tree.entries
+        .filter((entry) => !taken.has(pathOf(entry)) && (mine(entry) || !known.has(pathOf(entry))))
+        .map((entry) => (chat && !entry.bot ? { ...entry, bot: chat } : entry)),
+    ];
+    tree.archive = [
+      ...othersArchived,
+      ...tree.archive.filter(
+        (entry) => mine(entry) && !archived.has(`${pathOf(entry)}@${entry.archived}`),
+      ),
+    ];
+    if (chat) tree.skills = skills;
+    return result;
   }
 
   async function context() {
@@ -140,7 +183,7 @@ export function createMemoryService(options: {
       throw new Error('The complete current owned user message is required.');
   }
 
-  async function control(raw: unknown) {
+  async function control(raw: unknown, chat?: string | null) {
     const input = controlInput.parse(raw);
     const capture = snapshotAnalytics(options.analytics);
     const mark = await watermark();
@@ -160,7 +203,7 @@ export function createMemoryService(options: {
         tree.retries = 0;
         return { before, after: { enabled: tree.enabled }, cleared: input.clear };
       },
-      { allowDisabled: true },
+      { allowDisabled: true, chat },
     );
     captureSettingChanges(capture, 'agent', result.before, result.after, {
       enabled: 'memory_enabled',
@@ -168,14 +211,17 @@ export function createMemoryService(options: {
     return { ...result.after, cleared: result.cleared };
   }
 
-  function noteText(tree: Tree, target: string) {
-    return (locate(tree, target) ?? tree.archive.find((item) => pathOf(item) === target))?.text;
+  function noteText(tree: Tree, target: string, chat?: string | null) {
+    const entry = locate(tree, target) ?? tree.archive.find((item) => pathOf(item) === target);
+    return chat === undefined || (entry?.bot ?? null) === chat ? entry?.text : undefined;
   }
 
-  async function forget(raw: unknown, expected?: string) {
+  async function forget(raw: unknown, expected?: string, chat?: string | null) {
     const target = path.parse(raw);
     return edit(
       (tree) => {
+        if (noteText(tree, target) !== undefined && noteText(tree, target, chat) === undefined)
+          fail('That note was saved in another chat. You can forget only your own notes.', 403);
         if (expected !== undefined && noteText(tree, target) !== expected)
           fail('The note changed. Review it before asking again.', 409);
         const entry = locate(tree, target);
@@ -192,12 +238,22 @@ export function createMemoryService(options: {
         tree.entries = tree.entries.filter((item) => item !== entry);
         return { ok: true };
       },
+      { allowDisabled: true, chat },
+    );
+  }
+
+  function dropBot(bot: string) {
+    return edit(
+      (tree) => {
+        tree.entries = tree.entries.filter((entry) => entry.bot !== bot);
+        tree.archive = tree.archive.filter((entry) => entry.bot !== bot);
+      },
       { allowDisabled: true },
     );
   }
 
-  function owned<T>(change: (tree: Tree, now: string) => T) {
-    return edit((tree) => change(tree, new Date().toISOString()), { allowDisabled: true });
+  function owned<T>(change: (tree: Tree, now: string) => T, chat?: string | null) {
+    return edit((tree) => change(tree, new Date().toISOString()), { allowDisabled: true, chat });
   }
 
   function safe(text: string | undefined) {
@@ -210,7 +266,7 @@ export function createMemoryService(options: {
       fail('You already have this note.');
   }
 
-  async function add(raw: unknown) {
+  async function add(raw: unknown, chat?: string | null) {
     const input = noteInput.parse(raw);
     safe(input.text);
     return owned((tree, now) => {
@@ -227,7 +283,7 @@ export function createMemoryService(options: {
       };
       tree.entries.push(entry);
       return pathOf(entry);
-    });
+    }, chat);
   }
 
   async function adopt(notes: Array<{ area: Area; text: string }>) {
@@ -431,8 +487,9 @@ export function createMemoryService(options: {
   async function sources(ids: string[]) {
     const { rows } = await options.pool.query(
       `SELECT m.id,m.text,m.created_at,split_part(COALESCE(u.channel,'web'),':',1) AS channel,
-       COALESCE(${activeThreadSql()},false) AS can_open
+       COALESCE(${activeThreadSql()},false) AS can_open,m.bot_id,COALESCE(b.name,'Nod') AS chat
        FROM messages m LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
+       LEFT JOIN bots b ON b.id=m.bot_id AND b.owner_id=m.owner_id
        WHERE m.owner_id=$1 AND m.role='user' AND m.id=ANY($2::uuid[])`,
       [options.ownerId, ids],
     );
@@ -445,6 +502,8 @@ export function createMemoryService(options: {
           at: row.created_at.toISOString(),
           channel: row.channel,
           canOpenInCurrentChat: row.can_open === true,
+          chat: row.chat,
+          ...(row.bot_id ? { botId: row.bot_id } : {}),
         },
       ]),
     );
@@ -515,7 +574,9 @@ export function createMemoryService(options: {
         }),
       };
     },
-    note: async (raw: unknown) => noteText((await load()).tree, path.parse(raw)),
+    note: async (raw: unknown, chat?: string | null) =>
+      noteText((await load()).tree, path.parse(raw), chat),
+    dropBot,
   };
 }
 

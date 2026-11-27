@@ -3,8 +3,11 @@ import { randomUUID } from 'node:crypto';
 import type { ConnectedCli, Workspace } from '../../ports/computer.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import {
+  botAccount,
+  retireWorkspaceBot,
   runWorkspaceCommand,
   WorkspaceCommandError,
+  type BotAccount,
   type WorkspaceCommandLauncher,
 } from './command.ts';
 
@@ -123,6 +126,13 @@ export function createDockerWorkspace(options: {
       'Installed: Node, Python (pypdf, pdfplumber, pillow_heif, openpyxl, python-docx, python-pptx), LibreOffice (soffice), ffmpeg, yt-dlp, poppler-utils, qpdf, Ghostscript, Tesseract OCR, git, curl, ripgrep, jq and pipx. Install trusted Python libraries with pip install <package>, trusted CLIs with npm install -g <package> or pipx install <package>; /home/node persists across tasks and restarts. You have no sudo or display, so use a CLI or a web app in the browser, and IPv4 for internet access. Keep outputs in this workspace and never install on the owner\u2019s device.',
     runCommand: run,
     runConnectedCommand: run,
+    retireBot: (id, bot) =>
+      retireWorkspaceBot({
+        container: options.container,
+        threadId: id,
+        bot,
+        spawn: options.spawn,
+      }),
     available: options.available,
   });
 }
@@ -135,6 +145,7 @@ type CommandInput = {
   maxBytes?: number;
   onData?(chunk: Buffer): void;
   session?: boolean;
+  bot?: BotAccount;
 };
 type CommandResult = { stdout: Buffer; stderr: Buffer; exitCode: number };
 
@@ -147,6 +158,7 @@ export function createCommandWorkspace(options: {
     args: string[],
     input: CommandInput & { environment: Record<string, string>; cli: ConnectedCli },
   ): Promise<CommandResult>;
+  retireBot?(id: string, bot: BotAccount): Promise<void>;
   available?(): boolean;
 }): Workspace {
   let unavailable: string | undefined;
@@ -208,6 +220,21 @@ export function createCommandWorkspace(options: {
   const available = () => !disposed && !unavailable && options.available?.() !== false;
   return {
     connectedCliAvailable: Boolean(options.runConnectedCommand),
+    ...(options.retireBot
+      ? {
+          retireBot: async (threadId: string, bot: BotAccount) => {
+            if (disposed)
+              throw new Error('The workspace is unavailable. Restart Nod before continuing.');
+            const operation = options.retireBot!(threadIdentity(threadId), botAccount(bot));
+            pending.add(operation);
+            try {
+              await operation;
+            } finally {
+              pending.delete(operation);
+            }
+          },
+        }
+      : {}),
     available,
     dispose: async () => {
       disposed = true;
@@ -289,12 +316,41 @@ export function createCommandWorkspace(options: {
       const id = threadIdentity(input.threadId);
       if (resolve(input.workspacePath) !== resolve(options.workspaceRoot, id))
         throw new Error('The task workspace does not match its configured root.');
+      const bot = input.bot && botAccount(input.bot);
+      const root = `/workspace/${id}`;
+      const path = bot ? `${root}/bots/${bot.id}` : root;
+      const step = async (script: string, owner?: BotAccount) => {
+        const result = await command(id, ['/bin/sh', '-c', script], {
+          signal: input.signal,
+          timeoutMs: 30_000,
+          ...(owner ? { bot: owner } : {}),
+        });
+        if (result.exitCode)
+          throw new Error(
+            `The bot folders could not be prepared: ${result.stderr.toString().trim() || `exit code ${result.exitCode}`}.`,
+          );
+      };
+      let ready: Promise<void> | undefined;
+      const prepare = () =>
+        (ready ??= (async () => {
+          await step(
+            `chmod 755 ${root} && mkdir -p ${root}/team ${root}/bots && chmod 1777 ${root}/team ${root}/bots && cd ${root} && for p in bots/${bot!.id} team/${bot!.id}.md; do if [ -e "$p" ] || [ -L "$p" ]; then [ "$(stat -c %u "$p")" = ${bot!.uid} ] || mv -- "$p" "$(dirname "$p")/.taken-$(date +%s%N)-$(basename "$p")"; fi; done`,
+          );
+          await step(
+            `mkdir -p ${path}/.home && [ "$(stat -c %u ${path})" = "$(id -u)" ] && ln -sfn ../../team ${path}/team`,
+            bot,
+          );
+        })().catch((error) => {
+          ready = undefined;
+          throw error;
+        }));
       const connected = options.runConnectedCommand;
       return {
-        path: `/workspace/${id}`,
+        path,
         instructions: options.instructions,
         available,
         async exec(script, { input: stdin, signal, timeoutMs = 600_000, onData, notices } = {}) {
+          if (bot) await prepare();
           const result = await command(
             id,
             [
@@ -311,6 +367,7 @@ export function createCommandWorkspace(options: {
               timeoutMs: Math.max(1000, timeoutMs),
               onData: onData ?? (() => {}),
               session: notices,
+              ...(bot ? { bot } : {}),
             },
           );
           return { exitCode: result.exitCode };

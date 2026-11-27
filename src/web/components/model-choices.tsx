@@ -11,6 +11,8 @@ import {
   type WorkUsage,
   type WorkUsageResponse,
 } from '../../shared/models';
+import { defaultEffort } from '../../shared/model-defaults';
+import type { Bot } from '../../shared/bots';
 import { useModels } from '../hooks/use-models';
 import { usePageData } from '../hooks/use-page-data';
 import { api, errorMessage } from '../lib/api';
@@ -402,4 +404,71 @@ export function ScheduleModel({ schedule }: { schedule: Schedule }) {
       label={current && !modelOf(data, current.selection) ? 'Model unavailable' : undefined}
     />
   );
+}
+
+export function BotModel({ bot, onError }: { bot: Bot; onError(message: string): void }) {
+  const models = useModels();
+  const data = models.data;
+  if (!data)
+    return (
+      <select className="input panel-select" disabled aria-label="Model">
+        <option>…</option>
+      </select>
+    );
+  const own = kept(data, bot.model);
+  const choices = data.connections
+    .filter((connection) => connection.status === 'connected')
+    .flatMap((connection) =>
+      connection.models.map((model) => ({
+        key: `${connection.id}/${model.id}`,
+        label: model.name,
+        model: {
+          connectionId: connection.id,
+          modelId: model.id,
+          effort: defaultEffort(model),
+        } satisfies ModelSelection,
+      })),
+    );
+  const value = own ? `${own.connectionId}/${own.modelId}` : '';
+  return (
+    <select
+      className="input panel-select"
+      aria-label="Model"
+      value={value}
+      onChange={(event) => {
+        const model = choices.find((choice) => choice.key === event.target.value)?.model;
+        if (!model) return;
+        void api<Bot>(`/api/bots/${encodeURIComponent(bot.id)}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ model }),
+        })
+          .then(() => {
+            window.dispatchEvent(new Event('nod:bots-changed'));
+            void pageDataCache.refresh(workUsagePath, true);
+          })
+          .catch((cause) => onError(errorMessage(cause)));
+      }}
+    >
+      {!own && (
+        <option value="" disabled>
+          Model unavailable
+        </option>
+      )}
+      {own && !choices.some((choice) => choice.key === value) && (
+        <option value={value}>{modelOf(data, own)?.name ?? unavailableLabel}</option>
+      )}
+      {choices.map((choice) => (
+        <option key={choice.key} value={choice.key}>
+          {choice.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+export function NodModelName() {
+  const models = useModels();
+  const data = models.data;
+  return <>{data ? (modelOf(data, data.selection)?.name ?? 'Model unavailable') : '…'}</>;
 }

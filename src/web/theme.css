@@ -33,6 +33,7 @@
   --foreground: var(--black);
   --text-secondary: var(--gray-80);
   --muted-foreground: var(--gray-70);
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23676767' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   --placeholder: var(--muted-foreground);
   --accent: var(--pink-70);
   --accent-soft: var(--pink-10);
@@ -45,6 +46,7 @@
   --primary-foreground: var(--black);
   --chat-sent: var(--pink-20);
   --chat-sent-foreground: var(--black);
+  --bubble-border: var(--gray-20);
   --control: var(--gray-15);
   --control-hover: var(--gray-10);
   --control-foreground: var(--foreground);
@@ -119,6 +121,7 @@
   --ease-enter: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-reveal: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-travel: cubic-bezier(0.65, 0, 0.35, 1);
+  --glass: color-mix(in srgb, var(--surface) 78%, transparent);
 }
 
 :root[data-theme='dark'] {
@@ -134,11 +137,13 @@
   --foreground: var(--white);
   --text-secondary: var(--gray-30);
   --muted-foreground: var(--gray-40);
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23bfbfbf' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   --accent: var(--brand-pink);
   --accent-soft: var(--pink-80);
   --accent-border: var(--pink-70);
   --chat-sent: var(--pink-80);
   --chat-sent-foreground: var(--white);
+  --bubble-border: var(--gray-85);
   --control: color-mix(in srgb, var(--white) 12%, transparent);
   --control-hover: color-mix(in srgb, var(--white) 20%, transparent);
   --control-active: color-mix(in srgb, var(--white) 16%, transparent);

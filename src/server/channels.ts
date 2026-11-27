@@ -1321,7 +1321,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       JOIN channel_inbox i ON i.channel=u.channel AND i.owner_id=m.owner_id AND i.created_at<=m.created_at
         AND (u.channel_source_id IS NULL OR i.source_id=u.channel_source_id)
       WHERE m.role='assistant' AND m.owner_id=$1 AND m.hidden_at IS NULL AND i.state='submitted' AND u.channel<>'web'
-        AND NOT EXISTS (SELECT 1 FROM channel_outbox q WHERE q.message_id=m.id)
+        AND m.bot_id IS NULL AND NOT EXISTS (SELECT 1 FROM channel_outbox q WHERE q.message_id=m.id)
       ORDER BY m.id,(i.turn_id IS NOT DISTINCT FROM m.turn_id) DESC,i.received_at DESC,i.source_id
       ON CONFLICT(message_id) DO NOTHING`,
       [ownerId],
@@ -1336,11 +1336,11 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       CROSS JOIN LATERAL (SELECT lu.channel FROM messages lm
           JOIN turns lu ON lu.id=lm.turn_id AND lu.owner_id=lm.owner_id
           WHERE lm.owner_id=m.owner_id AND lm.thread_id=m.thread_id AND lm.role='user'
-            AND lm.created_at<=m.created_at
+            AND lm.bot_id IS NULL AND lm.created_at<=m.created_at
           ORDER BY lm.created_at DESC,lm.id DESC LIMIT 1) owner
       JOIN channel_inbox i ON i.channel=owner.channel AND i.owner_id=m.owner_id AND i.created_at<=m.created_at
       WHERE m.role='assistant' AND m.owner_id=$1 AND m.hidden_at IS NULL AND i.state='submitted'
-        AND owner.channel<>'web'
+        AND owner.channel<>'web' AND m.bot_id IS NULL
         AND (m.id IN (SELECT q.id FROM turns u CROSS JOIN LATERAL (SELECT q.id FROM messages q
               WHERE q.turn_id=u.id AND q.owner_id=u.owner_id AND q.role='assistant'
               ORDER BY q.created_at DESC,q.id DESC LIMIT 1) q

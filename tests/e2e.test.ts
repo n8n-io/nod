@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { startNod } from './e2e-harness.ts';
 
@@ -358,5 +359,237 @@ test(
       { action: 'NOD_schedule_pause', status: 'completed' },
     ]);
     assert.deepEqual(await nod.violations(), []);
+  },
+);
+
+test(
+  'end to end, each bot keeps its own chat, session, tools and note while Nod keeps its own',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 240_000 },
+  async (t) => {
+    const nod = await startNod({ checker: true });
+    t.after(() => nod.close());
+    const chat = async (botId: string) =>
+      (
+        await nod.api<{
+          messages: Array<{ id: string; role: string; text: string; botId?: string | null }>;
+        }>('GET', `/api/bots/${botId}/messages`)
+      ).messages;
+    const model = { connectionId: randomUUID(), modelId: 'scripted', effort: 'medium' };
+    const penny = await nod.api<{ id: string; name: string }>('POST', '/api/bots', {
+      name: 'Penny',
+      model,
+    });
+    await nod.api('PATCH', `/api/bots/${penny.id}`, { job: 'Track my bills' });
+
+    await t.test(
+      'a bot answers in its own chat and session with its note and the team',
+      async () => {
+        await nod.send('Nod-only: plan the week');
+        const sent = await nod.send('check the electricity bill', { botId: penny.id });
+        await nod.settle();
+        assert.deepEqual(
+          (await chat(penny.id)).map(({ role, text, botId }) => [role, text, botId]),
+          [
+            ['user', 'check the electricity bill', penny.id],
+            [
+              'assistant',
+              `Penny: check the electricity bill | note team/${penny.id}.md | bots Penny`,
+              penny.id,
+            ],
+          ],
+        );
+        assert.deepEqual(
+          await nod.query('SELECT session_id FROM turns WHERE id=$1', [sent.turnId]),
+          [{ session_id: penny.id }],
+        );
+        const main = (await nod.state()).messages.map(({ text }) => text);
+        assert.ok(main.includes('Nod-only: plan the week'));
+        assert.ok(!main.some((text) => text.includes('electricity')));
+        const reply = (await chat(penny.id)).at(-1)!;
+        await nod.api('POST', `/api/messages/${reply.id}/reaction`, { reaction: '👍' });
+        await nod.settle();
+        assert.deepEqual(
+          await nod.query(
+            "SELECT bot_id FROM turns WHERE starts_with(source_id,'reaction-reply:')",
+          ),
+          [{ bot_id: penny.id }],
+        );
+        assert.deepEqual(await nod.violations(), []);
+      },
+    );
+
+    await t.test('a bot starts tasks and schedules that report back to its own chat', async () => {
+      await nod.send('task: compare bills', { botId: penny.id });
+      await nod.settle();
+      assert.deepEqual(
+        await nod.query("SELECT bot_id,state FROM tasks WHERE title='compare bills'"),
+        [{ bot_id: penny.id, state: 'done' }],
+      );
+      await nod.send('schedule: water bill check', { botId: penny.id });
+      await nod.until(
+        async () =>
+          (
+            await nod.query(
+              "SELECT 1 FROM turns WHERE source='schedule' AND bot_id=$1 AND status='succeeded'",
+              [penny.id],
+            )
+          ).length > 0,
+      );
+      await nod.settle();
+      assert.deepEqual(await nod.query('SELECT bot_id FROM schedules'), [{ bot_id: penny.id }]);
+      const texts = (await chat(penny.id)).map(({ text }) => text);
+      assert.ok(texts.includes('Starting compare bills.'));
+      assert.ok(texts.includes('Done: task: compare bills'));
+      assert.ok(texts.some((text) => text.includes('Scheduled task: water bill check')));
+      const main = (await nod.state()).messages.map(({ text }) => text).join('\n');
+      assert.doesNotMatch(main, /compare bills|water bill/);
+      assert.deepEqual(await nod.violations(), []);
+    });
+
+    await t.test("a bot can't steer or stop Nod's tasks", async () => {
+      await nod.send('task: plan the garden');
+      await nod.settle();
+      const [nodTask] = await nod.query<{ id: string }>(
+        "SELECT id FROM tasks WHERE title='plan the garden' AND bot_id IS NULL",
+      );
+      await nod.send(`steer: ${nodTask!.id}`, { botId: penny.id });
+      await nod.settle();
+      assert.match((await chat(penny.id)).at(-1)!.text, /belongs to another chat/);
+      assert.deepEqual(
+        await nod.query("SELECT 1 FROM turns WHERE source='task' AND bot_id=$1 AND task_id=$2", [
+          penny.id,
+          nodTask!.id,
+        ]),
+        [],
+      );
+    });
+
+    await t.test('asking Nod creates a bot through the bot tool and the trust check', async () => {
+      await nod.send('make bot: Scout | Research trips');
+      await nod.settle();
+      const { bots, messages } = await nod.state();
+      assert.deepEqual(
+        bots.map(({ name, job }) => [name, job]),
+        [
+          ['Penny', 'Track my bills'],
+          ['Scout', 'Research trips'],
+        ],
+      );
+      assert.equal(messages.at(-1)?.text, 'Made Scout | note team/nod.md');
+      assert.deepEqual(await nod.violations(), []);
+    });
+
+    await t.test('a bot renames itself with the bot tool', async () => {
+      await nod.send('rename yourself: Pip', { botId: penny.id });
+      await nod.settle();
+      assert.equal((await nod.state()).bots.find(({ id }) => id === penny.id)?.name, 'Pip');
+      assert.deepEqual(await nod.violations(), []);
+    });
+
+    await t.test("Nod's Stop leaves a working bot alone and the bot's Stop ends it", async () => {
+      const held = await nod.send('hold: compare bills', { botId: penny.id });
+      await nod.running('hold: compare bills');
+      await nod.stopAll();
+      assert.deepEqual(await nod.query('SELECT status FROM turns WHERE id=$1', [held.turnId]), [
+        { status: 'running' },
+      ]);
+      await nod.stopBot(penny.id);
+      await nod.settle();
+      assert.deepEqual(await nod.query('SELECT status FROM turns WHERE id=$1', [held.turnId]), [
+        { status: 'cancelled' },
+      ]);
+      const again = await nod.send('hold: compare bills again', { botId: penny.id });
+      await nod.running('hold: compare bills again');
+      await nod.api('POST', '/api/thread/stop', { all: true });
+      await nod.settle();
+      assert.deepEqual(await nod.query('SELECT status FROM turns WHERE id=$1', [again.turnId]), [
+        { status: 'cancelled' },
+      ]);
+    });
+
+    await t.test('a bot reads other chats but changes only its own', async () => {
+      const scout = (await nod.state()).bots.find(({ name }) => name === 'Scout')!;
+      const pip = await nod.api<{ id: string }>('POST', '/api/bots', { name: 'Quill', model });
+      await nod.api('PATCH', `/api/bots/${scout.id}`, { instructions: 'Scout private rule' });
+      const reply = async (text: string) => {
+        await nod.send(text, { botId: pip.id });
+        await nod.settle();
+        return (await chat(pip.id)).at(-1)!.text;
+      };
+      const listed = await reply('call: bot {"action":"list"}');
+      assert.match(listed, /Scout/);
+      assert.doesNotMatch(listed, /Scout private rule/);
+      assert.match(
+        await reply(`call: bot {"action":"update","id":"${scout.id}","name":"Hacked"}`),
+        /can change only itself/,
+      );
+      assert.equal((await nod.state()).bots.find(({ id }) => id === scout.id)?.name, 'Scout');
+      await nod.send('schedule: water the plants', { botId: scout.id });
+      await nod.settle();
+      const [water] = await nod.query<{ id: string }>(
+        "SELECT id FROM schedules WHERE title='water the plants'",
+      );
+      assert.ok(water);
+      assert.doesNotMatch(
+        await reply('call: nod {"action":"schedule_list","args":{}}'),
+        /water the plants/,
+      );
+      assert.match(
+        await reply(`call: nod {"action":"schedule_pause","args":{"id":"${water!.id}"}}`),
+        /belongs to another chat/,
+      );
+      await nod.send('schedule: water the plants', { botId: pip.id });
+      await nod.settle();
+      assert.deepEqual(
+        await nod.query(
+          "SELECT bot_id FROM schedules WHERE title='water the plants' ORDER BY created_at",
+        ),
+        [{ bot_id: scout.id }, { bot_id: pip.id }],
+      );
+      const nodMessage = (await nod.state()).messages.find(({ role }) => role === 'user')!;
+      assert.match(
+        await reply(`call: send_message {"text":"hi","replyToMessageId":"${nodMessage.id}"}`),
+        /belongs to another chat/,
+      );
+      assert.match(
+        await reply(`call: task {"action":"stop","id":"${randomUUID()}"}`),
+        /belongs to another chat/,
+      );
+      const saved = await nod.api<{ path: string }>('POST', '/api/memory/notes', {
+        area: 'about',
+        text: 'Lives in Barcelona.',
+      });
+      assert.match(
+        await reply('call: memory {"action":"memory_find","args":{"query":"Barcelona"}}'),
+        new RegExp(saved.path),
+      );
+      assert.match(
+        await reply(`call: memory {"action":"memory_forget","args":{"path":"${saved.path}"}}`),
+        /only your own notes/,
+      );
+      assert.ok(
+        (await nod.api<{ notes: Array<{ path: string }> }>('GET', '/api/memory')).notes.some(
+          (note) => note.path === saved.path,
+        ),
+      );
+    });
+
+    await t.test('removing a bot stops its chat and retires everything it left', async () => {
+      const scout = (await nod.state()).bots.find(({ name }) => name === 'Scout')!;
+      await nod.api('DELETE', `/api/bots/${scout.id}`);
+      assert.deepEqual(
+        (await nod.state()).bots.map(({ name }) => name),
+        ['Pip', 'Quill'],
+      );
+      await assert.rejects(nod.send('are you there?', { botId: scout.id }), /404/);
+      await assert.rejects(nod.api('DELETE', '/api/bots/nod'), /400/);
+      await assert.rejects(nod.api('POST', '/api/bots', { name: ' NOD ', model }), /409/);
+      await nod.until(
+        async () =>
+          (await nod.query('SELECT 1 FROM bots WHERE id=$1 AND retired_at IS NOT NULL', [scout.id]))
+            .length > 0,
+      );
+      assert.deepEqual(await nod.query('SELECT id FROM schedules WHERE bot_id=$1', [scout.id]), []);
+    });
   },
 );

@@ -2,6 +2,7 @@ import {
   lazy,
   memo,
   Suspense,
+  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -9,6 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import { TaskMark } from './task-mark';
+import { ChatBot, focusMessage } from '../lib/bots';
 import { createPortal } from 'react-dom';
 import { Copy, Check, CornerUpLeft, Ellipsis, SmilePlus } from './icons';
 import Markdown from 'react-markdown';
@@ -127,23 +129,20 @@ export function MessageQuote({
   message,
   composing = false,
 }: {
-  message: NonNullable<Message['replyTo']>;
+  message: NonNullable<Message['replyTo']> & { from?: string };
   composing?: boolean;
 }) {
+  const botId = useContext(ChatBot);
   return (
     <Tooltip content="Go to original message">
       <button
         type="button"
         className="message-reply-quote"
-        onClick={() =>
-          window.dispatchEvent(
-            new CustomEvent('nod:focus-message', { detail: { messageId: message.id } }),
-          )
-        }
+        onClick={() => focusMessage(message.id, botId)}
       >
         <strong>
           {composing ? 'Replying to ' : ''}
-          {message.role === 'assistant' ? 'Nod' : composing ? 'yourself' : 'You'}
+          {message.role === 'assistant' ? (message.from ?? 'Nod') : composing ? 'yourself' : 'You'}
         </strong>
         <span
           className="message-excerpt"
@@ -373,6 +372,8 @@ export function MessageBubble({
   handoffPaused,
   work,
   task,
+  replyFrom,
+  speakerName = 'Nod',
   pickQuestion,
   choicesOnCard = false,
   onChoose,
@@ -385,6 +386,8 @@ export function MessageBubble({
   chosenText?: string;
   work?: MessageWork;
   task?: ReactNode;
+  replyFrom?: string;
+  speakerName?: string;
   pendingAudio?: ImagePreview;
   connectedAppIds?: ReadonlySet<string>;
   grouped?: boolean;
@@ -924,7 +927,9 @@ export function MessageBubble({
     <article
       ref={articleElement}
       className={`message message-${message.role}${grouped ? ' message-grouped' : ''}${arriving ? ' message-arriving' : ''}${panel ? ' message-panel-open' : ''}`}
-      aria-label={streaming ? 'Nod is responding' : message.role === 'user' ? 'You' : 'Nod'}
+      aria-label={
+        streaming ? `${speakerName} is responding` : message.role === 'user' ? 'You' : speakerName
+      }
       data-message-id={streaming ? undefined : message.id}
       onMouseUp={selectQuote}
       onKeyUp={selectQuote}
@@ -989,7 +994,7 @@ export function MessageBubble({
                 );
               }}
             >
-              {visibleReply && <MessageQuote message={visibleReply} />}
+              {visibleReply && <MessageQuote message={{ ...visibleReply, from: replyFrom }} />}
               {cardText?.lead && (
                 <MessageText text={cardText.lead} connectedAppIds={connectedAppIds} />
               )}

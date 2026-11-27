@@ -127,21 +127,24 @@ function fixture(t, onState) {
   const snapshots = [];
   const threadId = 'synthetic-thread-1';
   let messages = [{ id: 'historical-assistant', role: 'assistant' }];
+  let bots = [];
   const delivered = [];
   const threads = [];
+  const botsNotified = [];
   const stop = watchAssistantMessages({
     retryMs: 1,
     onState,
-    onMessage: (message, threadId) => {
+    onMessage: (message, threadId, bot) => {
       delivered.push(message);
       threads.push(threadId);
+      botsNotified.push(bot);
     },
     request: async (path, options) => {
       assert.equal(options.redirect, 'error');
       assert.ok(options.signal instanceof AbortSignal);
       if (path === '/api/state') {
         snapshots.push(messages);
-        return Response.json({ threadId, messages });
+        return Response.json({ threadId, messages, bots });
       }
       assert.equal(path, '/api/events');
       const stream = { signal: options.signal };
@@ -166,6 +169,10 @@ function fixture(t, onState) {
     stop,
     delivered,
     threads,
+    botsNotified,
+    bots(value) {
+      bots = value;
+    },
     get notifications() {
       return delivered.length;
     },
@@ -207,6 +214,36 @@ test('assistant notifications use committed messages without history, delta, or 
   assert.equal(f.notifications, 1);
   f.stop();
   assert.equal(f.streams[0].signal.aborted, true);
+});
+
+test('a bot reply notifies once with its bot and a waiting question shows the question', async (t) => {
+  const bot = (latestId, extra = {}) => [
+    {
+      id: 'synthetic-bot',
+      name: 'Inbox replies',
+      status: 'idle',
+      question: null,
+      lastMessage: { from: 'bot', text: 'Synthetic bot reply' },
+      latestReply: { id: latestId, at: '2026-11-25T10:00:00.000Z' },
+      ...extra,
+    },
+  ];
+  const f = fixture(t);
+  f.bots(bot('bot-message-1'));
+  await eventually(() => f.snapshots.length === 1);
+  f.bots(bot('bot-message-2'));
+  f.send('data: {"type":"refresh"}\n\n');
+  await eventually(() => f.notifications === 1);
+  assert.equal(f.delivered[0].id, 'bot-message-2');
+  assert.equal(f.delivered[0].text, 'Synthetic bot reply');
+  assert.deepEqual(f.botsNotified[0], { id: 'synthetic-bot', name: 'Inbox replies' });
+  f.send('data: {"type":"refresh"}\n\n');
+  await eventually(() => f.snapshots.length === 3);
+  assert.equal(f.notifications, 1);
+  f.bots(bot('bot-message-3', { status: 'needs_you', question: 'Synthetic question?' }));
+  f.send('data: {"type":"refresh"}\n\n');
+  await eventually(() => f.notifications === 2);
+  assert.equal(f.delivered[1].text, 'Synthetic question?');
 });
 
 test('notification reconnect reconciles missed messages and stop aborts subscription', async (t) => {

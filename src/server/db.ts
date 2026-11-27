@@ -93,8 +93,17 @@ export async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS turns_running_lease ON turns(owner_id,lease_expires_at) WHERE status='running';
     CREATE INDEX IF NOT EXISTS turns_withdrawn_message ON turns(message_id) WHERE withdrawn;
     CREATE INDEX IF NOT EXISTS turns_reaction_message ON turns(owner_id,message_id) WHERE starts_with(source_id,'reaction-reply:');
+    ALTER TABLE turns ADD COLUMN IF NOT EXISTS bot_id uuid;
+    CREATE INDEX IF NOT EXISTS turns_session_bot ON turns(session_id) WHERE bot_id IS NOT NULL;
     CREATE OR REPLACE FUNCTION turns_session() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
       NEW.session_id := COALESCE(NEW.session_id, CASE WHEN NEW.background THEN NEW.id ELSE NEW.thread_id END);
+      IF NEW.bot_id IS NULL AND to_regclass('bots') IS NOT NULL THEN
+        NEW.bot_id := COALESCE(
+          (SELECT p.bot_id FROM turns p WHERE p.id=NEW.parent_turn_id AND p.owner_id=NEW.owner_id),
+          (SELECT b.id FROM bots b WHERE b.id=NEW.session_id AND b.owner_id=NEW.owner_id),
+          (SELECT s.bot_id FROM turns s WHERE s.session_id=NEW.session_id AND s.owner_id=NEW.owner_id
+             AND s.bot_id IS NOT NULL LIMIT 1));
+      END IF;
       RETURN NEW;
     END $$;
     DROP TRIGGER IF EXISTS turns_session ON turns;
@@ -135,6 +144,24 @@ export async function initializeDatabase() {
       hidden_at timestamptz
     );
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_quote text;
+    CREATE TABLE IF NOT EXISTS bots (
+      id uuid PRIMARY KEY, owner_id text NOT NULL, name text NOT NULL, job text NOT NULL DEFAULT '',
+      instructions text NOT NULL DEFAULT '', avatar text NOT NULL DEFAULT '', model jsonb NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+      uid integer NOT NULL CHECK (uid>=100000), archived_at timestamptz, retired_at timestamptz
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS bots_name ON bots(owner_id,lower(name)) WHERE archived_at IS NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS bots_uid ON bots(owner_id,uid);
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS bot_id uuid;
+    CREATE INDEX IF NOT EXISTS messages_bot ON messages(owner_id,bot_id,created_at) WHERE bot_id IS NOT NULL;
+    CREATE OR REPLACE FUNCTION messages_bot() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.bot_id IS NULL AND NEW.turn_id IS NOT NULL THEN
+        SELECT u.bot_id INTO NEW.bot_id FROM turns u WHERE u.id=NEW.turn_id AND u.owner_id=NEW.owner_id;
+      END IF;
+      RETURN NEW;
+    END $$;
+    DROP TRIGGER IF EXISTS messages_bot ON messages;
+    CREATE TRIGGER messages_bot BEFORE INSERT ON messages FOR EACH ROW EXECUTE FUNCTION messages_bot();
     CREATE TABLE IF NOT EXISTS feedback_drafts (
       id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid NOT NULL,
       summary text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()

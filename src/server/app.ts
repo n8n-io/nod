@@ -73,7 +73,7 @@ import { messagePreview } from './message-preview.ts';
 import { validateRequestText } from './request-text.ts';
 import { createCardInteractions } from './card-interactions.ts';
 
-const messageFields = `m.id,m.role,m.text,CASE WHEN m.role='user' THEN m.display_text END AS "displayText",m.audio_caption AS "audioCaption",m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,m.presentation,m.answer_choices AS "answerChoices",(${pendingAnswerChoicesSql}) AS "answerChoicesPending",
+const messageFields = `m.id,m.role,m.text,m.bot_id AS "botId",CASE WHEN m.role='user' THEN m.display_text END AS "displayText",m.audio_caption AS "audioCaption",m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,m.presentation,m.answer_choices AS "answerChoices",(${pendingAnswerChoicesSql}) AS "answerChoicesPending",
  (m.role='user' AND (m.approval_answer IS NOT NULL OR (m.question_answer IS NOT NULL AND m.text<>'' AND jsonb_array_length(m.attachments)=0))) AS "cardAnswer",
  (m.role='user' AND m.card_choice) AS "cardChoice",
  CASE WHEN m.role='assistant' AND m.answer_choices IS NOT NULL THEN (SELECT json_build_object('answer',a.question_answer,'text',a.text) FROM messages a
@@ -115,7 +115,9 @@ const messageFields = `m.id,m.role,m.text,CASE WHEN m.role='user' THEN m.display
        k.source_message_id)
      WHERE k.owner_id=m.owner_id AND k.message_id=target.id LIMIT 1) END,
    json_build_object('id',target.id,'role',target.role,'text',COALESCE(m.reply_quote,''),'isQuote',m.reply_quote IS NOT NULL)) END AS "replyTo"`;
-const chatMessageSql = `NOT ${reactionReplySql('m')}`;
+const chatScopeSql = (bot: string) =>
+  `NOT ${reactionReplySql('m')} AND m.bot_id IS NOT DISTINCT FROM ${bot}::uuid`;
+const chatMessageSql = `NOT ${reactionReplySql('m')} AND m.bot_id IS NULL`;
 const textMessageOptions = {
   bodyLimit: 8 * 1024 * 1024,
   config: { rateLimit: { max: 120, timeWindow: '1 minute' } },
@@ -282,6 +284,7 @@ export interface AppDependencies {
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
   forgetLearned?: () => Promise<void>;
   taskLedger?: () => Promise<import('../shared/contracts.ts').Task[]>;
+  bots?: { list(): Promise<import('../shared/bots.ts').Bot[]> };
   activity?: () => Promise<Activity[]>;
   planningTasks?: () => string | undefined;
   rateLimit?: boolean;
@@ -441,6 +444,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       };
     });
   const turnFields = `u.id,u.status,u.source,u.error,u.created_at AS "createdAt",u.finished_at AS "finishedAt",
+    u.bot_id AS "botId",
     CASE WHEN ${activeHandoffSql}
       THEN (SELECT m.id FROM messages m WHERE m.turn_id=u.id AND m.owner_id=u.owner_id AND m.role='assistant' ORDER BY m.created_at DESC,m.id DESC LIMIT 1) END AS "handoffMessageId"`;
   async function messageTurns(threadId: string, ids: string[]): Promise<Turn[]> {
@@ -468,8 +472,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const hiddenMetadata = messageRows.then(({ rows }) =>
       pool.query<{ count: number; ids: string[]; visibleIds: string[] }>(
         `SELECT
-          (SELECT count(*)::int FROM messages WHERE owner_id=$1 AND thread_id=$2 AND hidden_at IS NOT NULL) AS count,
-          ARRAY(SELECT id FROM messages WHERE owner_id=$1 AND thread_id=$2 AND hidden_at IS NOT NULL
+          (SELECT count(*)::int FROM messages WHERE owner_id=$1 AND thread_id=$2 AND hidden_at IS NOT NULL AND bot_id IS NULL) AS count,
+          ARRAY(SELECT id FROM messages WHERE owner_id=$1 AND thread_id=$2 AND hidden_at IS NOT NULL AND bot_id IS NULL
             ORDER BY hidden_at DESC,id DESC LIMIT 150) AS ids,
           ARRAY(SELECT id FROM messages WHERE owner_id=$1 AND thread_id=$2
             AND id=ANY($3::uuid[]) AND hidden_at IS NULL) AS "visibleIds"`,
@@ -521,6 +525,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       ...(cleared ? { chatClearedAt: cleared } : {}),
       ...(recovery ? { chatRecovery: recovery } : {}),
       tasks: await dependencies.taskLedger?.(),
+      bots: (await dependencies.bots?.list()) ?? [],
       hasEarlierMessages,
       hiddenMessageCount: hiddenMessages.rows[0]!.count,
       hiddenMessageIds: hiddenMessages.rows[0]!.ids,
@@ -535,7 +540,9 @@ export async function createApp(dependencies: AppDependencies = {}) {
     };
   });
   app.get('/api/messages/search', async (request) => {
-    const { q } = z.object({ q: z.string().trim().min(1).max(200) }).parse(request.query);
+    const { q, botId } = z
+      .object({ q: z.string().trim().min(1).max(200), botId: z.uuid().optional() })
+      .parse(request.query);
     const thread = await activeThread(pool);
     const { rows } = await pool.query(
       `SELECT ${messageFields},ts_headline('english',m.text,websearch_to_tsquery('english',$3),'StartSel="", StopSel="", MaxWords=35, MinWords=15, ShortWord=0') AS snippet
@@ -545,12 +552,12 @@ export async function createApp(dependencies: AppDependencies = {}) {
            || jsonb_path_query_array(m.presentation,'strict $.** ? (@.type() == "array")[*] ? (@.type() == "string" || @.type() == "number")') AS content
          WHERE m.role='assistant' AND m.presentation->>'version'='1'
        ) visual ON true
-       WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.hidden_at IS NULL AND ${chatMessageSql} AND (
+       WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.hidden_at IS NULL AND ${chatScopeSql('$4')} AND (
          to_tsvector('english',m.text) @@ websearch_to_tsquery('english',$3) OR strpos(lower(m.text),lower($3))>0
          OR jsonb_to_tsvector('english',visual.content,'["string","numeric"]') @@ websearch_to_tsquery('english',$3)
          OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(visual.content) value WHERE strpos(lower(value),lower($3))>0)
        ) ORDER BY m.created_at DESC,m.id DESC LIMIT 50`,
-      [ownerId, thread.id, q],
+      [ownerId, thread.id, q, botId ?? null],
     );
     const visualTexts = rows.flatMap((row) => {
       const fallback = row.role === 'assistant' ? visualText(row.presentation) : '';
@@ -577,17 +584,18 @@ export async function createApp(dependencies: AppDependencies = {}) {
   });
   app.get('/api/messages/around/:id', async (request) => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
+    const { botId } = z.object({ botId: z.uuid().optional() }).parse(request.query);
     const thread = await activeThread(pool);
     const hit = (
       await pool.query(
-        `SELECT m.created_at FROM messages m WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3 AND m.hidden_at IS NULL AND ${chatMessageSql}`,
-        [id, ownerId, thread.id],
+        `SELECT m.created_at FROM messages m WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3 AND m.hidden_at IS NULL AND ${chatScopeSql('$4')}`,
+        [id, ownerId, thread.id, botId ?? null],
       )
     ).rows[0];
     if (!hit) throw Object.assign(new Error('Message not found.'), { statusCode: 404 });
     const { rows } = await pool.query(
-      `SELECT ${messageFields} FROM messages m LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id AND target.hidden_at IS NULL WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.hidden_at IS NULL AND ${chatMessageSql} AND m.created_at BETWEEN $3::timestamptz-interval '1 day' AND $3::timestamptz+interval '1 day' ORDER BY (m.id=$4) DESC,abs(extract(epoch FROM m.created_at-$3::timestamptz)),m.id LIMIT 60`,
-      [ownerId, thread.id, hit.created_at, id],
+      `SELECT ${messageFields} FROM messages m LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id AND target.hidden_at IS NULL WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.hidden_at IS NULL AND ${chatScopeSql('$5')} AND m.created_at BETWEEN $3::timestamptz-interval '1 day' AND $3::timestamptz+interval '1 day' ORDER BY (m.id=$4) DESC,abs(extract(epoch FROM m.created_at-$3::timestamptz)),m.id LIMIT 60`,
+      [ownerId, thread.id, hit.created_at, id, botId ?? null],
     );
     return messageViews(rows);
   });
@@ -611,6 +619,38 @@ export async function createApp(dependencies: AppDependencies = {}) {
       WHERE m.owner_id=$1 AND m.thread_id=$4 AND m.hidden_at IS NULL AND m.created_at>=COALESCE((SELECT chat_cleared_at FROM threads WHERE id=$4 AND owner_id=$1),'-infinity') AND ${chatMessageSql} AND ($2::timestamptz IS NULL OR date_trunc('milliseconds',m.created_at) < $2 OR (date_trunc('milliseconds',m.created_at) = $2 AND $3::uuid IS NOT NULL AND m.id < $3))
       ORDER BY date_trunc('milliseconds',m.created_at) DESC,m.id DESC LIMIT 61`,
       [ownerId, query.before ?? null, query.beforeId ?? null, thread.id],
+    );
+    const page = rows.rows.slice(0, 60);
+    return {
+      messages: await messageViews(page.reverse()),
+      hasMore: rows.rows.length > 60,
+    } satisfies MessageHistoryPage;
+  });
+  app.get<{ Params: { id: string } }>('/api/bots/:id/messages', async (request) => {
+    const botId = z.uuid().parse(request.params.id);
+    const query = z
+      .object({
+        before: z.iso.datetime({ offset: true }).optional(),
+        beforeId: z.uuid().optional(),
+      })
+      .parse(request.query);
+    const thread = await activeThread(pool);
+    if (
+      !(
+        await pool.query('SELECT 1 FROM bots WHERE id=$1 AND owner_id=$2 AND archived_at IS NULL', [
+          botId,
+          ownerId,
+        ])
+      ).rowCount
+    )
+      throw Object.assign(new Error('This bot was removed.'), { statusCode: 404 });
+    const rows = await pool.query(
+      `SELECT ${messageFields} FROM messages m
+      LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id AND target.hidden_at IS NULL
+      WHERE m.owner_id=$1 AND m.thread_id=$4 AND m.hidden_at IS NULL AND ${chatScopeSql('$5')}
+        AND ($2::timestamptz IS NULL OR date_trunc('milliseconds',m.created_at) < $2 OR (date_trunc('milliseconds',m.created_at) = $2 AND $3::uuid IS NOT NULL AND m.id < $3))
+      ORDER BY date_trunc('milliseconds',m.created_at) DESC,m.id DESC LIMIT 61`,
+      [ownerId, query.before ?? null, query.beforeId ?? null, thread.id, botId],
     );
     const page = rows.rows.slice(0, 60);
     return {
@@ -744,6 +784,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
       !input.approvalAnswer &&
       !input.verificationRequestId
     ) {
+      if (input.botId)
+        throw Object.assign(new Error('/clear works in Nod’s chat only.'), { statusCode: 400 });
       if (input.attachmentIds.length)
         throw Object.assign(new Error('Send /clear as a text message without attachments.'), {
           statusCode: 400,
@@ -787,6 +829,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
         replyToMessageId: input.replyToMessageId,
         replyQuote: input.replyQuote,
         seenMessageId: input.seenMessageId,
+        botId: input.botId,
         threadId: input.threadId,
         chatClearedAt: input.chatClearedAt,
         clientMessageId,
@@ -801,10 +844,14 @@ export async function createApp(dependencies: AppDependencies = {}) {
       ...(input.displayText !== undefined ? { displayText: input.displayText } : {}),
     };
   });
-  app.post('/api/thread/stop', () => {
+  app.post('/api/thread/stop', (request) => {
     const capture = snapshotAnalytics(dependencies.analytics);
+    const scope = z
+      .object({ botId: z.uuid().optional(), all: z.literal(true).optional() })
+      .strict()
+      .parse(request.body ?? {});
     return audioMessages.pause(async () => {
-      const { browsers } = await stopThread(capture);
+      const { browsers } = await stopThread(capture, scope);
       await Promise.allSettled(browsers.map((id) => dependencies.computer?.clear(id)));
       return { ok: true };
     });

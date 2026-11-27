@@ -588,6 +588,26 @@ test(
         },
       );
       await t.test(
+        'a security code sent in another chat is held back while a bot waits for it',
+        async () => {
+          await reset();
+          const bot = randomUUID();
+          await db.pool.query(
+            `INSERT INTO bots(id,owner_id,name,model,uid) VALUES($1,$2,'Penny','{}'::jsonb,100001)`,
+            [bot, ownerId],
+          );
+          const request = await seedPayment();
+          await db.pool.query('UPDATE turns SET bot_id=$1 WHERE id=$2', [bot, request.turnId]);
+          const elsewhere = await send('7395');
+          assert.equal(elsewhere.statusCode, 409);
+          assert.match(elsewhere.json().error, /chat that asked/);
+          assert.deepEqual(ordinary, []);
+          assert.deepEqual(entered, []);
+          assert.equal((await send('7395', { botId: bot })).statusCode, 200);
+          assert.deepEqual(entered, ['7395']);
+        },
+      );
+      await t.test(
         'an expired payment still holds code-like replies while an invoice question reaches chat',
         async () => {
           await reset();

@@ -79,14 +79,15 @@ export function FeedbackLauncher({
         id="feedback-launcher"
         type="button"
         variant="ghost"
-        size="sm"
+        size="icon"
         className="chat-report-button"
+        aria-label="Report bug"
+        title="Report bug"
         aria-describedby={shown ? description : undefined}
         data-discovery={shown || undefined}
         onClick={onFeedback}
       >
         <Bug size={16} aria-hidden="true" />
-        Report bug
       </Button>
       {onDismissDiscovery &&
         createPortal(

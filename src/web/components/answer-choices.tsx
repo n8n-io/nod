@@ -14,7 +14,11 @@ export interface AnswerChoicesProps {
   question: { id: string; text: string };
   title: ReactNode;
   disabled?: boolean;
-  onAnswer(text: string, answer: QuestionAnswer): Promise<boolean | 'unavailable'>;
+  onAnswer(
+    text: string,
+    answer: QuestionAnswer,
+    displayText?: string,
+  ): Promise<boolean | 'unavailable'>;
 }
 
 type GivenAnswer = NonNullable<Message['choiceAnswer']>;

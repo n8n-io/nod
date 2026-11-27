@@ -25,6 +25,7 @@
 }
 .chat-page .message .message-bubble > .message-body:has(> .message-presentation:only-child) {
   padding: 0;
+  border-color: transparent;
   border-radius: 0;
   background: transparent;
 }

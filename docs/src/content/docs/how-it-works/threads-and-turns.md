@@ -7,11 +7,11 @@ sidebar:
 
 This page explains how Nod turns your messages, schedules and events into work, and how that work shares one conversation.
 
-The short version: you have one thread. Every piece of work on it runs in a session: the chat has one, each saved task has one, and each schedule fire has one. App events and source checks share one observer session. A session runs one turn at a time, sessions run in parallel, and they all share one workspace. Turns and tool calls aren't retried automatically.
+The short version: you have one thread. Every piece of work on it runs in a session: the chat has one, each [bot](/use/bots/) has one, each saved task has one, and each schedule fire has one. App events and source checks share one observer session. A session runs one turn at a time, sessions run in parallel, and they all share one workspace. Turns and tool calls aren't retried automatically.
 
 ## One thread per owner
 
-Each owner has one active row in the `threads` table, shared by web, Telegram and WhatsApp. The thread ID keys the sandbox workspace and the chat session: its persistent Pi session (the transcript) and its browser.
+Each owner has one active row in the `threads` table, shared by web, Telegram and WhatsApp. The thread ID keys the sandbox workspace and the chat session: its persistent Pi session (the transcript) and its browser. Each bot's chat uses the bot's ID as its session, with its own Pi transcript and browser window. Every turn records its bot, inherited from the chat, task or schedule that started it, and each message takes the bot of its turn. So each chat keeps its own history, questions and approvals, and a bot's tasks and schedules report back to its chat.
 
 The code lives in [`src/server/thread.ts`](https://github.com/n8n-io/nod/blob/main/src/server/thread.ts).
 
@@ -19,13 +19,13 @@ The code lives in [`src/server/thread.ts`](https://github.com/n8n-io/nod/blob/ma
 
 A turn is one run of the agent. Each turn is a row in the `turns` table with a `source` and a `session_id`, and it records its reply channel, so a Telegram message gets its answer on Telegram.
 
-| `source`   | Created by                                                                                                                  | Session                                      |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| `user`     | A message from you, or a reaction that starts ordinary chat work                                                            | The chat, or the session selected by a reply |
-| `task`     | Chat dispatch or an addressed owner update                                                                                  | The saved task session                       |
-| `schedule` | A schedule firing                                                                                                           | A new session                                |
-| `event`    | A source batch or observer task                                                                                             | The observer or the task                     |
-| `resume`   | A payment approval, **Return to Nod** from the live browser, an app connection, or your reply or reaction to a confirmation | The session that asked                       |
+| `source`   | Created by                                                                                                                  | Session                                                  |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `user`     | A message from you, or a reaction that starts ordinary chat work                                                            | The chat or bot chat, or the session selected by a reply |
+| `task`     | Chat dispatch or an addressed owner update                                                                                  | The saved task session                                   |
+| `schedule` | A schedule firing                                                                                                           | A new session                                            |
+| `event`    | A source batch or observer task                                                                                             | The observer or the task                                 |
+| `resume`   | A payment approval, **Return to Nod** from the live browser, an app connection, or your reply or reaction to a confirmation | The session that asked                                   |
 
 A recurring schedule skips a firing while an earlier run is queued, running or still needs your answer. An earlier waiting turn no longer holds a firing after a later turn starts in that run's session. A schedule run can't create schedules.
 

@@ -236,6 +236,12 @@ export interface Workspace {
     maxBytes: number,
     purpose?: 'attachment' | 'publication',
   ): Promise<Uint8Array>;
-  open(input: { threadId: string; workspacePath: string; signal: AbortSignal }): WorkspaceSession;
+  open(input: {
+    threadId: string;
+    workspacePath: string;
+    signal: AbortSignal;
+    bot?: { id: string; uid: number };
+  }): WorkspaceSession;
+  retireBot?(threadId: string, bot: { id: string; uid: number }): Promise<void>;
   dispose(): void | Promise<void>;
 }

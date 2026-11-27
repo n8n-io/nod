@@ -1,6 +1,5 @@
+import { plainText } from '../lib/markdown';
 import { useEffect, useId, useRef, useState } from 'react';
-import { unified } from 'unified';
-import remarkParse from 'remark-parse';
 import { visit } from 'unist-util-visit';
 import type { Message, Task } from '../../shared/contracts';
 import { api, errorMessage, requestAccountVersion } from '../lib/api';
@@ -13,24 +12,14 @@ import {
   shortcutLabel,
   sidebarItems,
 } from '../lib/navigation';
+import { botPath, focusMessage, type Bot } from '../lib/bots';
+import { newBot } from './bots';
 import { formatDateTime, useDateFormat } from '../lib/date-format';
 import { useArtifactDrawer } from './artifact-context';
 import { ownedArtifactUrl, type ImagePreview } from './attachment-images';
 import { reuseFile } from './file-actions';
 import { Button, Dialog, DialogContent, DialogTitle, SearchField, Skeleton } from './ui';
 import { ArrowUpRight, Search } from './icons';
-
-const markdown = unified().use(remarkParse);
-
-function searchText(source: string) {
-  const parts: string[] = [];
-  visit(markdown.parse(source), (node) => {
-    if (node.type === 'text' || node.type === 'inlineCode' || node.type === 'code')
-      parts.push(node.value);
-    else if (node.type === 'image' && node.alt) parts.push(node.alt);
-  });
-  return parts.join(' ').replace(/\s+/g, ' ').trim();
-}
 
 function highlighted(text: string, query: string) {
   const terms = [...new Set(query.match(/[\p{L}\p{N}]+/gu) ?? [])]
@@ -42,7 +31,21 @@ function highlighted(text: string, query: string) {
     .map((part, index) => (index % 2 ? <mark key={index}>{part}</mark> : part));
 }
 
-export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?: Task[] }) {
+export function ChatTools({
+  files,
+  tasks = [],
+  bots = [],
+  enabled = true,
+  botId,
+}: {
+  files: ImagePreview[];
+  tasks?: Task[];
+  bots?: Bot[];
+  enabled?: boolean;
+  botId?: string;
+}) {
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
   const drawer = useArtifactDrawer();
   const desktop = desktopSettingsAvailable();
   const mac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -92,7 +95,7 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
         isEditingTarget(event.target)
       )
         return;
-      if (document.querySelector('[role="dialog"],dialog[open]')) return;
+      if (!enabledRef.current || document.querySelector('[role="dialog"],dialog[open]')) return;
       if (
         event.key.toLowerCase() === 'k' ||
         (desktopSettingsAvailable() && event.key.toLowerCase() === 'f')
@@ -115,7 +118,7 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
     setSearch({ query: trimmedQuery, items: [], error: '', loading: true });
     const timer = setTimeout(() => {
       void api<Array<Message & { snippet?: string }>>(
-        `/api/messages/search?q=${encodeURIComponent(trimmedQuery)}`,
+        `/api/messages/search?q=${encodeURIComponent(trimmedQuery)}${botId ? `&botId=${botId}` : ''}`,
         { signal: controller.signal },
       )
         .then((items) => {
@@ -151,6 +154,18 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
           },
         ]
       : []),
+    {
+      id: 'new-bot',
+      label: 'New bot',
+      action: newBot,
+    },
+    ...bots
+      .filter((bot) => bot.id !== botId)
+      .map((bot) => ({
+        id: `bot:${bot.id}`,
+        label: `Open ${bot.name}`,
+        action: () => navigate(botPath(bot.id)),
+      })),
     ...sidebarItems.map((item) => ({
       id: item.path,
       label: `Open ${item.label}`,
@@ -166,10 +181,7 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
       .map((task) => ({
         id: task.id,
         label: `Go to ${task.title}`,
-        action: () =>
-          window.dispatchEvent(
-            new CustomEvent('nod:focus-message', { detail: { messageId: task.messageId } }),
-          ),
+        action: () => focusMessage(task.messageId!, botId),
       })),
   ]
     .filter((item) => item.label.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
@@ -182,7 +194,7 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
           action: () =>
             window.dispatchEvent(
               new CustomEvent('nod:focus-message', {
-                detail: { messageId: message.id },
+                detail: { messageId: message.id, ...(botId ? { botId } : {}) },
               }),
             ),
         }))
@@ -303,12 +315,12 @@ export function ChatTools({ files, tasks = [] }: { files: ImagePreview[]; tasks?
                 const message = 'message' in entry ? entry.message : undefined;
                 let snippet = '';
                 if (message) {
-                  const text = searchText(message.audioCaption ?? message.text);
+                  const text = plainText(message.audioCaption ?? message.text);
                   const match = text.toLocaleLowerCase().indexOf(trimmedQuery.toLocaleLowerCase());
                   const start = Math.max(0, match - 60);
                   snippet =
                     match < 0 && message.snippet
-                      ? searchText(message.snippet)
+                      ? plainText(message.snippet)
                       : text
                         ? `${start > 0 ? '…' : ''}${text.slice(start, start + 220)}${text.length > start + 220 ? '…' : ''}`
                         : message.attachments.map((item) => item.name).join(', ') ||

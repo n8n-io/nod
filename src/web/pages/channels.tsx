@@ -1,4 +1,3 @@
-import { PageTitle } from '../components/page-title';
 import { useEffect, useId, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -582,7 +581,6 @@ export function Channels() {
   return (
     <div className="content-page secondary-page channels-page" ref={page}>
       <header className="page-heading secondary-heading">
-        <PageTitle path="/channels" />
         <p className="channel-runtime-note">
           Nod must be running to receive messages. If Nod runs on this computer, keep the computer
           awake.

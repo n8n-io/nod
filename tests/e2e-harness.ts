@@ -25,6 +25,7 @@ export type NodState = {
   threadId: string;
   messages: NodMessage[];
   tasks: NodTask[];
+  bots: Array<{ id: string; name: string; job: string; status: string }>;
   turns: Array<{ id: string; status: string; error: string | null }>;
 };
 
@@ -57,6 +58,9 @@ function scriptedReply(messages: Entry[]) {
   );
   const current = messages.slice(finished + 1);
   let task: { id: string } | undefined;
+  let bot: { id: string; name: string } | undefined;
+  let bots: Array<{ name: string }> = [];
+  let note = '';
   let background = false;
   const pending: OwnerRequest[] = [];
   for (const entry of current) {
@@ -65,6 +69,9 @@ function scriptedReply(messages: Entry[]) {
     const text = data?.currentInstruction;
     const id = data?.messageId ?? data?.currentMessageId;
     if (data?.task && typeof data.task === 'object') task = data.task as { id: string };
+    if (data?.bot && typeof data.bot === 'object') bot = data.bot as { id: string; name: string };
+    if (Array.isArray(data?.bots)) bots = data.bots as Array<{ name: string }>;
+    note = /Yours is (team\/[\w-]+\.md)/.exec(textOf(entry))?.[1] ?? note;
     if (data?.mode === 'background') background = true;
     if (typeof text === 'string') pending.push({ id: typeof id === 'string' ? id : '', text });
   }
@@ -79,6 +86,72 @@ function scriptedReply(messages: Entry[]) {
     name: 'codemode',
     arguments: { code: `await tools.${name}(${JSON.stringify(args)});` },
   });
+  const said = pending.map((request) => request.text).join(' / ');
+  const usedBotTool = calls.some((call) => call.includes('tools.bot('));
+  if (bot && !task && !background && !said.startsWith('task:')) {
+    const steer = /^steer: ([0-9a-f-]{36})$/.exec(said);
+    if (steer)
+      return calls.some((call) => call.includes('\\"reply\\"'))
+        ? {
+            text: `Steer: ${current
+              .filter((entry) => entry.role === 'toolResult')
+              .map(textOf)
+              .join(' ')}`,
+          }
+        : { call: tool('task', { action: 'reply', ids: [steer[1]] }) };
+    const direct = /^call: (\w+) (\{.*\})$/.exec(said);
+    if (direct)
+      return calls.some((call) => call.includes(`tools.${direct[1]}(`))
+        ? {
+            text: `Result: ${current
+              .filter((entry) => entry.role === 'toolResult')
+              .map(textOf)
+              .join(' ')}`,
+          }
+        : {
+            call: {
+              name: 'codemode',
+              arguments: {
+                code: `try { console.log(JSON.stringify(await tools.${direct[1]}(${direct[2]}))); } catch (error) { console.log(String(error?.message ?? error)); }`,
+              },
+            },
+          };
+    const rename = /^rename yourself: (.+)$/.exec(said);
+    if (rename && !usedBotTool)
+      return { call: tool('bot', { action: 'update', id: bot.id, name: rename[1] }) };
+    const schedule = /^schedule: (.+)$/.exec(said);
+    if (schedule)
+      return calls.some((call) => call.includes('schedule_create'))
+        ? { text: `Scheduled ${schedule[1]}` }
+        : {
+            call: tool('nod', {
+              action: 'schedule_create',
+              args: {
+                title: schedule[1],
+                prompt: schedule[1],
+                kind: 'once',
+                runAt: new Date(Date.now() + 2_000).toISOString(),
+                timeZone: 'UTC',
+              },
+            }),
+          };
+    return {
+      hold: said.startsWith('hold:') ? said : undefined,
+      text: `${bot.name}: ${said} | note ${note} | bots ${bots.map(({ name }) => name).join(',')}`,
+    };
+  }
+  const make = /^make bot: (\w+) \| (.+)$/.exec(said);
+  if (make)
+    return usedBotTool
+      ? { text: `Made ${make[1]} | note ${note}` }
+      : {
+          call: tool('bot', {
+            action: 'create',
+            name: make[1],
+            job: make[2],
+            model: { connectionId: randomUUID(), modelId: 'scripted', effort: 'medium' },
+          }),
+        };
   if (task) {
     const instruction = pending.map((request) => request.text).join(' / ');
     if (instruction.includes('pause-all') && !calls.some((call) => call.includes('schedule_pause')))
@@ -217,10 +290,16 @@ async function serve() {
       };
       if (request.task !== 'review' || !input.action) return undefined;
       const said = input.userMessages ?? [];
-      const index = said.findLastIndex(
-        (message) => message.canAuthorize !== false && /^pause my synthetic/i.test(message.text),
-      );
-      return input.action.name === 'NOD_schedule_pause' && index >= 0
+      const asks = {
+        NOD_schedule_pause: /^pause my synthetic/i,
+        NOD_bot_create: /^make bot:/i,
+        NOD_bot_update: /^rename yourself:/i,
+        NOD_schedule_create: /^schedule:/i,
+      }[input.action.name ?? ''];
+      const index = asks
+        ? said.findLastIndex((message) => message.canAuthorize !== false && asks.test(message.text))
+        : -1;
+      return index >= 0
         ? { run: true, source: `message:${index}`, because: said[index]!.text, terms: [] }
         : { run: false };
     },
@@ -393,13 +472,14 @@ export async function startNod(options: { checker?: boolean; nodeEnv?: string } 
     api: call,
     query,
     state,
-    async send(text: string, options: { replyTo?: string } = {}) {
+    async send(text: string, options: { replyTo?: string; botId?: string } = {}) {
       const { threadId } = await state();
       return call<{ turnId: string; messageId: string }>('POST', '/api/messages', {
         text,
         threadId,
         clientMessageId: randomUUID(),
         ...(options.replyTo ? { replyToMessageId: options.replyTo } : {}),
+        ...(options.botId ? { botId: options.botId } : {}),
       });
     },
     async release(text: string) {
@@ -432,6 +512,7 @@ export async function startNod(options: { checker?: boolean; nodeEnv?: string } 
       );
     },
     stopAll: () => call('POST', '/api/thread/stop', {}),
+    stopBot: (botId: string) => call('POST', '/api/thread/stop', { botId }),
     stopTask: (id: string) => call('POST', `/api/tasks/${id}/stop`, {}),
     async crash() {
       const exited = new Promise((done) => child!.once('exit', done));

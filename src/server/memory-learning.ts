@@ -6,7 +6,7 @@ import type { MemoryCurator } from '../ports/memory-curator.ts';
 import { repair } from './memory-lint.ts';
 import { applyOps, type Rejection } from './memory-ops.ts';
 import { localTimestamp } from '../shared/date-locale.ts';
-import { indexLayout, unsafe } from './memory-tree.ts';
+import { indexLayout, pathOf, unsafe } from './memory-tree.ts';
 import { withdrawnSql } from './turn-chain.ts';
 import type { MemoryService } from './memory.ts';
 import type { WorkConsumers } from './work-admission.ts';
@@ -20,14 +20,20 @@ const answer = z.object({ ops: z.array(z.unknown()) });
 const utc = (column: string) =>
   `to_char(${column} AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 
-const ownerText = `SELECT m.id,m.text,${utc('m.created_at')} AS at,(SELECT time_zone FROM preferences p WHERE p.owner_id=m.owner_id) AS zone FROM messages m
+const ownerText = `SELECT m.id,m.text,m.bot_id,${utc('m.created_at')} AS at,(SELECT time_zone FROM preferences p WHERE p.owner_id=m.owner_id) AS zone FROM messages m
   WHERE m.owner_id=$1 AND m.role='user' AND m.approval_answer IS NULL AND length(m.text)<=4000 AND NOT EXISTS (
     SELECT 1 FROM messages offer, jsonb_array_elements(offer.suggestions->'tasks') task
     WHERE offer.owner_id=m.owner_id AND offer.thread_id=m.thread_id AND task->>'title'=m.text)`;
 export const learnableText = `${ownerText} AND m.attachments='[]'::jsonb AND NOT ${withdrawnSql('m')}
   AND m.created_at<=now()-interval '10 minutes'
   AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.owner_id=m.owner_id AND a.source_message_id=m.id AND a.action='NOD_memory_save')`;
-type OwnerText = { id: string; text: string; at: string; zone: string | null };
+type OwnerText = {
+  id: string;
+  text: string;
+  bot_id: string | null;
+  at: string;
+  zone: string | null;
+};
 const numbered = (messages: OwnerText[]) =>
   messages.map((message, index) => ({
     m: index + 1,
@@ -143,7 +149,13 @@ export function createMemoryLearning(options: {
     }
     const result = await options.memory.edit((fresh) => {
       if (fresh.reflected !== tree.reflected) return;
+      const known = new Set(fresh.entries.map(pathOf));
       const { applied: operations } = applyOps(fresh, ops, messages, new Date().toISOString());
+      const chats = new Map(messages.map((message) => [message.id, message.bot_id]));
+      for (const entry of fresh.entries) {
+        const bot = known.has(pathOf(entry)) ? undefined : chats.get(entry.sources[0] ?? '');
+        if (bot) entry.bot = bot;
+      }
       fresh.reflected = mark;
       fresh.retries = 0;
       return { operations, applied: operations.length, more: rows.length === batchSize };
@@ -157,6 +169,7 @@ export function createMemoryLearning(options: {
     sourceMessageId: string | null,
     commit: <T>(write: () => Promise<T>) => Promise<T> = (write) => write(),
     signal?: AbortSignal,
+    chat: string | null = null,
   ) {
     signal?.throwIfAborted();
     const input = rememberInput.parse(raw);
@@ -168,11 +181,13 @@ export function createMemoryLearning(options: {
     const ids = named.filter((id) => z.uuid().safeParse(id).success);
     const required = [...ids, sourceMessageId];
     const { rows } = await options.pool.query(
-      `WITH source AS (SELECT thread_id,created_at FROM messages WHERE id=$3 AND owner_id=$1 AND role='user'),
+      `WITH source AS (SELECT thread_id,bot_id,created_at FROM messages WHERE id=$3 AND owner_id=$1 AND role='user'),
        recent AS (SELECT r.id FROM messages r, source WHERE r.owner_id=$1 AND r.role='user' AND NOT ${withdrawnSql('r')}
-         AND r.thread_id IS NOT DISTINCT FROM source.thread_id AND r.created_at<=source.created_at
+         AND r.thread_id IS NOT DISTINCT FROM source.thread_id AND r.bot_id IS NOT DISTINCT FROM source.bot_id
+         AND r.created_at<=source.created_at
          ORDER BY r.created_at DESC,r.id DESC LIMIT ${recentMessages})
        ${ownerText} AND (m.id=ANY($2::uuid[]) OR m.id IN (SELECT id FROM recent))
+         AND m.bot_id IS NOT DISTINCT FROM (SELECT bot_id FROM source)
        ORDER BY m.created_at,m.id`,
       [options.ownerId, required, sourceMessageId],
     );
@@ -221,19 +236,22 @@ export function createMemoryLearning(options: {
     if (!reply.success)
       throw new Error('The memory model gave no usable answer. Nothing was saved.');
     const changes = await commit(() =>
-      options.memory.edit((fresh) => {
-        if (fresh.generation !== tree.generation)
-          throw new Error('Memory changed while this note was being prepared. Save it again.');
-        const { applied, rejected } = applyOps(
-          fresh,
-          reply.data.ops,
-          ordered,
-          new Date().toISOString(),
-          'stated',
-        );
-        if (rejected.length) throw new Error(`Nothing was saved. ${notSaved(rejected)}`);
-        return applied;
-      }),
+      options.memory.edit(
+        (fresh) => {
+          if (fresh.generation !== tree.generation)
+            throw new Error('Memory changed while this note was being prepared. Save it again.');
+          const { applied, rejected } = applyOps(
+            fresh,
+            reply.data.ops,
+            ordered,
+            new Date().toISOString(),
+            'stated',
+          );
+          if (rejected.length) throw new Error(`Nothing was saved. ${notSaved(rejected)}`);
+          return applied;
+        },
+        { chat },
+      ),
     );
     report(changes, 'agent');
     return {

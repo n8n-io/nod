@@ -91,17 +91,6 @@
 :root[data-desktop='true'] .private-entry-toolbar button {
   -webkit-app-region: no-drag;
 }
-:root[data-desktop='true']
-  .app-shell:has(.chat-route:not([hidden]) .private-entry-panel)
-  .desktop-toolbar {
-  right: calc(var(--private-entry-space, 0px) + var(--artifact-drawer-space, 0px));
-  padding-right: 16px;
-}
-:root[data-desktop='true']
-  .app-shell:has(.private-entry-workspace.is-narrow .private-entry-panel)
-  .desktop-toolbar {
-  visibility: hidden;
-}
 
 .private-entry-card .vault-hero {
   padding-top: 0;

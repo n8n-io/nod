@@ -1,4 +1,4 @@
-import { transaction } from './transaction.ts';
+import { transaction, afterCommit } from './transaction.ts';
 import { lstat, mkdir, realpath } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, join, resolve } from 'node:path';
@@ -216,6 +216,7 @@ import {
   initializeThreads,
   insertBugReportDraft,
   lockThread,
+  turnChat,
   reactToAssistantMessage,
   resumeAfterConnection,
   resumeAfterPayment,
@@ -230,6 +231,7 @@ import {
 import type { VaultActivityReason } from '../shared/contracts.ts';
 import { createTriage, getPreferences } from './triage.ts';
 import { createTasks } from './tasks.ts';
+import { botAction, botChange, botCreate, createBots } from './bots.ts';
 import { createActivity, createActivityLine } from './activity.ts';
 import {
   checkedKeyStore,
@@ -1281,6 +1283,24 @@ async function initializeApplication(
       : {}),
   });
   await tasks.initialize();
+  const bots = createBots({
+    pool,
+    ownerId,
+    nodModel: () => adapters.models?.view().selection ?? null,
+    clearBrowser: (id) => adapters.computer.clear(id),
+    removeSchedule: (id) => personal.removeSchedule(id),
+    removeMemory: (id) => memory.dropBot(id),
+    retireWorkspace: async (bot) => {
+      const thread = await pool.query<{ id: string }>(
+        'SELECT id FROM threads WHERE owner_id=$1 AND archived_at IS NULL',
+        [ownerId],
+      );
+      if (thread.rows[0]) await workspace.retireBot?.(thread.rows[0].id, bot);
+    },
+    ...(adapters.models
+      ? { validateModel: (choice: ModelSelection) => adapters.models!.validateChoice(choice) }
+      : {}),
+  });
   async function describeModelChoice(input: Record<string, unknown>) {
     const models = adapters.models;
     if (!models) return undefined;
@@ -1350,6 +1370,7 @@ async function initializeApplication(
     sweep: async () => {
       await sweepArtifacts();
       await sweepExpiredTurns().catch((error) => logFailure('turn_lease_sweep', error));
+      await bots.retire();
       await tasks.wakeDue().catch((error) => logFailure('task_wake', error));
     },
     due: () => proactivity.due(),
@@ -1644,334 +1665,361 @@ async function initializeApplication(
         'NOD_schedule_create',
         'NOD_schedule_update',
       ].includes(action);
+      const botWrite = action.startsWith('NOD_bot_');
       const lockedWrite =
         action === 'NOD_limits_update' ||
         action === 'NOD_model_select' ||
         action.startsWith('NOD_memory_') ||
         action === 'NOD_notification_preferences_update';
-      const result = await (action === 'NOD_browser'
-        ? replayBrowserStep(args, provenance)
-        : action === 'NOD_vault_allow'
-          ? vaultAccess.allow(args)
-          : action === 'NOD_bug_report_send'
-            ? readyDrafts().sendDraft(
-                String(args.draftId),
-                null,
-                () => provenance.signal?.aborted === true,
-              )
-            : action === 'NOD_limits_update'
-              ? withTurnLock(turnLock, (client) => ledger.setLimits(args, 'agent', client))
-              : scheduleWrite
-                ? transaction(
-                    async (client) => {
-                      if ((await lockThread(client)).id !== provenance.threadId)
-                        throw Object.assign(
-                          new Error('The instruction conversation is no longer active.'),
-                          { notRun: true },
-                        );
-                      return withTurnLock(
-                        turnLock,
-                        (locked) =>
-                          personal.manage(action.slice('NOD_'.length), args, provenance, {
-                            client: locked,
-                          }),
-                        client,
-                      );
-                    },
-                    pool,
-                    provenance.signal,
-                  )
-                : lockedWrite
-                  ? withTurnLock(turnLock, (client) =>
-                      personal.manage(action.slice('NOD_'.length), args, provenance, {
-                        client,
-                        ...(provenance.details?.currentNotificationRule === undefined
-                          ? {}
-                          : {
-                              expectedNotificationRule: String(
-                                provenance.details.currentNotificationRule,
-                              ),
-                            }),
-                        ...(provenance.details?.currentRules === undefined
-                          ? {}
-                          : { expectedRules: String(provenance.details.currentRules) }),
-                      }),
-                    )
-                  : action.startsWith('NOD_')
-                    ? personal.manage(action.slice('NOD_'.length), args, provenance)
-                    : (async () => {
-                        integrations.serviceWait('action', action);
-                        const savedBinding = provenance.details?.verifiedBinding;
-                        const verifiedBinding =
-                          typeof savedBinding === 'string' ? savedBinding : undefined;
-                        if (
-                          (action === 'CONNECTED_HTTP' || action === 'CONNECTED_MCP_CALL') &&
-                          !verifiedBinding
-                        )
+      const result = await (botWrite
+        ? withTurnLock(turnLock, async (client) => {
+            if (action === 'NOD_bot_create') {
+              const id = await bots.create(client, botCreate.parse(args));
+              afterCommit(client, refresh);
+              return { id, name: (await bots.get(client, id)).name };
+            }
+            const id = z.uuid().parse(args.id);
+            const { id: _id, ...change } = args;
+            await bots.update(client, id, botChange.parse(change));
+            afterCommit(client, refresh);
+            const { avatar: _avatar, ...updated } = await bots.get(client, id);
+            return updated;
+          })
+        : action === 'NOD_browser'
+          ? replayBrowserStep(args, provenance)
+          : action === 'NOD_vault_allow'
+            ? vaultAccess.allow(args)
+            : action === 'NOD_bug_report_send'
+              ? readyDrafts().sendDraft(
+                  String(args.draftId),
+                  null,
+                  () => provenance.signal?.aborted === true,
+                )
+              : action === 'NOD_limits_update'
+                ? withTurnLock(turnLock, (client) => ledger.setLimits(args, 'agent', client))
+                : scheduleWrite
+                  ? transaction(
+                      async (client) => {
+                        if ((await lockThread(client)).id !== provenance.threadId)
                           throw Object.assign(
-                            new Error(
-                              'The connected app confirmation has no saved account binding. Ask for this action again.',
-                            ),
+                            new Error('The instruction conversation is no longer active.'),
                             { notRun: true },
                           );
-                        if (action === 'GMAIL_DELETE_MESSAGE' || action === 'GMAIL_DELETE_DRAFT') {
-                          const currentBinding = await integrations
-                            .binding(String(args.connectionId ?? ''))
-                            .catch((error: unknown) => {
-                              throw Object.assign(
-                                new Error(
-                                  `Nod could not check the selected Gmail account for deletion: ${safeIntegrationFailure(error)}`,
+                        return withTurnLock(
+                          turnLock,
+                          (locked) =>
+                            personal.manage(action.slice('NOD_'.length), args, provenance, {
+                              client: locked,
+                            }),
+                          client,
+                        );
+                      },
+                      pool,
+                      provenance.signal,
+                    )
+                  : lockedWrite
+                    ? withTurnLock(turnLock, (client) =>
+                        personal.manage(action.slice('NOD_'.length), args, provenance, {
+                          client,
+                          ...(provenance.details?.currentNotificationRule === undefined
+                            ? {}
+                            : {
+                                expectedNotificationRule: String(
+                                  provenance.details.currentNotificationRule,
                                 ),
-                                { notRun: true },
-                              );
-                            });
-                          if (!verifiedBinding || currentBinding !== verifiedBinding)
-                            throw Object.assign(
-                              new Error('The selected Gmail account changed after confirmation.'),
-                              { notRun: true },
-                            );
-                          if (action === 'GMAIL_DELETE_DRAFT') {
-                            const draftId = args.draft_id;
-                            const savedMessageId = provenance.details?.verifiedDraftMessageId;
-                            if (
-                              typeof draftId !== 'string' ||
-                              !draftId.trim() ||
-                              typeof savedMessageId !== 'string' ||
-                              !savedMessageId.trim()
-                            )
-                              throw Object.assign(
-                                new Error(
-                                  'The Gmail draft confirmation is missing its verified target.',
-                                ),
-                                { notRun: true },
-                              );
-                            const readArgs = {
-                              connectionId: args.connectionId,
-                              draft_id: draftId,
-                              format: 'metadata',
-                              ...(typeof args.user_id === 'string'
-                                ? { user_id: args.user_id }
-                                : {}),
-                            };
-                            const readVerdict = await trust
-                              .check(
-                                { threadId: provenance.threadId, turnId: provenance.turnId },
-                                'GMAIL_GET_DRAFT',
-                                readArgs,
-                                provenance.signal,
-                              )
-                              .catch((error: unknown) => {
-                                throw Object.assign(
-                                  new Error(
-                                    `Nod could not recheck permission to read the Gmail draft before deletion: ${safeIntegrationFailure(error)}`,
-                                  ),
-                                  { notRun: true },
-                                );
-                              });
-                            if (readVerdict.confirm)
-                              throw Object.assign(
-                                new Error(
-                                  'Nod could not authorize a fresh Gmail draft read before deletion.',
-                                ),
-                                { notRun: true },
-                              );
-                            const current = await integrations
-                              .execute(
-                                ownerId,
-                                'GMAIL_GET_DRAFT',
-                                readArgs,
-                                { threadId: provenance.threadId, turnId: provenance.turnId },
-                                provenance.signal,
-                                verifiedBinding,
-                                'read',
-                              )
-                              .catch((error: unknown) => {
-                                throw Object.assign(
-                                  new Error(
-                                    `Nod could not recheck the Gmail draft before deletion: ${safeIntegrationFailure(error)}`,
-                                  ),
-                                  { notRun: true },
-                                );
-                              });
-                            await ledger
-                              .action(provenance.turnId, 'GMAIL_GET_DRAFT', readVerdict.basis)
-                              .catch((error: unknown) => {
-                                throw Object.assign(
-                                  new Error(
-                                    `Nod could not record the Gmail draft read before deletion: ${safeIntegrationFailure(error)}`,
-                                  ),
-                                  { notRun: true },
-                                );
-                              });
-                            const currentTarget = gmailDraftTarget(current, draftId);
-                            if (!currentTarget)
-                              throw Object.assign(
-                                new Error(
-                                  'Nod could not verify the Gmail draft before deletion. Ask again before deleting it.',
-                                ),
-                                { notRun: true },
-                              );
-                            if (currentTarget.messageId !== savedMessageId)
-                              throw Object.assign(
-                                new Error(
-                                  'The Gmail draft changed after confirmation. Ask again before deleting it.',
-                                ),
-                                { notRun: true },
-                              );
-                          }
-                        }
-                        const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
-                        let validateCalendar: (() => Promise<void>) | undefined;
-                        if (isCalendarEventChange(action)) {
-                          const origin = await turnOrigin(provenance.turnId);
-                          const saved = provenance.details?.target;
-                          const revision = provenance.details?.verifiedCalendarRevision;
-                          const instruction = z
-                            .object({
-                              rules: z.string(),
-                              standingInstruction: z.string().optional(),
-                              chat: z
-                                .object({ threadId: z.uuid(), id: z.uuid() })
-                                .strict()
-                                .optional(),
-                              task: z
-                                .object({ id: z.uuid(), revision: z.number().int().nonnegative() })
-                                .strict()
-                                .optional(),
-                            })
-                            .strict()
-                            .safeParse(provenance.details?.verifiedInstructionRevision);
+                              }),
+                          ...(provenance.details?.currentRules === undefined
+                            ? {}
+                            : { expectedRules: String(provenance.details.currentRules) }),
+                        }),
+                      )
+                    : action.startsWith('NOD_')
+                      ? personal.manage(action.slice('NOD_'.length), args, provenance)
+                      : (async () => {
+                          integrations.serviceWait('action', action);
+                          const savedBinding = provenance.details?.verifiedBinding;
+                          const verifiedBinding =
+                            typeof savedBinding === 'string' ? savedBinding : undefined;
                           if (
-                            !origin ||
-                            !verifiedBinding ||
-                            typeof revision !== 'string' ||
-                            !/^[a-f0-9]{64}$/.test(revision) ||
-                            !instruction.success ||
-                            (origin.source === 'event' &&
-                              instruction.data.standingInstruction === undefined) ||
-                            (origin.source === 'schedule' && !origin.scheduleInstruction) ||
-                            !saved ||
-                            typeof saved !== 'object' ||
-                            Array.isArray(saved) ||
-                            (saved as Record<string, unknown>).eventId !== args.event_id
+                            (action === 'CONNECTED_HTTP' || action === 'CONNECTED_MCP_CALL') &&
+                            !verifiedBinding
                           )
                             throw Object.assign(
                               new Error(
-                                'This Calendar confirmation has no verified event. Ask again before changing it.',
+                                'The connected app confirmation has no saved account binding. Ask for this action again.',
                               ),
                               { notRun: true },
                             );
-                          try {
-                            validateCalendar = () =>
-                              transaction(
-                                async (client) => {
-                                  if ((await lockThread(client)).id !== provenance.threadId)
-                                    throw Object.assign(
-                                      new Error('This Calendar conversation is no longer active.'),
-                                      { notRun: true },
-                                    );
-                                  await withTurnLock(
-                                    turnLock,
-                                    async () => {
-                                      if (origin.source === 'schedule')
-                                        validateScheduledInstructions(origin.scheduleInstruction);
-                                      await validateInstructionRevision(
-                                        client,
-                                        ownerId,
-                                        instruction.data,
-                                      );
-                                      if (
-                                        (await integrations.binding(
-                                          String(args.connectionId),
-                                          client,
-                                        )) !== verifiedBinding
-                                      )
-                                        throw Object.assign(
-                                          new Error(
-                                            'The selected Calendar account changed after confirmation.',
-                                          ),
-                                          { notRun: true },
-                                        );
-                                    },
-                                    client,
-                                  );
-                                },
-                                pool,
-                                provenance.signal,
-                              );
-                            await validateCalendar();
-                            const readWork =
-                              (await turnOrigin(provenance.turnId))?.source === 'user'
-                                ? 'read'
-                                : 'background';
-                            const current = await readCalendarTarget(
-                              turn,
-                              args,
-                              verifiedBinding,
-                              provenance.signal,
-                              readWork,
-                            );
-                            if (
-                              current.revision !== revision ||
-                              !isDeepStrictEqual(current.target, saved)
-                            )
-                              throw new Error(
-                                'The Calendar event changed after confirmation. Ask again before changing it.',
-                              );
-                            await validateCalendar();
-                          } catch (error) {
-                            const failed = provenance.signal?.aborted
-                              ? provenance.signal.reason
-                              : error;
-                            throw Object.assign(
-                              failed instanceof Error ? failed : new Error(String(failed)),
-                              { notRun: true },
-                            );
-                          }
-                        }
-                        const ready = hasWorkspaceFiles(args)
-                          ? await integrations
-                              .prepare(ownerId, action, args, turn, provenance.signal)
+                          if (
+                            action === 'GMAIL_DELETE_MESSAGE' ||
+                            action === 'GMAIL_DELETE_DRAFT'
+                          ) {
+                            const currentBinding = await integrations
+                              .binding(String(args.connectionId ?? ''))
                               .catch((error: unknown) => {
                                 throw Object.assign(
-                                  error instanceof Error ? error : new Error(String(error)),
+                                  new Error(
+                                    `Nod could not check the selected Gmail account for deletion: ${safeIntegrationFailure(error)}`,
+                                  ),
                                   { notRun: true },
                                 );
+                              });
+                            if (!verifiedBinding || currentBinding !== verifiedBinding)
+                              throw Object.assign(
+                                new Error('The selected Gmail account changed after confirmation.'),
+                                { notRun: true },
+                              );
+                            if (action === 'GMAIL_DELETE_DRAFT') {
+                              const draftId = args.draft_id;
+                              const savedMessageId = provenance.details?.verifiedDraftMessageId;
+                              if (
+                                typeof draftId !== 'string' ||
+                                !draftId.trim() ||
+                                typeof savedMessageId !== 'string' ||
+                                !savedMessageId.trim()
+                              )
+                                throw Object.assign(
+                                  new Error(
+                                    'The Gmail draft confirmation is missing its verified target.',
+                                  ),
+                                  { notRun: true },
+                                );
+                              const readArgs = {
+                                connectionId: args.connectionId,
+                                draft_id: draftId,
+                                format: 'metadata',
+                                ...(typeof args.user_id === 'string'
+                                  ? { user_id: args.user_id }
+                                  : {}),
+                              };
+                              const readVerdict = await trust
+                                .check(
+                                  { threadId: provenance.threadId, turnId: provenance.turnId },
+                                  'GMAIL_GET_DRAFT',
+                                  readArgs,
+                                  provenance.signal,
+                                )
+                                .catch((error: unknown) => {
+                                  throw Object.assign(
+                                    new Error(
+                                      `Nod could not recheck permission to read the Gmail draft before deletion: ${safeIntegrationFailure(error)}`,
+                                    ),
+                                    { notRun: true },
+                                  );
+                                });
+                              if (readVerdict.confirm)
+                                throw Object.assign(
+                                  new Error(
+                                    'Nod could not authorize a fresh Gmail draft read before deletion.',
+                                  ),
+                                  { notRun: true },
+                                );
+                              const current = await integrations
+                                .execute(
+                                  ownerId,
+                                  'GMAIL_GET_DRAFT',
+                                  readArgs,
+                                  { threadId: provenance.threadId, turnId: provenance.turnId },
+                                  provenance.signal,
+                                  verifiedBinding,
+                                  'read',
+                                )
+                                .catch((error: unknown) => {
+                                  throw Object.assign(
+                                    new Error(
+                                      `Nod could not recheck the Gmail draft before deletion: ${safeIntegrationFailure(error)}`,
+                                    ),
+                                    { notRun: true },
+                                  );
+                                });
+                              await ledger
+                                .action(provenance.turnId, 'GMAIL_GET_DRAFT', readVerdict.basis)
+                                .catch((error: unknown) => {
+                                  throw Object.assign(
+                                    new Error(
+                                      `Nod could not record the Gmail draft read before deletion: ${safeIntegrationFailure(error)}`,
+                                    ),
+                                    { notRun: true },
+                                  );
+                                });
+                              const currentTarget = gmailDraftTarget(current, draftId);
+                              if (!currentTarget)
+                                throw Object.assign(
+                                  new Error(
+                                    'Nod could not verify the Gmail draft before deletion. Ask again before deleting it.',
+                                  ),
+                                  { notRun: true },
+                                );
+                              if (currentTarget.messageId !== savedMessageId)
+                                throw Object.assign(
+                                  new Error(
+                                    'The Gmail draft changed after confirmation. Ask again before deleting it.',
+                                  ),
+                                  { notRun: true },
+                                );
+                            }
+                          }
+                          const turn = { threadId: provenance.threadId, turnId: provenance.turnId };
+                          let validateCalendar: (() => Promise<void>) | undefined;
+                          if (isCalendarEventChange(action)) {
+                            const origin = await turnOrigin(provenance.turnId);
+                            const saved = provenance.details?.target;
+                            const revision = provenance.details?.verifiedCalendarRevision;
+                            const instruction = z
+                              .object({
+                                rules: z.string(),
+                                standingInstruction: z.string().optional(),
+                                chat: z
+                                  .object({ threadId: z.uuid(), id: z.uuid() })
+                                  .strict()
+                                  .optional(),
+                                task: z
+                                  .object({
+                                    id: z.uuid(),
+                                    revision: z.number().int().nonnegative(),
+                                  })
+                                  .strict()
+                                  .optional(),
                               })
-                          : args;
-                        const result = await integrations.executeApproved(
-                          ownerId,
-                          action,
-                          ready,
-                          turn,
-                          provenance.signal,
-                          action === 'GMAIL_DELETE_MESSAGE' ||
-                            action === 'GMAIL_DELETE_DRAFT' ||
-                            action === 'CONNECTED_MCP_CALL' ||
-                            action === 'CONNECTED_HTTP' ||
-                            isCalendarEventChange(action)
-                            ? verifiedBinding
-                            : undefined,
-                          validateCalendar,
-                        );
-                        await ledger.action(
-                          provenance.turnId,
-                          action,
-                          provenance.basis ?? { kind: 'approved' },
-                          actionTarget(action, args, provenance.details),
-                          objectIds(result),
-                        );
-                        return privateEmailResult(
-                          (
-                            await saveIntegrationFiles(result, async (file) => {
-                              const name = `${randomUUID()}-${basename(file.name)}`;
-                              await workspace.writeArtifact(provenance.threadId, name, file.bytes);
-                              return name;
-                            })
-                          ).value,
-                          mailCheck,
-                        );
-                      })());
+                              .strict()
+                              .safeParse(provenance.details?.verifiedInstructionRevision);
+                            if (
+                              !origin ||
+                              !verifiedBinding ||
+                              typeof revision !== 'string' ||
+                              !/^[a-f0-9]{64}$/.test(revision) ||
+                              !instruction.success ||
+                              (origin.source === 'event' &&
+                                instruction.data.standingInstruction === undefined) ||
+                              (origin.source === 'schedule' && !origin.scheduleInstruction) ||
+                              !saved ||
+                              typeof saved !== 'object' ||
+                              Array.isArray(saved) ||
+                              (saved as Record<string, unknown>).eventId !== args.event_id
+                            )
+                              throw Object.assign(
+                                new Error(
+                                  'This Calendar confirmation has no verified event. Ask again before changing it.',
+                                ),
+                                { notRun: true },
+                              );
+                            try {
+                              validateCalendar = () =>
+                                transaction(
+                                  async (client) => {
+                                    if ((await lockThread(client)).id !== provenance.threadId)
+                                      throw Object.assign(
+                                        new Error(
+                                          'This Calendar conversation is no longer active.',
+                                        ),
+                                        { notRun: true },
+                                      );
+                                    await withTurnLock(
+                                      turnLock,
+                                      async () => {
+                                        if (origin.source === 'schedule')
+                                          validateScheduledInstructions(origin.scheduleInstruction);
+                                        await validateInstructionRevision(
+                                          client,
+                                          ownerId,
+                                          instruction.data,
+                                        );
+                                        if (
+                                          (await integrations.binding(
+                                            String(args.connectionId),
+                                            client,
+                                          )) !== verifiedBinding
+                                        )
+                                          throw Object.assign(
+                                            new Error(
+                                              'The selected Calendar account changed after confirmation.',
+                                            ),
+                                            { notRun: true },
+                                          );
+                                      },
+                                      client,
+                                    );
+                                  },
+                                  pool,
+                                  provenance.signal,
+                                );
+                              await validateCalendar();
+                              const readWork =
+                                (await turnOrigin(provenance.turnId))?.source === 'user'
+                                  ? 'read'
+                                  : 'background';
+                              const current = await readCalendarTarget(
+                                turn,
+                                args,
+                                verifiedBinding,
+                                provenance.signal,
+                                readWork,
+                              );
+                              if (
+                                current.revision !== revision ||
+                                !isDeepStrictEqual(current.target, saved)
+                              )
+                                throw new Error(
+                                  'The Calendar event changed after confirmation. Ask again before changing it.',
+                                );
+                              await validateCalendar();
+                            } catch (error) {
+                              const failed = provenance.signal?.aborted
+                                ? provenance.signal.reason
+                                : error;
+                              throw Object.assign(
+                                failed instanceof Error ? failed : new Error(String(failed)),
+                                { notRun: true },
+                              );
+                            }
+                          }
+                          const ready = hasWorkspaceFiles(args)
+                            ? await integrations
+                                .prepare(ownerId, action, args, turn, provenance.signal)
+                                .catch((error: unknown) => {
+                                  throw Object.assign(
+                                    error instanceof Error ? error : new Error(String(error)),
+                                    { notRun: true },
+                                  );
+                                })
+                            : args;
+                          const result = await integrations.executeApproved(
+                            ownerId,
+                            action,
+                            ready,
+                            turn,
+                            provenance.signal,
+                            action === 'GMAIL_DELETE_MESSAGE' ||
+                              action === 'GMAIL_DELETE_DRAFT' ||
+                              action === 'CONNECTED_MCP_CALL' ||
+                              action === 'CONNECTED_HTTP' ||
+                              isCalendarEventChange(action)
+                              ? verifiedBinding
+                              : undefined,
+                            validateCalendar,
+                          );
+                          await ledger.action(
+                            provenance.turnId,
+                            action,
+                            provenance.basis ?? { kind: 'approved' },
+                            actionTarget(action, args, provenance.details),
+                            objectIds(result),
+                          );
+                          return privateEmailResult(
+                            (
+                              await saveIntegrationFiles(result, async (file) => {
+                                const name = `${randomUUID()}-${basename(file.name)}`;
+                                await workspace.writeArtifact(
+                                  provenance.threadId,
+                                  name,
+                                  file.bytes,
+                                );
+                                return name;
+                              })
+                            ).value,
+                            mailCheck,
+                          );
+                        })());
       if (action.startsWith('NOD_') && action !== 'NOD_vault_allow')
         await ledger.action(
           provenance.turnId,
@@ -1990,6 +2038,8 @@ async function initializeApplication(
       )
         return;
       if (action === 'NOD_limits_update') limitsInput.parse(args);
+      else if (action === 'NOD_bot_create') botCreate.parse(args);
+      else if (action === 'NOD_bot_update') await bots.get(pool, botAction.parse(args).id);
       else if (action.startsWith('NOD_')) {
         if (
           ['NOD_schedule_update', 'NOD_schedule_pause', 'NOD_schedule_cancel'].includes(action) &&
@@ -2629,7 +2679,7 @@ async function initializeApplication(
         if (request?.action === 'start' && request.model) {
           const current = (
             await pool.query<{ proactive: boolean; chat: boolean }>(
-              'SELECT proactive,session_id=thread_id AS chat FROM turns WHERE id=$1 AND owner_id=$2',
+              'SELECT proactive,session_id IN (thread_id,bot_id) AS chat FROM turns WHERE id=$1 AND owner_id=$2',
               [turn.turnId, ownerId],
             )
           ).rows[0];
@@ -2799,6 +2849,78 @@ async function initializeApplication(
       speech,
       audioReplies: async () => (await speechPreferences.get()).speechReply,
       manage: async (turn, action, args, { admit, signal, ...provenance }) => {
+        if (action === 'bot_list') {
+          const caller = turn.chat ?? null;
+          const view = adapters.models?.view();
+          const team = {
+            bots: await (async () => {
+              const [owned, live] = await Promise.all([bots.work(), activity.current()]);
+              return (await bots.list()).map(
+                ({
+                  avatar: _avatar,
+                  latestReply: _latest,
+                  lastMessage: _last,
+                  instructions,
+                  ...bot
+                }) => {
+                  const now = live.find((item) => item.botId === bot.id && !item.background);
+                  return {
+                    ...bot,
+                    ...(!caller || caller === bot.id ? { instructions } : {}),
+                    now: now?.step ?? now?.title ?? null,
+                    note: `team/${bot.id}.md`,
+                    ...owned(bot.id),
+                  };
+                },
+              );
+            })(),
+            models: (view?.connections ?? [])
+              .filter((connection) => connection.status === 'connected')
+              .flatMap((connection) =>
+                connection.models
+                  .filter((model) => !model.audio)
+                  .map((model) => ({
+                    connectionId: connection.id,
+                    modelId: model.id,
+                    name: model.name,
+                    efforts: model.efforts,
+                  })),
+              ),
+            nodModel: view?.selection ?? null,
+          };
+          return untrustedBlock('bot list', JSON.stringify(team));
+        }
+        if (action === 'bot_create' || action === 'bot_update') {
+          const update = action === 'bot_update' ? botAction.parse(args) : undefined;
+          const caller = turn.chat ?? null;
+          if (update && caller && update.id !== caller)
+            throw new Error(
+              'A bot can change only itself. Ask Nod, or change the bot in its settings.',
+            );
+          const target = update ?? botCreate.parse(args);
+          const botName = update ? (await bots.get(pool, update.id)).name : undefined;
+          const verdict = await trust.check(
+            turn,
+            `NOD_${action}`,
+            {
+              ...target,
+              ...(botName ? { botName } : {}),
+              ...(update && caller ? { askedIn: `${botName}'s own chat` } : {}),
+            },
+            signal,
+          );
+          return approvals.request(turn, `NOD_${action}`, target, {
+            ...provenance,
+            signal,
+            allowed: !verdict.confirm,
+            ...(verdict.confirm ? {} : { basis: verdict.basis }),
+            admit,
+            details: {
+              ...(botName ? { botName } : {}),
+              ...(verdict.confirm ? { reason: verdict.reason } : {}),
+            },
+          });
+        }
         if (action === 'prepared_list')
           return untrustedBlock('prepared work', JSON.stringify(await proactivity.prepared(args)));
         if (action === 'prepared_update') {
@@ -2866,6 +2988,7 @@ async function initializeApplication(
             throw new Error(
               'A scheduled run cannot create schedules. Do the work this schedule asks for in this run instead.',
             );
+          await personal.assertOwnTarget(action, args, turn.turnId);
           const prepared = action.startsWith('schedule_')
             ? await personal.prepareScheduleChange(action, args)
             : undefined;
@@ -2975,6 +3098,8 @@ async function initializeApplication(
           return overlays;
         }
         if (action === 'skill_save' || action === 'skill_patch') {
+          if (turn.chat)
+            throw new Error('Only Nod saves and changes skills. Use the skills you have.');
           const origin = await turnOrigin(turn.turnId);
           if (!origin || !['user', 'schedule', 'task'].includes(origin.source))
             throw new Error(
@@ -2998,6 +3123,7 @@ async function initializeApplication(
             provenance.sourceMessageId,
             (write) => withTurnLock({ turnId: turn.turnId, signal }, write),
             signal,
+            turn.chat ?? null,
           );
         }
         if (action === 'channels_get')
@@ -3384,6 +3510,7 @@ async function initializeApplication(
     attributeAudioUsage: ledger.attributeMediaUsage,
     verification: chatVerification,
     taskLedger: tasks.read,
+    bots: { list: () => bots.list() },
     forgetLearned: devTools ? async () => void (await memory.control({ clear: true })) : undefined,
     activity: activity.current,
     planningTasks: onboardingSuggestions.planning,
@@ -3489,6 +3616,7 @@ async function initializeApplication(
   onboardingSuggestions.registerRoutes(app);
   onboardingProfile.registerRoutes(app);
   tasks.registerRoutes(app);
+  bots.registerRoutes(app);
   triage.registerRoutes(app);
   let channelSettings: Awaited<ReturnType<typeof createChannelSettings>> | undefined;
   let lastChannelObservation: { consentVersion: number; signature: string } | undefined;

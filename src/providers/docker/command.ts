@@ -7,7 +7,7 @@ import {
 import { createHash } from 'node:crypto';
 import { serviceEnvironment } from '../process.ts';
 import type { ConnectedCli } from '../../ports/computer.ts';
-import { threadIdentity } from '../../ports/thread-identity.ts';
+import { botIdentity, threadIdentity } from '../../ports/thread-identity.ts';
 import {
   appEnvironmentNamePattern,
   appEnvironmentNameMaxLength,
@@ -73,6 +73,29 @@ const cliInstallTimeoutMs = 600_000;
 
 export const connectedUser = (cli: ConnectedCli) =>
   20_000 + (createHash('sha256').update(cli.id).digest().readUInt32BE() % 40_000);
+
+const botGroup = 1003;
+
+export interface BotAccount {
+  id: string;
+  uid: number;
+}
+
+export function botAccount(bot: BotAccount): BotAccount {
+  if (!Number.isInteger(bot.uid) || bot.uid < 100_000 || bot.uid > 1_000_000_000)
+    throw new Error('Invalid bot user.');
+  return { id: botIdentity(bot.id), uid: bot.uid };
+}
+
+function botEnvironment(home: string) {
+  return [
+    `HOME=${home}`,
+    `NPM_CONFIG_PREFIX=${home}/.local`,
+    `PIPX_HOME=${home}/.local/pipx`,
+    `PIPX_BIN_DIR=${home}/.local/bin`,
+    `PATH=${home}/.local/bin:/opt/nod-artifacts/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+  ].flatMap((value) => ['--env', value]);
+}
 
 const workspaceCommandProgram = `import os,sys,json,base64,selectors,subprocess,signal,time,threading,re,tempfile,shutil,glob
 import ctypes
@@ -305,31 +328,30 @@ export type WorkspaceCommandLauncher = (
   options: SpawnOptionsWithoutStdio,
 ) => ChildProcessWithoutNullStreams;
 
-export async function runWorkspaceCommand(options: {
+function launcher(options: {
   container: string;
   threadId: string;
-  args: string[];
-  input?: string;
-  environment?: Record<string, string>;
   cli?: ConnectedCli;
-  signal?: AbortSignal;
-  timeoutMs?: number;
-  maxBytes?: number;
-  onData?(chunk: Buffer): void;
+  bot?: BotAccount;
   spawn?: WorkspaceCommandLauncher;
-  drainTimeoutMs?: number;
-}): Promise<{ stdout: Buffer; stderr: Buffer; exitCode: number }> {
+}) {
   if (!/^nod-workspace(?:-[a-zA-Z0-9_-]+)?$/.test(options.container))
     throw new Error('WORKSPACE_CONTAINER must identify a Nod workspace.');
   const id = threadIdentity(options.threadId);
-  const launch = (workdir: string) => () =>
+  const bot = !options.cli && options.bot ? botAccount(options.bot) : undefined;
+  return (workdir: string) => () =>
     (options.spawn ?? spawn)(
       'docker',
       [
         'exec',
         '-i',
         '--user',
-        options.cli ? `${connectedUser(options.cli)}:1002` : 'node',
+        options.cli
+          ? `${connectedUser(options.cli)}:1002`
+          : bot
+            ? `${bot.uid}:${botGroup}`
+            : 'node',
+        ...(bot ? botEnvironment(`/workspace/${id}/bots/${bot.id}/.home`) : []),
         '--workdir',
         workdir,
         options.container,
@@ -341,28 +363,72 @@ export async function runWorkspaceCommand(options: {
       ],
       { env: serviceEnvironment(), shell: false },
     );
+}
+
+async function stopUser(launch: () => CommandProcess) {
+  const result = await runSupervisedCommand({
+    args: ['/usr/bin/python3', '-I', '-c', commandStopProgram, '/proc'],
+    timeoutMs: 30_000,
+    maxBytes: 4096,
+    launch,
+  });
+  if (result.exitCode)
+    throw new Error(
+      result.stderr.toString().trim() || `The process check exited with code ${result.exitCode}.`,
+    );
+}
+
+export async function runWorkspaceCommand(options: {
+  container: string;
+  threadId: string;
+  args: string[];
+  input?: string;
+  environment?: Record<string, string>;
+  cli?: ConnectedCli;
+  bot?: BotAccount;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  maxBytes?: number;
+  onData?(chunk: Buffer): void;
+  spawn?: WorkspaceCommandLauncher;
+  drainTimeoutMs?: number;
+}): Promise<{ stdout: Buffer; stderr: Buffer; exitCode: number }> {
+  const launch = launcher(options);
   try {
     return await runSupervisedCommand({
       ...options,
-      launch: launch(options.cli ? '/var/tmp' : `/workspace/${id}`),
+      launch: launch(options.cli ? '/var/tmp' : `/workspace/${threadIdentity(options.threadId)}`),
     });
   } catch (error) {
     if (error instanceof WorkspaceCommandError && error.uncertain)
-      error.stop = async () => {
-        const result = await runSupervisedCommand({
-          args: ['/usr/bin/python3', '-I', '-c', commandStopProgram, '/proc'],
-          timeoutMs: 30_000,
-          maxBytes: 4096,
-          launch: launch('/var/tmp'),
-        });
-        if (result.exitCode)
-          throw new Error(
-            result.stderr.toString().trim() ||
-              `The process check exited with code ${result.exitCode}.`,
-          );
-      };
+      error.stop = () => stopUser(launch('/var/tmp'));
     throw error;
   }
+}
+
+export async function retireWorkspaceBot(options: {
+  container: string;
+  threadId: string;
+  bot: BotAccount;
+  spawn?: WorkspaceCommandLauncher;
+}) {
+  const bot = botAccount(options.bot);
+  await stopUser(launcher(options)('/var/tmp'));
+  const removed = await runSupervisedCommand({
+    args: [
+      '/bin/rm',
+      '-f',
+      '--',
+      `/workspace/${threadIdentity(options.threadId)}/team/${bot.id}.md`,
+    ],
+    timeoutMs: 30_000,
+    maxBytes: 4096,
+    launch: launcher({ ...options, bot: undefined })('/var/tmp'),
+  });
+  if (removed.exitCode)
+    throw new Error(
+      `The bot's team note could not be removed: ${removed.stderr.toString().trim() || `exit code ${removed.exitCode}`}.`,
+    );
 }
 
 function runSupervisedCommand(options: {

@@ -49,6 +49,7 @@ const query = (
   runs: boolean,
 ) => `SELECT DISTINCT ON (u.session_id) u.id,u.channel,u.status,COALESCE(u.started_at,u.created_at) AS since,
     ${ownerStarted()} AS owner_started,t.id AS task_id,t.title,o.site,o.detail,o.calling,o.tool,h.recent,
+    u.bot_id,
     GREATEST(COALESCE(u.started_at,u.created_at),w.last) AS quiet_since,
     COALESCE(t.message_id,(SELECT m.id FROM messages m WHERE m.turn_id=u.id AND m.owner_id=u.owner_id
       AND m.role='assistant' ORDER BY m.created_at,m.id LIMIT 1)) AS message_id,
@@ -188,6 +189,7 @@ export function createActivity({
       .map((row) => ({
         turnId: row.id,
         taskId: row.task_id,
+        ...(row.bot_id ? { botId: row.bot_id } : {}),
         title: row.title,
         step: row.step,
         site: row.site,

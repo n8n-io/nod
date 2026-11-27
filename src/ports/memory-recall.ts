@@ -9,6 +9,7 @@ export interface MemoryBrief {
     text: string;
     at: string;
     shortened: boolean;
+    chat?: string;
   }>;
   searches: Array<{
     query: string;

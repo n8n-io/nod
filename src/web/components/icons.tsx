@@ -123,7 +123,6 @@ export const Hash = n8n('hash');
 export const Hourglass = n8n('hourglass');
 export const Import = n8n('arrow-block-down');
 export const Italic = n8n('text-italics');
-export const LayoutGrid = n8n('grid');
 export const Lightbulb = n8n('lightbulb');
 export const Link2 = n8n('link');
 export const List = n8n('list-bullets');
