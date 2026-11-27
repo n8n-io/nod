@@ -177,7 +177,7 @@ If your browser resets or blocks permission, the switch turns off. Once your bro
 
 On desktop, enabling notifications sends a confirmation. If it does not appear, allow Nod in your computer’s notification settings and check Focus or Do Not Disturb.
 
-Notifications use Nod's name and icon. In the web app, they announce a new reply without showing its contents. Keep the Nod tab open to receive them while it is in the background. Select a notification to return to its message. Ordinary browser tabs may also show the browser’s name; the operating system controls that attribution.
+Notifications use Nod's name and icon and are silent. In the desktop app, turn on **Play a sound** in **Settings → Notifications** if you want one; your computer's notification settings can still mute it. In the web app, they announce a new reply without showing its contents. Keep the Nod tab open to receive them while it is in the background. Select a notification to return to its message. Ordinary browser tabs may also show the browser’s name; the operating system controls that attribution.
 
 When you return to Chat with unread replies, a **New messages** divider marks where they begin and Chat opens there. It stays for that visit, even after you reach the latest reply and clear the unread badge. Selecting a notification still opens that specific message. Replies arriving while you are already at the bottom do not add a divider or move you away.
 

@@ -5,6 +5,7 @@ export type DesktopPreferences = {
   theme: 'system' | 'light' | 'dark';
   resolvedTheme: 'light' | 'dark';
   notifications: boolean;
+  notificationSound: boolean;
   launchAtLogin: boolean;
 };
 
@@ -58,7 +59,7 @@ export type DesktopUpdateStatus = {
 };
 
 export type DesktopSettingsChange = Partial<
-  Pick<DesktopPreferences, 'theme' | 'notifications' | 'launchAtLogin'>
+  Pick<DesktopPreferences, 'theme' | 'notifications' | 'notificationSound' | 'launchAtLogin'>
 >;
 
 type DesktopSettingsSection = 'general' | 'models' | 'preferences';

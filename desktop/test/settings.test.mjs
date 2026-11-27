@@ -793,6 +793,10 @@ async function runningDesktop(
     nativeTheme: { shouldUseDarkColors: false },
     safeStorage: storage.encryption,
     Notification: class extends EventEmitter {
+      constructor(options) {
+        super();
+        this.options = options;
+      }
       static isSupported() {
         return typeof notificationsSupported === 'function'
           ? notificationsSupported()
@@ -4493,9 +4497,18 @@ test('native notification confirmation follows only successful owned enable tran
     assert.equal(delayed.closed, true);
     last.emit('show');
     assert.notEqual(last.closed, true);
+    assert.equal(last.options.silent, true);
+    await save({ notificationSound: true });
+    await save({ notifications: false });
+    await save({ notifications: true });
+    assert.equal((await f.storage.reopen().get()).notificationSound, true);
+    const sounded = f.notifications.at(-1);
+    assert.equal(sounded.options.silent, false);
+    sounded.emit('show');
+    assert.notEqual(sounded.closed, true);
     await f.close();
-    last.emit('show');
-    assert.equal(last.closed, true);
+    sounded.emit('show');
+    assert.equal(sounded.closed, true);
   } finally {
     await f.close();
   }
@@ -6127,6 +6140,7 @@ test('startup reads preserve older settings for rollback until an owner preferen
   const settings = await store.get();
   assert.equal(settings.theme, 'dark');
   assert.equal(settings.notifications, true);
+  assert.equal(settings.notificationSound, false);
   assert.equal(settings.onboardingPreferenceStep, 'complete');
   assert.equal(await readFile(f.path, 'utf8'), previous);
   const blocked = createSettingsStore(f.path, {

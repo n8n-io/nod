@@ -268,7 +268,12 @@ let clientPartition = 'persist:nod-app';
 let replayingProductOnboarding = process.argv.includes('--onboarding');
 let stopNotifications;
 let unreadBadge;
-let preferences = { theme: 'system', notifications: false, launchAtLogin: false };
+let preferences = {
+  theme: 'system',
+  notifications: false,
+  notificationSound: false,
+  launchAtLogin: false,
+};
 const displayedNotifications = new Set();
 let status = {
   platform: process.platform,
@@ -418,6 +423,7 @@ const readinessNotice = createReadinessNotice({
     if (!eligible() || quitting || !preferences.notifications || foregroundWindow()) return false;
     if (!Notification.isSupported() || isQuietTime(saved.preferences)) return true;
     const notification = new Notification({
+      silent: !preferences.notificationSound,
       title: 'Nod is ready',
       icon: notificationIcon,
       body: onboardingCompleted
@@ -554,6 +560,7 @@ function applyPreferences(saved) {
   preferences = {
     theme: saved.theme,
     notifications: saved.notifications,
+    notificationSound: saved.notificationSound,
     launchAtLogin: saved.launchAtLogin,
   };
   nativeTheme.themeSource = saved.theme;
@@ -709,6 +716,7 @@ async function notifyAssistantMessage(message, threadId) {
   )
     return;
   const notification = new Notification({
+    silent: !preferences.notificationSound,
     title: 'Nod',
     icon: notificationIcon,
     body: assistantNotificationPreview(message, knownSecrets),
@@ -742,6 +750,7 @@ async function notifyAssistantMessage(message, threadId) {
 function showNotificationConfirmation() {
   if (!preferences.notifications || quitting || !Notification.isSupported()) return;
   const notification = new Notification({
+    silent: !preferences.notificationSound,
     title: 'Nod',
     icon: notificationIcon,
     body: 'Notifications are on.',
@@ -2041,7 +2050,7 @@ async function transferWelcome() {
 async function saveRendererSettings(event, value) {
   if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
   if (quitting) throw new Error('Nod is closing.');
-  const allowed = ['theme', 'notifications', 'launchAtLogin'];
+  const allowed = ['theme', 'notifications', 'notificationSound', 'launchAtLogin'];
   if (isEngine(event) && value?.onboardingCompleted === true && Object.keys(value).length === 1) {
     if (!remoteConnection) await reconcileLocalSetup(true);
     else if (!(await accountSetupComplete()))
@@ -2532,6 +2541,7 @@ async function notifyUpdate(candidate) {
   ({ notifications } = await settings.get());
   if (quietTime || !notifications || quitting || focusedEngineWindow()) return 'quiet';
   const notification = new Notification({
+    silent: !preferences.notificationSound,
     title: `Nod ${candidate.version} is ${candidate.command ? 'available' : 'ready'}`,
     icon: notificationIcon,
     body: candidate.command
@@ -3658,7 +3668,8 @@ else {
           typeof value !== 'object' ||
           Array.isArray(value) ||
           Object.keys(value).some(
-            (key) => !['theme', 'notifications', 'launchAtLogin'].includes(key),
+            (key) =>
+              !['theme', 'notifications', 'notificationSound', 'launchAtLogin'].includes(key),
           )
         )
           throw new Error('These preferences are not supported.');

@@ -429,6 +429,19 @@ export function AccountSettings({
                             }
                           />
                         </div>
+                        <div className="account-preference-row">
+                          <span>Play a sound</span>
+                          <Switch
+                            checked={native.settings?.notificationSound ?? false}
+                            disabled={
+                              native.busy || !native.settings || !native.settings.notifications
+                            }
+                            aria-label="Play a sound"
+                            onCheckedChange={(notificationSound) =>
+                              void native.save({ notificationSound }).catch(() => {})
+                            }
+                          />
+                        </div>
                         <p className="field-hint">
                           If they don’t appear, check your computer’s notification and Focus
                           settings.

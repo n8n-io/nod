@@ -61,7 +61,10 @@ type AnalyticsEvents = {
   onboarding_updates_email_submitted: undefined;
   local_setting_changed:
     | { setting: 'theme'; value: 'light' | 'dark' | 'system' }
-    | { setting: 'launch_at_login' | 'desktop_notifications'; value: 'enabled' | 'disabled' }
+    | {
+        setting: 'launch_at_login' | 'desktop_notifications' | 'notification_sound';
+        value: 'enabled' | 'disabled';
+      }
     | { setting: 'browser_notifications'; value: 'enabled' | 'disabled' | 'dismissed' };
   notification_opened: { kind: 'reply' };
   app_connection_completed: { entry: 'apps' | 'chat' | 'onboarding' | 'manage' };
@@ -215,7 +218,13 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
   onboarding_community_opened: { channel: ['discord', 'forum'] },
   onboarding_updates_email_submitted: {},
   local_setting_changed: {
-    setting: ['theme', 'launch_at_login', 'desktop_notifications', 'browser_notifications'],
+    setting: [
+      'theme',
+      'launch_at_login',
+      'desktop_notifications',
+      'notification_sound',
+      'browser_notifications',
+    ],
     value: ['light', 'dark', 'system', 'enabled', 'disabled', 'dismissed'],
   },
   notification_opened: { kind: ['reply'] },

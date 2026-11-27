@@ -61,6 +61,7 @@ export function useDesktopSettings(enabled = true) {
         for (const [key, setting] of [
           ['launchAtLogin', 'launch_at_login'],
           ['notifications', 'desktop_notifications'],
+          ['notificationSound', 'notification_sound'],
         ] as const)
           if (
             typeof change[key] === 'boolean' &&
