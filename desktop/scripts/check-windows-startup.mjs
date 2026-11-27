@@ -147,10 +147,17 @@ try {
     await launch(`first setup on ${previous}`, { reported: false, attempts: 3, limit: 480_000 });
     await quit();
     await returning();
+    const hostDatabase = await present(join(profile, 'database/state.json'));
     await install(installer);
     const updated = await launch('first start after the update');
     assert.notEqual(updated.version, receipt.launches[0].version);
-    assert.equal(updated.moved, true, 'Nod did not move the earlier version’s data.');
+    assert.equal(
+      updated.moved,
+      !hostDatabase,
+      hostDatabase
+        ? 'Nod moved data that was already on this computer.'
+        : 'Nod did not move the earlier version’s data.',
+    );
     assert.equal(
       JSON.parse(await readFile(join(profile, 'database/state.json'), 'utf8')).ready,
       true,
