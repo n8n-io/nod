@@ -17,6 +17,7 @@ import { api, errorMessage } from '../lib/api';
 import { botActivity, botLine, botPath, type Bot } from '../lib/bots';
 import { ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, Plus, Settings } from './icons';
 import { usePageData } from '../hooks/use-page-data';
+import { readUiPreference, writeUiPreference } from '../lib/ui-preferences';
 import { ScheduleRow } from '../pages/schedule';
 import { TaskCard } from '../pages/tasks';
 import { taskLabels } from '../../shared/task-status';
@@ -759,7 +760,33 @@ function InstructionsField({ bot }: { bot: Bot }) {
 }
 
 type CardKey = 'settings' | 'scheduled' | 'tasks';
-const wideCards = () => window.matchMedia('(min-width: 1280px)').matches;
+
+function CardsToggle({ bot, shown, onToggle }: { bot?: Bot; shown: boolean; onToggle(): void }) {
+  const tasks = usePageData<Task[]>('/api/tasks');
+  const chatId = bot?.id ?? null;
+  const needsYou =
+    !shown &&
+    (tasks.data ?? []).some(
+      (task) => (task.botId ?? null) === chatId && task.status === 'needs_you',
+    );
+  const label = shown ? 'Hide details' : 'Show details';
+  return (
+    <Tooltip content={label} side="left">
+      <button
+        type="button"
+        className="bot-cards-toggle"
+        data-shown={shown || undefined}
+        aria-label={label}
+        aria-expanded={shown}
+        aria-controls="bot-cards"
+        onClick={onToggle}
+      >
+        <PanelLeftOpen size={18} aria-hidden="true" />
+        {needsYou && <span className="bot-dot bot-dot-needs" aria-hidden="true" />}
+      </button>
+    </Tooltip>
+  );
+}
 
 export function PanelProvider({
   bot,
@@ -777,22 +804,20 @@ export function PanelProvider({
   onNavigate(path: string): void;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState<Record<CardKey, boolean>>(() => ({
+  const [shown, setShown] = useState(() => readUiPreference('nod.cards') !== 'hidden');
+  const [open, setOpen] = useState<Record<CardKey, boolean>>({
     settings: false,
-    scheduled: wideCards(),
-    tasks: wideCards(),
-  }));
-  useEffect(() => {
-    const query = window.matchMedia('(min-width: 1280px)');
-    const change = () =>
-      setOpen((current) => ({ ...current, scheduled: query.matches, tasks: query.matches }));
-    query.addEventListener('change', change);
-    return () => query.removeEventListener('change', change);
-  }, []);
+    scheduled: true,
+    tasks: true,
+  });
+  const toggleCards = () => {
+    writeUiPreference('nod.cards', shown ? 'hidden' : 'shown');
+    setShown(!shown);
+  };
   return (
     <>
       {children}
-      {available && (
+      {available && shown && (
         <BotCards
           bot={bot}
           activity={activity ?? []}
@@ -802,6 +827,7 @@ export function PanelProvider({
           onNavigate={onNavigate}
         />
       )}
+      {available && <CardsToggle bot={bot} shown={shown} onToggle={toggleCards} />}
     </>
   );
 }
@@ -965,7 +991,7 @@ function BotCards({
     </WorkLine>
   );
   return (
-    <aside className="bot-cards" aria-label={`${name} details`}>
+    <aside id="bot-cards" className="bot-cards" aria-label={`${name} details`}>
       <section className="bot-card bot-card-identity" aria-label={name}>
         <div className="bot-card-who">
           {bot ? (
