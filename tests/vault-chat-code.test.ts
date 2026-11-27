@@ -327,29 +327,36 @@ test(
       await t.test(
         'failure presentation never sees the code and never retries private entry',
         async () => {
-          await reset();
-          const pending = await seedPayment();
-          let attempts = 0;
-          beforePayment = async () => {
-            attempts++;
-            throw new Error('Untrusted website echoed 737');
-          };
-          const clientMessageId = randomUUID();
-          const response = await send('737', { clientMessageId });
-          assert.equal(response.statusCode, 200, response.body);
-          assert.equal(response.json().verificationStatus, 'unavailable');
-          assert.deepEqual(failurePresentations, [
-            {
-              threadId: pending.threadId,
-              input: { kind: 'verification_failure', verification: 'payment' },
-            },
-          ]);
-          const messages = await db.pool.query('SELECT text FROM messages ORDER BY created_at,id');
-          assert.doesNotMatch(JSON.stringify(messages.rows), /737|Untrusted website/);
-          assert.equal((await send('737', { clientMessageId })).statusCode, 200);
-          assert.equal(attempts, 1);
-          assert.equal(failurePresentations.length, 1);
-          assert.deepEqual(entered, []);
+          for (const afterEntry of [false, true]) {
+            await reset();
+            const pending = await seedPayment();
+            let attempts = 0;
+            const fail = async () => {
+              attempts++;
+              throw new Error('Untrusted website echoed 737');
+            };
+            if (afterEntry) duringPayment = fail;
+            else beforePayment = fail;
+            const clientMessageId = randomUUID();
+            const response = await send('737', { clientMessageId });
+            assert.equal(response.statusCode, 200, response.body);
+            assert.equal(response.json().verificationStatus, 'unavailable');
+            assert.deepEqual(failurePresentations, [
+              {
+                threadId: pending.threadId,
+                input: { kind: 'verification_failure', verification: 'payment' },
+              },
+            ]);
+            const messages = await db.pool.query(
+              'SELECT text FROM messages ORDER BY created_at,id',
+            );
+            assert.doesNotMatch(JSON.stringify(messages.rows), /737|Untrusted website/);
+            assert.equal((await send('737', { clientMessageId })).statusCode, 200);
+            assert.equal(attempts, 1);
+            assert.equal(failurePresentations.length, 1);
+            assert.deepEqual(entered, afterEntry ? ['737'] : []);
+            duringPayment = async () => {};
+          }
         },
       );
       await t.test(
