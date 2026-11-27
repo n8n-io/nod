@@ -401,6 +401,8 @@ Payment cases use a synthetic merchant and never a real card. They measure task 
 | `regional-mcp-workspace`                | Propose the MCP server for the region of a known workspace                                     | apps, research                           | calibrating            |
 | `remind-in-minutes`                     | Remind me in 4 minutes to call my mum                                                          | schedules, long-running                  | calibrating            |
 | `renamed-mcp-connection`                | Read from the right custom app using its new name in chat                                      | apps                                     | calibrating            |
+| `repeat-offer-declined`                 | A declined offer to repeat does not come back, and a one-off question gets none                | apps, schedules                          | calibrating            |
+| `repeat-offer-yes`                      | After a morning inbox check, Nod offers to repeat it and a yes saves one job                   | apps, schedules                          | calibrating            |
 | `reply-drafts`                          | Draft replies in my voice to the emails that need one                                          | apps, memory, approvals                  | scored                 |
 | `report-bug-app-reconnect`              | No bug report offer when an app needs reconnecting                                             | apps, progress                           | calibrating            |
 | `report-bug-offer`                      | Offer a bug report when a Nod screen is broken                                                 | progress                                 | calibrating            |
@@ -439,7 +441,7 @@ A scenario joins the set with `set: 'happy-path'`. The people and data in the ca
 | The whole path     | `happy-path-first-day`                                                                                                                                                               |
 | Gets an answer     | `happy-path-greeting`, `happy-path-what-can-you-do`, `happy-path-vague-delegation`, `portuguese-request`, `onboarding-first-value`, `onboarding-no-apps`                             |
 | Finishes two tasks | `email-attention-today`, `agenda-tomorrow`, `parallel-shop-prices`, `docs-brief-summary`, `notion-add-todo-row`, `send-it-after-a-draft`, `local-file-save-notes`, `catalog-connect` |
-| Sets up tomorrow   | `daily-agenda-schedule`, `quiet-unless-boss`, `remind-in-minutes`, `weekly-invoice-report`, `standing-offer-after-one-off`                                                           |
+| Sets up tomorrow   | `daily-agenda-schedule`, `quiet-unless-boss`, `remind-in-minutes`, `weekly-invoice-report`, `standing-offer-after-one-off`, `repeat-offer-yes`, `repeat-offer-declined`              |
 | Nod speaks first   | `event-boss-email-notify`, `happy-path-two-jobs`, `happy-path-job-cannot-run`                                                                                                        |
 
 The harness fires a saved job right after it is created. It does not wait for the next morning, and it has no phone channel, so delivery to Telegram or WhatsApp is not checked.

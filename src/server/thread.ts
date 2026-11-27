@@ -26,6 +26,7 @@ import { appPages } from '../shared/app-links.ts';
 import { errorCode } from '../shared/error-code.ts';
 import { loopbackHost } from '../shared/loopback.ts';
 import { pendingAnswerChoicesSql } from './answer-choices.ts';
+import { recordScheduleOffer, scheduleOfferAllowed } from './schedule-offer.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -2731,6 +2732,14 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       } catch (error) {
         logFailure('schedule_cache_policy_failed', error, { threadId, turnId });
       }
+    const scheduleOffer =
+      !turn.background &&
+      !proactivity &&
+      turn.source !== 'schedule' &&
+      (await scheduleOfferAllowed(pool).catch((error: unknown) => {
+        logFailure('schedule_offer_check_failed', error, { threadId, turnId });
+        return false;
+      }));
     if (routeError) throw routeError;
     const result = await dependencies.runTurn({
       threadId,
@@ -2745,6 +2754,16 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       ...loaded.context,
       speech,
       ...(proactivity ? { proactivity } : {}),
+      ...(scheduleOffer
+        ? {
+            scheduleOffer: {
+              record: () =>
+                current((client) => recordScheduleOffer(client)).catch((error: unknown) =>
+                  logFailure('schedule_offer_record_failed', error, { threadId, turnId }),
+                ),
+            },
+          }
+        : {}),
       taskContext,
       tasks,
       ...(checkIn ? { checkIn } : {}),

@@ -18,6 +18,8 @@ Ask in chat. For example:
 
 A schedule runs **One time** or is **Recurring**. Nod tells you when it's saved and when it runs next. If you ask for a schedule that's already active with the same name or instruction, timing and watched apps, Nod keeps the one you have instead of adding a copy, and uses the model you named for it, if any. When you hand Nod work that needs follow-up, it can also plan its own check-in, such as "I'll look for a reply on Friday". Check-ins are schedules too.
 
+Until you have a recurring schedule, Nod offers to make one. After it finishes something that would give a new answer next time, such as an inbox or calendar check, it sends a short message after the result: "Want me to do this every weekday at 8:00?" Say yes and Nod saves the schedule. It asks for a time only when nothing suggests one, and it stops offering once you have a recurring schedule. If you say no or don't answer, Nod waits three days before it offers again. It never offers after one-off questions or single actions such as a booking or a sent email.
+
 Nod uses your time zone, saved from your browser the first time you use Nod. Change it in **Settings → General**. If Nod doesn't know your time zone, it asks.
 
 ## Change, pause or delete a schedule
