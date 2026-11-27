@@ -33,6 +33,14 @@ export class ModelServiceError extends Error {
 
 const MAX_MODEL_ERROR_BODY_SIZE = 64 * 1024;
 const MAX_MODEL_ERROR_TEXT_SIZE = 2000;
+const MODEL_ERROR_REDACTED_MARKER = '[redacted]';
+
+function modelErrorTextForOutput(value: string, secrets: string[]) {
+  return value
+    .split(MODEL_ERROR_REDACTED_MARKER)
+    .map((part) => modelErrorText(part, secrets))
+    .join(MODEL_ERROR_REDACTED_MARKER);
+}
 
 export async function modelServiceError(
   response: Response,
@@ -71,7 +79,9 @@ export async function modelServiceError(
             ? modelErrorText(value.trim(), secrets).slice(0, MAX_MODEL_ERROR_TEXT_SIZE)
             : undefined;
         const fieldValue = (value: unknown) =>
-          typeof value === 'number' && Number.isFinite(value) ? `${value}` : text(value);
+          typeof value === 'number' && Number.isFinite(value)
+            ? modelErrorTextForOutput(`${value}`, secrets).slice(0, MAX_MODEL_ERROR_TEXT_SIZE)
+            : text(value);
         const fields = (error: Record<string, unknown>, message?: string) =>
           detailFields.flatMap((name) => {
             const selected = name === 'message' && message ? message : fieldValue(error[name]);
@@ -160,10 +170,12 @@ export async function modelServiceError(
       reader.releaseLock();
     }
   }
-  const details = reason.slice(0, MAX_MODEL_ERROR_TEXT_SIZE);
+  const details = modelErrorTextForOutput(reason, secrets).slice(0, MAX_MODEL_ERROR_TEXT_SIZE);
   return new ModelServiceError(
     `${service} failed (HTTP ${response.status})${reason ? `: ${details}` : '.'}`,
-    serviceReason?.slice(0, MAX_MODEL_ERROR_TEXT_SIZE),
+    serviceReason
+      ? modelErrorTextForOutput(serviceReason, secrets).slice(0, MAX_MODEL_ERROR_TEXT_SIZE)
+      : undefined,
     Number.isInteger(response.status) && response.status >= 100 && response.status <= 599
       ? response.status
       : undefined,

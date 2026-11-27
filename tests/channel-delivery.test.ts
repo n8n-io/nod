@@ -409,6 +409,14 @@ test('model service errors preserve safe provider JSON reasons and hide unsafe r
       expected: 'description: Synthetic description',
     },
     {
+      name: 'numeric detail field redaction',
+      body: { error: { code: 123456789, status: 'synthetic_status' } },
+      status: 400,
+      secrets: ['123456789'],
+      hidden: ['123456789'],
+      expected: 'code: [redacted]',
+    },
+    {
       name: 'large complete JSON body',
       body: { error: { message: 'context length exceeded' }, padding: 'x'.repeat(20_000) },
       status: 400,
