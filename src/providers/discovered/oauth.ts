@@ -17,6 +17,8 @@ import {
 } from '../../ports/discovered.ts';
 import { publicHttps, safeRemoteFetch } from './remote.ts';
 
+class RedirectRejected extends Error {}
+
 const publicSignIn = async (link: string) => (await publicHttps(link)).url.href;
 
 export function createDiscoveredOAuth(
@@ -82,37 +84,57 @@ export function createDiscoveredOAuth(
       serverUrl: endpoint,
       ...(options.code ? { authorizationCode: options.code } : {}),
       ...(saved.scope ? { scope: saved.scope } : {}),
-      fetchFn: bound(signal),
+      fetchFn: async (input, init) => {
+        const response = await bound(signal)(input, init);
+        if (!response.ok && init?.method === 'POST' && !saved.clientInformation) {
+          const body = await response
+            .clone()
+            .json()
+            .catch(() => undefined);
+          if (body?.error === 'invalid_redirect_uri')
+            throw new RedirectRejected(
+              [body.error, body.error_description].filter(Boolean).join(': '),
+            );
+        }
+        return response;
+      },
     });
     return { result, url };
   }
 
   return {
     async begin(endpoint, redirectUri, state, scope, clientId, metadata) {
-      const saved: DiscoveredOAuthState = {
-        redirectUri,
-        ...(scope ? { scope } : {}),
-        ...(clientId
-          ? {
-              clientInformation: {
-                client_id: clientId,
-                ...(metadata ? { issuer: metadata.issuer } : {}),
-              },
-            }
-          : {}),
-        ...(metadata
-          ? {
-              discovery: {
-                authorizationServerUrl: metadata.issuer,
-                authorizationServerMetadata: metadata,
-              },
-            }
-          : {}),
-      };
-      const result = await run(endpoint, saved, { state }, AbortSignal.timeout(30_000));
-      if (result.result !== 'REDIRECT' || !result.url)
-        throw new Error('The service did not provide a sign-in link.');
-      return { url: await signInLink(result.url), saved };
+      const { hostname, pathname } = new URL(redirectUri);
+      return start(redirectUri).catch((cause: unknown) => {
+        if (!(cause instanceof RedirectRejected) || hostname === '127.0.0.1') throw cause;
+        return start(new URL(pathname, 'http://127.0.0.1').href);
+      });
+      async function start(redirect: string) {
+        const saved: DiscoveredOAuthState = {
+          redirectUri: redirect,
+          ...(scope ? { scope } : {}),
+          ...(clientId
+            ? {
+                clientInformation: {
+                  client_id: clientId,
+                  ...(metadata ? { issuer: metadata.issuer } : {}),
+                },
+              }
+            : {}),
+          ...(metadata
+            ? {
+                discovery: {
+                  authorizationServerUrl: metadata.issuer,
+                  authorizationServerMetadata: metadata,
+                },
+              }
+            : {}),
+        };
+        const result = await run(endpoint, saved, { state }, AbortSignal.timeout(30_000));
+        if (result.result !== 'REDIRECT' || !result.url)
+          throw new Error('The service did not provide a sign-in link.');
+        return { url: await signInLink(result.url), saved };
+      }
     },
     async finish(endpoint, saved, code) {
       const result = await run(endpoint, saved, { code }, AbortSignal.timeout(30_000));
