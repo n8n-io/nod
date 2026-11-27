@@ -337,8 +337,6 @@ try {
           alternate?: boolean;
           sent?: boolean;
         };
-        if (event.kind === 'fixture_signup_code_sent' && event.sent === true)
-          integration.signupCodeSent(event.alternate === true);
         if (event.kind === 'fixture_signup_human')
           signupAttempted[event.alternate === true ? 'alternate' : 'base'] = true;
         if (

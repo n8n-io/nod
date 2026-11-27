@@ -755,12 +755,12 @@ button.message-work:is(:hover, :focus-visible) {
 }
 .chat-page .message .message-text {
   font-size: var(--text-body);
-  line-height: 1.6;
+  line-height: 1.5;
   font-kerning: normal;
   font-variant-ligatures: common-ligatures;
 }
 .chat-page .message .message-text p {
-  margin: 0 0 8px;
+  margin: 0 0 10px;
 }
 .chat-page .message .message-text > :first-child {
   margin-top: 0;
@@ -770,8 +770,8 @@ button.message-work:is(:hover, :focus-visible) {
 }
 .chat-page .message .message-text ul,
 .chat-page .message .message-text ol {
-  margin: 4px 0 8px;
-  padding-left: 16px;
+  margin: 6px 0 10px;
+  padding-left: 20px;
 }
 .chat-page .message .message-text li {
   margin: 0;
@@ -791,15 +791,15 @@ button.message-work:is(:hover, :focus-visible) {
   overflow-wrap: normal;
 }
 .chat-page .message .message-text strong {
-  font-weight: 500;
+  font-weight: 700;
 }
 .chat-page .message .message-text h1,
 .chat-page .message .message-text h2,
 .chat-page .message .message-text h3,
 .chat-page .message .message-text h4 {
-  margin: 8px 0 4px;
+  margin: 12px 0 4px;
   font-size: var(--text-body);
-  font-weight: 500;
+  font-weight: 600;
 }
 .chat-page .message .message-text blockquote {
   margin: 8px 0;

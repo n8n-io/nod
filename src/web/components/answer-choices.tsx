@@ -139,6 +139,11 @@ export function AnswerChoices({
     void answer(picked, typed);
   }
 
+  function skip() {
+    if (locked) return;
+    void answer([], 'Skip');
+  }
+
   if (submitted === 'unavailable' || !options.length) return <>{title}</>;
   if (submitted) return <ChoiceAnswer choices={choices} answer={submitted} title={title} />;
 
@@ -224,6 +229,14 @@ export function AnswerChoices({
             {error}
           </p>
         )}
+        <button
+          type="button"
+          className="choice-card-skip"
+          aria-disabled={locked || undefined}
+          onClick={skip}
+        >
+          Skip
+        </button>
         <button
           type="button"
           className="answer-choices-done choice-card-done"

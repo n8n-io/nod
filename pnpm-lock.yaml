@@ -41,9 +41,6 @@ importers:
 
   .:
     dependencies:
-      '@1password/sdk':
-        specifier: 0.5.0
-        version: 0.5.0
       '@audio/decode-mp3':
         specifier: 1.3.1
         version: 1.3.1
@@ -143,6 +140,9 @@ importers:
       pg-boss:
         specifier: 12.38.2
         version: 12.38.2(@opentelemetry/api@1.9.1)
+      pg-copy-streams:
+        specifier: 7.0.0
+        version: 7.0.0
       pi-web-access:
         specifier: 0.41.0
         version: 0.41.0(@cfworker/json-schema@4.1.6)(@earendil-works/pi-ai@1.5.2(patch_hash=ddb0630891a99c017c0a5add6245d04bb2f7b7b2bcf3aaf6c8a97aaa64fa45a5)(@aws-sdk/credential-provider-node@3.972.88)(@modelcontextprotocol/sdk@1.32.1(@cfworker/json-schema@4.1.6)(zod@4.6.7))(@smithy/signature-v4@5.7.4)(undici@8.12.4)(ws@8.22.0)(zod@4.6.7))(@earendil-works/pi-coding-agent@1.5.2(patch_hash=d0bb250616598663804958959a0bd72f2872a2537f264616aced3f9c5bf3c6c7)(@aws-sdk/credential-provider-node@3.972.88)(@modelcontextprotocol/sdk@1.32.1(@cfworker/json-schema@4.1.6)(zod@4.6.7))(@smithy/signature-v4@5.7.4)(ws@8.22.0)(zod@4.6.7))(@earendil-works/pi-tui@1.5.2)(@napi-rs/canvas@1.1.1)(typebox@1.4.4)(zod@4.6.7)
@@ -344,12 +344,6 @@ importers:
         version: 2.9.1
 
 packages:
-
-  '@1password/sdk-core@0.5.0':
-    resolution: {integrity: sha512-9g7LWOKRKdePZ85evVgE9xEom3DAg3hRIyQdOwLPvpL/F7KpDXmUHMi72rsqJxKaDbWApXmrYjDExMSPqUg7xw==}
-
-  '@1password/sdk@0.5.0':
-    resolution: {integrity: sha512-k6kov3pcA7PRg2tev9CgTfEf/3JSyAp11BPQNCEsqAD32QbqM032OXC1rfjyC8Ba0sfH+NHYZxcifUZToyGyYA==}
 
   '@agent-browser/cli-darwin-arm64@0.43.0':
     resolution: {integrity: sha512-HV6GP59IjNnowlrXR/5rVM8msPWwQDEONt/tWC8STzUfKZQHKZI/Iv9sf2h2ZhwK8xwoqLhxpf+KxcFgJ0sExQ==}
@@ -3912,6 +3906,9 @@ packages:
   pg-connection-string@2.14.1:
     resolution: {integrity: sha512-qR3kGNPBLpCNtz0evbKA0Y/MRFXwSSdT+pTJvYp/bXTcReZbvX1kzF0IyTc1QnxqF7AZbOeBhNL8R5mYQZV/MA==}
 
+  pg-copy-streams@7.0.0:
+    resolution: {integrity: sha512-zBvnY6wtaBRE2ae2xXWOOGMaNVPkXh1vhypAkNSKgMdciJeTyIQAHZaEeRAxUjs/p1El5jgzYmwG5u871Zj3dQ==}
+
   pg-int8@1.0.1:
     resolution: {integrity: sha512-WCtabS6t3c8SkpDBUlb1kjOs7l66xsGdKpIPZsg4wR+B3+u9UAum2odSsF9tnvxg80h4ZxLWMy4pRjOsFIqQpw==}
     engines: {node: '>=4.0.0'}
@@ -4957,12 +4954,6 @@ packages:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
 snapshots:
-
-  '@1password/sdk-core@0.5.0': {}
-
-  '@1password/sdk@0.5.0':
-    dependencies:
-      '@1password/sdk-core': 0.5.0
 
   '@agent-browser/cli-darwin-arm64@0.43.0':
     optional: true
@@ -8843,6 +8834,8 @@ snapshots:
     optional: true
 
   pg-connection-string@2.14.1: {}
+
+  pg-copy-streams@7.0.0: {}
 
   pg-int8@1.0.1: {}
 

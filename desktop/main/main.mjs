@@ -6,7 +6,6 @@ import {
   dialog,
   ipcMain,
   Menu,
-  MessageChannelMain,
   nativeImage,
   nativeTheme,
   net,
@@ -25,7 +24,17 @@ import {
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { appendFile, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  access,
+  appendFile,
+  mkdir,
+  open,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { homedir, uptime } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -65,8 +74,15 @@ import { connectFlatpakPortal, createFlatpakUpdater } from './flatpak-update.mjs
 import { clearInstalledWindowsUpdates, startWindowsInstall } from './windows-update.mjs';
 import { appOpenPath } from './app-links.mjs';
 import { trustSystemCertificates } from './system-certificates.mjs';
-import { opensAtLogin, setOpenAtLogin } from './login-item.mjs';
+import {
+  launchedInBackground,
+  openedAtLogin,
+  opensAtLogin,
+  refreshLoginItem,
+  setOpenAtLogin,
+} from './login-item.mjs';
 import { createStartupFeedbackClient } from './feedback-client.mjs';
+import { createSystemAwake } from './system-awake.mjs';
 
 trustSystemCertificates();
 
@@ -134,6 +150,13 @@ const agentDesktop = app.isPackaged
     : join(process.resourcesPath, 'agent-desktop')
   : join(desktopRoot, 'node_modules', 'agent-desktop', 'bin');
 const executable = process.platform === 'win32' ? '.exe' : '';
+const systemAwake =
+  process.platform === 'win32'
+    ? createSystemAwake({
+        onFailure: (reason) =>
+          void writeDiagnostic(`Windows keep-awake failed. ${reason}`).catch(() => {}),
+      })
+    : undefined;
 const computerOverlay = createComputerOverlay({
   onStop: () => {
     void computerHelper.cancel();
@@ -232,7 +255,8 @@ let welcomePassed = false;
 let welcomeNavigation = false;
 let transferringWelcome;
 let welcomeTransferError;
-let engineRuntimeReady = false;
+let engineReady = false;
+let computerState;
 let enginePreferencesReady = false;
 let preparing;
 let onboardingCompleted = false;
@@ -265,6 +289,13 @@ let engineBound = false;
 let authToken = '';
 let remoteConnection;
 let awakeBlocker;
+let engineWorking = false;
+let waiting;
+let waitingTimer;
+let trayKey;
+let openedInBackground = false;
+let resumeHidden = false;
+let engineRestarts = [];
 let connectionSettingsOpen = false;
 let onboardingSetupOpen = false;
 let connectionReturnsToOnboarding = false;
@@ -272,7 +303,13 @@ let clientPartition = 'persist:nod-app';
 let replayingProductOnboarding = process.argv.includes('--onboarding');
 let stopNotifications;
 let unreadBadge;
-let preferences = { theme: 'system', notifications: false, launchAtLogin: false };
+let preferences = {
+  theme: 'system',
+  notifications: false,
+  notificationSound: false,
+  launchAtLogin: false,
+  keepAwake: true,
+};
 const displayedNotifications = new Set();
 let status = {
   platform: process.platform,
@@ -331,7 +368,45 @@ let chatReadCursors = createChatReadCursorStore(join(profileRoot, 'chat-read-cur
 });
 
 const lifecycle = createDesktopLifecycle({
-  prepareRuntime: async ({ signal, onStatus, onStorageReady }) => {
+  openDatabase: async ({ signal }) => {
+    await mkdir(profileRoot, { recursive: true, mode: 0o700 });
+    const started = Date.now();
+    const { openDatabase } = await import(
+      pathToFileURL(join(engineRoot, 'desktop', 'runtime', 'database.mjs')).href
+    );
+    try {
+      const database = await openDatabase({
+        dataRoot: profileRoot,
+        resourcesPath: engineRoot,
+        signal,
+        onEvent: ({ event, error, details }) =>
+          void writeDiagnostic(
+            [
+              event === 'database_restarted'
+                ? 'Database restarted after it stopped.'
+                : 'Database restart failed.',
+              details,
+            ]
+              .filter(Boolean)
+              .join('\n'),
+            { event, ...(error ? { error } : {}) },
+          ).catch(() => {}),
+      });
+      knownSecrets.add(database.password);
+      await writeDiagnostic(`Database opened. ${diagnosticFields({ ms: Date.now() - started })}`, {
+        event: 'database_ready',
+        durationMs: Date.now() - started,
+      }).catch(() => {});
+      return database;
+    } catch (error) {
+      await writeDiagnostic(
+        `Database failed. ${diagnosticFields({ code: error.code, ms: Date.now() - started })}`,
+        { event: 'database_failed', error, durationMs: Date.now() - started },
+      ).catch(() => {});
+      throw error;
+    }
+  },
+  prepareRuntime: async ({ signal, onStatus, database, onMoved }) => {
     await mkdir(profileRoot, { recursive: true, mode: 0o700 });
     await writeDiagnostic('Preparing local runtime.', { event: 'runtime_prepare' }).catch(() => {});
     const started = Date.now();
@@ -353,9 +428,14 @@ const lifecycle = createDesktopLifecycle({
           step = typeof value === 'string' ? value : value?.message;
           onStatus(value);
         },
-        onStorageReady: async (storage) => {
+        database,
+        onMoved: async () => {
           phase = 'engine';
-          await onStorageReady(storage);
+          await writeDiagnostic(
+            `Saved data moved. ${diagnosticFields({ ms: Date.now() - started })}`,
+            { event: 'database_moved', durationMs: Date.now() - started },
+          ).catch(() => {});
+          await onMoved();
           phase = 'runtime';
         },
       });
@@ -393,6 +473,7 @@ const lifecycle = createDesktopLifecycle({
         () => {},
       );
     if (
+      !engineReady &&
       preparing &&
       !engineFailure &&
       !welcomeTransferError &&
@@ -408,13 +489,69 @@ const lifecycle = createDesktopLifecycle({
         secondsLeft: value.secondsLeft,
         needsRuntimeArchive: false,
       });
-    else
-      update({
-        runtime,
-        ...(runtime.phase === 'error' ? { error: runtime.message, details: runtime.details } : {}),
-      });
+    else update({ runtime });
+  },
+  onRuntime: (value) => {
+    computerState = value.error
+      ? {
+          error: {
+            code: typeof value.error.code === 'string' ? value.error.code : undefined,
+            message: bounded(value.error.message),
+          },
+        }
+      : { environment: value.environment };
+    sendComputerState();
+    preloadPendingUpdate();
+    if (engineReady && computerState.error?.code === 'NOD_WSL_REQUIRED') void installWslOnce();
   },
 });
+
+let wslInstall;
+let wslInstalled = false;
+
+async function installWslOnce() {
+  if (process.platform !== 'win32' || remoteConnection || quitting) return;
+  if (!welcomePassed && !onboardingCompleted) return;
+  if (wslInstalled) {
+    update({
+      runtime: {
+        ...status.runtime,
+        message:
+          'Restart your PC to finish installing WSL. Nod’s browser and workspace start after that.',
+        needsWsl: false,
+      },
+    });
+    return;
+  }
+  if (wslInstall) return;
+  const marker = join(profileRoot, 'wsl-install.json');
+  wslInstall = (async () => {
+    if (
+      await access(marker).then(
+        () => true,
+        () => false,
+      )
+    )
+      return;
+    await writeFile(marker, JSON.stringify({ requestedAt: new Date().toISOString() }), {
+      mode: 0o600,
+    });
+    const { installWsl } = await import(
+      pathToFileURL(join(engineRoot, 'desktop/runtime/windows.mjs')).href
+    );
+    await lifecycle.install(async (options) => {
+      await installWsl(options);
+      wslInstalled = true;
+    });
+  })().catch(
+    (error) => void writeDiagnostic(`WSL install failed. ${error.message}`).catch(() => {}),
+  );
+}
+
+function sendComputerState() {
+  if (engine && engineReady && computerState)
+    engine.postMessage({ type: 'nod-runtime', ...computerState });
+}
 
 const readinessNotice = createReadinessNotice({
   notify: async (eligible) => {
@@ -422,11 +559,10 @@ const readinessNotice = createReadinessNotice({
     if (!eligible() || quitting || !preferences.notifications || foregroundWindow()) return false;
     if (!Notification.isSupported() || isQuietTime(saved.preferences)) return true;
     const notification = new Notification({
+      silent: !preferences.notificationSound,
       title: 'Nod is ready',
       icon: notificationIcon,
-      body: onboardingCompleted
-        ? 'Your workspace and browser are ready.'
-        : 'Your computer is ready. Come back to finish setup.',
+      body: onboardingCompleted ? 'You can chat with Nod now.' : 'Come back to finish setup.',
     });
     displayedNotifications.add(notification);
     notification.on('show', () => {
@@ -455,13 +591,13 @@ function focusedEngineWindow() {
 
 function updateReadinessNotice() {
   void readinessNotice.update({
-    runtimePhase: engineRuntimeReady ? status.runtime.phase : 'preparing',
+    runtimePhase: engineReady ? 'ready' : 'preparing',
     guided: guidedStartup,
     enabled: preferences.notifications,
     foreground: foregroundWindow(),
     quitting,
     completed: onboardingCompleted,
-    engineReady: Boolean(engine) && engineRuntimeReady && status.phase === 'ready',
+    engineReady: Boolean(engine) && engineReady && status.phase === 'ready',
   });
 }
 
@@ -498,6 +634,7 @@ function update(value) {
   for (const window of [setupWindow, engineWindow])
     if (window && !window.isDestroyed()) window.webContents.send('nod:status', status);
   if (tray) tray.setToolTip(`Nod — ${status.phase === 'ready' ? 'Running' : status.message}`);
+  refreshTray();
   showDownloadProgress();
   updateReadinessNotice();
   captureLocalSetup();
@@ -558,12 +695,15 @@ function applyPreferences(saved) {
   preferences = {
     theme: saved.theme,
     notifications: saved.notifications,
+    notificationSound: saved.notificationSound,
     launchAtLogin: saved.launchAtLogin,
+    keepAwake: saved.keepAwake,
   };
   nativeTheme.themeSource = saved.theme;
   publishPreferences();
   synchronizeNotifications();
   updateReadinessNotice();
+  holdAwake();
 }
 
 function persistZoomFactor(contents) {
@@ -713,6 +853,7 @@ async function notifyAssistantMessage(message, threadId, bot) {
   )
     return;
   const notification = new Notification({
+    silent: !preferences.notificationSound,
     title: bot?.name ?? 'Nod',
     icon: notificationIcon,
     body: assistantNotificationPreview(message, knownSecrets),
@@ -748,6 +889,7 @@ async function notifyAssistantMessage(message, threadId, bot) {
 function showNotificationConfirmation() {
   if (!preferences.notifications || quitting || !Notification.isSupported()) return;
   const notification = new Notification({
+    silent: !preferences.notificationSound,
     title: 'Nod',
     icon: notificationIcon,
     body: 'Notifications are on.',
@@ -938,6 +1080,11 @@ function allowSetup(event) {
   if (!isSetup(event)) throw new Error('This action is unavailable.');
 }
 
+function allowLocalRuntime(event) {
+  if (!isSetup(event) && !(isEngine(event) && !remoteConnection))
+    throw new Error('This action is unavailable.');
+}
+
 async function openExternal(value) {
   let url;
   try {
@@ -972,6 +1119,7 @@ async function openExternal(value) {
 
 function protectWindow(window, origin) {
   if (origin) trackZoomFactor(window);
+  window.on('close', () => window.once('closed', () => setTimeout(appClosed, 0)));
   window.on('focus', updateReadinessNotice);
   for (const event of ['blur', 'hide', 'closed'])
     window.on(event, () => setTimeout(updateReadinessNotice, 100));
@@ -1046,6 +1194,7 @@ function openingBounds(bounds) {
 
 function showSettings(section = 'general', loading = false) {
   if (quitting) return;
+  void app.dock?.show();
   if (!loading && onboardingCompleted && (engine || remoteConnection) && status.phase === 'ready') {
     showEngine();
     const window = engineWindow;
@@ -1157,6 +1306,7 @@ function showSettings(section = 'general', loading = false) {
 
 function showEngine({ focus = true } = {}) {
   if (quitting) return;
+  void app.dock?.show();
   if (startupFeedbackOpen && setupWindow && !setupWindow.isDestroyed()) {
     if (focus) {
       setupWindow.show();
@@ -1178,7 +1328,7 @@ function showEngine({ focus = true } = {}) {
   if (
     !enginePreferencesReady ||
     !engineOrigin ||
-    (onboardingCompleted && !engineRuntimeReady) ||
+    (onboardingCompleted && !engineReady) ||
     (!onboardingCompleted && !welcomePassed)
   ) {
     showSettings('general', true);
@@ -1439,29 +1589,6 @@ function baseEnvironment() {
       .filter((key) => typeof process.env[key] === 'string')
       .map((key) => [key, process.env[key]]),
   );
-}
-
-function openOnePassword(owner) {
-  const helper = utilityProcess.fork(
-    join(engineRoot, 'desktop', 'main', 'onepassword.mjs'),
-    [app.getVersion()],
-    {
-      cwd: engineRoot,
-      env: Object.fromEntries(
-        ['HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'SYSTEMROOT', 'TMPDIR', 'TEMP', 'TMP']
-          .concat(['PATH', 'LANG'])
-          .filter((key) => typeof process.env[key] === 'string')
-          .map((key) => [key, process.env[key]]),
-      ),
-      stdio: 'ignore',
-      serviceName: 'Nod 1Password',
-      allowLoadingUnsignedLibraries: true,
-    },
-  );
-  const { port1, port2 } = new MessageChannelMain();
-  helper.postMessage({ type: 'nod-1password-port' }, [port2]);
-  owner.postMessage({ type: 'nod-1password-port' }, [port1]);
-  owner.once('exit', () => helper.kill());
 }
 
 async function answerComputer(child, { id, request }) {
@@ -1882,7 +2009,7 @@ async function startRemote(connection) {
   authToken = connected.token;
   engineBound = true;
   enginePreferencesReady = true;
-  engineRuntimeReady = true;
+  engineReady = true;
   onboardingCompleted = true;
   welcomePassed = true;
   const id = createHash('sha256').update(`${connected.url}\0${connected.owner}`).digest('hex');
@@ -1906,7 +2033,7 @@ async function startRemote(connection) {
     runtime: { phase: 'ready', message: 'Your server is ready.' },
   });
   synchronizeNotifications();
-  showEngine();
+  if (!openedInBackground || openWindow()) showEngine();
   if (connected.analyticsAllowed && !testInstall)
     void analyticsConfiguration()
       .then((analytics) => {
@@ -1951,19 +2078,197 @@ async function saveConnection(input) {
 }
 
 function stayAwake(working) {
-  if (working && awakeBlocker === undefined)
+  engineWorking = working;
+  holdAwake();
+  refreshTray();
+}
+
+function holdAwake() {
+  const hold =
+    !quitting &&
+    (engineWorking ||
+      (preferences.keepAwake &&
+        Boolean(waiting?.next || waiting?.channels.length) &&
+        !powerMonitor.isOnBatteryPower()));
+  systemAwake?.set(hold);
+  if (hold && awakeBlocker === undefined)
     awakeBlocker = powerSaveBlocker.start('prevent-app-suspension');
-  if (!working && awakeBlocker !== undefined) {
+  if (!hold && awakeBlocker !== undefined) {
     powerSaveBlocker.stop(awakeBlocker);
     awakeBlocker = undefined;
   }
 }
 
+async function checkWaiting() {
+  const current = engine;
+  if (!current || !engineReady || remoteConnection || quitting) return;
+  try {
+    const response = await engineRequest('/api/desktop/status');
+    if (!response.ok) return;
+    const value = await response.json();
+    if (engine !== current || quitting) return;
+    waiting = {
+      running: Array.isArray(value.running) ? value.running : [],
+      next:
+        typeof value.next?.title === 'string' && Number.isFinite(Date.parse(value.next.at))
+          ? { title: value.next.title, at: new Date(value.next.at) }
+          : null,
+      channels: Array.isArray(value.channels)
+        ? value.channels.filter((name) => ['telegram', 'whatsapp'].includes(name))
+        : [],
+    };
+  } catch {
+    return;
+  }
+  holdAwake();
+  refreshTray();
+  return waiting;
+}
+
+function watchWaiting() {
+  clearTimeout(waitingTimer);
+  waitingTimer = setTimeout(() => {
+    void checkWaiting()
+      .then(updateWhenIdle)
+      .catch((error) => void writeDiagnostic(error.message).catch(() => {}))
+      .finally(() => {
+        if (!quitting) watchWaiting();
+      });
+  }, 60_000);
+  waitingTimer.unref?.();
+}
+
+function runTime(at) {
+  const time = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).format(at);
+  return at.toDateString() === new Date().toDateString()
+    ? `at ${time}`
+    : `on ${new Intl.DateTimeFormat(undefined, { weekday: 'long' }).format(at)} at ${time}`;
+}
+
+function workNames(running) {
+  return [
+    ...new Set(
+      running.map((turn) =>
+        turn?.task
+          ? 'a task'
+          : turn?.visible
+            ? 'a reply in your chat'
+            : turn?.source === 'schedule'
+              ? 'a scheduled task'
+              : 'a background check',
+      ),
+    ),
+  ];
+}
+
+async function stoppedWork() {
+  if (!engine || !engineReady || remoteConnection) return '';
+  const current = await checkWaiting();
+  if (!current)
+    return 'Nod could not check its work. Turning off now may stop work in progress, and scheduled tasks won’t run until you open Nod again.';
+  const work = workNames(current.running);
+  const next =
+    current.next && current.next.at.getTime() - Date.now() < 86_400_000
+      ? `${current.next.title} won’t run ${runTime(current.next.at)}`
+      : '';
+  const channels = current.channels.length
+    ? `${new Intl.ListFormat('en').format(current.channels.map((name) => (name === 'telegram' ? 'Telegram' : 'WhatsApp')))} won’t get replies`
+    : '';
+  return [
+    work.length ? `Turning off now stops ${new Intl.ListFormat('en').format(work)}.` : '',
+    next && channels
+      ? `${next}, and ${channels}, until you open Nod again.`
+      : next || channels
+        ? `${next || channels} until you open Nod again.`
+        : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+async function turnOff() {
+  if (quitting) return;
+  const stopping = await stoppedWork();
+  if (stopping) {
+    const { response } = await dialog.showMessageBox({
+      type: 'warning',
+      message: 'Turn off Nod?',
+      detail: stopping,
+      buttons: ['Turn Off', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (response !== 0 || quitting) return;
+  }
+  app.quit();
+}
+
+function openWindow() {
+  return [setupWindow, ...engineWindows].some((window) => window && !window.isDestroyed());
+}
+
+function showStartupError() {
+  if (openedInBackground && status.phase === 'error' && !openWindow())
+    showSettings('general', true);
+}
+
+function closeApp() {
+  if (quitting) return;
+  if (!onboardingCompleted) return app.quit();
+  for (const window of [setupWindow, ...engineWindows])
+    if (window && !window.isDestroyed()) window.close();
+}
+
+function appClosed() {
+  if (quitting || !onboardingCompleted || openWindow()) return;
+  app.dock?.hide();
+  void showKeptOnNotice().catch(() => {});
+}
+
+async function showKeptOnNotice() {
+  if (
+    !preferences.notifications ||
+    !Notification.isSupported() ||
+    (await settings.keptOnNoticeShown())
+  )
+    return;
+  await settings.saveKeptOnNotice();
+  const notification = new Notification({
+    title: 'Nod is still on',
+    icon: notificationIcon,
+    body: `Open it or turn it off from the ${process.platform === 'darwin' ? 'menu bar' : 'tray'}.`,
+    silent: !preferences.notificationSound,
+  });
+  displayedNotifications.add(notification);
+  notification.on('click', () => {
+    if (!quitting) showEngine();
+  });
+  notification.on('close', () => displayedNotifications.delete(notification));
+  notification.on('failed', () => displayedNotifications.delete(notification));
+  notification.show();
+}
+
+async function updateWhenIdle(current) {
+  if (!updates?.ready || quitting || checkingUpdates || macInstallerBusy || openWindow()) return;
+  if (
+    !remoteConnection &&
+    (!current ||
+      current.running.length ||
+      (current.next && current.next.at.getTime() - Date.now() < 15 * 60_000))
+  )
+    return;
+  void updateEvent('idle-restart', { version: updates.ready.version });
+  await rememberState(undefined, true);
+  await quit(installUpdate, undefined, true);
+}
+
 async function stopEngine() {
   void computerHelper.cancel().catch(() => {});
+  waiting = undefined;
   stayAwake(false);
   enginePreferencesReady = false;
-  engineRuntimeReady = false;
+  engineReady = false;
   stopNotifications?.();
   stopNotifications = undefined;
   unreadBadge?.stop();
@@ -2025,9 +2330,10 @@ async function transferWelcome() {
     welcomeNavigation = true;
     welcomePassed = true;
     welcomeTransferError = undefined;
+    if (computerState?.error?.code === 'NOD_WSL_REQUIRED') void installWslOnce();
     update({
-      phase: engineRuntimeReady ? 'ready' : 'preparing',
-      message: engineRuntimeReady ? 'Nod is running on your computer.' : status.runtime.message,
+      phase: engineReady ? 'ready' : 'preparing',
+      message: engineReady ? 'Nod is running on your computer.' : status.runtime.message,
       error: undefined,
     });
     if (pendingFeedback || foregroundWindow()) showEngine();
@@ -2047,7 +2353,7 @@ async function transferWelcome() {
 async function saveRendererSettings(event, value) {
   if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
   if (quitting) throw new Error('Nod is closing.');
-  const allowed = ['theme', 'notifications', 'launchAtLogin'];
+  const allowed = ['theme', 'notifications', 'notificationSound', 'launchAtLogin', 'keepAwake'];
   if (isEngine(event) && value?.onboardingCompleted === true && Object.keys(value).length === 1) {
     if (!remoteConnection) await reconcileLocalSetup(true);
     else if (!(await accountSetupComplete()))
@@ -2142,38 +2448,40 @@ async function reconcileLocalSetup(required = false) {
   updateReadinessNotice();
 }
 
-async function finishEnginePreparation(pending = false) {
+async function finishEnginePreparation() {
   await appPreferences.sync();
   if (quitting || !engine) throw new Error(engineFailure || 'Nod is closing.');
   await reconcileLocalSetup();
   if (quitting || !engine) throw new Error(engineFailure || 'Nod is closing.');
-  if (!pending && !engineRuntimeReady) {
-    engine.postMessage({ type: 'nod-runtime-ready' });
-    engineRuntimeReady = true;
-  }
+  engineReady = true;
+  sendComputerState();
+  if (computerState?.error?.code === 'NOD_WSL_REQUIRED') void installWslOnce();
   update({
-    phase: pending ? 'preparing' : 'ready',
-    stage: pending ? status.runtime.stage : 'ready',
-    message: pending ? status.runtime.message : 'Nod is running on your computer.',
-    progress: pending ? status.runtime.progress : undefined,
-    secondsLeft: pending ? status.runtime.secondsLeft : undefined,
+    phase: 'ready',
+    stage: 'ready',
+    message: 'Nod is running on your computer.',
+    progress: undefined,
+    secondsLeft: undefined,
     engineReady: true,
   });
   if (!welcomeTransferError) await transferWelcome().catch(() => {});
   if (welcomeTransferError)
     update({ phase: 'error', error: welcomeTransferError, message: welcomeTransferError });
-  if ((!pending && onboardingCompleted) || welcomePassed) {
+  if (onboardingCompleted || welcomePassed) {
     if (pendingFeedback || foregroundWindow()) showEngine();
     else if (setupWindow && !setupWindow.isDestroyed()) showEngine({ focus: false });
   }
   synchronizeNotifications();
-  if (!pending && pendingPreload) {
-    const assets = pendingPreload;
-    pendingPreload = undefined;
-    void preloadUpdateImages(assets);
-  }
   updateReadinessNotice();
+  void checkWaiting();
   return status;
+}
+
+function preloadPendingUpdate() {
+  if (!pendingPreload || !computerState?.environment) return;
+  const assets = pendingPreload;
+  pendingPreload = undefined;
+  void preloadUpdateImages(assets);
 }
 
 function reportUpdateStatus(phase, progress) {
@@ -2336,9 +2644,8 @@ function waitForMacInstaller() {
   return waiting;
 }
 
-function refreshUpdateMenu() {
-  if (quitting) return;
-  const label = macInstallerBusy
+function updateMenuLabel() {
+  return macInstallerBusy
     ? 'Waiting for update installer…'
     : updatePhase === 'downloading' && updateProgress !== undefined
       ? `Downloading update… ${updateProgress}%`
@@ -2347,44 +2654,75 @@ function refreshUpdateMenu() {
           preparing: 'Preparing update…',
           downloading: 'Downloading update…',
         }[updatePhase] || (updateFailure ? 'Update Failed. Try Again…' : 'Check for Updates…');
+}
+
+function restartMenuLabel() {
+  return updates?.ready ? `Restart to update to ${updates.ready.version}…` : 'Restart to update…';
+}
+
+function trayStatus() {
+  if (remoteConnection) return 'Connected to your server';
+  if (status.phase === 'error') return 'Nod needs attention';
+  if (status.phase === 'updating') return 'Nod is updating';
+  if (status.phase !== 'ready' || !engineReady) return 'Nod is starting';
+  return engineWorking ? 'Nod is working' : 'Nod is on';
+}
+
+function refreshTray() {
+  if (!tray || quitting) return;
+  const items = [
+    { label: trayStatus(), enabled: false },
+    ...(waiting?.next
+      ? [
+          {
+            label: `Next: ${waiting.next.title.slice(0, 40)} ${runTime(waiting.next.at)}`,
+            enabled: false,
+          },
+        ]
+      : []),
+    { type: 'separator' },
+    { label: 'Open Nod', click: showEngine },
+    { label: 'Settings…', click: () => showSettings() },
+    { label: 'Report bug…', click: showFeedback },
+    {
+      label: updateMenuLabel(),
+      enabled: Boolean(updates) && !checkingUpdates && !macInstallerBusy,
+      click: () => void checkForUpdates(),
+    },
+    {
+      label: restartMenuLabel(),
+      visible: Boolean(updates?.ready),
+      enabled: Boolean(updates?.ready) && !checkingUpdates && !macInstallerBusy,
+      click: () => void checkForUpdates(true, true),
+    },
+    ...(process.platform === 'win32'
+      ? [{ label: 'Replay onboarding…', click: replayOnboarding }]
+      : []),
+    { type: 'separator' },
+    { label: 'Turn Off Nod', click: () => void turnOff() },
+  ];
+  const key = JSON.stringify(items.map(({ label, enabled, visible }) => [label, enabled, visible]));
+  if (key === trayKey) return;
+  trayKey = key;
+  tray.setContextMenu(Menu.buildFromTemplate(items));
+}
+
+function refreshUpdateMenu() {
+  if (quitting) return;
+  const label = updateMenuLabel();
   const item = Menu.getApplicationMenu?.()?.getMenuItemById('desktop-update');
   if (item) {
     item.label = label;
     item.enabled = Boolean(updates) && !checkingUpdates && !macInstallerBusy;
   }
-  const restartLabel = updates?.ready
-    ? `Restart to update to ${updates.ready.version}…`
-    : 'Restart to update…';
+  const restartLabel = restartMenuLabel();
   const restartItem = Menu.getApplicationMenu?.()?.getMenuItemById('desktop-restart');
   if (restartItem) {
     restartItem.label = restartLabel;
     restartItem.visible = Boolean(updates?.ready);
     restartItem.enabled = Boolean(updates?.ready) && !checkingUpdates && !macInstallerBusy;
   }
-  if (tray)
-    tray.setContextMenu(
-      Menu.buildFromTemplate([
-        { label: 'Open Nod', click: showEngine },
-        { label: 'Settings…', click: () => showSettings() },
-        { label: 'Report bug…', click: showFeedback },
-        {
-          label,
-          enabled: Boolean(updates) && !checkingUpdates && !macInstallerBusy,
-          click: () => void checkForUpdates(),
-        },
-        {
-          label: restartLabel,
-          visible: Boolean(updates?.ready),
-          enabled: Boolean(updates?.ready) && !checkingUpdates && !macInstallerBusy,
-          click: () => void checkForUpdates(true, true),
-        },
-        ...(process.platform === 'win32'
-          ? [{ label: 'Replay onboarding…', click: replayOnboarding }]
-          : []),
-        { type: 'separator' },
-        { label: 'Quit Nod', click: () => app.quit() },
-      ]),
-    );
+  refreshTray();
   publishUpdateStatus();
 }
 
@@ -2538,6 +2876,7 @@ async function notifyUpdate(candidate) {
   ({ notifications } = await settings.get());
   if (quietTime || !notifications || quitting || focusedEngineWindow()) return 'quiet';
   const notification = new Notification({
+    silent: !preferences.notificationSound,
     title: `Nod ${candidate.version} is ${candidate.command ? 'available' : 'ready'}`,
     icon: notificationIcon,
     body: candidate.command
@@ -2595,10 +2934,11 @@ async function restartForUpdate() {
   await quit(installUpdate, undefined, true);
 }
 
-async function rememberState(window) {
+async function rememberState(window, hidden = false) {
   session.fromPartition(clientPartition).flushStorageData();
   const state = JSON.stringify({
     version: updates?.ready?.version,
+    hidden,
     path: URL.parse(window?.webContents.getURL() ?? '')?.pathname,
     bounds: window?.getNormalBounds(),
     maximized: window?.isMaximized(),
@@ -2634,6 +2974,7 @@ async function resumeState() {
         running: app.getVersion(),
         applied: saved.version === app.getVersion(),
       });
+    resumeHidden = saved.hidden === true;
     pendingAppPath ||= appOpenPath(`nod://open${saved.path}`, appPages) || undefined;
     if (Number.isInteger(saved.port) && saved.port > 1023 && saved.port < 65536)
       resumePort = saved.port;
@@ -2662,21 +3003,7 @@ async function confirmRestart() {
     if (response.ok) running = (await response.json()).running;
   } catch {}
   if (Array.isArray(running) && !running.length) return true;
-  const work = Array.isArray(running)
-    ? [
-        ...new Set(
-          running.map((turn) =>
-            turn?.task
-              ? 'a task'
-              : turn?.visible
-                ? 'a reply in your chat'
-                : turn?.source === 'schedule'
-                  ? 'a scheduled task'
-                  : 'a background check',
-          ),
-        ),
-      ]
-    : [];
+  const work = Array.isArray(running) ? workNames(running) : [];
   const { response } = await dialog.showMessageBox({
     type: 'warning',
     message: work.length ? 'Nod is still working.' : 'Nod could not check its current work.',
@@ -2759,6 +3086,7 @@ async function quit(complete, failure = 'Nod could not finish shutting down.', u
   quitting = true;
   startupFeedback.close();
   stayAwake(false);
+  systemAwake?.close();
   await persistCurrentZoomFactor().catch(
     (error) => void writeDiagnostic(error.message).catch(() => {}),
   );
@@ -2844,12 +3172,12 @@ async function validateStart() {
   if (quitting) throw new Error('Nod is closing.');
 }
 
-async function startEngine({ runtime, signal, pending = false }) {
+async function startEngine({ database, signal }) {
   void writeDiagnostic('Starting the background service.', { event: 'engine_start' }).catch(
     () => {},
   );
   if (engineFailure) throw new Error(engineFailure);
-  if (engine && enginePreferencesReady) return finishEnginePreparation(pending);
+  if (engine && enginePreferencesReady) return finishEnginePreparation();
   if (engine) {
     if (!(await confirmRestart()))
       throw Object.assign(new Error('Restart Nod when it finishes its current work.'), {
@@ -2880,7 +3208,11 @@ async function startEngine({ runtime, signal, pending = false }) {
   const providerEnvironment = await settings.environment();
   const owner = await profileOwner();
   if (providerEnvironment.NOD_VAULT_KEY) knownSecrets.add(providerEnvironment.NOD_VAULT_KEY);
-  if (runtime.env.DATABASE_URL) knownSecrets.add(runtime.env.DATABASE_URL);
+  knownSecrets.add(database.url);
+  const { computerNames } = await import(
+    pathToFileURL(join(engineRoot, 'desktop', 'runtime', 'index.mjs')).href
+  );
+  const containers = computerNames(profileRoot);
   const { nodBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
   const tracesToken =
     typeof nodBuild?.tracesToken === 'string' ? nodBuild.tracesToken : process.env.NOD_TRACES_TOKEN;
@@ -2890,7 +3222,9 @@ async function startEngine({ runtime, signal, pending = false }) {
   const started = Date.now();
   const environment = {
     ...baseEnvironment(),
-    ...runtime.env,
+    DATABASE_URL: database.url,
+    BROWSER_CONTAINER: containers.browser,
+    WORKSPACE_CONTAINER: containers.workspace,
     ...providerEnvironment,
     NODE_ENV: 'production',
     PORT: String(port),
@@ -2903,7 +3237,6 @@ async function startEngine({ runtime, signal, pending = false }) {
     NOD_OS_VERSION: process.getSystemVersion(),
     NOD_DESKTOP_OWNER_ID: owner,
     NOD_DESKTOP_AUTH_TOKEN: authToken,
-    NOD_DESKTOP_RUNTIME_PENDING: 'true',
     NOD_ANALYTICS_ENABLED: String(!testInstall && analytics.enabled),
     NOD_ANALYTICS_ENVIRONMENT: analyticsEnvironment(nodBuild),
     NOD_PUBLIC_URL: engineOrigin,
@@ -2944,7 +3277,6 @@ async function startEngine({ runtime, signal, pending = false }) {
         ).catch(() => {});
       }
     }
-    if (engine === child && message?.type === 'nod-1password-open') openOnePassword(child);
     if (engine === child && message?.type === 'nod-trash') void moveToTrash(child, message);
     if (engine === child && message?.type === 'nod-computer') void answerComputer(child, message);
     if (
@@ -2960,7 +3292,7 @@ async function startEngine({ runtime, signal, pending = false }) {
   let diagnostics = '';
   let failure = '';
   child.stderr?.on('data', (chunk) => {
-    if (enginePreferencesReady && engineRuntimeReady) return;
+    if (enginePreferencesReady && engineReady) return;
     diagnostics = (diagnostics + chunk.toString()).slice(-4000);
     const lines = diagnostics.split('\n');
     diagnostics = lines.pop() || '';
@@ -2975,11 +3307,13 @@ async function startEngine({ runtime, signal, pending = false }) {
   });
   child.on('exit', (code) => {
     if (engine !== child) return;
+    const crashed = enginePreferencesReady && onboardingCompleted && !closingEngine && !quitting;
+    const shown = [...engineWindows].some((window) => !window.isDestroyed() && window.isVisible());
+    waiting = undefined;
     stayAwake(false);
     if (!closingEngine)
       failure =
         (status.phase === 'error' && status.error) ||
-        (status.runtime.phase === 'error' && status.runtime.message) ||
         failure ||
         `Nod’s background service stopped${enginePreferencesReady ? '' : ' before it was ready'}${Number.isInteger(code) ? ` (code ${code})` : ''}. Try again to restart it.`;
     stopNotifications?.({ clear: closingEngine || quitting });
@@ -2998,7 +3332,7 @@ async function startEngine({ runtime, signal, pending = false }) {
     engineOrigin = '';
     engineBound = false;
     authToken = '';
-    engineRuntimeReady = false;
+    engineReady = false;
     update({ engineReady: false });
     if (status.phase !== 'updating') {
       void persistCurrentZoomFactor().catch(
@@ -3008,6 +3342,7 @@ async function startEngine({ runtime, signal, pending = false }) {
       engineWindows.clear();
     }
     if (!quitting && !closingEngine) {
+      if (crashed && restartEngine(shown)) return;
       engineFailure = failure;
       update({
         phase: 'error',
@@ -3062,7 +3397,27 @@ async function startEngine({ runtime, signal, pending = false }) {
     );
   }
   enginePreferencesReady = true;
-  return finishEnginePreparation(pending);
+  return finishEnginePreparation();
+}
+
+function restartEngine(shown) {
+  const now = Date.now();
+  engineRestarts = engineRestarts.filter((at) => now - at < 10 * 60_000);
+  if (engineRestarts.length >= 3) return false;
+  engineRestarts.push(now);
+  update({ phase: 'starting', message: 'Nod stopped unexpectedly. Restarting…' });
+  if (shown) showSettings('general', true);
+  const timer = setTimeout(
+    () => {
+      if (quitting || engine) return;
+      void prepare({ retry: true }).then(() => {
+        if (status.phase === 'error' && !openWindow()) showSettings('general', true);
+      });
+    },
+    [2_000, 15_000, 60_000][engineRestarts.length - 1],
+  );
+  timer.unref?.();
+  return true;
 }
 
 async function prepare(options = {}) {
@@ -3095,7 +3450,8 @@ async function prepare(options = {}) {
       needsRuntimeArchive: false,
       needsStorage: false,
     });
-    return lifecycle.start({ retry: options?.retry === true });
+    await lifecycle.start({ retry: options?.retry === true });
+    return status;
   })()
     .catch((error) => {
       void writeDiagnostic(
@@ -3145,10 +3501,10 @@ function replayOnboarding() {
   return status;
 }
 
-async function chooseComputerDirectory() {
+async function chooseComputerDirectory(parent = setupWindow) {
   if (process.platform !== 'win32' || lifecycle.busy || quitting || !status.runtime.needsStorage)
     throw new Error('This setup action is unavailable.');
-  const chosen = await dialog.showOpenDialog(setupWindow, {
+  const chosen = await dialog.showOpenDialog(parent, {
     title: 'Choose a folder for Nod’s private computer',
     buttonLabel: 'Use this folder',
     properties: ['openDirectory', 'createDirectory'],
@@ -3166,9 +3522,9 @@ async function chooseComputerDirectory() {
   return prepare({ retry: true });
 }
 
-async function importRuntime() {
+async function importRuntime(parent = setupWindow) {
   if (lifecycle.busy || quitting) throw new Error('Wait for Nod to finish its current setup step.');
-  const chosen = await dialog.showOpenDialog(setupWindow, {
+  const chosen = await dialog.showOpenDialog(parent, {
     title: 'Choose the Nod Runtime pack',
     buttonLabel: 'Install runtime',
     properties: ['openFile'],
@@ -3191,7 +3547,7 @@ async function importRuntime() {
     return prepare();
   } catch (error) {
     void writeDiagnostic(error.message).catch(() => {});
-    if (onboardingCompleted)
+    if (onboardingCompleted && !engineReady)
       update({
         phase: 'error',
         message: bounded(error.message),
@@ -3212,6 +3568,7 @@ else {
       installUpdateOnQuit = false;
       return void app.quit();
     }
+    if (launchedInBackground(argv)) return;
     const path = argv.map((value) => appOpenPath(value, appPages)).find(Boolean);
     if (path) pendingAppPath = path;
     showEngine();
@@ -3334,7 +3691,7 @@ else {
             });
             void updateEvent('download-finished', { version, target: 'runtime', verified: true });
             report('preparing');
-            if (!engine || closingEngine) pendingPreload = assets;
+            if (!computerState?.environment || closingEngine) pendingPreload = assets;
             else await preloadUpdateImages(assets, signal);
           },
           restart: restartForUpdate,
@@ -3403,6 +3760,16 @@ else {
         });
       }
       nativeTheme.on('updated', publishPreferences);
+      for (const name of ['on-ac', 'on-battery']) powerMonitor.on(name, holdAwake);
+      powerMonitor.on('resume', () => void checkWaiting());
+      watchWaiting();
+      try {
+        refreshLoginItem();
+      } catch (error) {
+        void writeDiagnostic(`Open at login could not be refreshed. ${error.message}`).catch(
+          () => {},
+        );
+      }
       configureAppSession();
       const image = nativeImage.createFromPath(join(desktopRoot, 'main', 'trayTemplate.png'));
       image.setTemplateImage(true);
@@ -3440,7 +3807,8 @@ else {
               { role: 'hideOthers' },
               { role: 'unhide' },
               { type: 'separator' },
-              { role: 'quit' },
+              { label: 'Turn Off Nod', click: () => void turnOff() },
+              { label: 'Close Nod', accelerator: 'CmdOrCtrl+Q', click: closeApp },
             ],
           },
           { role: 'editMenu' },
@@ -3664,7 +4032,14 @@ else {
           typeof value !== 'object' ||
           Array.isArray(value) ||
           Object.keys(value).some(
-            (key) => !['theme', 'notifications', 'launchAtLogin'].includes(key),
+            (key) =>
+              ![
+                'theme',
+                'notifications',
+                'notificationSound',
+                'launchAtLogin',
+                'keepAwake',
+              ].includes(key),
           )
         )
           throw new Error('These preferences are not supported.');
@@ -3677,12 +4052,13 @@ else {
       });
       ipcMain.handle('nod:setup:preferences', async (event) => {
         if (!isEngine(event) || remoteConnection) throw new Error('Local setup is unavailable.');
-        if ((await settings.get()).onboardingPreferenceStep !== 'complete')
-          await saveRendererSettings(event, {
-            launchAtLogin: true,
-            onboardingPreferenceStep: 'complete',
-          });
-        return { preferenceStep: 'complete' };
+        if ((await settings.get()).onboardingPreferenceStep === 'complete')
+          return { preferenceStep: 'complete' };
+        const saved = await saveRendererSettings(event, {
+          launchAtLogin: true,
+          onboardingPreferenceStep: 'complete',
+        });
+        return { preferenceStep: 'complete', launchAtLogin: saved.launchAtLogin };
       });
       ipcMain.handle('nod:setup:reconcile', async (event) => {
         if (!isEngine(event) || remoteConnection) throw new Error('Local setup is unavailable.');
@@ -3699,8 +4075,11 @@ else {
           showEngine();
           if (enginePreferencesReady && status.runtime.phase !== 'error') return status;
         }
-        if (engineRuntimeReady || (!options?.retry && enginePreferencesReady && preparing))
+        if (engineReady && options?.retry === true && status.runtime.phase === 'error') {
+          void lifecycle.warmup({ retry: true }).catch(() => {});
           return status;
+        }
+        if (engineReady || (!options?.retry && enginePreferencesReady && preparing)) return status;
         return prepare(options);
       });
       ipcMain.handle('nod:warmup', async (event) => {
@@ -3711,14 +4090,15 @@ else {
         void lifecycle.warmup().catch(() => {});
       });
       ipcMain.handle('nod:runtime:import', (event) => {
-        allowSetup(event);
-        return importRuntime();
+        allowLocalRuntime(event);
+        return importRuntime(BrowserWindow.fromWebContents(event.sender) ?? setupWindow);
       });
       ipcMain.handle('nod:runtime:install-wsl', async (event) => {
-        allowSetup(event);
+        allowLocalRuntime(event);
         if (process.platform !== 'win32' || lifecycle.busy || quitting || !status.runtime.needsWsl)
           throw new Error('This setup action is unavailable.');
-        const { response } = await dialog.showMessageBox(setupWindow, {
+        const parent = BrowserWindow.fromWebContents(event.sender) ?? setupWindow;
+        const { response } = await dialog.showMessageBox(parent, {
           type: 'question',
           message: 'Install Windows Subsystem for Linux?',
           detail:
@@ -3733,17 +4113,17 @@ else {
           pathToFileURL(join(engineRoot, 'desktop/runtime/windows.mjs')).href
         );
         await lifecycle.install(installWsl, { warmup: false });
-        update({
-          phase: 'error',
-          message: 'Restart your PC, then open Nod again.',
-          error: 'Restart your PC, then open Nod again.',
-          needsWsl: false,
-        });
+        const restart = 'Restart your PC, then open Nod again.';
+        if (engineReady)
+          update({
+            runtime: { ...status.runtime, phase: 'error', message: restart, needsWsl: false },
+          });
+        else update({ phase: 'error', message: restart, error: restart, needsWsl: false });
         return status;
       });
       ipcMain.handle('nod:runtime:choose-folder', (event) => {
-        allowSetup(event);
-        return chooseComputerDirectory();
+        allowLocalRuntime(event);
+        return chooseComputerDirectory(BrowserWindow.fromWebContents(event.sender) ?? setupWindow);
       });
       ipcMain.handle('nod:chat-read:get', (event, ownerId, threadId) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
@@ -3784,9 +4164,13 @@ else {
         update({ remote: Boolean(saved.serverUrl) });
         applyPreferences(saved);
         guidedStartup = !saved.serverUrl && saved.onboardingPreferenceStep !== 'complete';
-        const presented = showSettings('general', true);
+        openedInBackground =
+          (resumeHidden || openedAtLogin()) &&
+          Boolean(saved.serverUrl || saved.onboardingPreferenceStep === 'complete');
+        if (openedInBackground) app.dock?.hide();
+        const presented = openedInBackground ? undefined : showSettings('general', true);
         if (saved.serverUrl || saved.onboardingPreferenceStep === 'complete' || saved.welcome)
-          void prepare();
+          void prepare().then(showStartupError);
         await presented;
       } catch (error) {
         showSettings('general', true);

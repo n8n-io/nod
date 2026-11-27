@@ -36,8 +36,4 @@ export interface AccountUpdate {
   traces?: boolean;
 }
 
-export interface AccountPreparationResponse {
-  ok: true;
-}
-
 export type AccountPreferences = Preferences;

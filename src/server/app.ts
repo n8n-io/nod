@@ -1,6 +1,7 @@
 import { presentationSchema, presentationText } from '../shared/presentation.ts';
 import {
   answerChoicesSchema,
+  choiceAnswerText,
   questionAnswerSchema,
   writtenAnswer,
   type AnswerChoice,
@@ -26,12 +27,14 @@ import {
   ownerId,
   port,
 } from './config.ts';
-import { events, type ServerEvent } from './events.ts';
+import { events, refresh, type ServerEvent } from './events.ts';
+import { transaction } from './transaction.ts';
 import { artifactView, localArtifacts, type ArtifactService } from './artifacts.ts';
 import {
   activeHandoffSql,
   activeThread,
   chatRecovery,
+  lockThread,
   ownerStarted,
   pendingAnswerChoicesSql,
   reactToAssistantMessage,
@@ -45,11 +48,13 @@ import {
   submitUserMessage,
 } from './thread.ts';
 import { reactionReplySql } from './turn-chain.ts';
+import { VaultError } from './vault.ts';
+import { loopbackHost } from '../shared/loopback.ts';
 import { isMessageReaction } from '../shared/emoji.ts';
 import { accessKey, registerLocalAccess } from './access.ts';
 import { logFailure, withFailureLog, type FailureLogSink } from './failure-log.ts';
 import { fileBytes } from '../shared/files.ts';
-import { BrowserActionError, type Computer } from '../ports/computer.ts';
+import { BrowserActionError, type BrowserViewFrame, type Computer } from '../ports/computer.ts';
 import { browserErrorMessage } from '../shared/browser-errors.ts';
 import { browserHandoffInputs } from '../shared/browser-handoff.ts';
 import type {
@@ -66,11 +71,28 @@ import { registerWorkAdmission, type WorkAdmission } from './work-admission.ts';
 import { registerAnalyticsRoutes, snapshotAnalytics, type CaptureAnalytics } from './analytics.ts';
 import { messagePreview } from './message-preview.ts';
 import { validateRequestText } from './request-text.ts';
+import { createCardInteractions } from './card-interactions.ts';
 
 const messageFields = `m.id,m.role,m.text,m.bot_id AS "botId",CASE WHEN m.role='user' THEN m.display_text END AS "displayText",m.audio_caption AS "audioCaption",m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,m.presentation,m.answer_choices AS "answerChoices",(${pendingAnswerChoicesSql}) AS "answerChoicesPending",
  (m.role='user' AND (m.approval_answer IS NOT NULL OR (m.question_answer IS NOT NULL AND m.text<>'' AND jsonb_array_length(m.attachments)=0))) AS "cardAnswer",
+ (m.role='user' AND m.card_choice) AS "cardChoice",
  CASE WHEN m.role='assistant' AND m.answer_choices IS NOT NULL THEN (SELECT json_build_object('answer',a.question_answer,'text',a.text) FROM messages a
    WHERE a.reply_to_message_id=m.id AND a.owner_id=m.owner_id AND a.role='user' AND a.question_answer IS NOT NULL AND a.text<>'' AND jsonb_array_length(a.attachments)=0 ORDER BY a.created_at,a.id LIMIT 1) END AS "choiceAnswer",
+ CASE WHEN m.role='assistant' THEN (SELECT json_build_object('id',ci.id,'status',ci.status,'selectedOptionIds',ci.selected_option_ids,'validUntil',ci.valid_until) FROM card_interactions ci
+   WHERE ci.message_id=m.id AND ci.owner_id=m.owner_id ORDER BY ci.created_at DESC LIMIT 1) END AS "interaction",
+ (m.role='assistant' AND m.stream_id LIKE 'failure:%' AND EXISTS (
+   WITH RECURSIVE chain(id,next,thread_id) AS (
+     SELECT u.id,u.parent_turn_id,u.thread_id FROM turns u WHERE u.id=m.turn_id AND u.owner_id=m.owner_id AND u.thread_id=m.thread_id
+     UNION
+     SELECT u.id,u.parent_turn_id,u.thread_id FROM chain c
+     JOIN turns u ON u.id=c.next AND u.owner_id=m.owner_id AND u.thread_id=c.thread_id
+   )
+   SELECT 1 FROM turns u WHERE u.id=m.turn_id AND u.owner_id=m.owner_id
+     AND u.status='failed' AND u.outside_action_at IS NULL
+     AND NOT EXISTS (SELECT 1 FROM turns x JOIN chain c ON c.id=x.id WHERE x.outside_action_at IS NOT NULL)
+     AND NOT EXISTS (SELECT 1 FROM approvals a JOIN chain c ON c.id IN (a.turn_id,a.execution_turn_id)
+       WHERE a.owner_id=u.owner_id AND a.status IN ('confirmed','executing','uncertain','completed'))
+ )) AS "retryable",
  CASE WHEN m.role='assistant' THEN (SELECT json_build_object('id',a.id,'status',a.status,'action',a.action,'title',a.title,'decline',a.decline,'cardQuestion',a.card_question,'args',a.args,'failure',CASE WHEN a.status IN ('expired','uncertain') AND jsonb_typeof(a.result->'error')='string' THEN a.result->>'error' END,'active',u.status IN ('running','waiting'),'executionActive',e.status IN ('queued','running','waiting')) FROM approvals a
    JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id LEFT JOIN turns e ON e.id=a.execution_turn_id AND e.owner_id=a.owner_id
    WHERE a.confirmation_message_id=m.id AND a.owner_id=m.owner_id LIMIT 1) END AS "approval",
@@ -142,12 +164,25 @@ function choiceAnswerView(options: AnswerChoice[], row: ChoiceAnswerRow | null |
   return { choiceIds, ...(text ? { text } : {}) };
 }
 
-type MessageRow = Omit<Message, 'approval' | 'choiceAnswer' | 'cardAnswer' | 'work'> & {
+type InteractionRow = {
+  id: string;
+  status: 'open' | 'selected' | 'fulfilled' | 'superseded' | 'expired' | 'cancelled';
+  selectedOptionIds?: string[] | null;
+  validUntil?: string | null;
+};
+
+type MessageRow = Omit<
+  Message,
+  'approval' | 'choiceAnswer' | 'cardAnswer' | 'cardChoice' | 'work' | 'interaction'
+> & {
   work?: Message['work'] | null;
   assistantReaction?: MessageReaction | null;
   approval?: ApprovalRow | null;
   choiceAnswer?: ChoiceAnswerRow | null;
+  interaction?: InteractionRow | null;
   cardAnswer?: boolean | null;
+  cardChoice?: boolean | null;
+  retryable?: boolean | null;
 };
 
 function messageView(row: MessageRow): Message {
@@ -160,7 +195,10 @@ function messageView(row: MessageRow): Message {
     answerChoicesPending,
     approval,
     choiceAnswer,
+    interaction,
     cardAnswer,
+    cardChoice,
+    retryable,
     work,
     ...message
   } = row;
@@ -180,6 +218,18 @@ function messageView(row: MessageRow): Message {
       ? { answerChoices: choices.data, answerChoicesPending: answerChoicesPending === true }
       : {}),
     ...(answered ? { choiceAnswer: answered } : {}),
+    ...(interaction
+      ? {
+          interaction: {
+            id: interaction.id,
+            status: interaction.status,
+            ...(Array.isArray(interaction.selectedOptionIds)
+              ? { selectedOptionIds: interaction.selectedOptionIds }
+              : {}),
+            ...(interaction.validUntil ? { validUntil: interaction.validUntil } : {}),
+          },
+        }
+      : {}),
     ...(approval
       ? {
           approval: {
@@ -195,6 +245,8 @@ function messageView(row: MessageRow): Message {
         }
       : {}),
     ...(cardAnswer ? { cardAnswer: true as const } : {}),
+    ...(cardChoice ? { cardChoice: true as const } : {}),
+    ...(retryable ? { retryable: true } : {}),
     ...(work ? { work } : {}),
     reactions: [
       ...(message.reaction ? [{ actor: 'user' as const, reaction: message.reaction }] : []),
@@ -220,8 +272,14 @@ export interface AppDependencies {
   verification?: Awaited<ReturnType<typeof createChatVerification>>;
   computer?: Pick<
     Computer,
-    'act' | 'screenshot' | 'control' | 'view' | 'screenStatus' | 'clear' | 'discard'
+    'act' | 'screenshot' | 'control' | 'view' | 'typedLogin' | 'screenStatus' | 'clear' | 'discard'
   >;
+  saveLogin?: (login: {
+    origin: string;
+    label: string;
+    username: string;
+    password: string;
+  }) => Promise<unknown>;
   configuration?: () => Configuration;
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
   forgetLearned?: () => Promise<void>;
@@ -278,7 +336,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
   const streams = new Set<ServerResponse>();
   const browserFrameAcks = new Map<
     string,
-    { turnId: string; browserId: string; acknowledge(): void }
+    { turnId: string; browserId: string; origin?: string; acknowledge(): void }
   >();
   if (dependencies.failureLog)
     app.addHook('onRequest', (_request, _reply, done) =>
@@ -357,7 +415,33 @@ export async function createApp(dependencies: AppDependencies = {}) {
          FROM turns u WHERE u.owner_id=$1 AND u.status='running'`,
         [ownerId],
       );
-      return { running: result.rows };
+      const tables = (
+        await pool.query<{ schedules: boolean; channels: boolean }>(
+          `SELECT to_regclass('schedules') IS NOT NULL AS schedules,to_regclass('channel_settings') IS NOT NULL AS channels`,
+        )
+      ).rows[0]!;
+      const next = tables.schedules
+        ? (
+            await pool.query<{ title: string; at: Date }>(
+              `SELECT title,next_run_at AS at FROM schedules
+               WHERE owner_id=$1 AND enabled AND next_run_at > now() ORDER BY next_run_at LIMIT 1`,
+              [ownerId],
+            )
+          ).rows[0]
+        : undefined;
+      const channels = tables.channels
+        ? (
+            await pool.query<{ provider: string }>(
+              'SELECT provider FROM channel_settings WHERE owner_id=$1 AND enabled ORDER BY provider',
+              [ownerId],
+            )
+          ).rows.map((row) => row.provider)
+        : [];
+      return {
+        running: result.rows,
+        next: next ? { title: next.title, at: next.at.toISOString() } : null,
+        channels,
+      };
     });
   const turnFields = `u.id,u.status,u.source,u.error,u.created_at AS "createdAt",u.finished_at AS "finishedAt",
     u.bot_id AS "botId",
@@ -607,6 +691,57 @@ export async function createApp(dependencies: AppDependencies = {}) {
       return reset;
     }, threadId);
   });
+  const cardInteractions = createCardInteractions(pool, ownerId);
+  app.post('/api/interactions/:id/select', async (request, reply) => {
+    const { id } = z.object({ id: z.uuid() }).parse(request.params);
+    const { optionIds } = z
+      .object({ optionIds: z.array(z.string().min(1)).min(1).max(6) })
+      .strict()
+      .parse(request.body);
+    if (!publicConfiguration().llmReady)
+      return reply.code(503).send({
+        error: 'Choose a model in Models before sending a message.',
+        code: 'model_required',
+      });
+    const result = await transaction(async (client) => {
+      await lockThread(client);
+      const outcome = await cardInteractions.selectInteraction(client, id, optionIds);
+      if (!outcome.ok) return outcome;
+      if (outcome.alreadySelected) return outcome;
+      const text = choiceAnswerText(outcome.selected);
+      const submitted = await (dependencies.submitMessage ?? submitUserMessage)(text, [], {
+        replyToMessageId: outcome.interaction.messageId,
+        questionAnswer: { choiceIds: outcome.selected.map((opt) => opt.id) },
+        channel: 'web',
+        client,
+      });
+      return { ...outcome, submitted };
+    }, pool);
+    if (!result.ok) {
+      const status =
+        result.code === 'not_found' ? 404 : result.code === 'invalid_option' ? 400 : 409;
+      return reply.code(status).send({
+        error:
+          result.code === 'expired'
+            ? 'This card option has expired.'
+            : result.code === 'closed'
+              ? 'This card is no longer open for selection.'
+              : result.code === 'invalid_option'
+                ? 'Choose an available option.'
+                : 'Interaction not found.',
+        code: `interaction_${result.code}`,
+        status: result.status,
+      });
+    }
+    refresh();
+    return {
+      interactionId: result.interaction.id,
+      status: result.interaction.status,
+      selectedOptionIds: result.interaction.selectedOptionIds,
+      alreadySelected: result.alreadySelected,
+      ...('submitted' in result ? { submitted: result.submitted } : {}),
+    };
+  });
   app.post('/api/conversation/restart-context', async (request) => {
     const { threadId, turnId } = z
       .object({ threadId: z.uuid(), turnId: z.uuid() })
@@ -628,6 +763,15 @@ export async function createApp(dependencies: AppDependencies = {}) {
           !value.approvalAnswer ||
           (Boolean(value.replyToMessageId) &&
             !value.questionAnswer &&
+            !value.verificationRequestId &&
+            value.attachmentIds.length === 0),
+      )
+      .refine(
+        (value) =>
+          !value.cardChoice ||
+          (Boolean(value.replyToMessageId) &&
+            !value.questionAnswer &&
+            !value.approvalAnswer &&
             !value.verificationRequestId &&
             value.attachmentIds.length === 0),
       )
@@ -690,6 +834,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
         chatClearedAt: input.chatClearedAt,
         clientMessageId,
         questionAnswer: input.questionAnswer,
+        cardChoice: input.cardChoice,
         approvalAnswer: input.approvalAnswer,
         stopSignal: arrival,
       },
@@ -820,7 +965,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const latest = await pool.query(
       `SELECT u.session_id AS "browserId",left(COALESCE(m.text,u.prompt),100) AS title,u.status,COALESCE(e.created_at,u.created_at) AS "lastActivityAt"
        FROM turns u LEFT JOIN messages m ON m.id=u.message_id
-       LEFT JOIN LATERAL (SELECT created_at FROM turn_events WHERE turn_id=u.id AND type IN ('tool_start','tool_complete') AND (summary='browser' OR summary LIKE 'browser %') ORDER BY created_at DESC LIMIT 1) e ON true
+       LEFT JOIN LATERAL (SELECT created_at FROM turn_events WHERE turn_id=u.id AND type IN ('tool_start','tool_complete') AND (summary='browser' OR summary='browser run' OR summary LIKE 'browser %') ORDER BY created_at DESC LIMIT 1) e ON true
        WHERE u.owner_id=$1 AND u.thread_id=$2 AND e.created_at IS NOT NULL
        ORDER BY e.created_at IS NULL,COALESCE(e.created_at,u.created_at) DESC LIMIT 1`,
       [ownerId, thread.id],
@@ -852,6 +997,19 @@ export async function createApp(dependencies: AppDependencies = {}) {
     return latest.rows[0]?.handoff_browser_id as string | undefined;
   }
   const handoffClosed = 'The browser opens here when Nod hands it to you.';
+  const savableLogins = new Map<string, { origin: string; username: string; password: string }>();
+  async function typedHandoffLogin(turnId: string) {
+    const typedLogin = dependencies.computer?.typedLogin;
+    if (!typedLogin) return undefined;
+    const { rows } = await pool.query<{ browser: string; since: Date }>(
+      `SELECT u.handoff_browser_id AS browser,u.finished_at AS since FROM turns u
+       JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
+       WHERE u.owner_id=$1 AND u.id=$2 AND th.archived_at IS NULL
+       AND u.handoff_browser_id IS NOT NULL AND u.finished_at IS NOT NULL`,
+      [ownerId, turnId],
+    );
+    return rows[0] ? typedLogin(rows[0].browser, rows[0].since.getTime()) : undefined;
+  }
   async function readBrowserScreen(reply: FastifyReply) {
     const thread = await activeThread(pool);
     const browserId = (await readCurrentBrowser())?.browserId ?? thread.id;
@@ -913,7 +1071,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       let abortOpening = () => {};
       try {
         return await Promise.race([
-          new Promise<IteratorResult<Buffer>>((resolve) => {
+          new Promise<IteratorResult<BrowserViewFrame>>((resolve) => {
             abortOpening = () => resolve({ done: true, value: undefined });
             controller.signal.addEventListener('abort', abortOpening, { once: true });
             if (controller.signal.aborted) abortOpening();
@@ -948,7 +1106,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       });
       while (!next.done && !controller.signal.aborted) {
         const length = Buffer.alloc(4);
-        length.writeUInt32BE(next.value.length);
+        length.writeUInt32BE(next.value.image.length);
         let acknowledge: Promise<void> | undefined;
         if (viewId) {
           acknowledge = new Promise<void>((resolve) => {
@@ -958,13 +1116,18 @@ export async function createApp(dependencies: AppDependencies = {}) {
               controller.signal.removeEventListener('abort', finish);
               resolve();
             };
-            browserFrameAcks.set(viewId, { turnId, browserId, acknowledge: finish });
+            browserFrameAcks.set(viewId, {
+              turnId,
+              browserId,
+              origin: next.value.origin,
+              acknowledge: finish,
+            });
             controller.signal.addEventListener('abort', finish, { once: true });
             if (controller.signal.aborted) finish();
           });
         }
         reply.raw.write(length);
-        if (!reply.raw.write(next.value))
+        if (!reply.raw.write(next.value.image))
           await new Promise((resolve) => {
             reply.raw.once('drain', resolve);
             reply.raw.once('close', resolve);
@@ -997,7 +1160,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     if ((await handoffBrowser(turnId)) !== pending.browserId)
       return reply.code(423).send({ error: handoffClosed });
     pending.acknowledge();
-    return { ok: true };
+    return { ok: true, ...(pending.origin ? { origin: pending.origin } : {}) };
   });
   app.post('/api/browser-handoff', async (request, reply) => {
     const body = z
@@ -1033,8 +1196,44 @@ export async function createApp(dependencies: AppDependencies = {}) {
   app.post('/api/browser-handoff/done', async (request, reply) => {
     const body = z.object({ turnId: z.uuid() }).strict().safeParse(request.body);
     if (!body.success) return reply.code(400).send({ error: 'Choose a browser handoff.' });
+    const typed = dependencies.saveLogin
+      ? await typedHandoffLogin(body.data.turnId).catch(() => undefined)
+      : undefined;
+    const login =
+      typed &&
+      (new URL(typed.origin).protocol === 'https:' || loopbackHost(new URL(typed.origin).hostname))
+        ? typed
+        : undefined;
     if (!(await resumeAfterHandoff(body.data.turnId)))
       return reply.code(423).send({ error: handoffClosed });
+    if (!login) return { ok: true };
+    savableLogins.set(body.data.turnId, login);
+    setTimeout(() => savableLogins.delete(body.data.turnId), 10 * 60_000).unref();
+    return { ok: true, savableLogin: { host: new URL(login.origin).host } };
+  });
+  app.post('/api/browser-handoff/save-login', async (request, reply) => {
+    const body = z.object({ turnId: z.uuid() }).strict().safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: 'Choose a browser handoff.' });
+    if (!dependencies.saveLogin) return reply.code(404).send({ error: 'Vault is unavailable.' });
+    const login = savableLogins.get(body.data.turnId);
+    if (!login)
+      return reply.code(409).send({
+        error:
+          'This login is no longer available to save. Sign in again and save it right after you return.',
+      });
+    try {
+      await dependencies.saveLogin({
+        origin: login.origin,
+        label: new URL(login.origin).hostname.slice(0, 100),
+        username: login.username,
+        password: login.password,
+      });
+    } catch (error) {
+      if (error instanceof VaultError)
+        return reply.code(error.statusCode).send({ error: error.message });
+      throw error;
+    }
+    savableLogins.delete(body.data.turnId);
     return { ok: true };
   });
   app.post('/api/browser-handoff/navigate', async (request, reply) => {

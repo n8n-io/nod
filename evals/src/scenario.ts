@@ -69,6 +69,8 @@ export interface UserScript {
     | string[]
     | ((question: string, world: any, kind: 'otp' | 'payment' | 'password') => string | undefined);
   signIn?: { username: string; password: string };
+  saveLogin?: boolean;
+  signInReply?: string;
   signInMethod?: string;
   persona?: string;
 }
@@ -99,6 +101,7 @@ export interface Scenario<W extends World = World> {
   tier: 'pr' | 'full' | 'release' | 'live' | 'canary';
   complexity: 'simple' | 'medium' | 'complex';
   stance: 'regression' | 'gap';
+  set?: 'happy-path';
   seconds: number;
   timeZone?: string;
   window?: { from: number; to: number };

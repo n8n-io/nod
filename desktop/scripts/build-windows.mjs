@@ -6,6 +6,7 @@ import { packager } from '@electron/packager';
 import { assetHash } from '../runtime/assets.mjs';
 import { copyBundleSource, copyEngineDependencies } from './engine-dependencies.mjs';
 import { buildDesktopUI } from './build-ui.mjs';
+import { copyPostgres } from './postgres-binaries.mjs';
 import { copyAgentDesktop, desktopBuildOptions, hardenElectron, run } from './release-tools.mjs';
 import { signWindowsFiles, windowsCodeFiles } from './windows-signing.mjs';
 
@@ -48,6 +49,7 @@ await mkdir(engine, { recursive: true });
 await mkdir(output, { recursive: true });
 await copyEngineSource({ root, target: engine, platform: 'win32' });
 await copyEngineDependencies({ root, target: engine, platform: 'win32', arch: 'x64' });
+await copyPostgres({ target: engine, platform: 'win32', arch: 'x64' });
 console.log('Windows engine files prepared.');
 for (const path of ['main', 'preload'])
   await copyBundleSource(join(root, 'desktop', path), join(source, path));

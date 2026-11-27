@@ -6,7 +6,6 @@ import type { Pool } from 'pg';
 import { feedbackLimits, type FeedbackContext } from '../shared/feedback.ts';
 import { parseFeedbackActivity, type FeedbackActivity } from '../shared/feedback-activity.ts';
 import { integrationServiceIds } from '../shared/integrations.ts';
-import { browserSignInGuard } from '../shared/browser-errors.ts';
 import { feedbackTechnicalContext } from './feedback-context.ts';
 import { createFeedbackRedactor } from './feedback-redaction.ts';
 import type { PersonalProfile } from './personal-data.ts';
@@ -84,6 +83,7 @@ const tools = [
   'usage_get',
   'ask_user',
   'browser',
+  'browser_run',
   'computer',
   'create_audio',
   'delegate',
@@ -709,8 +709,6 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
       error.code,
       error.status,
       record(data.context).reason,
-      browserSignInGuard(record(data.context).signInGuard),
-      choice(record(data.context).method, ['signInMethods', 'selectSignInMethod']),
     ]);
     const previous = repeated.get(key);
     repeated.delete(key);

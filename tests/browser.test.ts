@@ -24,7 +24,13 @@ import test, { describe } from 'node:test';
 import type { Static } from '@sinclair/typebox';
 import pg from 'pg';
 import type { Agent, AgentToolResult, RuntimeContext } from '../src/ports/agent.ts';
-import { BrowserActionError, type BrowserAction, type Computer } from '../src/ports/computer.ts';
+import {
+  BrowserActionError,
+  type BrowserAction,
+  type BrowserViewFrame,
+  type Computer,
+  type TypedLogin,
+} from '../src/ports/computer.ts';
 import {
   browserSessionId,
   createAgentBrowserComputer,
@@ -84,12 +90,14 @@ test(
     const url = new URL(process.env.TEST_DATABASE_URL!);
     url.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = url.href;
+    process.env.PGBOSS_SCHEMA = `${schema.slice(0, 40)}_boss`;
     const runtimeRoot = await mkdtemp(join(tmpdir(), 'nod-test-runtime-'));
     t.after(() => rm(runtimeRoot, { recursive: true, force: true }));
     process.env.NOD_DATA_ROOT = runtimeRoot;
     const db = await import('../src/server/db.ts');
     const { createApp } = await import('../src/server/app.ts');
-    const { activeThread } = await import('../src/server/thread.ts');
+    const { activeThread, initializeThreads, stopThreadWorkers } =
+      await import('../src/server/thread.ts');
     const { dataRoot, ownerId, port, configuration } = await import('../src/server/config.ts');
     const headers = {
       host: `localhost:${port}`,
@@ -99,13 +107,19 @@ test(
     let locked = false;
     let fail = false;
     let pageShown = true;
-    let onView: ((signal: AbortSignal) => AsyncGenerator<Buffer>) | undefined;
+    let onView: ((signal: AbortSignal) => AsyncGenerator<BrowserViewFrame>) | undefined;
     let onCapture: (() => Promise<void>) | undefined;
     const captures: string[] = [];
     const controls: unknown[] = [];
     let copyResponses: Array<string | undefined> = [];
     let onCopy: (() => Promise<void>) | undefined;
+    let typedLogin: TypedLogin | undefined;
+    const typedLoginReads: Array<[string, number]> = [];
+    const savedLogins: unknown[] = [];
     const app = await createApp({
+      saveLogin: async (login) => {
+        savedLogins.push(login);
+      },
       configuration: () => configuration(),
       computer: {
         screenStatus: () => ({ state: 'live', capturedAt }),
@@ -130,13 +144,17 @@ test(
           controls.push([id, input]);
           return { text: 'Synthetic page', url: 'https://example.test/' };
         },
+        typedLogin: async (id, since) => {
+          typedLoginReads.push([id, since]);
+          return typedLogin;
+        },
         view: async function* (_id, signal) {
           if (!pageShown) return;
           if (onView) {
             yield* onView(signal);
             return;
           }
-          yield Buffer.from('synthetic-live-frame');
+          yield { image: Buffer.from('synthetic-live-frame') };
           await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
         },
       },
@@ -290,9 +308,9 @@ test(
       let yieldedSecondFrame = false;
       onView = async function* (signal) {
         try {
-          yield Buffer.from('first-frame');
+          yield { image: Buffer.from('first-frame'), origin: 'https://accounts.example.test' };
           yieldedSecondFrame = true;
-          yield Buffer.from('second-frame');
+          yield { image: Buffer.from('second-frame') };
           await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
         } finally {
           oldViewClosed.resolve();
@@ -328,10 +346,10 @@ test(
       try {
         assert.equal(await readFrame(), 'first-frame');
         assert.equal(yieldedSecondFrame, false);
-        assert.equal(
-          (await post('/api/browser-handoff/frame-ack', { view: viewId })).statusCode,
-          200,
-        );
+        assert.deepEqual((await post('/api/browser-handoff/frame-ack', { view: viewId })).json(), {
+          ok: true,
+          origin: 'https://accounts.example.test',
+        });
         assert.equal(await readFrame(), 'second-frame');
         assert.equal(yieldedSecondFrame, true);
       } finally {
@@ -344,9 +362,9 @@ test(
       const reconnectViewClosed = deferred();
       onView = async function* (signal) {
         try {
-          yield Buffer.from('reconnected-first-frame');
+          yield { image: Buffer.from('reconnected-first-frame') };
           yieldedReconnectFrame = true;
-          yield Buffer.from('reconnected-second-frame');
+          yield { image: Buffer.from('reconnected-second-frame') };
           await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
         } finally {
           reconnectViewClosed.resolve();
@@ -522,7 +540,7 @@ test(
       onView = async function* (signal) {
         views++;
         if (views === 1) {
-          yield Buffer.from('synthetic-live-frame');
+          yield { image: Buffer.from('synthetic-live-frame') };
           return;
         }
         try {
@@ -561,6 +579,34 @@ test(
         onView = undefined;
         t.mock.timers.reset();
       }
+      const handedOff = (
+        await db.pool.query<{ browser: string; finished: Date }>(
+          'UPDATE turns SET finished_at=now() WHERE id=$1 RETURNING handoff_browser_id AS browser,finished_at AS finished',
+          [nextTurnId],
+        )
+      ).rows[0]!;
+      typedLogin = {
+        origin: 'https://accounts.example.test',
+        username: 'synthetic-owner@example.test',
+        password: 'Synthetic-handoff-password',
+      };
+      const foreignSave = await app.inject({
+        method: 'POST',
+        url: '/api/browser-handoff/save-login',
+        payload: { turnId: foreignTurnId },
+        headers,
+      });
+      assert.equal(foreignSave.statusCode, 409);
+      await initializeThreads();
+      const returned = await post('/api/browser-handoff/done', {});
+      assert.deepEqual(returned.json(), {
+        ok: true,
+        savableLogin: { host: 'accounts.example.test' },
+      });
+      assert.deepEqual(savedLogins, []);
+      assert.equal((await post('/api/browser-handoff/save-login', {})).statusCode, 200);
+      assert.deepEqual(savedLogins, [{ ...typedLogin, label: 'accounts.example.test' }]);
+      assert.deepEqual(typedLoginReads.at(-1), [handedOff.browser, handedOff.finished.getTime()]);
       await db.pool.query(
         "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status) VALUES($1,$2,$3,'user','Done','queued')",
         [randomUUID(), ownerId, next.id],
@@ -569,8 +615,10 @@ test(
       assert.equal(controls.length, 6);
     } finally {
       await app.close();
+      await stopThreadWorkers();
       await db.pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.query(`DROP SCHEMA IF EXISTS ${process.env.PGBOSS_SCHEMA} CASCADE`);
       await admin.end();
     }
   },
@@ -1500,9 +1548,9 @@ test('a live view acknowledges applied input or fails', { timeout: 10_000 }, asy
     },
     view: async function* (_id, signal) {
       viewSignals.push(signal);
-      yield Buffer.from('first frame');
+      yield { image: Buffer.from('first frame'), origin: 'https://accounts.example.test' };
       while (inputs.length < initialInputs.length && !signal.aborted) await delay(5);
-      yield Buffer.from('second frame');
+      yield { image: Buffer.from('second frame') };
       await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
     },
   };
@@ -1510,8 +1558,10 @@ test('a live view acknowledges applied input or fails', { timeout: 10_000 }, asy
   try {
     const client = fixture.client('/synthetic/live-view');
     const frames: string[] = [];
+    const origins: Array<string | undefined> = [];
     for await (const frame of client.view!('task', new AbortController().signal)) {
-      frames.push(String(frame));
+      frames.push(String(frame.image));
+      origins.push(frame.origin);
       if (frames.length === 1) {
         await Promise.all(
           initialInputs.map(async (input, index) => {
@@ -1522,6 +1572,7 @@ test('a live view acknowledges applied input or fails', { timeout: 10_000 }, asy
       } else break;
     }
     assert.deepEqual(frames, ['first frame', 'second frame']);
+    assert.deepEqual(origins, ['https://accounts.example.test', undefined]);
     assert.deepEqual(inputs, initialInputs);
     await assert.rejects(client.control!('task', { type: 'text', text: 'late' }), /not open/);
     const controller = new AbortController();
@@ -1715,71 +1766,6 @@ test('a failed workspace browser action names only Nod-authored reasons', async 
       await assert.rejects(computer.act('task', { action: 'open', url: 'https://example.com/' }), {
         message: 'The workspace browser could not complete this action. Try again.',
       });
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('sign-in refusal guards cross the worker boundary without private values or merged causes', async () => {
-  const privateValue = 'picker-private@example.test/private-selector';
-  let failure: Error;
-  const failures: unknown[] = [];
-  const fixture = await harness({
-    computer: {
-      ...syntheticComputer(),
-      signInMethods: async () => {
-        throw failure;
-      },
-    },
-  });
-  try {
-    const computer = fixture.client('/synthetic/sign-in-guard');
-    const inspect = () =>
-      withFailureLog(
-        (event, error, context) => failures.push({ event, error, context }),
-        () =>
-          computer.signInMethods!('task', 'https://example.test', [
-            { label: privateValue, selector: `[data-account="${privateValue}"]` },
-          ]),
-      );
-    for (const guard of ['control_changed', 'choice_duplicate'] as const) {
-      failure = Object.assign(new BrowserActionError('browser_target_changed', undefined, guard), {
-        cause: privateValue,
-      });
-      await assert.rejects(inspect(), (error: unknown) => {
-        assert.ok(error instanceof BrowserActionError);
-        assert.equal(error.signInGuard, guard);
-        assert.equal(error.code, 'browser_target_changed');
-        assert.equal(error.detail, undefined);
-        assert.equal(error.cause, undefined);
-        return true;
-      });
-    }
-    assert.deepEqual(
-      failures.map((failure) => Object(failure).context.signInGuard),
-      ['control_changed', 'choice_duplicate'],
-    );
-    failure = Object.assign(new Error(privateValue), { signInGuard: 'control_covered' });
-    await assert.rejects(inspect(), (error: unknown) => {
-      assert.equal(Object(error).signInGuard, 'control_covered');
-      assert.equal(
-        Object(error).message,
-        'The workspace browser could not complete this action. Try again.',
-      );
-      return true;
-    });
-    failure = Object.assign(new Error(privateValue), { signInGuard: privateValue });
-    await assert.rejects(inspect(), (error: unknown) => {
-      assert.equal(Object(error).signInGuard, undefined);
-      assert.ok(
-        !JSON.stringify(
-          Object.getOwnPropertyNames(error).map((key) => Object(error)[key]),
-        ).includes(privateValue),
-      );
-      return true;
-    });
-    assert.equal(Object(failures.at(-1)).context.signInGuard, undefined);
-    assert.ok(!JSON.stringify(failures).includes(privateValue));
   } finally {
     await fixture.close();
   }
@@ -2187,13 +2173,23 @@ test('a password typed through the handoff in several pauses hides only the fini
   const secret = 'Sign-handoff-password';
   const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
   try {
+    const started = Date.now();
     await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+    await computer.act('fixture', { action: 'click', selector: '#account' });
+    await computer.control!('fixture', { type: 'text', text: 'synthetic-owner@example.test' });
+    assert.equal(await computer.typedLogin!('fixture', started), undefined);
     fixture.pages.get('fixture')!.stage = 'password';
     fixture.pages.get('fixture')!.render();
     await computer.act('fixture', { action: 'click', selector: '#account' });
     await computer.control!('fixture', { type: 'text', text: 'Sign' });
     await computer.control!('fixture', { type: 'text', text: secret.slice(4) });
     assert.equal(fixture.pages.get('fixture')!.input.value, secret);
+    assert.deepEqual(await computer.typedLogin!('fixture', started), {
+      origin: 'https://1.1.1.1',
+      username: 'synthetic-owner@example.test',
+      password: secret,
+    });
+    assert.equal(await computer.typedLogin!('fixture', Date.now() + 60_000), undefined);
     for (const observation of [
       await computer.act('fixture', { action: 'snapshot' }),
       await computer.act('fixture', {
@@ -2215,6 +2211,14 @@ test('a password typed through the handoff in several pauses hides only the fini
       script: "document.querySelector('#account').value",
     });
     assert.equal(JSON.stringify(first).includes(secret), false);
+    fixture.pages.get('fixture')!.stage = 'otp';
+    fixture.pages.get('fixture')!.render();
+    await computer.act('fixture', { action: 'click', selector: '#account' });
+    await computer.control!('fixture', { type: 'text', text: '482913' });
+    assert.equal(
+      (await computer.typedLogin!('fixture', started))?.username,
+      'synthetic-owner@example.test',
+    );
   } finally {
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });
@@ -2408,7 +2412,10 @@ describe('native browser controls', { concurrency: 3 }, () => {
       });
       let stderrPath: string | undefined;
       try {
-        await computer.act('fixture', { action: 'open', url: `http://127.0.0.1:${address.port}` });
+        await computer.act('fixture', {
+          action: 'open',
+          url: `http://127.0.0.1:${address.port}/sign-in?token=synthetic-private`,
+        });
         assert.ok((await computer.screenshot('fixture'))?.length);
         for (const pid of await readdir('/proc')) {
           if (!/^\d+$/.test(pid)) continue;
@@ -2446,7 +2453,8 @@ describe('native browser controls', { concurrency: 3 }, () => {
         assert.ok(screenshot?.length);
         assert.equal(computer.screenStatus!('fixture').state, 'live');
         for await (const frame of computer.view!('fixture', new AbortController().signal)) {
-          assert.deepEqual([...frame.subarray(0, 2)], [0xff, 0xd8]);
+          assert.deepEqual([...frame.image.subarray(0, 2)], [0xff, 0xd8]);
+          assert.equal(frame.origin, `http://127.0.0.1:${address.port}`);
           break;
         }
         const passkey = await computer.act('fixture', {
@@ -2583,7 +2591,7 @@ describe('native browser controls', { concurrency: 3 }, () => {
             for (;;) {
               const frame = await frames.next();
               assert.equal(frame.done, false);
-              const image = await loadImage(frame.value!);
+              const image = await loadImage(frame.value!.image);
               context.drawImage(image, 1 - image.width, 1 - image.height);
               const pixel = context.getImageData(0, 0, 1, 1).data;
               if (color.every((channel, index) => channel === (pixel[index]! > 127 ? 255 : 0)))

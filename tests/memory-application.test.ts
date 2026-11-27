@@ -101,10 +101,6 @@ test(
         }));
       return options.tools.find((tool) => tool.name === step.tool)!.execute(step.args);
     };
-    let storageReady!: () => void;
-    const runtimeReady = new Promise<void>((resolve) => {
-      storageReady = resolve;
-    });
     const model = { provider: 'fixture', name: 'fixture', configured: true };
     let onboardingInboxReads = 0;
     const application = await createApplication(
@@ -187,7 +183,7 @@ test(
         keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 7) },
         model,
       },
-      { channels: false, runtimeReady },
+      { channels: false },
     );
     const headers = {
       host: `localhost:${port}`,
@@ -318,50 +314,29 @@ test(
         }
         assert.equal(handled.mock.callCount(), 0);
       });
-      await t.test(
-        'one backend serves setup while queued turns wait for the computer',
-        async () => {
-          const session = await application.app.inject({
-            method: 'GET',
-            url: '/api/session',
-            headers,
-          });
-          assert.equal(session.statusCode, 200);
-          const choice = await application.app.inject({
-            method: 'PATCH',
-            url: '/api/account',
-            headers,
-            payload: { usageData: false },
-          });
-          assert.equal(choice.statusCode, 200);
-          let prepared = false;
-          const preparation = application.app
-            .inject({
-              method: 'POST',
-              url: '/api/account/prepare',
-              headers,
-              payload: {},
-            })
-            .then((response) => {
-              prepared = true;
-              return response;
-            });
-          const turn = await send({ text: 'Synthetic runtime startup probe.' });
-          await delay(100);
-          assert.equal(prepared, false);
-          assert.equal((await turnStatus(turn)).status, 'queued');
-          assert.equal(contexts.length, 0);
-          storageReady();
-          assert.equal((await preparation).statusCode, 200);
-          await settle(turn, 'succeeded');
-          assert.ok(contexts.length > 0);
-          assert.equal(
-            (await application.app.inject({ method: 'GET', url: '/api/session', headers })).json()
-              .user.id,
-            session.json().user.id,
-          );
-        },
-      );
+      await t.test('one backend serves setup and runs turns', async () => {
+        const session = await application.app.inject({
+          method: 'GET',
+          url: '/api/session',
+          headers,
+        });
+        assert.equal(session.statusCode, 200);
+        const choice = await application.app.inject({
+          method: 'PATCH',
+          url: '/api/account',
+          headers,
+          payload: { usageData: false },
+        });
+        assert.equal(choice.statusCode, 200);
+        const turn = await send({ text: 'Synthetic runtime startup probe.' });
+        await settle(turn, 'succeeded');
+        assert.ok(contexts.length > 0);
+        assert.equal(
+          (await application.app.inject({ method: 'GET', url: '/api/session', headers })).json()
+            .user.id,
+          session.json().user.id,
+        );
+      });
       const assertSilent = async (
         turnId: string,
         finalText = 'Synthetic memory request handled.',
@@ -1535,6 +1510,101 @@ test('an agent cannot overwrite a skill the owner edited', async () => {
 
   await skills.change('owner-flow', { body: 'Owner steps again.' });
   assert.equal(await body('owner-flow'), 'Owner steps again.');
+});
+
+test('learned skill overlays, version history rollback, and staleness demotion work cleanly', async () => {
+  const memory = createMemoryService({
+    pool: {
+      query: async () => ({ rows: [{ now: new Date().toISOString() }] }),
+    } as unknown as pg.Pool,
+    ownerId: 'overlay-owner',
+    store: memoryObjectStore(),
+  });
+  const curator: MemoryCurator = {
+    id: 'fixture',
+    configured: true,
+    curate: async (request) => {
+      const draft = (request.input as { draft: { description: string; body: string } }).draft;
+      return { skill: { description: draft.description, body: draft.body } };
+    },
+  };
+  const skills = createLearnedSkills({
+    memory,
+    curator,
+    builtIn: ['travel'],
+    redact: (text) => text,
+  });
+
+  await assert.rejects(
+    skills.learn(
+      {
+        action: 'save',
+        name: 'travel',
+        description: 'Use when booking flights.',
+        body: 'Prefer nonstop.',
+      },
+      randomUUID(),
+    ),
+    /built-in guide/,
+  );
+
+  await assert.rejects(
+    skills.learn(
+      {
+        action: 'save',
+        name: 'my-travel-prefs',
+        description: 'Use when booking flights.',
+        body: 'Prefer nonstop.',
+        overlayFor: 'missing-guide',
+      },
+      randomUUID(),
+    ),
+    /overlayFor must name a built-in guide/,
+  );
+
+  await skills.learn(
+    {
+      action: 'save',
+      name: 'my-travel-prefs',
+      description: 'Use when booking flights.',
+      body: 'Prefer nonstop flights.',
+      overlayFor: 'travel',
+    },
+    randomUUID(),
+  );
+  assert.deepEqual(await skills.overlayFor('travel'), [
+    {
+      name: 'my-travel-prefs',
+      description: 'Use when booking flights.',
+      body: 'Prefer nonstop flights.',
+      version: 1,
+    },
+  ]);
+
+  await skills.learn(
+    {
+      action: 'save',
+      name: 'my-travel-prefs',
+      description: 'Use when booking flights.',
+      body: 'Prefer nonstop Lufthansa flights.',
+      overlayFor: 'travel',
+    },
+    randomUUID(),
+  );
+  assert.equal((await skills.read('my-travel-prefs')).version, 2);
+
+  await skills.restore('my-travel-prefs', 1);
+  assert.equal((await skills.read('my-travel-prefs')).body, 'Prefer nonstop flights.');
+  assert.equal((await skills.read('my-travel-prefs')).version, 3);
+
+  await skills.recordOutcome('my-travel-prefs', false);
+  assert.equal((await skills.overlayFor('travel'))?.length, 1);
+  await skills.recordOutcome('my-travel-prefs', false);
+  assert.equal(await skills.overlayFor('travel'), undefined);
+  assert.deepEqual(await skills.index(), []);
+
+  await skills.recordOutcome('my-travel-prefs', true);
+  assert.equal((await skills.overlayFor('travel'))?.length, 1);
 });
 
 test(

@@ -29,6 +29,7 @@ type AnalyticsEvents = {
     login_item?: 'registered' | 'not_registered' | 'unknown';
     since_boot?: 'under_5m' | 'under_1h' | 'over_1h';
   };
+  login_item_observed: { login_item: 'registered' | 'not_registered' };
   onboarding_step_viewed: {
     step: OnboardingStep;
     direction: 'forward' | 'back';
@@ -60,7 +61,10 @@ type AnalyticsEvents = {
   onboarding_updates_email_submitted: undefined;
   local_setting_changed:
     | { setting: 'theme'; value: 'light' | 'dark' | 'system' }
-    | { setting: 'launch_at_login' | 'desktop_notifications'; value: 'enabled' | 'disabled' }
+    | {
+        setting: 'launch_at_login' | 'keep_awake' | 'desktop_notifications' | 'notification_sound';
+        value: 'enabled' | 'disabled';
+      }
     | { setting: 'browser_notifications'; value: 'enabled' | 'disabled' | 'dismissed' };
   notification_opened: { kind: 'reply' };
   app_connection_completed: { entry: 'apps' | 'chat' | 'onboarding' | 'manage' };
@@ -183,6 +187,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     login_item: ['registered', 'not_registered', 'unknown'],
     since_boot: ['under_5m', 'under_1h', 'over_1h'],
   },
+  login_item_observed: { login_item: ['registered', 'not_registered'] },
   onboarding_step_viewed: {
     step: onboardingSteps,
     direction: ['forward', 'back'],
@@ -213,7 +218,14 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
   onboarding_community_opened: { channel: ['discord', 'forum'] },
   onboarding_updates_email_submitted: {},
   local_setting_changed: {
-    setting: ['theme', 'launch_at_login', 'desktop_notifications', 'browser_notifications'],
+    setting: [
+      'theme',
+      'launch_at_login',
+      'keep_awake',
+      'desktop_notifications',
+      'notification_sound',
+      'browser_notifications',
+    ],
     value: ['light', 'dark', 'system', 'enabled', 'disabled', 'dismissed'],
   },
   notification_opened: { kind: ['reply'] },
@@ -497,6 +509,7 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
     (event.event === 'answer_choices_viewed' ||
       event.event === 'answer_choices_selected' ||
       event.event === 'chat_message_sent' ||
+      event.event === 'login_item_observed' ||
       event.event === 'presentation_action') &&
     Object.entries(allowed).some(([key, values]) => !values.includes(event.properties[key]))
   )

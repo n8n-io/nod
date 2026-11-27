@@ -1,4 +1,5 @@
-import { createContext, Fragment, useContext, useState, type ReactNode } from 'react';
+import { createContext, Fragment, useContext, useEffect, useState, type ReactNode } from 'react';
+import { appPagePath, appPages } from '../../shared/app-links';
 import {
   compareColumn,
   draftSendLabel,
@@ -7,7 +8,8 @@ import {
   mapTileSize,
   type Presentation,
 } from '../../shared/presentation';
-import { AlertCircle, Check, ChevronDown, ExternalLink, LockKeyhole, Send } from './icons';
+import { copyContent } from '../lib/clipboard';
+import { AlertCircle, Check, ChevronDown, Copy, ExternalLink, LockKeyhole, Send } from './icons';
 
 export interface CardPick {
   chosen: number[];
@@ -16,10 +18,10 @@ export interface CardPick {
   disabled: boolean;
   sent: boolean;
   closed?: boolean;
-  label?: string;
   choose(index: number): void;
   write(text: string): void;
   send(fallback?: string): void;
+  skip(): void;
 }
 
 export const CardPickContext = createContext<CardPick | null>(null);
@@ -76,45 +78,54 @@ export function CardPickSend({
   const send = () => {
     if (!idle) pick.send(written || pick.chosen.length ? undefined : action?.label);
   };
+  const skip = () => {
+    if (open && !pick.disabled) pick.skip();
+  };
   return (
     <div className="card-band card-pick-send">
-      {open && (
-        <>
-          <input
-            className="card-pick-write"
-            value={pick.written}
-            maxLength={4000}
-            placeholder={placeholder}
-            aria-label={placeholder}
-            readOnly={pick.disabled}
-            onChange={(event) => pick.write(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
-              event.preventDefault();
-              send();
-            }}
-          />
-          <button
-            type="button"
-            className="choice-card-done"
-            aria-disabled={idle || undefined}
-            onClick={send}
-          >
-            {written || pick.multiple ? (
-              'Send'
-            ) : action ? (
-              <>
-                {action.icon}
-                {action.label}
-              </>
-            ) : pick.label ? (
-              `Choose ${pick.label}`
-            ) : (
-              'Choose one'
-            )}
-          </button>
-        </>
-      )}
+      <div className="card-pick-bar">
+        {open && (
+          <>
+            <input
+              className="card-pick-write"
+              value={pick.written}
+              maxLength={4000}
+              placeholder={placeholder}
+              aria-label={placeholder}
+              readOnly={pick.disabled}
+              onChange={(event) => pick.write(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+                event.preventDefault();
+                send();
+              }}
+            />
+            <button
+              type="button"
+              className="choice-card-skip"
+              aria-disabled={pick.disabled || undefined}
+              onClick={skip}
+            >
+              Skip
+            </button>
+            <button
+              type="button"
+              className="choice-card-done"
+              aria-disabled={idle || undefined}
+              onClick={send}
+            >
+              {action && !written && !pick.multiple && !pick.chosen.length ? (
+                <>
+                  {action.icon}
+                  {action.label}
+                </>
+              ) : (
+                'Send'
+              )}
+            </button>
+          </>
+        )}
+      </div>
       {extra}
     </div>
   );
@@ -728,13 +739,63 @@ function Journey({ journey }: { journey: NonNullable<Item['journeys']>[number] }
   );
 }
 
-function Facts({ items }: { items: Array<{ label: string; value: string; strong?: boolean }> }) {
+function useCopyState() {
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  useEffect(() => {
+    if (state === 'idle') return;
+    const timer = setTimeout(() => setState('idle'), 2000);
+    return () => clearTimeout(timer);
+  }, [state]);
+  const copy = (value: string) => {
+    void copyContent(value)
+      .then(() => setState('copied'))
+      .catch(() => setState('failed'));
+  };
+  return { state, copy };
+}
+
+function CopyValueButton({ value, label }: { value: string; label: string }) {
+  const { state, copy } = useCopyState();
+  const statusText =
+    state === 'copied'
+      ? `Copied ${label}`
+      : state === 'failed'
+        ? `Could not copy ${label}`
+        : `Copy ${label}`;
+  return (
+    <button
+      type="button"
+      className="card-copy"
+      data-copy-state={state === 'idle' ? undefined : state}
+      aria-label={statusText}
+      title={
+        state === 'copied' ? 'Copied' : state === 'failed' ? 'Could not copy' : `Copy ${label}`
+      }
+      onClick={() => copy(value)}
+    >
+      {state === 'copied' ? (
+        <Check size={13} aria-hidden="true" />
+      ) : (
+        <Copy size={13} aria-hidden="true" />
+      )}
+    </button>
+  );
+}
+
+function Facts({
+  items,
+}: {
+  items: Array<{ label: string; value: string; strong?: boolean; copy?: boolean }>;
+}) {
   return (
     <dl className="card-facts">
       {items.map((item, index) => (
         <div key={index} data-strong={item.strong || undefined}>
           <dt>{item.label}</dt>
-          <dd>{item.value}</dd>
+          <dd className={item.copy ? 'card-fact-copy' : undefined}>
+            {item.copy ? <code>{item.value}</code> : item.value}
+            {item.copy && <CopyValueButton value={item.value} label={item.label} />}
+          </dd>
         </div>
       ))}
     </dl>
@@ -755,9 +816,86 @@ function Stats({ items }: { items: NonNullable<Visual<'facts'>['stats']> }) {
   );
 }
 
+function FactReference({ reference }: { reference: NonNullable<Visual<'facts'>['reference']> }) {
+  const { state, copy } = useCopyState();
+  const ariaLabel =
+    state === 'copied'
+      ? `Copied ${reference.label}`
+      : state === 'failed'
+        ? `Could not copy ${reference.label}`
+        : `Copy ${reference.label}`;
+  return (
+    <div className="card-band card-reference">
+      <div className="card-reference-meta">
+        <span className="card-reference-label">{reference.label}</span>
+        <code className="card-reference-value">{reference.value}</code>
+      </div>
+      <button
+        type="button"
+        className="card-reference-copy"
+        data-copy-state={state === 'idle' ? undefined : state}
+        aria-label={ariaLabel}
+        onClick={() => copy(reference.value)}
+      >
+        {state === 'copied' ? (
+          <>
+            <Check size={13} aria-hidden="true" />
+            Copied
+          </>
+        ) : state === 'failed' ? (
+          <>
+            <Copy size={13} aria-hidden="true" />
+            Could not copy
+          </>
+        ) : (
+          <>
+            <Copy size={13} aria-hidden="true" />
+            Copy
+          </>
+        )}
+      </button>
+    </div>
+  );
+}
+
+export function FactAction({ action }: { action?: Visual<'facts'>['action'] }) {
+  if (!action) return null;
+  const appPath = appPagePath(action.url);
+  if (appPath) {
+    const pageName = Object.hasOwn(appPages, appPath)
+      ? appPages[appPath as keyof typeof appPages]
+      : 'Nod';
+    return (
+      <div className="card-band card-action-bar">
+        <a className="button button-outline button-sm card-action-link" href={appPath}>
+          <span className="card-action-label">{action.label ?? `Open ${pageName}`}</span>
+        </a>
+        <span className="card-action-host">{pageName}</span>
+      </div>
+    );
+  }
+  const host = hostLabel(action.url);
+  return (
+    <div className="card-band card-action-bar">
+      <a
+        className="button button-outline button-sm card-action-link"
+        href={action.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        referrerPolicy="no-referrer"
+      >
+        <span className="card-action-label">{action.label ?? `Open on ${host}`}</span>
+        <ExternalLink size={13} aria-hidden="true" />
+      </a>
+      <span className="card-action-host">{host}</span>
+    </div>
+  );
+}
+
 export function FactList({ visual }: { visual: Visual<'facts'> }) {
   return (
     <>
+      {visual.reference && <FactReference reference={visual.reference} />}
       {visual.stats && (
         <div className="card-band">
           <Stats items={visual.stats} />

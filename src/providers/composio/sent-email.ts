@@ -1,7 +1,7 @@
 import type { Composio } from '@composio/core';
 import { z } from 'zod';
 import type { InboxSnippet, InboxThread, SentEmail } from '../../ports/integrations.ts';
-import { mailbox, messageSchema, messageText } from './verification-email.ts';
+import { mailbox, messageSchema, messageText } from './gmail-message.ts';
 
 type Client = Pick<Composio['tools'], 'proxyExecute'>;
 const messageList = (max: number) =>

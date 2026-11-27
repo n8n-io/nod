@@ -590,7 +590,8 @@ async function prepareWindows(options, onComputerStart, progress) {
         timeout: 600_000,
       });
     },
-    onStorageReady: options.onStorageReady,
+    database: options.database,
+    onMoved: options.onMoved,
   });
 }
 

@@ -59,14 +59,19 @@ async function createDownloadBrowser(root: string) {
       });
     },
   });
-  const launch: BrowserBridgeLauncher = () => {
+  const launch: BrowserBridgeLauncher = (_command, args) => {
     const process = Object.assign(new EventEmitter(), {
       stdin: new PassThrough(),
       stdout: new PassThrough(),
       stderr: new PassThrough(),
       kill: () => true,
     });
-    void runBrowserBridge({ socketPath, input: process.stdin, output: process.stdout }).then(
+    void runBrowserBridge({
+      socketPath,
+      input: process.stdin,
+      output: process.stdout,
+      multiplex: args.includes('--multiplex'),
+    }).then(
       () => process.emit('close', 0),
       () => process.emit('close', 1),
     );

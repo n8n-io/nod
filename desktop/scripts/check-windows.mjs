@@ -15,6 +15,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { run } from './release-tools.mjs';
 import { assetHash } from '../runtime/assets.mjs';
@@ -179,6 +180,9 @@ if (process.env.WORKSPACE_CONTAINER) {
   {
     const profile = join(installation, 'synthetic-profile');
     const runtime = await import('../runtime/windows.mjs');
+    const { openDatabase } = await import('../runtime/database.mjs');
+    const { availablePort, computerNames } = await import('../runtime/index.mjs');
+    const names = computerNames(profile);
     const system = (name) => join(process.env.SYSTEMROOT, 'System32', name);
     console.log('Checking that a WSL failure offers its repair and keeps the Windows error.');
     const automatic = /AUTO_START/.test(await run(system('sc.exe'), ['qc', 'WslService']));
@@ -230,7 +234,18 @@ if (process.env.WORKSPACE_CONTAINER) {
       }),
     );
     let prepared;
+    let database;
+    const computerEnvironment = () => ({
+      ...environment,
+      ...prepared.environment,
+      NOD_DATA_ROOT: profile,
+      WORKSPACE_CONTAINER: names.workspace,
+      BROWSER_CONTAINER: names.browser,
+      DATABASE_URL: database.url,
+    });
     try {
+      database = await openDatabase({ dataRoot: profile, resourcesPath: engine });
+      assert.equal(database.pendingMove, false);
       await run(
         system('WindowsPowerShell/v1.0/powershell.exe'),
         [
@@ -305,17 +320,17 @@ if (process.env.WORKSPACE_CONTAINER) {
           'node',
           '--workdir',
           '/workspace/synthetic-windows-check',
-          prepared.env.WORKSPACE_CONTAINER,
+          names.workspace,
           'bash',
           '-c',
           'test ! -e /var/run/docker.sock && test ! -e /mnt/c && test ! -e /app/.env',
         ],
-        { env: { ...environment, ...prepared.env }, timeout: 120_000 },
+        { env: computerEnvironment(), timeout: 120_000 },
       );
       assert.match(
         await run(application, [smoke], {
           cwd: engine,
-          env: { ...environment, ...prepared.env },
+          env: computerEnvironment(),
           timeout: 300_000,
         }),
         /Windows application and browser verified\./,
@@ -328,7 +343,7 @@ if (process.env.WORKSPACE_CONTAINER) {
       console.log(
         'Checking a relaunch without admin rights after the PC went off and WSL lost the computer.',
       );
-      await run(wsl, ['--terminate', prepared.env.NOD_WSL_DISTRIBUTION]);
+      await run(wsl, ['--terminate', prepared.environment.NOD_WSL_DISTRIBUTION]);
       await run(wsl, ['--shutdown']);
       const disk = join(saved.computerPath, 'ext4.vhdx');
       const kept = join(elsewhere, 'synthetic-kept-ext4.vhdx');
@@ -352,6 +367,8 @@ if (process.env.WORKSPACE_CONTAINER) {
         '-ProcessId',
         String(process.pid),
       ]);
+      await database.close();
+      database = await openDatabase({ dataRoot: profile, resourcesPath: engine });
       prepared = await runtime.prepareWindowsRuntime(
         {
           dataRoot: profile,
@@ -363,13 +380,131 @@ if (process.env.WORKSPACE_CONTAINER) {
       assert.match(
         await run(application, [smoke], {
           cwd: engine,
-          env: { ...environment, ...prepared.env, NOD_WINDOWS_REOPEN: '1' },
+          env: { ...computerEnvironment(), NOD_WINDOWS_REOPEN: '1' },
           timeout: 300_000,
         }),
         /Windows application and browser verified\./,
       );
       receipt.reopened = true;
       receipt.reattached = true;
+      console.log('Checking that data from an earlier version moves out of the private computer.');
+      const docker = (args, env = {}) =>
+        run(join(engine, 'windows-runtime/bin/docker.exe'), args, {
+          env: { ...computerEnvironment(), ...env },
+          timeout: 300_000,
+        });
+      const upgrade = async () => {
+        await database.close();
+        await rm(join(profile, 'database'), { recursive: true, force: true });
+        database = await openDatabase({ dataRoot: profile, resourcesPath: engine });
+        assert.equal(database.pendingMove, true);
+        let moved = 0;
+        prepared = await runtime.prepareWindowsRuntime(
+          {
+            dataRoot: profile,
+            resourcesPath: engine,
+            database,
+            onMoved: () => moved++,
+            onStatus: (value) => console.log(value.message),
+          },
+          () => {},
+        );
+        assert.equal(moved, 1);
+        assert.equal(database.pendingMove, false);
+        assert.doesNotMatch(
+          await docker(['ps', '--all', '--format', '{{.Names}}']),
+          new RegExp(names.postgres),
+        );
+      };
+      await upgrade();
+      const identity = distribution.slice(4);
+      const { images } = JSON.parse(
+        await readFile(join(engine, 'windows-runtime/manifest.json'), 'utf8'),
+      );
+      const legacyPassword = JSON.parse(
+        await readFile(join(profile, 'desktop-runtime/state.json'), 'utf8'),
+      ).password;
+      const legacyPort = await availablePort();
+      await docker(
+        [
+          'run',
+          '--detach',
+          '--name',
+          names.postgres,
+          '--network',
+          `nod-control-${identity}`,
+          '--publish',
+          `127.0.0.1:${legacyPort}:5432`,
+          '--env',
+          'POSTGRES_USER=nod',
+          '--env',
+          'POSTGRES_DB=nod',
+          '--env',
+          'POSTGRES_PASSWORD',
+          '--volume',
+          `nod-postgres-${identity}:/var/lib/postgresql/data`,
+          images.find(({ name }) => name === 'postgres').id,
+        ],
+        { POSTGRES_PASSWORD: legacyPassword },
+      );
+      const legacyUrl = `postgresql://nod:${legacyPassword}@127.0.0.1:${legacyPort}/nod`;
+      const { default: pg } = await import('pg');
+      for (let attempt = 1; ; attempt++) {
+        const client = new pg.Client({
+          connectionString: legacyUrl,
+          connectionTimeoutMillis: 5000,
+        });
+        try {
+          await client.connect();
+          await client.end();
+          break;
+        } catch (error) {
+          await client.end().catch(() => {});
+          if (attempt === 60) throw error;
+          await delay(1000);
+        }
+      }
+      assert.match(
+        await run(application, [smoke], {
+          cwd: engine,
+          env: { ...computerEnvironment(), DATABASE_URL: legacyUrl },
+          timeout: 300_000,
+        }),
+        /Windows application and browser verified\./,
+      );
+      const fingerprint = `SELECT
+        (SELECT count(*) FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema'))::int AS tables,
+        (SELECT md5(string_agg(body, ',' ORDER BY id)) FROM synthetic_bulk) AS bulk,
+        (SELECT value FROM windows_check) AS marker`;
+      const legacy = new pg.Client({ connectionString: legacyUrl });
+      await legacy.connect();
+      await legacy.query(
+        'CREATE TABLE synthetic_bulk (id bigserial PRIMARY KEY, body text NOT NULL, at timestamptz NOT NULL DEFAULT now())',
+      );
+      await legacy.query(
+        "INSERT INTO synthetic_bulk (body) SELECT repeat(md5(g::text), 4) || ' π' FROM generate_series(1, 200000) g",
+      );
+      const before = (await legacy.query(fingerprint)).rows[0];
+      await legacy.end();
+      assert.ok(before.tables > 10);
+      await docker(['rm', '--force', names.postgres]);
+      await upgrade();
+      const host = new pg.Client({ connectionString: database.url });
+      await host.connect();
+      assert.deepEqual((await host.query(fingerprint)).rows[0], before);
+      await host.end();
+      assert.match(
+        await run(application, [smoke], {
+          cwd: engine,
+          env: { ...computerEnvironment(), NOD_WINDOWS_REOPEN: '1' },
+          timeout: 300_000,
+        }),
+        /Windows application and browser verified\./,
+      );
+      await database.close();
+      database = await openDatabase({ dataRoot: profile, resourcesPath: engine });
+      assert.equal(database.pendingMove, false);
+      receipt.upgraded = true;
     } finally {
       await run(system('WindowsPowerShell/v1.0/powershell.exe'), [
         '-NoProfile',
@@ -377,6 +512,9 @@ if (process.env.WORKSPACE_CONTAINER) {
         '-Command',
         `Remove-Item -LiteralPath '${otherRegistration}' -Recurse -Force -ErrorAction SilentlyContinue`,
       ]);
+      await database
+        ?.close()
+        .catch((error) => console.log(`The test database did not stop: ${error.message}`));
       console.log('Stopping the test computer.');
       await runtime.stopWindowsRuntime({ dataRoot: profile });
       const saved = await readFile(join(profile, 'desktop-runtime/state.json'), 'utf8')
@@ -387,6 +525,21 @@ if (process.env.WORKSPACE_CONTAINER) {
       else await run(wsl, ['--unregister', distribution]).catch(() => {});
     }
   }
+  const leftover = await run(
+    join(process.env.SYSTEMROOT, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      "Get-CimInstance Win32_Process -Filter \"Name='postgres.exe'\" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($env:NOD_INSTALLATION + '\\', 'OrdinalIgnoreCase') } | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId) $($_.CommandLine)\" }",
+    ],
+    { env: { ...process.env, NOD_INSTALLATION: installation } },
+  );
+  assert.equal(
+    leftover.trim(),
+    '',
+    `PostgreSQL is still running from the installation:\n${leftover}`,
+  );
   console.log('Checking that an update installs its runtime file.');
   await run(join(output, 'nod-Setup-x64.exe'), ['/S', `/D=${installation}`], { timeout: 600_000 });
   const { guest } = JSON.parse(
@@ -397,7 +550,9 @@ if (process.env.WORKSPACE_CONTAINER) {
   console.log(JSON.stringify(receipt));
 } finally {
   console.log('Removing the test installation.');
-  await rm(installation, { recursive: true, force: true });
+  await rm(installation, { recursive: true, force: true }).catch((error) =>
+    console.log(`The test installation was not removed: ${error.message}`),
+  );
   await rm(foreign, { recursive: true, force: true });
   await rm(alone, { recursive: true, force: true });
 }

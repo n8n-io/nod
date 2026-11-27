@@ -2,6 +2,7 @@ import { pool } from './db.ts';
 import { authToken, dataRoot, desktopMode, host, port, publicOrigin, webRoot } from './config.ts';
 import { accessKey } from './access.ts';
 import { createApplication, createDefaultAdapters } from './composition.ts';
+import { createComputerReadiness } from './computer-readiness.ts';
 
 let stopping = false;
 let closeApplication: (() => Promise<void>) | undefined;
@@ -9,22 +10,44 @@ const parent = (
   process as NodeJS.Process & {
     parentPort?: {
       on(event: 'message', listener: (event: { data: unknown }) => void): void;
-      removeListener(event: 'message', listener: (event: { data: unknown }) => void): void;
     };
   }
 ).parentPort;
-const runtimeReady =
-  desktopMode && process.env.NOD_DESKTOP_RUNTIME_PENDING === 'true'
-    ? new Promise<void>((resolve) => {
-        if (!parent) throw new Error('Desktop startup requires Nod.');
-        const ready = (event: { data: unknown }) => {
-          if ((event.data as { type?: string })?.type !== 'nod-runtime-ready') return;
-          parent.removeListener('message', ready);
-          resolve();
-        };
-        parent.on('message', ready);
-      })
-    : undefined;
+const computerEnvironment = [
+  'PATH',
+  'DOCKER_HOST',
+  'DOCKER_CONFIG',
+  'DOCKER_CONTEXT',
+  'NOD_WSL_DISTRIBUTION',
+  'TEMP',
+  'TMP',
+];
+const computer = desktopMode && parent ? createComputerReadiness() : undefined;
+if (computer && parent) {
+  parent.on('message', (event) => {
+    const message = event.data as {
+      type?: string;
+      environment?: Record<string, unknown>;
+      error?: { code?: unknown; message?: unknown };
+    } | null;
+    if (message?.type !== 'nod-runtime') return;
+    if (message.error)
+      return computer.update({
+        error: {
+          code: typeof message.error.code === 'string' ? message.error.code : undefined,
+          message:
+            typeof message.error.message === 'string'
+              ? message.error.message
+              : 'It could not start.',
+        },
+      });
+    for (const key of computerEnvironment) {
+      const value = message.environment?.[key];
+      if (typeof value === 'string') process.env[key] = value;
+    }
+    computer.update({ ready: true });
+  });
+}
 const starting = (step: string) => {
   if (desktopMode)
     (
@@ -32,8 +55,7 @@ const starting = (step: string) => {
     ).parentPort?.postMessage({ type: 'nod-starting', step });
 };
 starting('loaded');
-const { app } = await createApplication(createDefaultAdapters(process.env), {
-  runtimeReady,
+const { app } = await createApplication(createDefaultAdapters(process.env, computer), {
   starting,
 });
 closeApplication = () => app.close();

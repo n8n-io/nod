@@ -156,7 +156,7 @@ try {
       );
     if (scenes[i].view === 'usage')
       assert(
-        await evaluate('document.body.innerText.includes("Nod spent")'),
+        await evaluate('document.body.innerText.includes("Your usage is")'),
         'Usage did not load.',
       );
     const screenshot = await send('Page.captureScreenshot', {
@@ -172,7 +172,6 @@ try {
     ['usage-light', 1000, 680, 'usage', 'light'],
     ['vault-light', 1000, 680, 'vault', 'light'],
     ['usage-task-limit', 1000, 680, 'usage-limit', 'light', true],
-    ['verify-code-page', 800, 450, 'code', 'light'],
   ]) {
     await send('Emulation.setDeviceMetricsOverride', {
       width,

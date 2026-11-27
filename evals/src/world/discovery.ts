@@ -1,4 +1,4 @@
-import { noWrites } from '../checks.ts';
+import { noWrites, weekdaysAt } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { addresses, createApps, gmail, type Mail } from './apps.ts';
@@ -81,18 +81,6 @@ const startsTask = (name: string, input: any) => name === 'task' && input?.actio
 const startsConnection = (name: string, input: any) =>
   name === 'manage_apps' && ['connect', 'propose'].includes(input?.action);
 const beforeChoice = (run: Run, at: number) => run.tools.filter((call) => call.at <= at);
-const weekdaysAtNine = (cron: string | null) => {
-  const fields = (cron ?? '').trim().toUpperCase().split(/\s+/);
-  return (
-    fields.length === 5 &&
-    /^0+$/.test(fields[0]) &&
-    /^0?9$/.test(fields[1]) &&
-    fields[2] === '*' &&
-    fields[3] === '*' &&
-    ['1-5', 'MON-FRI', '1,2,3,4,5', 'MON,TUE,WED,THU,FRI'].includes(fields[4])
-  );
-};
-
 export function discoveryCase(kind: DiscoveryCase) {
   const draft = kind === 'inbox' || kind === 'more-ideas';
   const greeting = kind === 'greeting' || kind === 'greeting-portuguese';
@@ -320,7 +308,7 @@ export function discoveryCase(kind: DiscoveryCase) {
                     pass:
                       run.schedules.length === 1 &&
                       run.schedules[0].enabled &&
-                      weekdaysAtNine(run.schedules[0].cron) &&
+                      weekdaysAt(run.schedules[0].cron, 9) &&
                       run.schedules[0].timeZone === 'Europe/Lisbon' &&
                       run.scheduleRuns.length > 0,
                     evidence: JSON.stringify({

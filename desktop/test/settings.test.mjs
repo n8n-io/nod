@@ -50,7 +50,7 @@ import { saveArtifactDownload } from '../main/downloads.mjs';
 import { createArtifactFiles } from '../main/artifact-files.mjs';
 import { createDesktopLifecycle, startupErrorDetails } from '../main/lifecycle.mjs';
 import { createMacEncryption } from '../main/mac-encryption.mjs';
-import { waitFor } from '../runtime/index.mjs';
+import { computerNames, waitFor } from '../runtime/index.mjs';
 import { appOpenPath } from '../main/app-links.mjs';
 import { trustSystemCertificates } from '../main/system-certificates.mjs';
 import { createStartupFeedbackClient } from '../main/feedback-client.mjs';
@@ -340,109 +340,207 @@ test('desktop link context menus copy the address with or without selected text'
   assert.deepEqual(copied, [linkURL, linkURL]);
 });
 
-test('storage starts the normal backend before workspace readiness and quit closes it before the runtime', async () => {
-  const storage = deferred();
-  const resources = deferred();
-  const listening = deferred();
-  const events = [];
-  const computer = { close: async () => events.push('computer closed') };
-  const lifecycle = createDesktopLifecycle({
-    prepareRuntime: async ({ onStorageReady }) => {
-      events.push('storage starting');
-      await storage.promise;
-      await onStorageReady(computer);
-      listening.resolve();
-      await resources.promise;
-      return computer;
+function syntheticDatabase(events = [], pendingMove = false) {
+  const database = {
+    url: 'postgresql://nod:synthetic@127.0.0.1:1/nod',
+    password: 'synthetic',
+    pendingMove,
+    moved: async () => {
+      database.pendingMove = false;
     },
-    validateStart: async () => {},
-    startEngine: async ({ runtime, pending }) => {
-      assert.equal(runtime, computer);
-      events.push(pending ? 'backend listening' : 'runtime ready');
-    },
-    stopEngine: async () => events.push('engine stopped'),
-    onRuntimeStatus: () => {},
-  });
-  const running = lifecycle.start();
-  assert.equal(running, lifecycle.start());
-  await new Promise(setImmediate);
-  assert.deepEqual(events, ['storage starting']);
-  storage.resolve();
-  await listening.promise;
-  assert.equal(lifecycle.busy, true);
-  assert.deepEqual(events, ['storage starting', 'backend listening']);
-  resources.resolve();
-  await running;
-  assert.deepEqual(events, ['storage starting', 'backend listening', 'runtime ready']);
-  const stopped = lifecycle.close();
-  assert.equal(stopped, lifecycle.close());
-  await stopped;
-  assert.deepEqual(events.slice(-2), ['engine stopped', 'computer closed']);
+    close: async () => events.push('database closed'),
+  };
+  return database;
+}
+
+test('runtime warmup holds the engine until local setup is chosen and never waits for the computer', async () => {
+  for (const allowed of [false, true]) {
+    const database = syntheticDatabase();
+    const computer = deferred();
+    const engines = [];
+    const lifecycle = createDesktopLifecycle({
+      openDatabase: async () => database,
+      prepareRuntime: async () => computer.promise,
+      validateStart: async () => {},
+      startEngine: async (options) => engines.push(options.database),
+      stopEngine: async () => {},
+      onRuntimeStatus: () => {},
+    });
+    if (allowed) lifecycle.allowEngine();
+    const warming = lifecycle.warmup();
+    for (let i = 0; i < 5; i++) await new Promise(setImmediate);
+    assert.deepEqual(engines, allowed ? [database] : []);
+    await lifecycle.start();
+    assert.deepEqual(engines, allowed ? [database, database] : [database]);
+    assert.equal(lifecycle.busy, true);
+    computer.resolve({ environment: {}, close: async () => {} });
+    await warming;
+    await lifecycle.close();
+  }
 });
 
-test('failed runtime preparation waits for explicit retry and keeps the successful computer', async () => {
+test('a failed computer leaves the engine running and is retried only on an explicit retry', async () => {
+  const computers = [deferred(), deferred()];
+  const engines = [];
+  const statuses = [];
+  const runtimes = [];
   let attempts = 0;
-  let engineStarts = 0;
   const lifecycle = createDesktopLifecycle({
-    prepareRuntime: async () => {
-      if (++attempts === 1)
-        throw Object.assign(new Error('Runtime required'), { code: 'RUNTIME_ARCHIVE_REQUIRED' });
-      return { close: async () => {} };
-    },
+    openDatabase: async () => syntheticDatabase(),
+    prepareRuntime: async () => computers[attempts++].promise,
     validateStart: async () => {},
-    startEngine: async () => {
-      if (++engineStarts === 1) throw new Error('Engine unavailable');
-    },
+    startEngine: async () => engines.push('engine'),
     stopEngine: async () => {},
-    onRuntimeStatus: () => {},
+    onRuntimeStatus: (value) => statuses.push(value.phase),
+    onRuntime: (value) => runtimes.push(value),
   });
-  await assert.rejects(lifecycle.warmup());
-  await assert.rejects(lifecycle.start());
-  assert.equal(attempts, 1);
-  assert.equal(engineStarts, 0);
-  await assert.rejects(lifecycle.start({ retry: true }));
-  assert.equal(attempts, 2);
-  assert.equal(engineStarts, 1);
+  const failure = Object.assign(new Error('Synthetic computer failure'), {
+    code: 'NOD_WSL_REQUIRED',
+  });
+  const warming = lifecycle.warmup();
   await new Promise(setImmediate);
-  assert.equal(engineStarts, 1);
+  computers[0].reject(failure);
+  await assert.rejects(warming, failure);
+  assert.deepEqual(runtimes, [{ error: failure }]);
+  assert.equal(statuses.at(-1), 'error');
+  await lifecycle.start();
+  await new Promise(setImmediate);
+  assert.deepEqual(engines, ['engine']);
+  assert.equal(attempts, 1);
+  assert.equal(lifecycle.busy, false);
   await lifecycle.start({ retry: true });
+  await new Promise(setImmediate);
+  assert.deepEqual(engines, ['engine', 'engine']);
   assert.equal(attempts, 2);
-  assert.equal(engineStarts, 2);
+  assert.equal(lifecycle.busy, true);
+  const environment = { DOCKER_HOST: 'unix://synthetic-docker' };
+  computers[1].resolve({ environment, close: async () => {} });
+  await new Promise(setImmediate);
+  assert.deepEqual(runtimes.at(-1), { environment });
+  assert.equal(statuses.at(-1), 'ready');
+  await lifecycle.start({ retry: true });
+  await new Promise(setImmediate);
+  assert.equal(attempts, 2);
   await lifecycle.close();
 });
 
-test('quit aborts and waits for late runtime completion without starting an engine', async () => {
-  const gate = deferred();
-  const started = deferred();
-  const events = [];
-  let signal;
+test('a pending data move holds the engine until the computer moves it, and a failed move fails start until an explicit retry', async () => {
+  const database = syntheticDatabase([], true);
+  const moves = [deferred(), deferred()];
+  const workspace = deferred();
+  const engines = [];
+  let attempts = 0;
   const lifecycle = createDesktopLifecycle({
+    openDatabase: async () => database,
     prepareRuntime: async (options) => {
-      signal = options.signal;
-      started.resolve();
-      return gate.promise;
+      assert.equal(options.database, database);
+      await moves[attempts++].promise;
+      await options.database.moved();
+      await options.onMoved();
+      await workspace.promise;
+      return { environment: {}, close: async () => {} };
     },
     validateStart: async () => {},
-    startEngine: async () => assert.fail('Quit must fence engine startup.'),
-    stopEngine: async () => events.push('engine stopped'),
-    onRuntimeStatus: (value) => events.push(value.phase),
+    startEngine: async () => engines.push('engine'),
+    stopEngine: async () => {},
+    onRuntimeStatus: () => {},
   });
-  const starting = lifecycle.start();
-  const rejected = assert.rejects(starting);
-  await started.promise;
-  const closing = lifecycle.close();
-  assert.equal(signal.aborted, true);
+  const failure = Object.assign(new Error('Synthetic move failure'), {
+    code: 'NOD_DATABASE_MOVE_FAILED',
+  });
+  const first = lifecycle.start();
   await new Promise(setImmediate);
-  assert.ok(!events.includes('engine stopped'));
-  gate.resolve({ close: async () => events.push('computer closed') });
-  await Promise.all([closing, rejected]);
-  assert.ok(events.includes('computer closed'));
+  assert.equal(attempts, 1);
+  assert.deepEqual(engines, []);
+  moves[0].reject(failure);
+  await assert.rejects(first, failure);
+  assert.equal(database.pendingMove, true);
+  await assert.rejects(lifecycle.start(), failure);
+  assert.equal(attempts, 1);
+  const retried = lifecycle.start({ retry: true });
+  await new Promise(setImmediate);
+  assert.equal(attempts, 2);
+  assert.deepEqual(engines, []);
+  moves[1].resolve();
+  await retried;
+  assert.deepEqual(engines, ['engine']);
+  assert.equal(lifecycle.busy, true);
+  workspace.resolve();
+  await lifecycle.close();
+});
+
+test('quit fences engine start and closes the engine, then the computer, then the database', async () => {
+  for (const scenario of ['database opening', 'computer preparing', 'running']) {
+    const events = [];
+    const database = syntheticDatabase(events);
+    const opening = deferred();
+    const preparing = deferred();
+    let signal;
+    const lifecycle = createDesktopLifecycle({
+      openDatabase: async () => {
+        if (scenario === 'database opening') await opening.promise;
+        return database;
+      },
+      prepareRuntime: async (options) => {
+        signal = options.signal;
+        if (scenario === 'computer preparing') await preparing.promise;
+        return { environment: {}, close: async () => events.push('computer closed') };
+      },
+      validateStart: async () => {},
+      startEngine: async () => {
+        assert.equal(scenario, 'running', 'Quit must fence engine startup.');
+        events.push('engine started');
+      },
+      stopEngine: async () => events.push('engine stopped'),
+      onRuntimeStatus: () => {},
+      onRuntime: (value) => events.push(value.error ? 'computer failed' : 'computer ready'),
+    });
+    let started;
+    if (scenario === 'running') await lifecycle.start();
+    else if (scenario === 'database opening')
+      started = assert.rejects(lifecycle.start(), /Nod is closing/);
+    else started = assert.rejects(lifecycle.warmup(), /Nod is closing/);
+    await new Promise(setImmediate);
+    const closing = lifecycle.close();
+    assert.equal(closing, lifecycle.close());
+    if (scenario === 'computer preparing') assert.equal(signal.aborted, true);
+    if (scenario !== 'running') {
+      await new Promise(setImmediate);
+      assert.deepEqual(events, []);
+      opening.resolve();
+      preparing.resolve();
+    }
+    await Promise.all([closing, started]);
+    assert.deepEqual(
+      events,
+      {
+        'database opening': ['engine stopped', 'database closed'],
+        'computer preparing': ['engine stopped', 'computer closed', 'database closed'],
+        running: [
+          'engine started',
+          'computer ready',
+          'engine stopped',
+          'computer closed',
+          'database closed',
+        ],
+      }[scenario],
+    );
+    assert.throws(() => lifecycle.start(), /Nod is closing/);
+  }
 });
 
 test('failed computer shutdown retains the runtime and permits an explicit retry', async () => {
   let stops = 0;
+  let databaseCloses = 0;
   const lifecycle = createDesktopLifecycle({
+    openDatabase: async () => ({
+      ...syntheticDatabase(),
+      close: async () => {
+        databaseCloses++;
+      },
+    }),
     prepareRuntime: async () => ({
+      environment: {},
       close: async () => {
         if (++stops === 1) throw new Error('Computer did not stop');
       },
@@ -453,39 +551,13 @@ test('failed computer shutdown retains the runtime and permits an explicit retry
     onRuntimeStatus: () => {},
   });
   await lifecycle.warmup();
-  await assert.rejects(lifecycle.close());
+  await assert.rejects(lifecycle.close(), /Computer did not stop/);
   assert.throws(() => lifecycle.start());
   await lifecycle.close();
   assert.equal(stops, 2);
   await lifecycle.close();
   assert.equal(stops, 2);
-});
-
-test('runtime warmup holds the engine until local setup is chosen', async () => {
-  for (const allowed of [false, true]) {
-    let engineStarts = 0;
-    const lifecycle = createDesktopLifecycle({
-      prepareRuntime: async ({ onStorageReady }) => {
-        const runtime = { close: async () => {} };
-        await onStorageReady(runtime);
-        return runtime;
-      },
-      validateStart: async () => {},
-      startEngine: async () => {
-        engineStarts++;
-      },
-      stopEngine: async () => {},
-      onRuntimeStatus: () => {},
-    });
-    if (allowed) lifecycle.allowEngine();
-    const warming = lifecycle.warmup();
-    for (let i = 0; i < 5; i++) await new Promise(setImmediate);
-    assert.equal(engineStarts, allowed ? 1 : 0);
-    await lifecycle.start();
-    await warming;
-    assert.equal(engineStarts, 2);
-    await lifecycle.close();
-  }
+  assert.equal(databaseCloses, 1);
 });
 
 async function runningDesktop(
@@ -499,6 +571,7 @@ async function runningDesktop(
     initialState = 'running',
     storedProfile,
     enginePort = 4310,
+    openDatabase,
     prepareRuntime,
     nativePageLoaded,
     enginePageLoaded,
@@ -522,6 +595,7 @@ async function runningDesktop(
     trustCertificates = () => {},
     version = '0.0.0-test',
     argv = [],
+    onBattery = () => false,
     prompt = () => assert.fail('No restart prompt is needed.'),
     reveal = () => assert.fail('No file should be revealed.'),
     openExternal,
@@ -564,6 +638,7 @@ async function runningDesktop(
   const externalURLs = [];
   const trashed = [];
   const blockers = new Map();
+  const systemHolds = [];
   let blockerId = 0;
   const updateMenu = {};
   const restartMenu = {};
@@ -617,6 +692,7 @@ async function runningDesktop(
     startupStatusFacts,
     startupEventFacts,
     startupErrorFacts,
+    computerNames,
     app: {
       on: (name, listener) => appEvents.on(name, listener),
       once: (name, listener) => appEvents.once(name, listener),
@@ -782,17 +858,23 @@ async function runningDesktop(
     createDesktopLifecycle: (options) =>
       createDesktopLifecycle({
         ...options,
+        openDatabase: async (options) => {
+          await mkdir(join(paths.get('userData'), 'profiles', 'local'), { recursive: true });
+          return openDatabase ? openDatabase(options) : syntheticDatabase();
+        },
         prepareRuntime: async (options) => {
           await mkdir(join(paths.get('userData'), 'profiles', 'local'), { recursive: true });
           if (prepareRuntime) return prepareRuntime(options);
-          const runtime = { env: {} };
-          await options.onStorageReady?.(runtime);
-          return runtime;
+          return { environment: {} };
         },
       }),
     nativeTheme: { shouldUseDarkColors: false },
     safeStorage: storage.encryption,
     Notification: class extends EventEmitter {
+      constructor(options) {
+        super();
+        this.options = options;
+      }
       static isSupported() {
         return typeof notificationsSupported === 'function'
           ? notificationsSupported()
@@ -807,6 +889,11 @@ async function runningDesktop(
       }
     },
     clipboard: { writeText: (text) => clipboardText.push(text) },
+    powerMonitor: { isOnBatteryPower: () => onBattery() },
+    createSystemAwake: () => ({
+      set: (hold) => systemHolds.push(hold),
+      close: () => systemHolds.push('closed'),
+    }),
     powerSaveBlocker: {
       start: (type) => {
         blockers.set(++blockerId, type);
@@ -815,10 +902,6 @@ async function runningDesktop(
       stop: (id) => {
         assert.ok(blockers.delete(id), 'Only an active blocker can stop.');
       },
-    },
-    MessageChannelMain: class {
-      port1 = { end: 'engine' };
-      port2 = { end: 'helper' };
     },
     utilityProcess: {
       fork(file, args, options) {
@@ -841,26 +924,13 @@ async function runningDesktop(
           setImmediate(() => helper.emit('message', { ready: true }));
           return helper;
         }
-        if (/[\\/]onepassword\.mjs$/.test(file)) {
-          const helper = Object.assign(new EventEmitter(), { file, args, options, sent: [] });
-          helper.postMessage = (message, transfer) => helper.sent.push({ message, transfer });
-          helper.kill = () => {
-            helper.killed = true;
-          };
-          helpers.push(helper);
-          return helper;
-        }
         assert.ok(allowStart, 'The healthy engine must not restart.');
         assert.ok(Object.values(options.env).every((value) => typeof value === 'string'));
         const child = new EventEmitter();
         assert.ok(file.endsWith('/engine.mjs') || file.endsWith('\\engine.mjs'));
         child.kind = 'engine';
         child.sent = [];
-        child.transfers = [];
-        child.postMessage = (message, transfer) => {
-          child.sent.push(message);
-          if (transfer) child.transfers.push({ message, transfer });
-        };
+        child.postMessage = (message) => child.sent.push(message);
         child.environment = options.env;
         child.port = options.env.PORT;
         child.stdout = { resume() {} };
@@ -878,6 +948,7 @@ async function runningDesktop(
       },
     },
     BrowserWindow: class extends EventEmitter {
+      static fromWebContents() {}
       constructor(options = {}) {
         super();
         this.sent = [];
@@ -996,6 +1067,10 @@ async function runningDesktop(
         this.focused = false;
         this.emit('closed');
       }
+      close() {
+        this.emit('close');
+        this.destroy();
+      }
     },
   };
   const source = (await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8'))
@@ -1007,6 +1082,7 @@ async function runningDesktop(
       /^const \{ startupStatusFacts, startupEventFacts, startupErrorFacts \} = await import\([\s\S]*?\);\n/m,
       '',
     )
+    .replace(/^  const \{ computerNames \} = await import\([\s\S]*?\);\n/m, '')
     .replaceAll(
       'import.meta.url',
       JSON.stringify(new URL('../main/main.mjs', import.meta.url).href),
@@ -1028,12 +1104,12 @@ async function runningDesktop(
     appLinksReady = true;
     engine = {};
     enginePreferencesReady = true;
-    engineRuntimeReady = true;
+    engineReady = true;
     engineOrigin = ${JSON.stringify(`http://127.0.0.1:${enginePort}`)};
     engineBound = true;
     onboardingCompleted = true;
     status.phase = 'ready';
-    ${initialState === 'running' ? '' : "engine = undefined; enginePreferencesReady = false; engineRuntimeReady = false; engineOrigin = ''; engineBound = false; onboardingCompleted = false; status.phase = 'idle';"}
+    ${initialState === 'running' ? '' : "engine = undefined; enginePreferencesReady = false; engineReady = false; engineOrigin = ''; engineBound = false; onboardingCompleted = false; status.phase = 'idle';"}
     configureAppSession();
     ${source.slice(source.indexOf("      ipcMain.handle('nod:renderer-ready'"), source.indexOf("      ipcMain.handle('nod:feedback:context'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('nod:feedback:context'"), source.indexOf("      ipcMain.handle('nod:preferences:get'"))}
@@ -1081,6 +1157,12 @@ async function runningDesktop(
       requestQuit: () => app.quit(),
       restartForUpdate,
       crash: () => { engine = undefined; enginePreferencesReady = false; },
+      checkWaiting,
+      holdAwake,
+      turnOff,
+      closeApp,
+      updateWhenIdle,
+      setUpdates: (updater) => { updates = updater; },
     };
     })()`,
     context,
@@ -1101,6 +1183,7 @@ async function runningDesktop(
     externalURLs,
     trashed,
     awake: () => [...blockers.values()],
+    systemHolds,
     rendererReady,
     healthWaits: () => healthWaits,
     updateMenu,
@@ -1357,7 +1440,7 @@ test('native local setup observes early runtime failure and recovery without pri
     packaged: true,
     buildMetadata: { release: true },
     version: '0.1.17',
-    prepareRuntime: async ({ onStatus, onStorageReady }) => {
+    prepareRuntime: async ({ onStatus }) => {
       onStatus({ stage: privateText, message: privateText, progress: 0.1 });
       if (++attempts === 1)
         throw Object.assign(
@@ -1376,9 +1459,7 @@ test('native local setup observes early runtime failure and recovery without pri
           },
         );
       onStatus({ stage: privateText, message: privateText, progress: 0.2 });
-      const runtime = { env: {} };
-      await onStorageReady(runtime);
-      return runtime;
+      return { environment: {} };
     },
   });
   try {
@@ -1387,10 +1468,13 @@ test('native local setup observes early runtime failure and recovery without pri
     const setup = f.windows[0];
     const event = { sender: setup.webContents, senderFrame: setup.webContents.mainFrame };
     await f.handlers.get('nod:warmup')(event);
-    await waitFor(() => assert.equal(f.status().runtime.phase, 'error'), {
-      attempts: 40,
-      interval: 10,
-    });
+    await waitFor(
+      () => {
+        assert.equal(f.status().runtime.phase, 'error');
+        assert.equal(f.status().engineReady, true);
+      },
+      { attempts: 40, interval: 10 },
+    );
     const observations = () =>
       f.nativeAnalytics.filter((item) => item.event === 'local_setup_observed');
     assert.equal(observations().length, 0);
@@ -1402,8 +1486,8 @@ test('native local setup observes early runtime failure and recovery without pri
       interval: 10,
     });
     assert.equal(observations()[0].properties.runtime_status, 'failed');
-    assert.equal(observations()[0].properties.startup_status, 'idle');
-    assert.equal(observations()[0].properties.setup_available, false);
+    assert.equal(observations()[0].properties.startup_status, 'ready');
+    assert.equal(observations()[0].properties.setup_available, true);
     assert.equal(observations()[0].properties.failure_code, 'NOD_COMPUTER_REGISTRATION_MISSING');
     assert.equal(observations()[0].properties.failure_step, 'wsl');
     assert.equal(observations()[0].properties.failure_class, 'Error');
@@ -1412,12 +1496,12 @@ test('native local setup observes early runtime failure and recovery without pri
     assert.equal(observations()[0].properties.failure_signal, 'SIGKILL');
     assert.equal(observations()[0].properties.failure_syscall, 'open');
     await f.handlers.get('nod:prepare')(event, { retry: true });
-    assert.equal(f.status().engineReady, true, JSON.stringify(f.status()));
-    await waitFor(() => assert.ok(observations().some((item) => item.properties.setup_available)), {
-      attempts: 40,
-      interval: 10,
-    });
-    assert.ok(observations().some((item) => item.properties.runtime_status === 'ready'));
+    await waitFor(
+      () => assert.ok(observations().some((item) => item.properties.runtime_status === 'ready')),
+      { attempts: 40, interval: 10 },
+    );
+    assert.equal(attempts, 2);
+    assert.equal(f.children.length, 1);
     f.children[0].emit('exit', 1);
     await waitFor(
       () =>
@@ -1751,60 +1835,65 @@ test('native first open waits for consent on disabled and returning profiles', a
 test('a first Windows setup without disk space offers another folder and retries there', async (t) => {
   let attempts = 0;
   let chosen;
-  const f = await runningDesktop(
-    t,
-    async () => assert.fail('No backend can run without storage.'),
-    {
-      initialState: 'fresh',
-      platform: 'win32',
-      allowStart: true,
-      openDialog: async () => ({ canceled: false, filePaths: [chosen] }),
-      prepareRuntime: async () => {
-        throw Object.assign(new Error('Synthetic full drive'), {
-          code: ++attempts === 3 ? 'NOD_WSL_REQUIRED' : 'NOD_COMPUTER_STORAGE_FULL',
-        });
-      },
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'fresh',
+    platform: 'win32',
+    allowStart: true,
+    openDialog: async () => ({ canceled: false, filePaths: [chosen] }),
+    prepareRuntime: async () => {
+      throw Object.assign(new Error('Synthetic full drive'), {
+        code: ++attempts === 3 ? 'NOD_WSL_REQUIRED' : 'NOD_COMPUTER_STORAGE_FULL',
+      });
     },
-  );
-  await f.launch();
-  await f.prepare();
-  assert.equal(f.status().needsStorage, true);
-  const window = f.windows.find((window) => window.isVisible());
-  const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
-  const choose = f.handlers.get('nod:runtime:choose-folder');
-  chosen = join(f.profileRoot, 'synthetic-inside');
-  await assert.rejects(choose(event), /outside Nod/);
-  assert.equal(await f.storage.store.computerDirectory(), undefined);
-  assert.equal(attempts, 1);
-  chosen = join(dirname(f.profileRoot), 'synthetic-other-drive');
-  await choose(event);
-  assert.equal(await f.storage.store.computerDirectory(), chosen);
-  assert.equal(attempts, 2);
-  await f.prepare({ retry: true });
-  assert.equal(f.status().needsStorage, false);
-  await assert.rejects(choose(event), /unavailable/);
-  assert.equal(attempts, 3);
+  });
+  const failed = (count, needsStorage) =>
+    waitFor(
+      () => {
+        assert.equal(attempts, count);
+        assert.equal(f.status().runtime.phase, 'error');
+        assert.equal(f.status().runtime.needsStorage, needsStorage);
+      },
+      { attempts: 40, interval: 10 },
+    );
+  try {
+    await f.launch();
+    await f.prepare();
+    await failed(1, true);
+    assert.equal(f.status().phase, 'ready');
+    const window = f.windows.find((window) => window.isVisible());
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    const choose = f.handlers.get('nod:runtime:choose-folder');
+    chosen = join(f.profileRoot, 'synthetic-inside');
+    await assert.rejects(choose(event), /outside Nod/);
+    assert.equal(await f.storage.store.computerDirectory(), undefined);
+    assert.equal(attempts, 1);
+    chosen = join(dirname(f.profileRoot), 'synthetic-other-drive');
+    await choose(event);
+    assert.equal(await f.storage.store.computerDirectory(), chosen);
+    await failed(2, true);
+    await f.prepare({ retry: true });
+    await failed(3, false);
+    await assert.rejects(choose(event), /unavailable/);
+    assert.equal(attempts, 3);
+    assert.equal(f.children.length, 1);
+  } finally {
+    await f.close();
+  }
 });
 
-test('Windows onboarding waits for storage before unlocking credentials and exposes prerequisite recovery', async (t) => {
+test('Windows prerequisite recovery keeps the WSL cause and installer failures in the computer status and startup log', async (t) => {
   const revealed = [];
   const cause = `Synthetic WSL missing: ${'x'.repeat(450)} HCS_E_HYPERV_NOT_INSTALLED`;
   const details = `Error: ${cause}\n${join(homedir(), 'synthetic-folder')}\n${'Synthetic WSL output\n'.repeat(200)}End of native error`;
-  const f = await runningDesktop(
-    t,
-    async () => assert.fail('No backend can run without storage.'),
-    {
-      initialState: 'fresh',
-      platform: 'win32',
-      allowStart: true,
-      reveal: (path) => revealed.push(path),
-      prepareRuntime: async () => {
-        throw Object.assign(new Error(cause), { code: 'NOD_WSL_REQUIRED', details });
-      },
+  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+    initialState: 'fresh',
+    platform: 'win32',
+    allowStart: true,
+    reveal: (path) => revealed.push(path),
+    prepareRuntime: async () => {
+      throw Object.assign(new Error(cause), { code: 'NOD_WSL_REQUIRED', details });
     },
-  );
-  f.storage.store.environment = async () =>
-    assert.fail('No credentials are needed before storage.');
+  });
   try {
     await mkdir(join(f.profileRoot, 'logs'), { recursive: true });
     await appendFile(
@@ -1813,8 +1902,12 @@ test('Windows onboarding waits for storage before unlocking credentials and expo
     );
     await f.launch();
     await f.prepare();
-    assert.equal(f.children.length, 0);
-    assert.equal(f.status().needsWsl, true);
+    await waitFor(() => assert.equal(f.status().runtime.needsWsl, true), {
+      attempts: 40,
+      interval: 10,
+    });
+    assert.equal(f.status().phase, 'ready');
+    assert.equal(f.status().error, undefined);
     assert.equal(f.windows.filter((window) => window.isVisible()).length, 1);
     const window = f.windows.find((window) => window.isVisible());
     const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
@@ -1829,10 +1922,10 @@ test('Windows onboarding waits for storage before unlocking credentials and expo
     assert.ok(log.includes(cause));
     assert.ok(log.includes(details.replaceAll(homedir(), '<home>')));
     assert.equal(log.includes(homedir()), false);
-    assert.equal(f.status().error, cause);
-    assert.ok(f.status().details.includes(details));
-    assert.ok(f.status().details.includes('NOD_WSL_REQUIRED'));
-    assert.ok(f.status().details.includes(`Error: ${cause}`));
+    assert.equal(f.status().runtime.message, cause);
+    assert.ok(f.status().runtime.details.includes(details));
+    assert.ok(f.status().runtime.details.includes('NOD_WSL_REQUIRED'));
+    assert.ok(f.status().runtime.details.includes(`Error: ${cause}`));
     const installation = Object.assign(new Error('Synthetic WSL install failure'), {
       code: 'EACCES',
       details: 'Installer native output\nInstaller native tail',
@@ -1843,16 +1936,17 @@ test('Windows onboarding waits for storage before unlocking credentials and expo
       }),
       (error) => error === installation,
     );
-    assert.equal(f.status().error, installation.message);
-    assert.ok(f.status().details.includes(`Error: ${installation.message}`));
+    const failure = f.status().runtime;
+    assert.equal(failure.message, installation.message);
+    assert.ok(failure.details.includes(`Error: ${installation.message}`));
     const frame = /settings\.test\.mjs:\d+:\d+/.exec(installation.stack)?.[0];
     assert.ok(frame);
-    assert.ok(f.status().details.includes(frame));
-    assert.ok(!f.status().details.includes(f.engineRoot));
-    assert.ok(!f.status().details.includes(f.engineRoot.replaceAll('\\', '/')));
-    assert.ok(f.status().details.includes(installation.code));
-    assert.ok(f.status().details.includes(installation.details));
-    assert.ok(!f.status().details.includes(cause));
+    assert.ok(failure.details.includes(frame));
+    assert.ok(!failure.details.includes(f.engineRoot));
+    assert.ok(!failure.details.includes(f.engineRoot.replaceAll('\\', '/')));
+    assert.ok(failure.details.includes(installation.code));
+    assert.ok(failure.details.includes(installation.details));
+    assert.ok(!failure.details.includes(cause));
     await showLog(event);
     const updatedLog = await readFile(revealed.at(-1), 'utf8');
     assert.ok(updatedLog.lastIndexOf(installation.details) > updatedLog.lastIndexOf(details));
@@ -1861,7 +1955,7 @@ test('Windows onboarding waits for storage before unlocking credentials and expo
   }
 });
 
-test('native Welcome waits for local selection and storage before system-key access', async (t) => {
+test('native Welcome waits for local selection and the database before system-key access', async (t) => {
   const storage = deferred();
   let preparing = false;
   const loaded = deferred();
@@ -1869,12 +1963,10 @@ test('native Welcome waits for local selection and storage before system-key acc
     initialState: 'fresh',
     allowStart: true,
     nativePageLoaded: loaded.promise,
-    prepareRuntime: async ({ onStorageReady }) => {
+    openDatabase: async () => {
       preparing = true;
       await storage.promise;
-      const runtime = { env: {} };
-      await onStorageReady(runtime);
-      return runtime;
+      return syntheticDatabase();
     },
   });
   const environment = f.storage.store.environment;
@@ -2363,10 +2455,10 @@ test('native key-store failure needs an explicit retry and never completes onboa
   }
 });
 
-test('native onboarding starts one normal backend at storage readiness and keeps its origin through full runtime readiness', async (t) => {
+test('native onboarding starts one normal backend once the database opens and keeps its origin while the computer becomes ready', async (t) => {
   const storage = deferred();
   const resources = deferred();
-  const connected = deferred();
+  const environment = { DOCKER_HOST: 'unix://synthetic-docker' };
   let writes = 0;
   const f = await runningDesktop(
     t,
@@ -2384,13 +2476,13 @@ test('native onboarding starts one normal backend at storage readiness and keeps
       initialState: 'fresh',
       allowStart: true,
       reportReady: false,
-      prepareRuntime: async ({ onStorageReady }) => {
+      openDatabase: async () => {
         await storage.promise;
-        const runtime = { env: { DATABASE_URL: 'postgresql://synthetic.invalid/test' } };
-        await onStorageReady(runtime);
-        connected.resolve();
+        return syntheticDatabase();
+      },
+      prepareRuntime: async () => {
         await resources.promise;
-        return runtime;
+        return { environment };
       },
     },
   );
@@ -2415,7 +2507,10 @@ test('native onboarding starts one normal backend at storage readiness and keeps
       await new Promise((accept) => setTimeout(accept, 10));
     assert.equal(f.children.length, 1);
     const engine = f.children[0];
-    assert.equal(engine.environment.NOD_DESKTOP_RUNTIME_PENDING, 'true');
+    const names = computerNames(f.profileRoot);
+    assert.equal(engine.environment.DATABASE_URL, syntheticDatabase().url);
+    assert.equal(engine.environment.WORKSPACE_CONTAINER, names.workspace);
+    assert.equal(engine.environment.BROWSER_CONTAINER, names.browser);
     assert.notEqual(f.status().engineReady, true);
     assert.equal(writes, 0);
     assert.equal(
@@ -2423,12 +2518,12 @@ test('native onboarding starts one normal backend at storage readiness and keeps
       false,
     );
     engine.emit('message', { type: 'nod-ready', port: Number(engine.port) });
-    await connected.promise;
+    await opening;
     assert.equal(f.status().engineReady, true);
-    assert.equal(f.status().phase, 'preparing');
+    assert.equal(f.status().phase, 'ready');
     assert.notEqual(f.status().runtime.phase, 'ready');
     assert.equal(
-      engine.sent.some((message) => message.type === 'nod-runtime-ready'),
+      engine.sent.some((message) => message.type === 'nod-runtime'),
       false,
     );
     const window = f.windows.at(-1);
@@ -2459,11 +2554,16 @@ test('native onboarding starts one normal backend at storage readiness and keeps
         ),
       );
     resources.resolve();
-    await opening;
-    await f.settle();
+    await waitFor(() => assert.equal(f.status().runtime.phase, 'ready'), {
+      attempts: 40,
+      interval: 10,
+    });
     assert.equal(f.children.length, 1);
     assert.equal(new URL(window.url).origin, origin);
-    assert.equal(engine.sent.filter((message) => message.type === 'nod-runtime-ready').length, 1);
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(engine.sent.filter((message) => message.type === 'nod-runtime'))),
+      [{ type: 'nod-runtime', environment }],
+    );
     assert.equal((await f.storage.store.get()).onboardingPreferenceStep, 'launchAtLogin');
     assert.equal(f.status().phase, 'ready');
   } finally {
@@ -2505,7 +2605,7 @@ test('onboarding and app windows open inside the usable display area', async (t)
   }
 });
 
-test('runtime handoff and readiness respect closed, minimized and background windows', async (t) => {
+test('engine start and computer readiness respect closed, minimized and background windows', async (t) => {
   for (const scenario of [
     'closed',
     'minimized',
@@ -2516,7 +2616,6 @@ test('runtime handoff and readiness respect closed, minimized and background win
   ]) {
     await t.test(scenario, async (t) => {
       const storage = deferred();
-      const connected = deferred();
       const resources = deferred();
       const f = await runningDesktop(
         t,
@@ -2527,13 +2626,13 @@ test('runtime handoff and readiness respect closed, minimized and background win
         {
           initialState: scenario === 'upgrade-closed' ? 'upgrade' : 'fresh',
           allowStart: true,
-          prepareRuntime: async ({ onStorageReady }) => {
+          openDatabase: async () => {
             await storage.promise;
-            const runtime = { env: {} };
-            await onStorageReady(runtime);
-            connected.resolve();
+            return syntheticDatabase();
+          },
+          prepareRuntime: async () => {
             await resources.promise;
-            return runtime;
+            return { environment: {} };
           },
         },
       );
@@ -2550,7 +2649,7 @@ test('runtime handoff and readiness respect closed, minimized and background win
           shell.focused = false;
         }
         storage.resolve();
-        await connected.promise;
+        await f.settle();
         const window = f.windows.find((window) => window.url);
         if (scenario.endsWith('-closed')) assert.equal(window, undefined);
         else {
@@ -2563,7 +2662,10 @@ test('runtime handoff and readiness respect closed, minimized and background win
         const count = f.windows.length;
         const inactiveShows = window?.inactiveShows ?? 0;
         resources.resolve();
-        await f.settle();
+        await waitFor(() => assert.equal(f.status().runtime.phase, 'ready'), {
+          attempts: 40,
+          interval: 10,
+        });
         assert.equal(f.status().phase, 'ready');
         assert.equal(f.windows.length, count);
         assert.equal(window?.inactiveShows ?? 0, inactiveShows);
@@ -2625,7 +2727,6 @@ test('native windows wait for owned renderer readiness before replacing startup'
   ]) {
     await t.test(scenario, async (t) => {
       const storage = deferred();
-      const connected = deferred();
       const loaded = deferred();
       const runtimeFinished = deferred();
       let retried = false;
@@ -2641,13 +2742,13 @@ test('native windows wait for owned renderer readiness before replacing startup'
           allowStart: true,
           readyRenderers: false,
           enginePageLoaded: () => (retried ? Promise.resolve() : loaded.promise),
-          prepareRuntime: async ({ onStorageReady }) => {
+          openDatabase: async () => {
             await storage.promise;
-            const runtime = { env: {} };
-            await onStorageReady(runtime);
-            connected.resolve();
+            return syntheticDatabase();
+          },
+          prepareRuntime: async () => {
             if (scenario === 'early-load-failure') await runtimeFinished.promise;
-            return runtime;
+            return { environment: {} };
           },
         },
       );
@@ -2664,8 +2765,7 @@ test('native windows wait for owned renderer readiness before replacing startup'
         await launched;
         assert.equal(setup.isVisible(), true);
         storage.resolve();
-        await connected.promise;
-        if (scenario !== 'early-load-failure') await f.settle();
+        await f.settle();
         const engine = f.windows.find((window) => window.url);
         assert.ok(engine);
         assert.equal(engine.isVisible(), false);
@@ -2684,7 +2784,6 @@ test('native windows wait for owned renderer readiness before replacing startup'
             await new Promise((accept) => setTimeout(accept, 10));
           assert.equal(transferred, true);
         }
-        if (scenario !== 'early-load-failure') await f.settle();
         assert.equal(engine.isVisible(), false);
         const frame = engine.webContents.mainFrame;
         const ready = f.handlers.get('nod:renderer-ready');
@@ -2719,7 +2818,7 @@ test('native windows wait for owned renderer readiness before replacing startup'
           assert.ok(recovery);
           if (recovery !== setup) await f.rendererReady(recovery);
           assert.equal(recovery.isVisible(), true);
-          assert.equal(f.status().phase, scenario === 'early-load-failure' ? 'preparing' : 'ready');
+          assert.equal(f.status().phase, 'ready');
           assert.ok(f.status().windowError);
           const backend = f.children[0];
           retried = true;
@@ -2749,7 +2848,7 @@ test('native windows wait for owned renderer readiness before replacing startup'
           await f.rendererReady(replacement);
           assert.equal(replacement.isVisible(), true);
           assert.equal(recovery.isDestroyed(), true);
-          assert.equal(f.status().phase, scenario === 'early-load-failure' ? 'preparing' : 'ready');
+          assert.equal(f.status().phase, 'ready');
           assert.equal(f.status().windowError, undefined);
           assert.equal(f.children.length, 1);
           assert.equal(f.children[0], backend);
@@ -2832,11 +2931,6 @@ test('a missing native setup renderer offers explicit recovery without hidden ke
           allowStart: true,
           readyRenderers: false,
           nativePageLoaded: () => (reopened ? Promise.resolve() : loaded.promise),
-          prepareRuntime: async ({ onStorageReady }) => {
-            const runtime = { env: {} };
-            await onStorageReady(runtime);
-            return runtime;
-          },
           prompt: (value) => {
             prompts.push(value);
             return { response: 0 };
@@ -2949,7 +3043,6 @@ test('completed upgrades retain settings and only explicit replay repeats onboar
           f.children.map((child) => child.kind),
           ['engine'],
         );
-        assert.equal(f.children.at(-1).environment.NOD_DESKTOP_RUNTIME_PENDING, 'true');
         assert.equal(f.children.at(-1).environment.NOD_DESKTOP_LEGACY_INTEGRATION, undefined);
         if (initialState === 'replay')
           assert.ok(f.windows.some((window) => window.url?.endsWith('/onboarding?replay=1')));
@@ -3014,12 +3107,11 @@ test('failed Welcome transfer preserves the saved answer and retries without a s
   }
 });
 
-test('a failed saved Welcome transfer leaves storage and the normal backend ready for explicit retry', async (t) => {
+test('a failed saved Welcome transfer leaves the computer and the normal backend ready for explicit retry', async (t) => {
   let failing = true;
   let writes = 0;
   let attempts = 0;
   let stopped = 0;
-  let handedOff = false;
   const f = await runningDesktop(
     t,
     async (url) => {
@@ -3033,17 +3125,14 @@ test('a failed saved Welcome transfer leaves storage and the normal backend read
     {
       initialState: 'fresh',
       allowStart: true,
-      prepareRuntime: async ({ onStorageReady }) => {
+      prepareRuntime: async () => {
         attempts++;
-        const runtime = {
-          env: {},
+        return {
+          environment: {},
           close: async () => {
             stopped++;
           },
         };
-        await onStorageReady(runtime);
-        handedOff = true;
-        return runtime;
       },
     },
   );
@@ -3051,7 +3140,10 @@ test('a failed saved Welcome transfer leaves storage and the normal backend read
   try {
     await f.launch();
     await f.settle();
-    assert.equal(handedOff, true);
+    await waitFor(() => assert.equal(f.status().runtime.phase, 'ready'), {
+      attempts: 40,
+      interval: 10,
+    });
     assert.equal(attempts, 1);
     assert.equal(writes, 1);
     assert.equal(stopped, 0);
@@ -3116,7 +3208,7 @@ test('one explicit retry after an engine exit also retries the saved Welcome cho
   }
 });
 
-test('session reconciliation retries after runtime startup without rebuilding the computer or engine', async (t) => {
+test('session reconciliation retries at engine start without rebuilding the computer or engine', async (t) => {
   for (const failure of ['session', 'settings']) {
     await t.test(failure, async (t) => {
       let failing = true;
@@ -3128,20 +3220,17 @@ test('session reconciliation retries after runtime startup without rebuilding th
         async (url) => {
           if (url.endsWith('/api/session')) {
             reads++;
-            if (reads > 1 && failing && failure === 'session')
-              throw new Error('Synthetic session unavailable');
-            return Response.json({ settings: { onboardingCompleted: reads > 1 } });
+            if (failing && failure === 'session') throw new Error('Synthetic session unavailable');
+            return Response.json({ settings: { onboardingCompleted: true } });
           }
           return Response.json({ ok: true });
         },
         {
           initialState: 'fresh',
           allowStart: true,
-          prepareRuntime: async ({ onStorageReady }) => {
+          prepareRuntime: async () => {
             attempts++;
-            const runtime = { env: {}, close: async () => stopped++ };
-            await onStorageReady(runtime);
-            return runtime;
+            return { environment: {}, close: async () => stopped++ };
           },
         },
       );
@@ -3156,26 +3245,30 @@ test('session reconciliation retries after runtime startup without rebuilding th
         await f.launch();
         await f.prepare();
         assert.equal(f.status().phase, 'error');
-        assert.equal(reads, 2);
-        assert.equal(attempts, 1);
-        assert.equal(stopped, 0);
+        assert.equal(reads, 1);
         assert.equal(f.children.length, 1);
         failing = false;
         const shell = f.windows[0];
-        const result = await f.handlers.get('nod:prepare')(
+        await f.handlers.get('nod:prepare')(
           { sender: shell.webContents, senderFrame: shell.webContents.mainFrame },
           { retry: true },
         );
-        assert.equal(result.phase, 'ready');
-        assert.equal(reads, 3);
+        assert.equal(f.status().phase, 'ready');
+        assert.equal(reads, 2);
+        await waitFor(() => assert.equal(f.status().runtime.phase, 'ready'), {
+          attempts: 40,
+          interval: 10,
+        });
         assert.equal(attempts, 1);
         assert.equal(stopped, 0);
         assert.equal(f.children.length, 1);
         assert.equal((await f.storage.store.get()).onboardingPreferenceStep, 'complete');
         assert.equal((await f.storage.store.get()).notifications, false);
-        assert.equal(
-          f.children[0].sent.filter((message) => message.type === 'nod-runtime-ready').length,
-          1,
+        assert.deepEqual(
+          JSON.parse(
+            JSON.stringify(f.children[0].sent.filter((message) => message.type === 'nod-runtime')),
+          ),
+          [{ type: 'nod-runtime', environment: {} }],
         );
       } finally {
         await f.close();
@@ -3281,7 +3374,7 @@ test('completed backend onboarding resumes required native preferences without c
   }
 });
 
-test('startup reports nested network failures, removes secrets and waits for an explicit retry', async (t) => {
+test('computer failures report nested network causes, remove secrets and wait for an explicit retry', async (t) => {
   let attempts = 0;
   const socket = Object.assign(new Error('Synthetic socket failure sk-syntheticPrivateKey'), {
     code: 'ECONNRESET',
@@ -3293,20 +3386,24 @@ test('startup reports nested network failures, removes secrets and waits for an 
     allowStart: true,
     prepareRuntime: async () => {
       if (++attempts === 1) throw new Error('The runtime download failed.', { cause: failure });
-      return { env: {} };
+      return { environment: {} };
     },
   });
   try {
     await f.launch();
     await f.settle();
+    await waitFor(() => assert.equal(f.status().runtime.phase, 'error'), {
+      attempts: 40,
+      interval: 10,
+    });
     await f.prepare();
-    assert.equal(f.status().phase, 'error');
-    for (const details of [f.status().details, f.status().runtime.details]) {
-      assert.match(details, /ECONNRESET/);
-      assert.match(details, /Synthetic socket failure \[redacted\]/);
-      assert.equal(details.includes('syntheticPrivateKey'), false);
-      assert.equal(details.includes('synthetic-private-property'), false);
-    }
+    assert.equal(f.status().phase, 'ready');
+    assert.equal(f.status().details, undefined);
+    const details = f.status().runtime.details;
+    assert.match(details, /ECONNRESET/);
+    assert.match(details, /Synthetic socket failure \[redacted\]/);
+    assert.equal(details.includes('syntheticPrivateKey'), false);
+    assert.equal(details.includes('synthetic-private-property'), false);
     const log = await waitFor(
       async () => {
         const value = await readFile(join(f.profileRoot, 'logs/startup.log'), 'utf8');
@@ -3319,8 +3416,12 @@ test('startup reports nested network failures, removes secrets and waits for an 
     assert.equal(log.includes('syntheticPrivateKey'), false);
     assert.equal(log.includes('synthetic-private-property'), false);
     assert.equal(attempts, 1);
-    assert.equal(f.children.length, 0);
+    assert.equal(f.children.length, 1);
     await f.prepare({ retry: true });
+    await waitFor(() => assert.equal(f.status().runtime.phase, 'ready'), {
+      attempts: 40,
+      interval: 10,
+    });
     assert.equal(attempts, 2);
     assert.equal(f.status().phase, 'ready');
   } finally {
@@ -3328,51 +3429,65 @@ test('startup reports nested network failures, removes secrets and waits for an 
   }
 });
 
-test('workspace failure leaves the pending backend intact and an explicit retry releases it once', async (t) => {
+test('a computer failure keeps the app open and an explicit retry sends the ready computer to the same engine', async (t) => {
   let attempts = 0;
+  const environment = { DOCKER_HOST: 'unix://synthetic-docker' };
   const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
     initialState: 'upgrade',
     allowStart: true,
-    prepareRuntime: async ({ onStorageReady }) => {
-      const runtime = { env: {} };
-      await onStorageReady(runtime);
-      if (++attempts === 1) throw new Error('Synthetic browser startup failure');
-      return runtime;
+    prepareRuntime: async () => {
+      if (++attempts === 1)
+        throw Object.assign(new Error('Synthetic browser startup failure'), {
+          code: 'NOD_CONTAINER_STOPPED',
+        });
+      return { environment };
     },
   });
+  const states = () =>
+    JSON.parse(
+      JSON.stringify(f.children[0].sent.filter((message) => message.type === 'nod-runtime')),
+    );
   try {
     await f.launch();
     await f.settle();
-    assert.equal(f.status().phase, 'error');
-    assert.equal(f.children.length, 1);
-    assert.equal(f.children[0].sent.length, 0);
-    assert.equal(f.windows[0].isDestroyed(), false);
-    assert.equal(
-      f.windows.some((window) => window.url),
-      false,
-    );
-    f.showEngine();
-    assert.equal(
-      f.windows.some((window) => window.url),
-      false,
-    );
-    await f.prepare();
-    assert.equal(attempts, 1);
-    await f.prepare({ retry: true });
-    assert.equal(attempts, 2);
-    assert.equal(f.children.length, 1);
-    assert.deepEqual(JSON.parse(JSON.stringify(f.children[0].sent)), [
-      { type: 'nod-runtime-ready' },
-    ]);
+    await waitFor(() => assert.equal(f.status().runtime.phase, 'error'), {
+      attempts: 40,
+      interval: 10,
+    });
     assert.equal(f.status().phase, 'ready');
+    assert.equal(f.status().error, undefined);
+    assert.equal(f.children.length, 1);
+    assert.deepEqual(states(), [
+      {
+        type: 'nod-runtime',
+        error: { code: 'NOD_CONTAINER_STOPPED', message: 'Synthetic browser startup failure' },
+      },
+    ]);
     assert.equal(f.windows[0].isDestroyed(), true);
     assert.ok(f.windows.some((window) => window.url));
+    await f.prepare();
+    await new Promise(setImmediate);
+    assert.equal(attempts, 1);
+    await f.prepare({ retry: true });
+    await waitFor(() => assert.equal(f.status().runtime.phase, 'ready'), {
+      attempts: 40,
+      interval: 10,
+    });
+    assert.equal(attempts, 2);
+    assert.equal(f.children.length, 1);
+    assert.deepEqual(states().at(-1), { type: 'nod-runtime', environment });
+    assert.ok(
+      states()
+        .slice(0, -1)
+        .every((state) => state.error),
+    );
+    assert.equal(f.status().phase, 'ready');
   } finally {
     await f.close();
   }
 });
 
-test('an engine exit after a workspace failure retains its cause until an explicit recovery', async (t) => {
+test('an engine exit after a computer failure keeps both causes until one explicit retry restarts both', async (t) => {
   let attempts = 0;
   const f = await runningDesktop(
     t,
@@ -3383,11 +3498,9 @@ test('an engine exit after a workspace failure retains its cause until an explic
     {
       initialState: 'fresh',
       allowStart: true,
-      prepareRuntime: async ({ onStorageReady }) => {
-        const runtime = { env: {} };
-        await onStorageReady(runtime);
+      prepareRuntime: async () => {
         if (++attempts === 1) throw new Error('Synthetic runtime storage is full');
-        return runtime;
+        return { environment: {} };
       },
     },
   );
@@ -3395,11 +3508,17 @@ test('an engine exit after a workspace failure retains its cause until an explic
     await f.storage.store.save({ welcome: { usageData: false, continued: true } });
     await f.launch();
     await f.settle();
-    assert.equal(f.status().phase, 'error');
-    const cause = f.status().error;
-    assert.equal(cause, 'Synthetic runtime storage is full');
+    await waitFor(() => assert.equal(f.status().runtime.phase, 'error'), {
+      attempts: 40,
+      interval: 10,
+    });
+    const cause = 'Synthetic runtime storage is full';
+    assert.equal(f.status().runtime.message, cause);
+    assert.equal(f.status().phase, 'ready');
     f.children[0].emit('exit', 1);
-    assert.equal(f.status().error, cause);
+    assert.equal(f.status().phase, 'error');
+    assert.match(f.status().error, /background service stopped/);
+    assert.equal(f.status().runtime.message, cause);
     assert.equal(f.status().engineReady, false);
     await new Promise(setImmediate);
     const shell = f.windows.find((window) => window.path && !window.isDestroyed());
@@ -3411,6 +3530,10 @@ test('an engine exit after a workspace failure retains its cause until an explic
     assert.equal(f.status().phase, 'ready');
     assert.equal(f.status().engineReady, true);
     assert.equal(f.status().error, undefined);
+    await waitFor(() => assert.equal(f.status().runtime.phase, 'ready'), {
+      attempts: 40,
+      interval: 10,
+    });
     assert.equal(attempts, 2);
     assert.equal(f.children.length, 2);
   } finally {
@@ -3418,7 +3541,7 @@ test('an engine exit after a workspace failure retains its cause until an explic
   }
 });
 
-test('an engine exit during warmup retains its error and waits for one explicit restart', async (t) => {
+test('an engine exit while the computer prepares retains its error and waits for one explicit restart', async (t) => {
   for (const earlyRetry of [false, true]) {
     await t.test(earlyRetry ? 'retry during warmup' : 'retry after warmup', async (t) => {
       const connected = deferred();
@@ -3428,15 +3551,13 @@ test('an engine exit during warmup retains its error and waits for one explicit 
       const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
         initialState: 'fresh',
         allowStart: true,
-        prepareRuntime: async ({ onStorageReady, onStatus }) => {
+        prepareRuntime: async ({ onStatus }) => {
           preparations++;
           progress = onStatus;
-          const runtime = { env: {} };
-          await onStorageReady(runtime);
           connected.resolve();
           await workspace.promise;
           onStatus({ phase: 'preparing', stage: 'browser', message: 'Synthetic browser setup' });
-          return runtime;
+          return { environment: {} };
         },
       });
       try {
@@ -3444,21 +3565,23 @@ test('an engine exit during warmup retains its error and waits for one explicit 
         await f.launch();
         await connected.promise;
         assert.equal(f.children.length, 1);
-        f.children[0].stderr.emit('data', Buffer.from('Error: Synthetic engine warmup failure\n'));
         f.children[0].emit('exit', 1);
         const failure = f.status().error;
-        assert.equal(failure, 'Synthetic engine warmup failure');
+        assert.match(failure, /background service stopped/);
         progress({ phase: 'preparing', stage: 'workspace', message: 'Synthetic workspace setup' });
         assert.equal(f.status().phase, 'error');
         assert.equal(f.status().error, failure);
         const retry = () => Promise.all([f.prepare({ retry: true }), f.prepare({ retry: true })]);
-        const pending = earlyRetry ? retry() : null;
-        await new Promise(setImmediate);
-        assert.equal(f.children.length, 1);
-        workspace.resolve();
-        if (pending) await pending;
-        else {
-          await f.settle();
+        if (earlyRetry) {
+          await retry();
+          assert.equal(f.status().runtime.phase, 'preparing');
+          workspace.resolve();
+        } else {
+          workspace.resolve();
+          await waitFor(() => assert.equal(f.status().runtime.phase, 'ready'), {
+            attempts: 40,
+            interval: 10,
+          });
           assert.equal(f.children.length, 1);
           assert.equal(f.status().phase, 'error');
           assert.equal(f.status().error, failure);
@@ -3496,22 +3619,25 @@ test('native upgrades preserve the existing settings and vault through successfu
         initialState: 'upgrade',
         allowStart: true,
         storedProfile: storage,
-        prepareRuntime: async ({ onStorageReady }) => {
-          const runtime = { env: {} };
-          await onStorageReady(runtime);
+        prepareRuntime: async () => {
           if (failed) throw new Error('Synthetic browser startup failure');
-          return runtime;
+          return { environment: {} };
         },
       });
       try {
         await f.launch();
         await f.settle();
-        assert.equal(f.status().phase, failed ? 'error' : 'ready');
+        await waitFor(() => assert.equal(f.status().runtime.phase, failed ? 'error' : 'ready'), {
+          attempts: 40,
+          interval: 10,
+        });
+        assert.equal(f.status().phase, 'ready');
         assert.equal(f.children[0].environment.NOD_VAULT_KEY, environment.NOD_VAULT_KEY);
-        assert.deepEqual(
-          JSON.parse(JSON.stringify(f.children[0].sent)),
-          failed ? [] : [{ type: 'nod-runtime-ready' }],
-        );
+        assert.deepEqual(JSON.parse(JSON.stringify(f.children[0].sent)), [
+          failed
+            ? { type: 'nod-runtime', error: { message: 'Synthetic browser startup failure' } }
+            : { type: 'nod-runtime', environment: {} },
+        ]);
         assert.equal((await f.storage.store.get()).onboardingPreferenceStep, 'complete');
         assert.equal((await f.storage.store.get()).theme, 'dark');
         assert.equal(await readFile(storage.path, 'utf8'), previous);
@@ -3522,16 +3648,16 @@ test('native upgrades preserve the existing settings and vault through successfu
   }
 });
 
-test('native quit aborts storage startup without creating a late engine', async (t) => {
-  const runtime = deferred();
+test('native quit aborts database startup without creating a late engine', async (t) => {
+  const database = deferred();
   let signal;
   let closed = 0;
   const f = await runningDesktop(t, async () => assert.fail('Quit must fence the full engine.'), {
     initialState: 'fresh',
     allowStart: true,
-    prepareRuntime: async (options) => {
+    openDatabase: async (options) => {
       signal = options.signal;
-      return runtime.promise;
+      return database.promise;
     },
   });
   await f.launch();
@@ -3541,8 +3667,8 @@ test('native quit aborts storage startup without creating a late engine', async 
   const closing = f.close();
   await new Promise(setImmediate);
   assert.equal(signal.aborted, true);
-  runtime.resolve({
-    env: {},
+  database.resolve({
+    ...syntheticDatabase(),
     close: async () => {
       closed++;
     },
@@ -4493,16 +4619,26 @@ test('native notification confirmation follows only successful owned enable tran
     assert.equal(delayed.closed, true);
     last.emit('show');
     assert.notEqual(last.closed, true);
+    assert.equal(last.options.silent, true);
+    await save({ notificationSound: true });
+    await save({ notifications: false });
+    await save({ notifications: true });
+    assert.equal((await f.storage.reopen().get()).notificationSound, true);
+    const sounded = f.notifications.at(-1);
+    assert.equal(sounded.options.silent, false);
+    sounded.emit('show');
+    assert.notEqual(sounded.closed, true);
     await f.close();
-    last.emit('show');
-    assert.equal(last.closed, true);
+    sounded.emit('show');
+    assert.equal(sounded.closed, true);
   } finally {
     await f.close();
   }
 });
 
-test('an engine crash retires every stale chat window before recovery opens the new engine', async (t) => {
+test('a crashed engine restarts by itself with backoff and repeated crashes wait for an explicit retry', async (t) => {
   const requests = [];
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const f = await runningDesktop(
     t,
     async (url) => {
@@ -4512,23 +4648,54 @@ test('an engine crash retires every stale chat window before recovery opens the 
     },
     { allowStart: true },
   );
+  const settled = async (promise = f.settle()) => {
+    let done = false;
+    const finish = () => {
+      done = true;
+    };
+    promise.then(finish, finish);
+    while (!done) {
+      t.mock.timers.tick(1);
+      await new Promise(setImmediate);
+    }
+    return promise;
+  };
   f.crash();
-  assert.equal((await f.prepare()).phase, 'ready');
+  assert.equal((await settled(f.prepare())).phase, 'ready');
   f.showEngine();
   const previous = f.windows.at(-1);
   const secondary = new previous.constructor();
   previous.webContents.emit('did-create-window', secondary);
-  f.children[0].emit('exit', 1);
-  assert.equal(f.status().phase, 'error');
+  for (const [index, delay] of [2_000, 15_000, 60_000].entries()) {
+    f.children.at(-1).emit('exit', 1);
+    assert.equal(f.status().phase, 'starting');
+    assert.equal(f.children.length, index + 1);
+    for (let turn = 0; turn < 1000 && !f.windows.at(-1).isVisible(); turn++)
+      await new Promise(setImmediate);
+    t.mock.timers.tick(delay - 1);
+    await new Promise(setImmediate);
+    assert.equal(f.children.length, index + 1);
+    t.mock.timers.tick(1);
+    await settled();
+    assert.equal(f.status().phase, 'ready');
+    assert.equal(f.children.length, index + 2);
+  }
   assert.equal(previous.isDestroyed(), true);
   assert.equal(secondary.isDestroyed(), true);
-  assert.equal((await f.prepare({ retry: true })).phase, 'ready');
+  f.children.at(-1).emit('exit', 1);
+  assert.equal(f.status().phase, 'error');
+  for (let turn = 0; turn < 1000 && !f.windows.at(-1).isVisible(); turn++)
+    await new Promise(setImmediate);
+  t.mock.timers.tick(10 * 60_000);
+  await settled();
+  assert.equal(f.children.length, 4);
+  assert.equal((await settled(f.prepare({ retry: true }))).phase, 'ready');
   f.showEngine();
   const current = f.windows.at(-1);
   assert.notEqual(current, previous);
   assert.equal(current.isDestroyed(), false);
   assert.equal(current.url, new URL(requests.at(-1)).origin);
-  assert.equal(f.children.length, 2);
+  assert.equal(f.children.length, 5);
 });
 
 test('the engine token waits for the engine Nod started to report its port', async (t) => {
@@ -4795,33 +4962,6 @@ test('late startup responses cannot make an exited engine ready or block its exp
   }
 });
 
-test('the engine reaches 1Password only through a separate helper that may load its library', async (t) => {
-  const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
-    allowStart: true,
-    environment: { HOME: '/Users/synthetic', OPENAI_API_KEY: 'sk-synthetic-provider-key' },
-  });
-  f.crash();
-  assert.equal((await f.prepare()).phase, 'ready');
-  const [engine] = f.children;
-  assert.equal(f.helpers.length, 0);
-  engine.emit('message', { type: 'nod-1password-open' });
-  assert.equal(f.helpers.length, 1);
-  const [helper] = f.helpers;
-  assert.match(helper.file, /[\\/]desktop[\\/]main[\\/]onepassword\.mjs$/);
-  assert.equal(helper.options.allowLoadingUnsignedLibraries, true);
-  assert.equal(helper.options.serviceName, 'Nod 1Password');
-  assert.deepEqual(JSON.parse(JSON.stringify(helper.options.env)), { HOME: '/Users/synthetic' });
-  assert.deepEqual(JSON.parse(JSON.stringify(helper.args)), ['0.0.0-test']);
-  assert.deepEqual(JSON.parse(JSON.stringify(helper.sent)), [
-    { message: { type: 'nod-1password-port' }, transfer: [{ end: 'helper' }] },
-  ]);
-  assert.deepEqual(JSON.parse(JSON.stringify(engine.transfers)), [
-    { message: { type: 'nod-1password-port' }, transfer: [{ end: 'engine' }] },
-  ]);
-  engine.emit('exit', 1);
-  assert.equal(helper.killed, true);
-});
-
 test('the engine moves only absolute paths to the system Trash and hears the result', async (t) => {
   const f = await runningDesktop(t, async () => Response.json({ ok: true }), { allowStart: true });
   f.crash();
@@ -4891,14 +5031,223 @@ test('quitting releases the computer at once and a late working message cannot t
   await quitting;
 });
 
-test('a stale engine cannot open a 1Password helper', async (t) => {
-  const f = await runningDesktop(t, async () => Response.json({ ok: true }), { allowStart: true });
+test('the computer stays awake for an upcoming run or phone channel only on power and while the setting is on', async (t) => {
+  for (const platform of ['darwin', 'win32'])
+    await t.test(platform, async (t) => {
+      let upcoming = { running: [], next: null, channels: [] };
+      let battery = false;
+      const f = await runningDesktop(
+        t,
+        async (url) =>
+          Response.json(new URL(url).pathname === '/api/desktop/status' ? upcoming : { ok: true }),
+        { allowStart: true, onBattery: () => battery, platform },
+      );
+      const awake = (held) => {
+        assert.deepEqual(f.awake(), held ? ['prevent-app-suspension'] : []);
+        assert.equal(f.systemHolds.at(-1) ?? false, platform === 'win32' && held);
+      };
+      f.crash();
+      assert.equal((await f.prepare()).phase, 'ready');
+      await f.checkWaiting();
+      awake(false);
+      upcoming = {
+        running: [],
+        next: { title: 'Synthetic briefing', at: new Date(Date.now() + 3_600_000).toISOString() },
+        channels: [],
+      };
+      await f.checkWaiting();
+      awake(true);
+      battery = true;
+      f.holdAwake();
+      awake(false);
+      battery = false;
+      upcoming = { running: [], next: null, channels: ['telegram'] };
+      await f.checkWaiting();
+      awake(true);
+      f.showEngine();
+      const window = f.windows.at(-1);
+      const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+      await f.handlers.get('nod:preferences:save')(event, { keepAwake: false });
+      assert.equal((await f.storage.reopen().get()).keepAwake, false);
+      awake(false);
+      f.children[0].emit('message', { type: 'nod-working', working: true });
+      awake(true);
+      f.children[0].emit('message', { type: 'nod-working', working: false });
+      await f.handlers.get('nod:preferences:save')(event, { keepAwake: true });
+      awake(true);
+      const quitting = f.quit(async () => {});
+      assert.deepEqual(f.awake(), []);
+      f.crash();
+      await quitting;
+      assert.equal(f.systemHolds.includes('closed'), platform === 'win32');
+      assert.equal(f.systemHolds.filter((hold) => hold !== 'closed').at(-1) ?? false, false);
+    });
+});
+
+test(
+  'Windows keep-awake helper holds a system power request until Nod releases it',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const { createSystemAwake } = await import('../main/system-awake.mjs');
+    const failures = [];
+    const helper = createSystemAwake({ onFailure: (reason) => failures.push(reason) });
+    const reason = 'Nod is keeping this computer awake for its work and schedules';
+    const listed = async () => {
+      const { stdout } = await promisify(execFile)('powercfg.exe', ['/requests']);
+      const system = /SYSTEM:\r?\n([\s\S]*?)(?:\r?\n\r?\n|$)/.exec(stdout)?.[1] ?? '';
+      return system.includes(reason);
+    };
+    const until = async (expected) => {
+      for (let attempt = 0; attempt < 120 && (await listed()) !== expected; attempt++)
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      return listed();
+    };
+    try {
+      helper.set(true);
+      assert.equal(await until(true), true);
+      helper.set(false);
+      assert.equal(await until(false), false);
+      helper.set(true);
+      assert.equal(await until(true), true);
+    } finally {
+      helper.close();
+    }
+    assert.equal(await until(false), false);
+    assert.deepEqual(failures, []);
+  },
+);
+
+test('closing the app leaves Nod on and turning it off names what stops first', async (t) => {
+  const prompts = [];
+  let answer = 1;
+  let upcoming = { running: [], next: null, channels: [] };
+  let unavailable = false;
+  const f = await runningDesktop(
+    t,
+    async (url) =>
+      new URL(url).pathname !== '/api/desktop/status'
+        ? Response.json({ ok: true })
+        : unavailable
+          ? new Response('Synthetic failure', { status: 500 })
+          : Response.json(upcoming),
+    {
+      allowStart: true,
+      prompt: (value) => {
+        prompts.push(value);
+        return { response: answer };
+      },
+    },
+  );
   f.crash();
   assert.equal((await f.prepare()).phase, 'ready');
-  const [stale] = f.children;
-  stale.emit('exit', 1);
-  stale.emit('message', { type: 'nod-1password-open' });
-  assert.equal(f.helpers.length, 0);
+  f.showEngine();
+  const window = f.windows.at(-1);
+  f.closeApp();
+  assert.equal(window.isDestroyed(), true);
+  assert.equal(f.children[0].killed, undefined);
+  assert.equal(f.status().phase, 'ready');
+  upcoming = {
+    running: [{ source: 'schedule', visible: false, task: false }],
+    next: { title: 'Synthetic briefing', at: new Date(Date.now() + 3_600_000).toISOString() },
+    channels: ['telegram'],
+  };
+  await f.turnOff();
+  assert.equal(prompts.length, 1);
+  for (const named of ['a scheduled task', 'Synthetic briefing', 'Telegram'])
+    assert.ok(prompts[0].detail.includes(named), named);
+  assert.equal(f.children[0].killed, undefined);
+  unavailable = true;
+  await f.turnOff();
+  assert.equal(prompts.length, 2);
+  assert.ok(prompts[1].detail.includes('could not check'));
+  assert.equal(f.children[0].killed, undefined);
+  unavailable = false;
+  upcoming = { running: [], next: null, channels: [] };
+  answer = 0;
+  await f.turnOff();
+  assert.equal(prompts.length, 2);
+  for (let turn = 0; !f.children[0].killed && turn < 1000; turn++)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(f.children[0].killed, true);
+});
+
+test('a login launch starts a set-up Nod without a window and a second login launch stays hidden', async (t) => {
+  for (const argv of [[], ['--background']]) {
+    const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
+      platform: 'win32',
+      initialState: 'upgrade',
+      allowStart: true,
+      argv,
+    });
+    t.after(() => f.close());
+    const open = () => f.windows.filter((window) => !window.isDestroyed()).length;
+    await f.launch();
+    await f.settle();
+    assert.equal(f.status().phase, 'ready');
+    assert.equal(f.children.length, 1);
+    assert.equal(open(), argv.length ? 0 : 1);
+    f.secondInstance(['--background']);
+    assert.equal(open(), argv.length ? 0 : 1);
+    f.secondInstance([]);
+    assert.equal(open(), 1);
+    await f.close();
+  }
+});
+
+test('a ready update installs by itself only when Nod is idle, closed and no run is due soon', async (t) => {
+  const installs = [];
+  let upcoming = {
+    running: [{ source: 'schedule', visible: false, task: false }],
+    next: null,
+    channels: [],
+  };
+  let unavailable = false;
+  const f = await runningDesktop(
+    t,
+    async (url) =>
+      new URL(url).pathname !== '/api/desktop/status'
+        ? Response.json({ ok: true })
+        : unavailable
+          ? new Response('Synthetic failure', { status: 500 })
+          : Response.json(upcoming),
+    {
+      platform: 'win32',
+      allowStart: true,
+      startWindowsInstall: async (options) => installs.push(options.relaunch),
+    },
+  );
+  t.after(() => f.close());
+  f.crash();
+  assert.equal((await f.prepare()).phase, 'ready');
+  f.setUpdates({ ready: { version: '0.10.2' }, dispose: async () => {} });
+  const idle = async () => {
+    await f.updateWhenIdle(await f.checkWaiting());
+  };
+  await idle();
+  upcoming = {
+    running: [],
+    next: { title: 'Synthetic briefing', at: new Date(Date.now() + 10 * 60_000).toISOString() },
+    channels: [],
+  };
+  await idle();
+  upcoming = {
+    running: [],
+    next: { title: 'Synthetic briefing', at: new Date(Date.now() + 3_600_000).toISOString() },
+    channels: [],
+  };
+  f.showEngine();
+  await idle();
+  assert.deepEqual(installs, []);
+  f.windows.at(-1).close();
+  unavailable = true;
+  await idle();
+  assert.deepEqual(installs, []);
+  unavailable = false;
+  await idle();
+  assert.deepEqual(installs, [true]);
+  const resume = JSON.parse(await readFile(join(f.profileRoot, 'update-resume.json'), 'utf8'));
+  assert.equal(resume.hidden, true);
+  assert.equal(resume.version, '0.10.2');
 });
 
 async function fixture(t, platform = 'win32') {
@@ -4990,6 +5339,10 @@ test('a fresh desktop connects to a server without creating a local Vault, owner
       Response.json({ user: { id: 'server-owner' }, settings: { onboardingCompleted: true } }),
     {
       initialState: 'fresh',
+      openDatabase: () => {
+        preparations++;
+        throw new Error('Choosing a server must not open a local database.');
+      },
       prepareRuntime: () => {
         preparations++;
         throw new Error('Choosing a server must not prepare a local runtime.');
@@ -6073,6 +6426,8 @@ app.whenReady().then(async () => {
     assert.deepEqual(restarted.preferences, {
       launchAtLogin: true,
       notifications: false,
+      notificationSound: false,
+      keepAwake: true,
       theme: 'system',
       zoomFactor: 1,
       onboardingPreferenceStep: 'complete',
@@ -6127,6 +6482,7 @@ test('startup reads preserve older settings for rollback until an owner preferen
   const settings = await store.get();
   assert.equal(settings.theme, 'dark');
   assert.equal(settings.notifications, true);
+  assert.equal(settings.notificationSound, false);
   assert.equal(settings.onboardingPreferenceStep, 'complete');
   assert.equal(await readFile(f.path, 'utf8'), previous);
   const blocked = createSettingsStore(f.path, {
@@ -8890,7 +9246,7 @@ async function updatePreparation({
       engineRoot: resourcesPath,
       pathToFileURL,
       join,
-      engine: undefined,
+      computerState: undefined,
       closingEngine: false,
       pendingPreload: undefined,
       chromiumFetch: request,
@@ -9325,7 +9681,7 @@ test('desktop preference steps and completion require the owned normal app and d
     });
 });
 
-test('native readiness notification waits for full runtime readiness and reaches opted-in background users once', async (t) => {
+test('native readiness notification follows the engine without waiting for the computer and reaches opted-in background users once', async (t) => {
   for (const scenario of [
     { enabled: true, focused: false, supported: true, expected: 1 },
     { enabled: false, focused: false, supported: true, expected: 0 },
@@ -9335,15 +9691,18 @@ test('native readiness notification waits for full runtime readiness and reaches
     await t.test(JSON.stringify(scenario), async (t) => {
       const resources = deferred();
       const storage = deferred();
+      const opening = deferred();
       const f = await runningDesktop(t, async () => Response.json({ ok: true }), {
         initialState: 'fresh',
         allowStart: true,
-        prepareRuntime: async ({ onStorageReady }) => {
-          const runtime = { env: {} };
-          await onStorageReady(runtime);
-          storage.resolve();
+        openDatabase: async () => {
+          opening.resolve();
+          await storage.promise;
+          return syntheticDatabase();
+        },
+        prepareRuntime: async () => {
           await resources.promise;
-          return runtime;
+          return { environment: {} };
         },
         notificationsSupported: scenario.supported,
       });
@@ -9351,14 +9710,20 @@ test('native readiness notification waits for full runtime readiness and reaches
         await f.storage.store.save({ notifications: scenario.enabled });
         await f.launch();
         void f.prepare();
-        await storage.promise;
+        await opening.promise;
         const window = f.windows[0];
         window.focused = scenario.focused;
         assert.equal(f.notifications.length, 0);
-        resources.resolve();
+        storage.resolve();
         await f.settle();
         await new Promise(setImmediate);
+        assert.notEqual(f.status().runtime.phase, 'ready');
         assert.equal(f.notifications.length, scenario.expected);
+        resources.resolve();
+        await waitFor(() => assert.equal(f.status().runtime.phase, 'ready'), {
+          attempts: 40,
+          interval: 10,
+        });
         f.notifyReady();
         f.notifyReady();
         await new Promise(setImmediate);
@@ -9369,6 +9734,7 @@ test('native readiness notification waits for full runtime readiness and reaches
           assert.equal(window.focused, true);
         }
       } finally {
+        storage.resolve();
         resources.resolve();
         await f.close();
       }
@@ -10164,7 +10530,8 @@ test('onboarding completion crosses the client and native boundary in each suppo
         }
         const client = await onboardingClient(native.bridge);
         assert.equal(client.desktopRuntimeAvailable(), local);
-        if (local) await client.completeDesktopPreferences();
+        if (local)
+          assert.equal(typeof (await client.completeDesktopPreferences()).launchAtLogin, 'boolean');
         if (remote) {
           assert.equal(native.bridge.localRuntime, undefined);
           assert.equal(native.bridge.prepare, undefined);
@@ -11187,6 +11554,7 @@ test('computer use clicks a field that ignores accessibility focus and types or 
     'focus @s1abcdef:e1': { ok: true, data: { disposition: { delivery: 'delivered_unverified' } } },
     'snapshot --root @s1abcdef:e1 --max-depth 0': [
       fieldRead([]),
+      fieldRead([]),
       fieldRead(focused ? ['focused'] : []),
     ],
     ...extra,
@@ -11206,6 +11574,7 @@ test('computer use clicks a field that ignores accessibility focus and types or 
     'type @s1abcdef:e1 --stdin',
     'focus-window --app Mail --window-id w-1',
     'type @s1abcdef:e1 --stdin',
+    focusRead,
     'focus @s1abcdef:e1',
     focusRead,
     'click @s1abcdef:e1 --headed',
@@ -11213,6 +11582,30 @@ test('computer use clicks a field that ignores accessibility focus and types or 
     'find --app Mail --window-id w-1 --state focused --limit 0 --timeout-ms 25000',
     'type @s1abcdef:e1 --stdin --headed',
   ]);
+
+  const keptFocus = await fakeDesktop(
+    t,
+    answers(true, { 'snapshot --root @s1abcdef:e1 --max-depth 0': fieldRead(['focused']) }),
+  );
+  await keptFocus.helper.request(request);
+  assert.ok(!(await keptFocus.calls()).some((call) => /^(focus|click) @s1abcdef:e1/.test(call)));
+
+  const changedWindow = await fakeDesktop(
+    t,
+    answers(true, { 'snapshot --root @s1abcdef:e1 --max-depth 0': fieldRead(['focused']) }),
+  );
+  await assert.rejects(
+    changedWindow.helper.request({ ...request, settable: false, expected: 'checked-state' }),
+  );
+  assert.ok(!(await changedWindow.calls()).some((call) => call.startsWith('press cmd+v')));
+
+  const lostFocus = await fakeDesktop(t, answers(true));
+  await assert.rejects(
+    lostFocus.helper.request({ ...request, keepFocus: true }),
+    /lost keyboard focus/,
+  );
+  assert.ok(!(await lostFocus.calls()).some((call) => /^(focus|click) @s1abcdef:e1/.test(call)));
+  assert.ok(!(await lostFocus.calls()).includes('type @s1abcdef:e1 --stdin --headed'));
 
   const unfocused = await fakeDesktop(t, answers(false));
   await assert.rejects(unfocused.helper.request(request), /did not take keyboard focus/);
@@ -11223,6 +11616,7 @@ test('computer use clicks a field that ignores accessibility focus and types or 
   await pasted.helper.request(readOnly);
   assert.deepEqual(await pasted.calls(), [
     'focus-window --app Mail --window-id w-1',
+    focusRead,
     'focus @s1abcdef:e1',
     focusRead,
     'click @s1abcdef:e1 --headed',
@@ -11261,6 +11655,7 @@ test('computer use clicks a field that ignores accessibility focus and types or 
   assert.deepEqual(await windows.calls(), [
     'focus-window --app Mail --window-id w-1',
     'type @s1abcdef:e1 --stdin --headed',
+    focusRead,
     'focus @s1abcdef:e1 --headed',
     focusRead,
     'click @s1abcdef:e1 --headed',
@@ -11508,6 +11903,27 @@ test('computer use on Windows starts only windowed programs', async (t) => {
   );
   assert.deepEqual(await desktop.helper.request({ op: 'open', bundle: 'notepad' }), { pid: 9 });
   assert.deepEqual(await desktop.calls(), [`launch ${join(root, 'System32', 'notepad.exe')}`]);
+});
+
+test('computer use on macOS reaches an app by bundle ID when helper processes share its name', async (t) => {
+  const desktop = await fakeDesktop(t, {
+    status: { ok: true, data: { supported_surfaces: ['window', 'menubar'] } },
+    'snapshot --app Thunderbird': refused(
+      'AMBIGUOUS_TARGET',
+      "Multiple application instances matched 'Thunderbird'",
+    ),
+    'snapshot --app org.mozilla.thunderbird': {
+      ok: true,
+      data: { tree: { role: 'menubar', children: [{ role: 'menu', name: 'File' }] } },
+    },
+  });
+  const read = await desktop.helper.request({
+    op: 'snapshot',
+    app: 'Thunderbird',
+    bundle: 'org.mozilla.thunderbird',
+    menu: true,
+  });
+  assert.equal(read.tree.children[0].name, 'File');
 });
 
 test('computer use keeps no focus session when the window cannot come to the front', async (t) => {
@@ -12395,7 +12811,7 @@ test('startup report facts survive retry and disk failure without keeping diagno
     packaged: true,
     resourcesPath: '/Applications/Synthetic Owner/Nod.app/Contents/Resources',
     allowStart: true,
-    prepareRuntime: async () => {
+    openDatabase: async () => {
       attempts++;
       if (attempts === 2) retryFailure = startupStatusFacts(f.status()).failure;
       throw Object.assign(new Error(privateText), { code: 'EACCES', syscall: 'open' });
@@ -12562,7 +12978,7 @@ test('startup status hides environment credentials before preparation errors and
         initialState: 'idle',
         allowStart: true,
         environment: { [key]: value },
-        prepareRuntime: async () => {
+        openDatabase: async () => {
           throw new Error(prefix + secret + ' end');
         },
         startupFeedbackAction: async (message) => {
@@ -12636,7 +13052,7 @@ test('startup status masks overlapping credentials and private roots in one pass
       CROSS_OTHER_API_KEY: 'ABCsynthetic-private-cross-tail',
       PATH_CROSS_API_KEY: 'engine/synthetic-private-path-tail',
     },
-    prepareRuntime: async () => {
+    openDatabase: async () => {
       throw new Error(
         `Synthetic failure ${secret} ${engineRoot.replaceAll('\\', '/')}/worker ${f.profileRoot.replaceAll('\\', '/')}/worker`,
       );

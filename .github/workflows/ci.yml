@@ -128,6 +128,9 @@ jobs:
           fi
           sudo ln -s "$PWD" /app
           mkdir -p "$RUNNER_TEMP/integration-timings"
+      - name: Fetch the pinned PostgreSQL build for host database tests
+        if: steps.scope.outputs.integration == 'true'
+        run: node desktop/scripts/postgres-binaries.mjs
       - name: Install desktop tooling without downloading Electron
         if: steps.scope.outputs.desktop == 'true'
         env:
@@ -342,6 +345,8 @@ jobs:
             --test-reporter=spec --test-reporter-destination=stdout `
             --test-reporter=junit --test-reporter-destination=.local/windows-setup/desktop.xml `
             desktop/test/settings.test.mjs
+      - name: Check the Windows keep-awake power request
+        run: node --test --test-name-pattern="Windows keep-awake helper" desktop/test/settings.test.mjs
       - name: Check Windows browser app sign-in bridge
         shell: pwsh
         run: |
@@ -375,6 +380,10 @@ jobs:
             tests/integrations.test.ts
       - name: Check local file rules on Windows
         run: pnpm exec tsx --test --test-name-pattern="local file rules" tests/sandbox.test.ts
+      - name: Fetch the pinned PostgreSQL build for Windows
+        run: node desktop/scripts/postgres-binaries.mjs
+      - name: Check the host database on Windows
+        run: pnpm exec tsx --test tests/desktop-database.test.ts
       - name: Execute the PowerShell installer fixtures
         shell: pwsh
         run: >-

@@ -24,6 +24,7 @@ export function createContainerBrowserComputer(options: {
   spawn?: BrowserBridgeLauncher;
   timeoutMs?: number;
   drainTimeoutMs?: number;
+  ready?(signal?: AbortSignal): Promise<void>;
 }): Computer {
   const container = options.container ?? 'nod-browser';
   if (!/^nod-browser(?:-[a-zA-Z0-9_-]+)?$/.test(container))
@@ -33,10 +34,20 @@ export function createContainerBrowserComputer(options: {
     namespace: browserNamespace(options.dataRoot),
     timeoutMs: options.timeoutMs,
     drainTimeoutMs: options.drainTimeoutMs,
+    ready: options.ready,
     launch: () =>
       launch('docker', ['exec', '-i', '--user', 'node', container, 'node', '/app/bridge.mjs'], {
         env: serviceEnvironment(),
         shell: false,
       }),
+    launchPersistent: () =>
+      launch(
+        'docker',
+        ['exec', '-i', '--user', 'node', container, 'node', '/app/bridge.mjs', '--multiplex'],
+        {
+          env: serviceEnvironment(),
+          shell: false,
+        },
+      ),
   });
 }

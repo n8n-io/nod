@@ -13,7 +13,7 @@ Check current stock and delivery at the selected seller. Compare the total deliv
 
 Prefer manufacturer specifications for compatibility and warranty. Check seller identity, return costs and return limits. Distinguish a marketplace seller from the platform. Do not treat a sponsored ranking or a coupon site as proof of a deal.
 
-For a basket, match each line and quantity. Keep substitutes out unless the request allows them. Read the final basket after changes; adding twice can create an unwanted duplicate. Read delivery and payment choices before an authorized checkout. A request for research or a basket does not authorize a purchase.
+For a basket, match each line and quantity. Keep substitutes out unless the request allows them. Read the final basket after changes; adding twice can create an unwanted duplicate. Read delivery and payment choices before an authorized checkout. When the user states no shipping preference and multiple options are comparable, choose the cheapest available option rather than accepting a more expensive preselected default, and disclose the choice. A request for research or a basket does not authorize a purchase.
 
 For research or a basket task, return the checked options or basket with variants, quantities, total costs and delivery estimates. An authorized purchase requires the final variant, quantity, total, delivery estimate and order reference from the seller. A clicked button or pending payment is not an order. If the result is unclear, inspect orders before any further action.
 

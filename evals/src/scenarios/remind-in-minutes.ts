@@ -1,23 +1,11 @@
 import { setTimeout as sleep } from 'node:timers/promises';
+import { scheduledMessages } from '../checks.ts';
 import { check, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { createApps } from '../world/apps.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const mum = /\b(mum|mom|mother|mam|mummy|mommy)\b/i;
-
-function scheduledMessages(run: Run) {
-  const turns = new Set(
-    run.turns.filter((turn) => turn.source === 'schedule').map((turn) => turn.id),
-  );
-  return run.messages.filter(
-    (message) =>
-      message.role === 'assistant' &&
-      message.turnId !== null &&
-      turns.has(message.turnId) &&
-      message.text.trim(),
-  );
-}
 
 const clock = (at: number) =>
   new Intl.DateTimeFormat('en-GB', {
@@ -31,7 +19,8 @@ export default scenario({
   id: 'remind-in-minutes',
   title: 'Remind me in 4 minutes to call my mum',
   capabilities: ['schedules', 'long-running'],
-  tier: 'release',
+  tier: 'full',
+  set: 'happy-path',
   calibration: 'pending',
   complexity: 'medium',
   stance: 'regression',

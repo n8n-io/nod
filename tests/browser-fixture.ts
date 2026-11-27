@@ -519,7 +519,14 @@ export async function createBrowserWorkerFixture(
       },
     });
     void Promise.resolve(launches.length === 1 ? control.beforeFirstBridge : undefined)
-      .then(() => runBrowserBridge({ input: process.stdin, output: process.stdout, socketPath }))
+      .then(() =>
+        runBrowserBridge({
+          input: process.stdin,
+          output: process.stdout,
+          socketPath,
+          multiplex: args.includes('--multiplex'),
+        }),
+      )
       .then((code) => {
         process.stdout.end();
         process.stderr.end();

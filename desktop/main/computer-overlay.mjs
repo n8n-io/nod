@@ -66,7 +66,10 @@ function overlayWindow(options) {
     },
   });
   window.setAlwaysOnTop(true, 'floating');
-  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  window.setVisibleOnAllWorkspaces(true, {
+    visibleOnFullScreen: true,
+    skipTransformProcessType: true,
+  });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
   return window;

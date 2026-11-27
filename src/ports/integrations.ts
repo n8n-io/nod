@@ -261,20 +261,6 @@ export interface IntegrationBackoff {
   status: number;
   code?: IntegrationConnectionError['code'];
 }
-export interface VerificationEmailQuery {
-  recipient: string;
-  senderDomain: string;
-  after: number;
-  before: number;
-}
-export interface VerificationEmail {
-  id: string;
-  receivedAt: number;
-  sender: string;
-  recipients: string[];
-  authenticatedDomain: string;
-  text: string;
-}
 export interface SentEmail {
   from: string;
   to: string[];
@@ -348,11 +334,6 @@ export interface IntegrationProvider {
     authConfigId?: string;
   }>;
   deleteAccount(id: string, ownerId?: string): Promise<void>;
-  verificationEmails?(
-    accountId: string,
-    query: VerificationEmailQuery,
-    signal: AbortSignal,
-  ): Promise<VerificationEmail[] | undefined>;
   sentEmails?(accountId: string, signal: AbortSignal): Promise<SentEmail[]>;
   inboxSnippets?(accountId: string, signal: AbortSignal): Promise<InboxSnippet[]>;
   inboxThreads?(accountId: string, signal: AbortSignal): Promise<InboxThread[]>;

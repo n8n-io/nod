@@ -475,9 +475,11 @@ export function createComputerHelper({
       throw new Error(`INVALID: Invalid ${what}.`);
     return value;
   };
+  const appArg = (request) =>
+    check(platform === 'darwin' && request.bundle ? request.bundle : request.app, appName, 'app');
   const scope = (request) => [
     '--app',
-    check(request.app, appName, 'app'),
+    appArg(request),
     ...(request.window ? ['--window-id', check(request.window, windowId, 'window')] : []),
   ];
   const inspectArgs = (request) => [
@@ -603,7 +605,7 @@ export function createComputerHelper({
 
   async function windowOf(target) {
     if (!target.window) return undefined;
-    const windows = await run(['list-windows', '--app', check(target.app, appName, 'app')]);
+    const windows = await run(['list-windows', '--app', appArg(target)]);
     return windows.find((window) => window.id === target.window);
   }
 
@@ -622,9 +624,10 @@ export function createComputerHelper({
     if (!current || polling) return;
     polling = true;
     try {
-      const windows = await run(['list-windows', ...scope({ app: current.target.app })]).catch(
-        () => [],
-      );
+      const windows = await run([
+        'list-windows',
+        ...scope({ app: current.target.app, bundle: current.target.bundle }),
+      ]).catch(() => []);
       const bounds = windows.find((item) => item.id === current.target.window)?.bounds;
       if (
         !bounds ||
@@ -767,7 +770,7 @@ export function createComputerHelper({
     args,
     { input, found = windowOf(request), front = false, ready } = {},
   ) {
-    const target = { app: request.app, window: request.window };
+    const target = { app: request.app, bundle: request.bundle, window: request.window };
     const window = await found;
     const inFront = window && (front || (await chromium(window.pid)));
     if (!inFront)
@@ -806,6 +809,11 @@ export function createComputerHelper({
 
   async function keyboardFocus(request) {
     const at = check(request.ref, ref, 'ref');
+    if (await hasFocus(at)) return { ...request, noSecureFocus: true };
+    if (request.keepFocus)
+      throw new Error(
+        'STALE_REF: That field lost keyboard focus since this step was checked, so Nod typed nothing.',
+      );
     const focus = await guarded(request, focusArgs(at)).catch((error) => {
       if (
         error.delivery !== 'not_delivered' ||
@@ -827,7 +835,7 @@ export function createComputerHelper({
   }
 
   async function type(request) {
-    const target = { app: request.app, window: request.window };
+    const target = { app: request.app, bundle: request.bundle, window: request.window };
     const window = await windowOf(target);
     if (window && (pasteRoles.has(request.role) || (await chromium(window.pid))))
       return paste(request, target, window);
@@ -877,7 +885,7 @@ export function createComputerHelper({
   }
 
   async function observe(request, work) {
-    const target = { app: request.app, window: request.window };
+    const target = { app: request.app, bundle: request.bundle, window: request.window };
     if (!stale.has(target.window))
       try {
         return await work();
@@ -918,7 +926,7 @@ export function createComputerHelper({
       ),
     }),
     windows: async (request) => ({
-      windows: (await run(['list-windows', '--app', check(request.app, appName, 'app')]))
+      windows: (await run(['list-windows', '--app', appArg(request)]))
         .filter((window) => window.pid === request.pid && window.accessible !== false)
         .map((window) => ({
           id: window.id,

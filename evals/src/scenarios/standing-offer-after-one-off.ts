@@ -55,6 +55,7 @@ export default scenario({
   linear: 'LAB-508',
   capabilities: ['apps', 'progress'],
   tier: 'pr',
+  set: 'happy-path',
   complexity: 'simple',
   stance: 'gap',
   calibration: 'pending',

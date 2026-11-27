@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { previewableUrl } from './link-preview.ts';
+import { appPagePath, appPageUrl } from './app-links.ts';
+import { previewableUrl, publicActionUrl } from './link-preview.ts';
 
 const text = (length: number) =>
   z
@@ -13,6 +14,12 @@ const url = text(2048)
     message: 'Use a public HTTPS source without credentials or private links.',
   })
   .transform((value) => previewableUrl(value)!);
+const actionUrl = text(2048)
+  .refine((value) => Boolean(appPagePath(value.trim()) || publicActionUrl(value.trim())), {
+    message:
+      'Use a public HTTPS link without credentials, auth paths or sensitive query tokens, or an allowed Nod page path.',
+  })
+  .transform((value) => appPagePath(value.trim()) ?? publicActionUrl(value.trim())!);
 const common = {
   version: z.literal(1),
   title: text(120),
@@ -382,6 +389,15 @@ const factsPresentation = z.strictObject({
   status: status
     .describe('Only a state the evidence establishes, such as Confirmed or Pending.')
     .optional(),
+  reference: z
+    .strictObject({
+      label: text(40).describe('What the code is, e.g. Confirmation, Order, Ticket, Booking ref.'),
+      value: text(80).describe('The exact reference, booking code or ID from the source.'),
+    })
+    .describe(
+      'The primary confirmation code, booking reference, order number or record ID so the owner can verify and copy it.',
+    )
+    .optional(),
   stats: z
     .array(
       z.strictObject({
@@ -395,8 +411,24 @@ const factsPresentation = z.strictObject({
     .describe('One to four headline figures shown large above the details.')
     .optional(),
   items: z
-    .array(fact.extend({ strong: z.boolean().describe('A total or the key figure.').optional() }))
+    .array(
+      fact.extend({
+        strong: z.boolean().describe('A total or the key figure.').optional(),
+        copy: z.boolean().describe('Show a copy button for an ID, code or reference.').optional(),
+      }),
+    )
     .max(20)
+    .optional(),
+  action: z
+    .strictObject({
+      label: text(60)
+        .describe('Button label, e.g. View booking, Open cart, View order, Open Scheduled.')
+        .optional(),
+      url: actionUrl.describe(
+        'Public HTTPS link or allowed Nod page path (e.g. /tasks, /vault) where the owner can inspect or confirm the result.',
+      ),
+    })
+    .describe('Primary link to open and verify the result on its site or in Nod.')
     .optional(),
   note: text(220)
     .describe('One short line of context not already in the title; omit if redundant.')
@@ -755,8 +787,14 @@ export const presentationSchema = z
           invalid('A pie or donut chart must contain a positive value.');
       }
     }
-    if (value.type === 'facts' && !value.items?.length && !value.stats?.length)
-      invalid('A facts card needs items or stats.');
+    if (
+      value.type === 'facts' &&
+      !value.items?.length &&
+      !value.stats?.length &&
+      !value.reference &&
+      !value.action
+    )
+      invalid('A facts card needs items, stats, a reference or an action.');
     if (
       value.type === 'compare' &&
       value.winner !== undefined &&
@@ -1295,9 +1333,15 @@ export function presentationText(value: Presentation) {
   }
   if (value.type === 'facts') {
     if (value.status) lines.push(value.status.label);
+    if (value.reference) lines.push(`${value.reference.label}: ${value.reference.value}`);
     for (const stat of value.stats ?? [])
       lines.push([`${stat.label}: ${stat.value}`, stat.sub].filter(Boolean).join(' · '));
     for (const item of value.items ?? []) lines.push(`${item.label}: ${item.value}`);
+    if (value.action) {
+      const appPath = appPagePath(value.action.url);
+      const href = appPath ? appPageUrl(appPath) : value.action.url;
+      lines.push(value.action.label ? `${value.action.label}: ${href}` : href);
+    }
   }
   if (value.type === 'compare') {
     if (value.verdict) lines.push(value.verdict);

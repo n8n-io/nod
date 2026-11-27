@@ -87,6 +87,10 @@ export async function initializeDatabase() {
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS withdrawn boolean NOT NULL DEFAULT false;
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS context_exhausted boolean NOT NULL DEFAULT false;
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS outside_action_at timestamptz;
+    ALTER TABLE turns ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz;
+    ALTER TABLE turns ADD COLUMN IF NOT EXISTS fence_token integer NOT NULL DEFAULT 0;
+    ALTER TABLE turns ADD COLUMN IF NOT EXISTS retry_count integer NOT NULL DEFAULT 0;
+    CREATE INDEX IF NOT EXISTS turns_running_lease ON turns(owner_id,lease_expires_at) WHERE status='running';
     CREATE INDEX IF NOT EXISTS turns_withdrawn_message ON turns(message_id) WHERE withdrawn;
     CREATE INDEX IF NOT EXISTS turns_reaction_message ON turns(owner_id,message_id) WHERE starts_with(source_id,'reaction-reply:');
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS bot_id uuid;
@@ -170,6 +174,7 @@ export async function initializeDatabase() {
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS presentation jsonb;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS answer_choices jsonb;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS question_answer jsonb;
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS card_choice boolean NOT NULL DEFAULT false;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS approval_answer boolean;
     CREATE INDEX IF NOT EXISTS messages_question_answer_reply ON messages(reply_to_message_id) WHERE question_answer IS NOT NULL;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_channel text;
@@ -198,6 +203,25 @@ export async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS approvals_execution_turn ON approvals(execution_turn_id);
     CREATE INDEX IF NOT EXISTS approvals_confirmation_message ON approvals(confirmation_message_id);
     CREATE INDEX IF NOT EXISTS approvals_memory_save ON approvals(owner_id,source_message_id) WHERE action='NOD_memory_save';
+    CREATE TABLE IF NOT EXISTS card_offers (
+      id text NOT NULL, owner_id text NOT NULL, thread_id uuid NOT NULL REFERENCES threads(id),
+      kind text NOT NULL, payload jsonb NOT NULL,
+      valid_until timestamptz, created_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY(owner_id,thread_id,id)
+    );
+    CREATE INDEX IF NOT EXISTS card_offers_expiry ON card_offers(valid_until) WHERE valid_until IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS card_interactions (
+      id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid NOT NULL REFERENCES threads(id),
+      message_id uuid NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      turn_id uuid REFERENCES turns(id), session_id uuid NOT NULL,
+      task_id uuid, task_revision integer,
+      options jsonb NOT NULL, multiple boolean NOT NULL DEFAULT false,
+      status text NOT NULL DEFAULT 'open' CHECK (status IN ('open','selected','fulfilled','superseded','expired','cancelled')),
+      selected_option_ids jsonb, valid_until timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS card_interactions_message ON card_interactions(owner_id,message_id);
+    CREATE INDEX IF NOT EXISTS card_interactions_session_open ON card_interactions(owner_id,session_id) WHERE status='open';
     CREATE TABLE IF NOT EXISTS artifacts (
       id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid REFERENCES threads(id), name text NOT NULL,
       mime_type text NOT NULL, size integer NOT NULL, storage_path text NOT NULL,
@@ -227,6 +251,7 @@ export async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS messages_thread_time ON messages(thread_id,created_at);
     DROP TABLE IF EXISTS draft_instructions;
     DROP TABLE IF EXISTS browser_connections;
+    DROP TABLE IF EXISTS credential_requests, credential_account_selections, password_manager_accounts;
     CREATE INDEX IF NOT EXISTS messages_turn_time ON messages(turn_id,created_at);
     CREATE INDEX IF NOT EXISTS messages_attachments ON messages USING gin (attachments jsonb_path_ops);
     CREATE INDEX IF NOT EXISTS messages_text_search ON messages USING gin (to_tsvector('english',text));

@@ -32,8 +32,8 @@
     "proof": "main-f724033 + main-d7649a6: 6/6"
   },
   "login-2fa-metrics": {
-    "fingerprint": "b1fe33f3c1f7",
-    "proof": "main-f724033 + main-d7649a6: 6/6"
+    "fingerprint": "cace2bab6e55",
+    "proof": "feat-real-page-sign-in-a8b9367: 5/5"
   },
   "metrics-week-over-week": {
     "fingerprint": "28c2f5ed7094",
@@ -52,8 +52,8 @@
     "proof": "main-f724033 + main-d7649a6: 6/6"
   },
   "portal-account-choice": {
-    "fingerprint": "2a174ac0a900",
-    "proof": "main-f724033 + main-d7649a6: 6/6"
+    "fingerprint": "5ab57899f81c",
+    "proof": "feat-real-page-sign-in-a8b9367: 5/5"
   },
   "portal-nif-signin": {
     "fingerprint": "bccbe63ea70c",

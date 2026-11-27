@@ -136,6 +136,7 @@ export async function setBrowserNotifications(
   let notification;
   try {
     notification = new window.Notification('Nod', {
+      silent: true,
       body: 'Notifications are on.',
       icon: new URL('/nod-logo.png', window.location.origin).href,
       tag: key,
@@ -204,6 +205,7 @@ export async function deliverBrowserNotification(
       JSON.stringify({ createdAt: message.createdAt, ids: [...ids, message.id] }),
     );
     const notification = new window.Notification('Nod', {
+      silent: true,
       body: 'Nod has a new reply for you.',
       icon: new URL('/nod-logo.png', window.location.origin).href,
       tag: key,

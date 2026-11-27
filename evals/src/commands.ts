@@ -86,6 +86,7 @@ const help = `Nod capability evals
                                pending cases; pr is the small suite; release adds the release suite;
                                live also runs the open web cases
     --scenario a,b             only these scenarios       --capability browser   only this capability
+    --set happy-path           only the scenarios in this named set
     --shard 1/4                run only shard 1 of 4 (combine shards later with "merge")
     --include-pending          include pending cases in the small pr suite
     --repeat 3                 attempts per scenario      --k 3                  k for pass@k and pass^k
@@ -128,6 +129,7 @@ function runOptions(args: Args): RunOptions {
     tier: choice(args, 'tier', ['pr', 'full', 'release', 'live'], 'full'),
     scenarioIds: text(args, 'scenario')?.split(','),
     capability: text(args, 'capability'),
+    set: text(args, 'set'),
     shard: parseShard(text(args, 'shard')),
     label: text(args, 'label'),
     ref: text(args, 'ref'),
@@ -237,7 +239,7 @@ export async function main(args: Args) {
       }
       for (const item of scenarios)
         console.log(
-          `${item.id.padEnd(40)} ${item.tier.padEnd(7)} ${item.complexity.padEnd(8)} ${item.stance.padEnd(10)} ${item.capabilities.join(',').padEnd(34)} ${(item.linear ?? '').padEnd(8)} ${item.calibration === 'pending' ? 'calibration pending' : ''}`,
+          `${item.id.padEnd(40)} ${item.tier.padEnd(7)} ${item.complexity.padEnd(8)} ${item.stance.padEnd(10)} ${item.capabilities.join(',').padEnd(34)} ${(item.linear ?? '').padEnd(8)} ${(item.set ?? '').padEnd(10)} ${item.calibration === 'pending' ? 'calibration pending' : ''}`,
         );
       return;
     }

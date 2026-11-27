@@ -100,7 +100,7 @@ The CLI then runs with an environment built from scratch: a fixed `PATH`, a priv
 
 ## The browser container
 
-The browser is a separate trusted container. It doesn't share mounts or a network namespace with the workspace. The server drives Vercel Labs [agent-browser](https://github.com/vercel-labs/agent-browser) over a fixed stdin bridge to a private Unix socket.
+The browser is a separate trusted container. It doesn't share mounts or a network namespace with the workspace. The server drives Vercel Labs [agent-browser](https://github.com/vercel-labs/agent-browser) over a persistent multiplexed stdin bridge to a private Unix socket.
 
 | Setting    | Value                                                                   |
 | ---------- | ----------------------------------------------------------------------- |
@@ -122,17 +122,15 @@ Nod runs one Chromium for the owner, with one profile that keeps cookies, logins
 - **Downloads stay with their session.** The browser saves every download to one private folder. Nod moves each finished file to the session whose tab started it and deletes a file that no session's tab started.
 - **A lost session recovers on its next step.** Before each step, Nod checks the session's browser, its driver and its tab with one small read. If the driver stopped or the tab closed, Nod gives the session a new driver in the running browser. If the browser crashed or the browser service restarted, Nod first starts the browser again with the same profile. Either way it reopens the session's last page without the query string, and then runs the step. A session that stopped during an action doesn't reopen on its own, because the action may have happened: Pi opens the website again, checks the result there and never repeats the action. A browser crash can lose sign-ins from its last 30 seconds, because Chrome saves new cookies on a timer. A restart keeps them.
 
-Pi reads the page from agent-browser's accessibility snapshot, with `@eN` references, as plain text after the page URL. A snapshot returns up to 40,000 characters with link addresses, and Pi reads the rest with an offset. After any other action, Pi gets the first 10,000 characters of the page without link addresses, which keeps each step's context small; Pi takes a snapshot when it needs more. Pi interprets the page and chooses controls. The server also reads the selected control's form method and destination for the trust check, and the page's visible text when it prepares a confirmation question.
+Pi reads the page from agent-browser's accessibility snapshot, with `@eN` references, as plain text after the page URL. A snapshot returns up to 40,000 characters with link addresses, and Pi reads the rest with an offset. After any other action, Pi gets the first 10,000 characters of the page without link addresses, which keeps each step's context small; Pi takes a snapshot when it needs more. When an action keeps the same document URL as the previous observation in the same turn, Nod returns `(page unchanged)` when nothing changed, or an incremental line diff when the changed lines stay within 65% of the page, falling back to the full text otherwise; explicit `snapshot` calls (or `full: true`) always return the full page. Pi interprets the page and chooses controls. The server also reads the selected control's form method and destination for the trust check, and the page's visible text when it prepares a confirmation question.
 
 A snapshot can use a CSS selector to read one part of the page. If the selector is invalid or no element matches it, Nod gets a specific reason and can take a snapshot of the whole page or choose a valid scope. The page stays open.
 
-Pi can send up to 10 browser actions in one call as a list of steps, such as opening a page and running a script, or filling fields and submitting. Each step goes through the same trust check as a single action. Nod returns script results and the page after the last step. It stops at the first step that fails, a wait that isn't met, a step that needs the owner's approval, or a step with an `@eN` reference after the page changed, and tells Pi which steps ran. A snapshot or screenshot can only be the last step.
+Pi can run multi-step browser flows in one turn with the `browser_run` tool, which executes a short async JavaScript script in an isolated worker thread with a `node:vm` context and a JSON-bridged `page` helper (`open`, `snapshot`, `click`, `fill`, `type`, `press`, `select`, `check`, `uncheck`, `hover`, `drag`, `scroll`, `back`, `forward`, `reload`, `wait`, `evaluate`, `tabList`, `tabSwitch`, `acceptDialog`, `dismissDialog`, `screenshot`). Every step inside `browser_run` runs sequentially through the same trust check, origin/URL/target guards and turn lock as a direct `browser` call, skips intermediate page snapshots until the script calls `snapshot` or finishes, and pauses cleanly if a step needs the owner's approval (up to 20 steps or 30 seconds per call, after which the worker is terminated).
 
 A browser wait takes one condition: text to appear, a URL to match, or a page load state. `waitMs` sets how long to wait for that condition. If the call omits the condition or supplies more than one, Nod gets a validation error and can correct the wait on the same page.
 
-Browser hit tests convert viewport positions to document coordinates using the target page or frame's current scroll position. This keeps sign-in choices and the form shown to the trust check bound to the visible control after scrolling. A hit test finds the control a click would reach. A layer that lets clicks through does not block a sign-in choice. A banner or dialog over the control does, and Nod has to dismiss it first.
-
-For a private sign-in click, Nod keeps the control's position in its frame and its position in the main page. Nod calculates the position in the main page again before each check. It checks the visible point and live target from the main page, then sends one press and release through the checked frame's browser session. The page can still change between the check and the press. Nod does not retry input. The private picker still refuses a frame whose origin differs from the page's origin.
+Browser hit tests convert viewport positions to document coordinates using the target page or frame's current scroll position. This keeps the form shown to the trust check bound to the visible control after scrolling. A hit test finds the control a click would reach. A banner or dialog over the control blocks it, and Nod has to dismiss it first.
 
 Every browser command has a deadline: 60 seconds, or a wait's own timeout plus 30 seconds. That leaves room for agent-browser's own 30-second limit on each browser call, so only a browser that has stopped answering misses it. A session that misses its deadline, is interrupted or doesn't close within 5 seconds has its agent-browser process killed and its tab closed. The browser and other sessions' tabs keep running. A cancelled action requires an explicit open before that session can continue. A lost bridge response still requires recovery of the application namespace because the worker may have closed it. Nod never repeats the interrupted action during recovery. While a dialog is open, the observation is the dialog, and every action except open is refused until Pi accepts or dismisses it.
 
@@ -142,7 +140,7 @@ Known secret values (passwords, codes, card numbers and security codes) are remo
 
 ## Browser handoff
 
-When Pi needs you in the browser, it calls `browser` with `action: handoff` and a clear instruction. Nod web shows the live tab in chat.
+When Pi needs you in the browser, it calls `browser` with `action: handoff` and a clear instruction. `sign_in` does the same when no saved login applies. Nod web shows the live tab in chat.
 
 ```mermaid
 sequenceDiagram
@@ -162,7 +160,9 @@ sequenceDiagram
 - **Return to Nod** continues the session that asked, including a background session, without posting a message for you. Pi looks at the page to see what you did.
 - The panel scrolls into view once, when its first frame arrives. While it is open, the task ledger marks its task `browserHandoff`. With the full prompt, not the compact one for small context windows, the coordinator then points you to the panel instead of forwarding a message, because a task reply closes the handoff.
 - One bridge call carries frames out, newest first, and your input in. Each input is acknowledged after the browser applies it. Failures reach the view without retrying the input. Losing the connection rejects pending input and disables it until the view reconnects.
+- The panel's title shows the page's protocol, host and port, taken from the browser's current address, never from Pi. The path and query stay out.
 - Frames pause during credential entry. Passwords you type in the handoff join the known secrets.
+- Nod keeps the last account and password you typed on a page in memory only. An account pairs with a password only when you typed it on the same origin, during this handoff and before the password. When you select **Return to Nod**, Nod takes that login from the browser and keeps it in memory for 10 minutes; the reply says only that a login can be saved and for which host. Nod saves it to Vault under that origin only when you select **Save login to Vault**, and only for HTTPS or loopback origins. The saved login then follows the [website matching](/trust/vault/#website-matching) rules.
 - An init script makes every passkey request fail at once and reports no passkey support, so a sign-in doesn't open a passkey prompt that the live view can't show. Nod adds it to every tab, popup and frame before the page's own scripts run.
 
 :::caution[Limits]

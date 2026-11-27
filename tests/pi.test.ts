@@ -867,6 +867,28 @@ test('small Pi sessions save full output and keep nested results available to sc
   await session.dispose();
 });
 
+test('an oversized result keeps an inline preview while the workspace is unavailable', async () => {
+  const { createContextOutput } = await import('../src/providers/pi/context-output.ts');
+  let commands = 0;
+  const output = createContextOutput({
+    path: '/workspace/fixture',
+    instructions: '',
+    available: () => false,
+    exec: async () => {
+      commands++;
+      return { exitCode: 0 };
+    },
+  });
+  const full = `${'synthetic result line\n'.repeat(5000)}synthetic last line`;
+  const saved = JSON.parse(await output.save([{ type: 'text', text: full }], 1000));
+  assert.equal(commands, 0);
+  assert.equal(saved.workspaceFile, undefined);
+  assert.equal(saved.characters, full.length);
+  assert.ok(saved.preview.startsWith('synthetic result line'));
+  assert.ok(saved.tail.endsWith('synthetic last line'));
+  assert.match(saved.message, /unavailable/);
+});
+
 test('direct image results save over-budget images in the workspace', async (t) => {
   const { workspace, prefix, root } = await hostSandbox(t);
   const directory = await mkdtemp(join(tmpdir(), 'nod-image-output-'));
@@ -1683,7 +1705,7 @@ test('a context restart drops old model input once and keeps later turns through
   assert.match(await localText(saved), /old context that must not return/);
 });
 
-test('real Pi sessions persist a credential pause and resume without replaying chat history', async (t) => {
+test('real Pi sessions persist a sign-in handoff and resume without replaying chat history', async (t) => {
   for (const kind of ['chat', 'background', 'task'] as const)
     await t.test(`${kind} session`, async () => {
       const background = kind !== 'chat';
@@ -1722,7 +1744,7 @@ test('real Pi sessions persist a credential pause and resume without replaying c
         publish: async () => {
           throw new Error('Not used');
         },
-        requestCredential: async () => ({ url: '/credentials/fixture' }),
+        requestCredential: async () => ({ handoff: true }),
         integration: async () => ({}),
         manage: async () => {
           managed += 1;
@@ -1756,11 +1778,9 @@ test('real Pi sessions persist a credential pause and resume without replaying c
                       name: 'sign_in',
                       arguments: {
                         origin: 'https://example.com',
-                        label: 'Example',
                         passwordSelector: '#password',
                         submitSelector: '#submit',
-                        message: 'Example needs your password.',
-                        action: 'Add password',
+                        message: 'Example needs you to sign in.',
                       },
                     },
                     {
@@ -1813,11 +1833,8 @@ test('real Pi sessions persist a credential pause and resume without replaying c
       });
       try {
         const paused = await runtime.runTurn(context);
-        assert.equal(paused.status, 'waiting_credentials');
-        assert.equal(
-          paused.message,
-          'Example needs your password. [Add password](/credentials/fixture)',
-        );
+        assert.equal(paused.status, 'waiting_user');
+        assert.equal(paused.message, 'Example needs you to sign in.');
         assert.deepEqual(replies, []);
         assert.equal(managed, 0);
         phase = 1;
@@ -2116,15 +2133,6 @@ test('fresh scheduled sessions put their stable first request on a one-hour Anth
       resumed: false,
       prompt: 'Scheduled task: synthetic status check ' + label,
       memory: 'about/name: The owner is Alex.',
-      credentialRequests: [
-        {
-          turnId: 'fixture-sign-in-turn',
-          origin: 'https://sign-in.fixture.test',
-          label: 'Synthetic sign-in',
-          kind: 'password',
-          status: label === 'FIRST-RUN' ? 'pending' : 'expired',
-        },
-      ],
       history: [
         { role: 'user', text: 'Earlier owner message', createdAt: new Date().toISOString() },
       ],
@@ -2157,17 +2165,9 @@ test('fresh scheduled sessions put their stable first request on a one-hour Anth
     stable[0].map((block: any) => block.text),
     stable[1].map((block: any) => block.text),
   );
-  assert.ok(
-    stable.every((blocks) =>
-      blocks.every((block: any) => !block.text.includes('sign-in.fixture.test')),
-    ),
-  );
   for (const [index, body] of bodies.entries()) {
     const tail = blocks(body).at(-1);
     assert.match(tail.text, index ? /SECOND-RUN/ : /FIRST-RUN/);
-    assert.match(JSON.stringify(body), /Only pending means open/);
-    const status = JSON.stringify(`"status":"${index ? 'expired' : 'pending'}"`).slice(1, -1);
-    assert.ok(tail.text.includes(status));
     assert.deepEqual(tail.cache_control, { type: 'ephemeral' });
     assert.equal('cache_control' in body.system[0], false);
     assert.ok(JSON.stringify(body).split('"cache_control"').length - 1 <= 4);
@@ -3195,9 +3195,7 @@ test('sign-in and payment approvals wait until queued messages are read', async 
           };
           const signIn = {
             origin: 'https://example.com',
-            label: 'Synthetic login',
             message: 'Sign in privately.',
-            action: 'Sign in',
           };
           await run('sign_in', signIn);
           await read();
@@ -3447,7 +3445,7 @@ test('task handoff shows only the start message unless a steered request needs a
 test('a paused turn cannot start a subagent still preparing and failed children return errors', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'nod-delegate-stop-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  let opened = 0;
+  let started = 0;
   let preparing = 0;
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
@@ -3457,13 +3455,14 @@ test('a paused turn cannot start a subagent still preparing and failed children 
     agent: {
       open: async (input) => {
         const child = Boolean(input.ephemeral);
-        if (child) opened++;
+        if (child && ++preparing === 3) await gate;
         return {
           resumed: false,
           abort: () => release(),
           dispose() {},
           prompt: async () => {
             if (child) {
+              started++;
               await gate;
               input.onEvent({ type: 'error', message: '402 Insufficient credits' });
               input.onEvent({ type: 'message_end', status: 'failed' });
@@ -3479,7 +3478,7 @@ test('a paused turn cannot start a subagent still preparing and failed children 
               .find((tool) => tool.name === 'ask_user')!
               .execute({ question: 'Which source should I use?' });
             const outcomes = await Promise.allSettled(pending);
-            assert.equal(opened, 2);
+            assert.equal(started, 2);
             assert.ok(outcomes.every((outcome) => outcome.status === 'rejected'));
             assert.ok(
               outcomes
@@ -3502,10 +3501,7 @@ test('a paused turn cannot start a subagent still preparing and failed children 
       open: () => ({
         path: '/fixture/workspace',
         instructions: 'Fixture workspace only.',
-        exec: async () => {
-          if (++preparing === 3) await gate;
-          return { exitCode: 0 };
-        },
+        exec: async () => ({ exitCode: 0 }),
       }),
     }),
   });
@@ -4420,7 +4416,62 @@ test('send_message validates structured visuals and delivers each distinct prese
                 title: 'Synthetic invoice',
                 caption: 'c'.repeat(500),
                 status: 'Pending approval',
-                items: [{ label: 'Total', value: '€10' }],
+                reference: { label: 'Confirmation', value: 'TB-5529' },
+                items: [
+                  { label: 'Confirmation', value: 'tb-5529' },
+                  { label: 'Total', value: '€10', strong: true },
+                  { label: 'Link', value: 'https://tables.example.com/#/bookings/TB-5529' },
+                  { label: 'Raw', value: '/api/artifacts/internal-id' },
+                ],
+                action: {
+                  label: 'View booking',
+                  url: 'https://tables.example.com/#/bookings/TB-5529',
+                },
+              },
+            });
+            await assert.rejects(
+              () =>
+                send.execute({
+                  text: '',
+                  presentation: {
+                    version: 1,
+                    type: 'facts',
+                    title: 'Synthetic cart',
+                    status: 'Ready',
+                    items: [{ label: 'Items', value: '12', copy: true }],
+                    action: {
+                      label: 'Unsafe link',
+                      url: 'http://127.0.0.1/cart',
+                    },
+                  },
+                }),
+              /Use a public HTTPS link/,
+            );
+            await assert.rejects(
+              () =>
+                send.execute({
+                  text: '',
+                  presentation: {
+                    version: 1,
+                    type: 'facts',
+                    title: 'Overlong reference',
+                    reference: { label: 'Confirmation', value: 'R'.repeat(81) },
+                  },
+                }),
+              /80/,
+            );
+            await send.execute({
+              text: '',
+              presentation: {
+                version: 1,
+                type: 'facts',
+                title: 'Synthetic schedule',
+                status: 'Active',
+                items: [{ label: 'Cadence', value: 'Weekdays 08:30', copy: true }],
+                action: {
+                  label: 'Open Scheduled',
+                  url: '/tasks',
+                },
               },
             });
           },
@@ -4439,7 +4490,7 @@ test('send_message validates structured visuals and delivers each distinct prese
       },
     });
     assert.equal(result.status, 'succeeded');
-    assert.equal(replies.length, 2);
+    assert.equal(replies.length, 3);
     assert.equal(replies[0][3]?.type, 'draft');
     if (replies[0][3]?.type === 'draft') {
       assert.equal(replies[0][3].status, 'draft');
@@ -4448,6 +4499,17 @@ test('send_message validates structured visuals and delivers each distinct prese
     if (replies[1][3]?.type === 'facts') {
       assert.deepEqual(replies[1][3].status, { label: 'Pending approval', tone: 'waiting' });
       assert.equal(replies[1][3].caption?.length, 500);
+      assert.deepEqual(replies[1][3].reference, { label: 'Confirmation', value: 'TB-5529' });
+      assert.deepEqual(replies[1][3].items, [{ label: 'Total', value: '€10', strong: true }]);
+      assert.deepEqual(replies[1][3].action, {
+        label: 'View booking',
+        url: 'https://tables.example.com/#/bookings/TB-5529',
+      });
+    }
+    assert.equal(replies[2][3]?.type, 'facts');
+    if (replies[2][3]?.type === 'facts') {
+      assert.equal(replies[2][3].items?.[0]?.copy, true);
+      assert.deepEqual(replies[2][3].action, { label: 'Open Scheduled', url: '/tasks' });
     }
   });
 
@@ -14174,9 +14236,7 @@ test('invalid tool calls stop before another model request and a valid repair re
                             : toolName === 'sign_in'
                               ? {
                                   origin: 'https://signin.example.test',
-                                  label: 'Synthetic login',
                                   message: 'Sign in to the synthetic account.',
-                                  action: 'Sign in',
                                   kind: 'method',
                                 }
                               : valid
@@ -14227,7 +14287,7 @@ test('invalid tool calls stop before another model request and a valid repair re
               toolName === 'skills'
                 ? /expected one of \["list","read","save","patch"\]/
                 : toolName === 'sign_in'
-                  ? /\/methods:/
+                  ? /kind: expected "otp"/
                   : /\/doneWhen:/,
             );
             return true;

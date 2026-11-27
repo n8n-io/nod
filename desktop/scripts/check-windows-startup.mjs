@@ -58,11 +58,12 @@ async function launch(name, { limit = 900_000, reported = true, attempts = 1 } =
     const fresh = (await lines()).slice(seen);
     const failed = fresh.find((line) => /Startup failed|Local runtime failed/.test(line));
     const prepared = fresh.find((line) => line.includes('Local runtime prepared.'));
+    const listening = fresh.some((line) => line.includes('Background service step: listening'));
     if (failed || Date.now() - started > limit) {
       console.log(fresh.map((line) => line.slice(0, 400)).join('\n'));
       assert.fail(failed ? `Nod failed to start: ${name}.` : `Nod did not start in time: ${name}.`);
     }
-    if (prepared) {
+    if (prepared && (listening || !reported)) {
       const steps = Object.fromEntries(
         fresh.flatMap((line) => {
           const match = /Background service step: ([a-z]+) after ([\d.]+)s\./.exec(line);
@@ -77,6 +78,7 @@ async function launch(name, { limit = 900_000, reported = true, attempts = 1 } =
           fresh.find((line) => line.includes(' start version=')),
         )?.[1],
         steps,
+        moved: fresh.some((line) => line.includes('Saved data moved')),
       };
       if (reported)
         assert.ok(steps.listening > 0, 'The background service did not report its startup steps.');
@@ -145,9 +147,21 @@ try {
     await launch(`first setup on ${previous}`, { reported: false, attempts: 3, limit: 480_000 });
     await quit();
     await returning();
+    const hostDatabase = await present(join(profile, 'database/state.json'));
     await install(installer);
     const updated = await launch('first start after the update');
     assert.notEqual(updated.version, receipt.launches[0].version);
+    assert.equal(
+      updated.moved,
+      !hostDatabase,
+      hostDatabase
+        ? 'Nod moved data that was already on this computer.'
+        : 'Nod did not move the earlier version’s data.',
+    );
+    assert.equal(
+      JSON.parse(await readFile(join(profile, 'database/state.json'), 'utf8')).ready,
+      true,
+    );
   } else {
     await install(installer);
     await launch('first setup');
@@ -156,6 +170,7 @@ try {
   }
   if (await running()) await quit();
   const warm = await launch('next start', { limit: 300_000 });
+  assert.equal(warm.moved, false);
   assert.ok(
     warm.steps.listening < 120,
     'The background service took too long on a prepared computer.',

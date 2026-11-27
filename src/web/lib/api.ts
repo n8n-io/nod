@@ -9,6 +9,7 @@ export class ApiError extends Error {
     readonly status: number,
     readonly step?: string,
     readonly workspaces?: ModelWorkspace[],
+    readonly code?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -93,7 +94,6 @@ async function request<T>(
           'schedule-runs': 'tasks',
           usage: 'usage',
           vault: 'vault',
-          'credential-requests': 'vault',
           'payment-requests': 'vault',
           preferences: 'settings',
           privacy: 'settings',
@@ -173,6 +173,7 @@ export async function responseError(response: Response, signal?: AbortSignal) {
     message?: unknown;
     step?: unknown;
     workspaces?: unknown;
+    code?: unknown;
   } | null;
   signal?.throwIfAborted();
   const workspaces =
@@ -196,6 +197,7 @@ export async function responseError(response: Response, signal?: AbortSignal) {
     response.status,
     typeof body?.step === 'string' ? body.step : undefined,
     workspaces,
+    typeof body?.code === 'string' ? body.code : undefined,
   );
 }
 

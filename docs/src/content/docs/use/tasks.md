@@ -124,7 +124,7 @@ The task list sends one message per task. You can reply to that message, the tas
 
 A status message that shows a pending question keeps a link to that exact question. Your approval applies only to the saved action it shows. An old status message cannot approve a later action.
 
-Telegram, WhatsApp and web use the same task record and saved session. Task commands do not grant permission for an outside action. Private sign-in and payment steps still use Nod's private forms.
+Telegram, WhatsApp and web use the same task record and saved session. Task commands do not grant permission for an outside action. Signing in to a website and approving a payment still happen in the Nod app.
 
 ## Statuses
 

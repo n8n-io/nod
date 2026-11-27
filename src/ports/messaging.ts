@@ -60,6 +60,17 @@ export interface InboundApproval {
   acknowledge(result: 'recorded' | 'unavailable' | 'retry'): Promise<void>;
 }
 
+export interface InboundInteraction {
+  channelId: string;
+  accountId: string;
+  senderId: string;
+  threadId: string;
+  messageId: string;
+  interactionId: string;
+  optionIndex: number;
+  acknowledge(result: 'recorded' | 'unavailable' | 'retry'): Promise<void>;
+}
+
 export interface ChannelPairingRequest {
   channelId: string;
   accountId: string;
@@ -87,6 +98,7 @@ export interface MessagingWebhookResult {
   messages?: InboundMessage[];
   reactions?: InboundReaction[];
   approvals?: InboundApproval[];
+  interactions?: InboundInteraction[];
   pairing?: ChannelPairingRequest;
 }
 
@@ -103,6 +115,7 @@ export interface MessagingTransport {
     pair?: (request: ChannelPairingRequest) => Promise<void>,
     react?: (reaction: InboundReaction) => Promise<void>,
     approve?: (approval: InboundApproval) => Promise<void>,
+    interact?: (interaction: InboundInteraction) => Promise<void>,
   ): Promise<void>;
   receive(request: MessagingWebhook): Promise<MessagingWebhookResult>;
   post(input: {
@@ -111,6 +124,7 @@ export interface MessagingTransport {
     threadId: string;
     text: string;
     approval?: { approve: string; decline: string };
+    interaction?: { id: string; options: Array<{ label: string }> };
     attachments?: MessagingAttachment[];
     replyToMessageId?: string;
     replyToText?: string;

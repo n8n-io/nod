@@ -1,15 +1,10 @@
-import {
-  browserErrorMessage,
-  type BrowserErrorCode,
-  type BrowserSignInGuard,
-} from '../shared/browser-errors.ts';
+import { browserErrorMessage, type BrowserErrorCode } from '../shared/browser-errors.ts';
 import type { BrowserHandoffInput } from '../shared/browser-handoff.ts';
 
 export class BrowserActionError extends Error {
   constructor(
     readonly code: BrowserErrorCode,
     readonly detail?: string,
-    readonly signInGuard?: BrowserSignInGuard,
   ) {
     super(
       detail
@@ -65,6 +60,7 @@ export interface BrowserAction {
   expectUrl?: string;
   expectTarget?: string;
   readOnly?: boolean;
+  observe?: boolean;
 }
 export interface BrowserControl {
   role: string;
@@ -144,6 +140,15 @@ export interface CardEntry {
 export interface CredentialSubmission {
   status: 'submitted';
 }
+export interface TypedLogin {
+  origin: string;
+  username: string;
+  password: string;
+}
+export interface BrowserViewFrame {
+  image: Buffer;
+  origin?: string;
+}
 export interface Computer {
   act(threadId: string, input: BrowserAction, signal?: AbortSignal): Promise<BrowserObservation>;
   download(
@@ -162,7 +167,8 @@ export interface Computer {
     input: BrowserHandoffInput,
     signal?: AbortSignal,
   ): Promise<string | void>;
-  view(threadId: string, signal: AbortSignal): AsyncIterable<Buffer>;
+  view(threadId: string, signal: AbortSignal): AsyncIterable<BrowserViewFrame>;
+  typedLogin?(threadId: string, since: number): Promise<TypedLogin | undefined>;
   screenStatus(threadId: string): {
     state: 'live' | 'last_known' | 'unavailable';
     capturedAt?: string;
@@ -178,17 +184,6 @@ export interface Computer {
   ): Promise<{ document: string; destinations: Partial<Record<keyof CardFields, string>> }>;
   checkoutImage(threadId: string): Promise<Uint8Array>;
   currentPage(threadId: string, step?: BrowserAction): Promise<BrowserPage>;
-  signInMethods?(
-    threadId: string,
-    origin: string,
-    methods: { label: string; selector: string }[],
-    signal?: AbortSignal,
-  ): Promise<{ document: string; methods: { id: string; label: string; page: BrowserPage }[] }>;
-  selectSignInMethod?(
-    threadId: string,
-    input: { origin: string; document: string; methodId: string },
-    signal?: AbortSignal,
-  ): Promise<void>;
   hold(threadId: string, held: boolean): Promise<void>;
   close(threadId: string): Promise<void>;
   clear(threadId: string): Promise<void>;
@@ -217,6 +212,7 @@ export interface ConnectedCliResult {
 export interface WorkspaceSession {
   path: string;
   instructions: string;
+  available?(): boolean;
   exec(command: string, options?: WorkspaceExecOptions): Promise<{ exitCode: number }>;
   runConnectedCli?(
     cli: ConnectedCli,
@@ -227,6 +223,7 @@ export interface WorkspaceSession {
 }
 export interface Workspace {
   connectedCliAvailable?: boolean;
+  available?(): boolean;
   writeArtifact(
     threadId: string,
     path: string,

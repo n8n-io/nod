@@ -61,10 +61,6 @@
 .credential-embedded .credential-card:focus {
   outline: none;
 }
-.credential-method-back {
-  margin: 0 0 16px -8px;
-}
-
 .credential-payment {
   display: grid;
   gap: 20px;

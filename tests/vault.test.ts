@@ -5,45 +5,26 @@ import { act, createElement } from 'react';
 import { JSDOM } from 'jsdom';
 import { runProcess } from '../src/providers/process.ts';
 import { Vault } from '../src/web/pages/vault.tsx';
-import { Credentials, Payment } from '../src/web/pages/credentials.tsx';
+import { Payment } from '../src/web/pages/payment.tsx';
 import { SetupActions } from '../src/web/components/setup-link.tsx';
 import { messageSetupLinks } from '../src/web/lib/message-links.ts';
 import { paymentInvitation } from '../src/runtime/communication.ts';
-import { PrivateEntryWorkspace, usePrivateEntry } from '../src/web/components/private-entry.tsx';
 import { VaultItemForm } from '../src/web/components/vault-item-form.tsx';
 import { VaultDetails } from '../src/web/components/vault-details.tsx';
 import { pageDataCache } from '../src/web/lib/page-data-cache.ts';
-import { Composio } from '@composio/core';
 import Fastify, { type FastifyInstance } from 'fastify';
 import pg, { DatabaseError } from 'pg';
-import { BrowserActionError, type CredentialKind } from '../src/ports/computer.ts';
-import type { IntegrationProvider, VerificationEmail } from '../src/ports/integrations.ts';
-import { readVerificationEmails } from '../src/providers/composio/verification-email.ts';
+import { BrowserActionError, type CredentialInput } from '../src/ports/computer.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
-import {
-  normalizedEmail,
-  verificationCode,
-  verificationSenderDomain,
-  type EmailCodeRequest,
-} from '../src/server/email-code.ts';
-import { createIntegrations } from '../src/server/integrations.ts';
-import type { TurnRef } from '../src/server/thread.ts';
+import { normalizedEmail } from '../src/server/email-address.ts';
 import {
   checkedKeyStore,
   createVault,
   credentialOrigin,
   sealCredential,
-  type CredentialInjection,
 } from '../src/server/vault.ts';
-import type {
-  CredentialRequest,
-  VaultCardEntry,
-  VaultLoginEntry,
-} from '../src/shared/contracts.ts';
+import type { VaultCardEntry, VaultLoginEntry } from '../src/shared/contracts.ts';
 import { parsePasswordCsv } from '../src/shared/password-import.ts';
-import { matchingWebsite } from '../src/providers/onepassword/websites.ts';
-import { createOnePassword, forkedOnePassword } from '../src/providers/onepassword/index.ts';
-import { PasswordManagerError, type PasswordManager } from '../src/ports/password-manager.ts';
 import { createPayments } from '../src/server/payments.ts';
 import type { CardEntry } from '../src/ports/computer.ts';
 import { withFailureLog } from '../src/server/failure-log.ts';
@@ -96,128 +77,7 @@ async function seedTurns(pool: pg.Pool) {
   return { turn, archive, wait, resume };
 }
 
-test('a 1Password login applies only where 1Password itself would fill it', () => {
-  const anywhere = (url: string) => [{ url, autofillBehavior: 'AnywhereOnWebsite' }];
-  assert.equal(matchingWebsite(anywhere('github.com'), 'https://github.com'), 'github.com');
-  assert.equal(
-    matchingWebsite(anywhere('https://github.com/login'), 'https://gist.github.com'),
-    'https://github.com/login',
-  );
-  for (const page of [
-    'https://github.com.attacker.example',
-    'https://evilgithub.com',
-    'https://github.co',
-  ])
-    assert.equal(matchingWebsite(anywhere('https://github.com'), page), undefined, page);
-  assert.equal(
-    matchingWebsite(anywhere('https://alice.github.io'), 'https://bob.github.io'),
-    undefined,
-  );
-  const exact = [{ url: 'https://login.example.com', autofillBehavior: 'ExactDomain' }];
-  assert.equal(matchingWebsite(exact, 'https://login.example.com'), 'https://login.example.com');
-  assert.equal(matchingWebsite(exact, 'https://example.com'), undefined);
-  assert.equal(matchingWebsite(exact, 'https://login.example.com:8443'), undefined);
-  assert.equal(
-    matchingWebsite(
-      [{ url: 'https://example.com', autofillBehavior: 'Never' }],
-      'https://example.com',
-    ),
-    undefined,
-  );
-  assert.equal(
-    matchingWebsite(anywhere('android://key@com.example.app/'), 'https://example.com'),
-    undefined,
-  );
-  for (const url of ['mailto:login@example.com', 'https://login:secret@example.com'])
-    assert.equal(matchingWebsite(anywhere(url), 'https://example.com'), undefined, url);
-});
-
-test('the real 1Password helper runs in its own process and fails clearly without the app', async () => {
-  const manager = createOnePassword({ open: forkedOnePassword('test') });
-  try {
-    await assert.rejects(
-      manager.logins('Synthetic account', 'https://example.com'),
-      (error: unknown) =>
-        error instanceof PasswordManagerError &&
-        error.reason === 'unavailable' &&
-        /^1Password: ./.test(error.message),
-    );
-  } finally {
-    await manager.close();
-  }
-  const running = async () =>
-    /onepassword\/helper\.ts test/.test((await runProcess('ps', ['-ax', '-o', 'command='])).stdout);
-  for (let attempt = 0; attempt < 50 && (await running()); attempt++)
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.equal(await running(), false);
-});
-
-test('a stopped 1Password helper fails its request at once and the next request reopens it', async () => {
-  let opened = 0;
-  const manager = createOnePassword({
-    answerMs: 60_000,
-    open: async () => {
-      const dead = ++opened === 2;
-      const closed: Array<() => void> = [];
-      return {
-        send: () => {
-          if (!dead) closed.forEach((listener) => listener());
-        },
-        receive: () => {},
-        closed: (listener: () => void) => {
-          closed.push(listener);
-          if (dead) listener();
-        },
-        close: () => {},
-      };
-    },
-  });
-  try {
-    for (const _ of [1, 2]) {
-      const started = Date.now();
-      await assert.rejects(
-        manager.logins('Synthetic account', 'https://example.com'),
-        (error: unknown) => error instanceof PasswordManagerError && /stopped/.test(error.message),
-      );
-      assert.ok(Date.now() - started < 1_000);
-    }
-    assert.equal(opened, 2);
-  } finally {
-    await manager.close();
-  }
-});
-
-test('an idle 1Password helper closing late never fails a request on its replacement', async () => {
-  const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-  let opened = 0;
-  const manager = createOnePassword({
-    idleMs: 5,
-    open: async () => {
-      const answerMs = ++opened === 1 ? 0 : 60;
-      const closed: Array<() => void> = [];
-      let reply: (raw: unknown) => void = () => {};
-      return {
-        send: (message: { id: number }) =>
-          void setTimeout(() => reply({ id: message.id, ok: true, value: [] }), answerMs),
-        receive: (receiver: (raw: unknown) => void) => {
-          reply = receiver;
-        },
-        closed: (listener: () => void) => closed.push(listener),
-        close: () => void setTimeout(() => closed.forEach((listener) => listener()), 30),
-      };
-    },
-  });
-  try {
-    assert.deepEqual(await manager.logins('Synthetic account', 'https://example.com'), []);
-    await delay(15);
-    assert.deepEqual(await manager.logins('Synthetic account', 'https://example.com'), []);
-    assert.equal(opened, 2);
-  } finally {
-    await manager.close();
-  }
-});
-
-async function vaultFixture(emailCode?: Parameters<typeof createVault>[1]['emailCode']) {
+async function vaultFixture() {
   const schema = `test_vault_${randomUUID().replaceAll('-', '')}`;
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   await admin.query(`CREATE SCHEMA ${schema}`);
@@ -228,8 +88,8 @@ async function vaultFixture(emailCode?: Parameters<typeof createVault>[1]['email
   });
   const seeded = await seedTurns(pool);
   const app = Fastify();
-  const calls = { injected: 0, retried: [] as string[] };
-  let inspecting = async () => ({
+  const calls = { injected: 0 };
+  const inspecting = async () => ({
     origin: 'https://example.com',
     url: 'https://example.com/login',
   });
@@ -263,8 +123,6 @@ async function vaultFixture(emailCode?: Parameters<typeof createVault>[1]['email
     },
   });
   const vault = await createVault(database, {
-    emailCode,
-    requestKey: Buffer.alloc(32, 42),
     keyStore: { id: 'fixture', configured: true, getKey: async () => randomBytes(32) },
     page: async (_id, step) => ({
       ...(await inspecting()),
@@ -273,34 +131,8 @@ async function vaultFixture(emailCode?: Parameters<typeof createVault>[1]['email
     inject: async () => {
       calls.injected++;
     },
-    resume: async (turnId, client) => {
-      await client.query(
-        "INSERT INTO turns(id,owner_id,thread_id,source,source_id) SELECT gen_random_uuid(),owner_id,thread_id,'resume','credentials:'||id FROM turns WHERE id=$1",
-        [turnId],
-      );
-    },
-    retry: async (turnId) => {
-      calls.retried.push(turnId);
-    },
   });
   vault.registerRoutes(app);
-  const input = {
-    origin: 'https://example.com',
-    label: 'Example',
-    kind: 'password' as const,
-    passwordSelector: '#password',
-  };
-  const link = async (ref: TurnRef) =>
-    (await vault.request(ref, 'local-development', input)).url.replace(
-      '/vault/',
-      '/api/credential-requests/',
-    );
-  const submit = (url: string) =>
-    app.inject({
-      method: 'POST',
-      url,
-      payload: { password: 'fixture-secret' },
-    });
   return {
     ...seeded,
     pool,
@@ -313,33 +145,6 @@ async function vaultFixture(emailCode?: Parameters<typeof createVault>[1]['email
     removeFromPage(selector?: string) {
       absent = selector;
     },
-    resumed: async () =>
-      (
-        await pool.query(
-          "SELECT substring(source_id from 13) AS id FROM turns WHERE source='resume'",
-        )
-      ).rows
-        .map((row) => row.id as string)
-        .sort(),
-    link,
-    submit,
-    status: async (url: string) => (await app.inject({ url })).json().status,
-    holdInspection: () => {
-      let release!: () => void;
-      let reached!: () => void;
-      const started = new Promise<void>((resolve) => {
-        reached = resolve;
-      });
-      const hold = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      inspecting = async () => {
-        reached();
-        await hold;
-        return { origin: 'https://example.com', url: 'https://example.com/login' };
-      };
-      return { started, release };
-    },
     close: async () => {
       await app.close();
       await pool.end();
@@ -350,76 +155,32 @@ async function vaultFixture(emailCode?: Parameters<typeof createVault>[1]['email
 }
 
 test(
-  'automatic login and email-code entry preserve a known stop without a fallback form',
+  'a saved login stopped before entry enters nothing and stays not entered',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
-    const f = await vaultFixture(async () => ({ code: '381742', current: async () => true }));
+    const f = await vaultFixture();
     try {
-      const first = await f.turn();
-      const invitation = await f.vault.request(first, 'local-development', {
+      const entry = await f.vault.saveLogin({
+        label: 'Example',
         origin: 'https://example.com',
-        label: 'Synthetic staged sign-in',
-        kind: 'identifier',
-        usernameSelector: '#username',
+        username: 'synthetic@example.com',
+        password: 'fixture-secret',
       });
-      await f.wait(first);
-      const entered = await f.app.inject({
-        method: 'POST',
-        url: invitation.url.replace('/vault/', '/api/credential-requests/'),
-        payload: { username: 'synthetic@example.com', password: 'Synthetic held password' },
-      });
-      assert.equal(entered.statusCode, 200, entered.body);
-      const resumed = await f.resume(first);
-      const before = f.calls.injected;
-      f.cancelBeforeEntry(resumed.turnId);
+      const turn = await f.turn();
+      f.cancelBeforeEntry(turn.turnId);
       await assert.rejects(
-        f.vault.fillSelected(resumed, 'local-development', {
+        f.vault.fill(turn, 'local-development', entry.id, {
           origin: 'https://example.com',
-          label: 'Synthetic staged sign-in',
-          kind: 'password',
+          usernameSelector: '#username',
           passwordSelector: '#password',
         }),
         (error: unknown) =>
           error instanceof Error && 'notEntered' in error && error.notEntered === true,
       );
-      assert.equal(f.calls.injected, before);
-      assert.equal(
-        (await f.pool.query('SELECT 1 FROM credential_requests WHERE turn_id=$1', [resumed.turnId]))
-          .rowCount,
-        0,
-      );
-      const email = await f.turn();
-      await f.pool.query(
-        "UPDATE turns SET started_at=clock_timestamp()-interval '1 second' WHERE id=$1",
-        [email.turnId],
-      );
-      f.cancelBeforeEntry(email.turnId);
-      await assert.rejects(
-        f.vault.fillEmailCode(email, 'local-development', {
-          origin: 'https://example.com',
-          label: 'Synthetic email code',
-          kind: 'otp',
-          emailCode: true,
-          emailRecipient: 'synthetic@example.com',
-          passwordSelector: '#code',
-        }),
-        (error: unknown) =>
-          error instanceof Error && 'notEntered' in error && error.notEntered === true,
-      );
-      assert.equal(f.calls.injected, before);
-      assert.equal(
-        (await f.pool.query('SELECT 1 FROM credential_requests WHERE turn_id=$1', [email.turnId]))
-          .rowCount,
-        0,
-      );
-      assert.deepEqual(
-        (
-          await f.pool.query(
-            "SELECT status FROM vault_uses WHERE kind IN ('password','otp') ORDER BY created_at",
-          )
-        ).rows,
-        [{ status: 'not_entered' }, { status: 'not_entered' }],
-      );
+      assert.equal(f.calls.injected, 0);
+      assert.deepEqual((await f.pool.query('SELECT status FROM vault_uses')).rows, [
+        { status: 'not_entered' },
+      ]);
     } finally {
       await f.close();
     }
@@ -434,8 +195,6 @@ test(
     try {
       const step = {
         origin: 'https://example.com',
-        label: 'Example',
-        kind: 'password' as const,
         usernameSelector: '#username',
         passwordSelector: '#password',
         submitSelector: '#sign-in',
@@ -450,27 +209,12 @@ test(
       const turn = await f.turn();
       for (const selector of ['#username', '#password', '#sign-in']) {
         f.removeFromPage(selector);
-        await assert.rejects(f.vault.request(turn, 'local-development', step), missing);
-        await assert.rejects(f.vault.fillSaved(turn, 'local-development', entry.id, step), missing);
+        await assert.rejects(f.vault.fill(turn, 'local-development', entry.id, step), missing);
       }
-      assert.equal((await f.pool.query('SELECT 1 FROM credential_requests')).rowCount, 0);
       assert.equal((await f.pool.query('SELECT 1 FROM vault_uses')).rowCount, 0);
       f.removeFromPage();
-      assert.equal(await f.vault.fillSaved(turn, 'local-development', entry.id, step), true);
+      assert.equal(await f.vault.fill(turn, 'local-development', entry.id, step), true);
       assert.equal(f.calls.injected, 1);
-
-      const later = await f.turn();
-      const url = await f.link(later);
-      await f.wait(later);
-      f.removeFromPage('#password');
-      const refused = await f.submit(url);
-      assert.equal(refused.statusCode, 409, refused.body);
-      assert.match(refused.json().error, missing);
-      assert.equal(await f.status(url), 'pending');
-      assert.equal(f.calls.injected, 1);
-      f.removeFromPage();
-      assert.equal((await f.submit(url)).statusCode, 200);
-      assert.equal(f.calls.injected, 2);
     } finally {
       await f.close();
     }
@@ -791,103 +535,6 @@ test(
         ).includes('fixture-private-value'),
         false,
       );
-      const stopped = await f.turn();
-      const privatePath = await f.link(stopped);
-      await f.wait(stopped);
-      const entriesBeforeStop = f.calls.injected;
-      f.cancelBeforeEntry(stopped.turnId);
-      const stoppedReply = await f.submit(privatePath);
-      assert.equal(stoppedReply.statusCode, 409, stoppedReply.body);
-      assert.match(stoppedReply.json().error, /stopped before entry/);
-      assert.equal(f.calls.injected, entriesBeforeStop);
-      const stoppedDescription = (await f.app.inject({ url: privatePath })).json();
-      assert.equal(stoppedDescription.status, 'expired');
-      assert.equal(stoppedDescription.notEntered, true);
-      const stoppedId = privatePath.split('/').at(-1)!;
-      const stoppedView = await vaultPage(
-        createElement(Credentials, { id: stoppedId }),
-        async (path) => {
-          const reply = await f.app.inject({ url: path });
-          return new Response(reply.body, {
-            status: reply.statusCode,
-            headers: { 'content-type': 'application/json' },
-          });
-        },
-        `http://localhost:4310/vault/${stoppedId}`,
-      );
-      try {
-        for (
-          let attempt = 0;
-          !stoppedView.document.body.textContent?.includes('Stopped before entry') && attempt < 100;
-          attempt++
-        )
-          await act(async () => {
-            await new Promise((resolve) => setTimeout(resolve, 10));
-          });
-        assert.match(stoppedView.document.body.textContent!, /No values were entered in this step/);
-        assert.doesNotMatch(
-          stoppedView.document.body.textContent!,
-          /result is unknown|may have reached/i,
-        );
-        assert.equal(stoppedView.document.querySelectorAll('input, button').length, 0);
-        await stoppedView.render(createElement(Credentials, { id: stoppedId, key: 'reload' }));
-        for (
-          let attempt = 0;
-          !stoppedView.document.body.textContent?.includes('Stopped before entry') && attempt < 100;
-          attempt++
-        )
-          await act(async () => {
-            await new Promise((resolve) => setTimeout(resolve, 10));
-          });
-        assert.match(stoppedView.document.body.textContent!, /No values were entered in this step/);
-      } finally {
-        await stoppedView.close();
-      }
-      const codeTurn = await f.turn();
-      const codeInvitation = await f.vault.request(codeTurn, 'local-development', {
-        origin: 'https://example.com',
-        label: 'Synthetic code',
-        kind: 'otp',
-        passwordSelector: '#code',
-      });
-      await f.wait(codeTurn);
-      const codeRequestId = (
-        await f.pool.query('SELECT id FROM credential_requests WHERE turn_id=$1', [codeTurn.turnId])
-      ).rows[0].id;
-      f.cancelBeforeEntry(codeTurn.turnId);
-      assert.deepEqual(
-        await f.vault.submitChatCode('local-development', codeTurn.turnId, '563829', codeRequestId),
-        { status: 'unavailable', notEntered: true },
-      );
-      assert.equal(
-        (
-          await f.app.inject({
-            url: codeInvitation.url.replace('/vault/', '/api/credential-requests/'),
-          })
-        ).json().notEntered,
-        true,
-      );
-      assert.equal(f.calls.injected, entriesBeforeStop);
-
-      assert.deepEqual((await f.app.inject({ url: `${privatePath}/status` })).json(), {
-        status: 'expired',
-        notEntered: true,
-      });
-      assert.equal((await f.submit(privatePath)).statusCode, 409);
-      assert.equal(
-        (await f.app.inject({ method: 'POST', url: `${privatePath}/retry`, payload: {} }))
-          .statusCode,
-        409,
-      );
-      assert.equal(f.calls.injected, entriesBeforeStop);
-      assert.deepEqual(
-        (
-          await f.pool.query('SELECT status FROM vault_uses WHERE root_turn_id=$1', [
-            stopped.turnId,
-          ])
-        ).rows,
-        [{ status: 'not_entered' }],
-      );
     } finally {
       await f.close();
     }
@@ -895,7 +542,7 @@ test(
 );
 
 test(
-  'named Vault accounts preserve exact websites and chosen staged identity across restart',
+  'saved logins keep exact websites, owners and one entry per account in a task',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const schema = `test_vault_accounts_${randomUUID().replaceAll('-', '')}`;
@@ -905,299 +552,93 @@ test(
       connectionString: process.env.TEST_DATABASE_URL,
       options: `-c search_path=${schema}`,
     });
-    await pool.query(
-      'CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz)',
-    );
-    await pool.query(
-      "CREATE TABLE turns(id uuid PRIMARY KEY,parent_turn_id uuid,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED)",
-    );
-    const threads = new Map<string, string>();
-    const tasks = new Map<string, TurnRef>();
-    const startTurn = async (owner = 'local-development', resumeOf?: string) => {
-      let threadId = threads.get(owner);
-      if (!threadId) {
-        threadId = randomUUID();
-        threads.set(owner, threadId);
-        await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
-      }
-      const turnId = randomUUID();
-      await pool.query(
-        'INSERT INTO turns(id,owner_id,thread_id,source,source_id,parent_turn_id) VALUES($1,$2,$3,$4,$5,$6)',
-        [
-          turnId,
-          owner,
-          threadId,
-          resumeOf ? 'resume' : 'user',
-          resumeOf ? `credentials:${resumeOf}` : null,
-          resumeOf ?? null,
-        ],
-      );
-      return { threadId, turnId };
-    };
-    const task = (name: string) => tasks.get(name)!;
+    const { turn, archive } = await seedTurns(pool);
+    const owner = 'local-development';
     const key = randomBytes(32);
-    const stages = new Map<string, CredentialKind>();
-    const injections: CredentialInjection[] = [];
-    const resumed: string[] = [];
-    const emailCodeRequests: EmailCodeRequest[] = [];
-    let app = Fastify();
+    const injections: CredentialInput[] = [];
     let observedOrigin = 'https://example.com';
-    const options = {
-      requestKey: Buffer.alloc(32, 42),
+    const vault = await createVault(pool, {
       keyStore: { id: 'fixture', configured: true, getKey: async () => key },
       page: async () => ({ origin: observedOrigin, url: `${observedOrigin}/login` }),
-      inject: async (input: CredentialInjection) => {
+      inject: async (input) => {
         injections.push(input);
-        stages.set(input.threadId, input.kind === 'identifier' ? 'password' : 'otp');
       },
-      retry: async () => {},
-      emailCode: async (request: EmailCodeRequest) => {
-        emailCodeRequests.push(request);
-        return { code: '381742', current: async () => true };
-      },
-      resume: async (turnId: string) => {
-        const name = [...tasks].find(([, value]) => value.turnId === turnId)?.[0];
-        assert.ok(name);
-        const result = await pool.query(
-          "SELECT 1 FROM turns WHERE id=$1 AND status='waiting' AND waiting_reason='credentials'",
-          [turnId],
-        );
-        assert.equal(result.rowCount, 1);
-        tasks.set(name, await startTurn('local-development', turnId));
-        resumed.push(name);
-      },
-    };
-    let vault = await createVault(pool, options);
-    vault.registerRoutes(app);
-    const addTask = async (id: string, kind: CredentialKind = 'identifier') => {
-      const turn = await startTurn();
-      tasks.set(id, turn);
-      stages.set(turn.threadId, kind);
-    };
-    const input = (kind: CredentialKind = 'identifier', origin = 'https://example.com') => ({
-      origin,
-      label: 'Model provided label',
-      kind,
-      ...(kind === 'identifier' ? { usernameSelector: '#login' } : { passwordSelector: '#login' }),
     });
-    const form = async (taskId: string, origin?: string) => {
-      const request = await vault.request(
-        task(taskId),
-        'local-development',
-        input(stages.get(task(taskId).threadId), origin),
-      );
-      await pool.query(
-        "UPDATE turns SET status='waiting',waiting_reason='credentials' WHERE id=$1",
-        [task(taskId).turnId],
-      );
-      return request.url.replace('/vault/', '/api/credential-requests/');
-    };
-    const choose = (url: string, entryId: string) =>
-      app.inject({ method: 'POST', url: `${url}/saved`, payload: { entryId } });
-    const describe = async (url: string) => (await app.inject({ url })).json<CredentialRequest>();
-    const save = async (label: string, origin: string, username: string, password: string) => {
-      const response = await app.inject({
-        method: 'POST',
-        url: '/api/vault',
-        payload: { label, origin, username, password },
-      });
-      assert.equal(response.statusCode, 200);
-      return response.json<VaultLoginEntry>();
-    };
+    const identifier = (origin = 'https://example.com') => ({ origin, usernameSelector: '#login' });
+    const password = (origin = 'https://example.com') => ({
+      origin,
+      passwordSelector: '#password',
+    });
+    const combined = (origin = 'https://example.com') => ({
+      origin,
+      usernameSelector: '#account',
+      passwordSelector: '#password',
+    });
+    const code = (origin: string) => ({ origin, kind: 'otp' as const, passwordSelector: '#code' });
     try {
-      const first = await save(
-        'Personal',
-        'EXAMPLE.com',
-        'same-first@example.test',
-        'first-password',
-      );
-      const second = await save(
-        'Work',
-        'https://EXAMPLE.com:443/',
-        'same-second@example.test',
-        'second-password',
-      );
-      await save(
-        'Subdomain',
-        'https://login.example.com',
-        'same-second@example.test',
-        'other-secret',
-      );
-      await save(
-        'Other port',
-        'https://example.com:8443',
-        'same-second@example.test',
-        'port-secret',
-      );
-      const foreign = {
-        id: randomUUID(),
-        owner_id: 'foreign-owner',
+      const first = await vault.saveLogin({
+        label: 'Personal',
         origin: 'https://example.com',
-      };
-      await pool.query(
-        'INSERT INTO vault_entries(id,owner_id,label,origin,username_hint,ciphertext) VALUES($1,$2,$3,$4,$5,$6)',
-        [
-          foreign.id,
-          foreign.owner_id,
-          'Foreign',
-          foreign.origin,
-          'sa…',
-          sealCredential(key, foreign, { username: 'foreign-user', password: 'foreign-secret' }),
-        ],
-      );
+        username: 'same-first@example.test',
+        password: 'first-password',
+      });
+      const second = await vault.saveLogin({
+        label: 'Work',
+        origin: 'https://example.com',
+        username: 'same-second@example.test',
+        password: 'second-password',
+      });
 
-      await t.test(
-        'root and www private entry keeps the real destination and saved binding',
-        async (t) => {
-          t.after(() => {
-            observedOrigin = 'https://example.com';
+      await t.test('root and www entry types into the real destination only', async (t) => {
+        t.after(() => {
+          observedOrigin = 'https://example.com';
+        });
+        for (const [savedOrigin, destination] of [
+          ['https://example.net:8443', 'https://www.example.net:8443'],
+          ['https://www.example.org:9443', 'https://example.org:9443'],
+          ['https://tenant.github.io:8443', 'https://www.tenant.github.io:8443'],
+          ['https://xn--bcher-kva.de:7443', 'https://www.xn--bcher-kva.de:7443'],
+        ] as const) {
+          observedOrigin = destination;
+          const saved = await vault.saveLogin({
+            label: 'Synthetic root and www account',
+            origin: savedOrigin,
+            username: 'synthetic-account@example.test',
+            password: 'synthetic-www-password',
+            authenticatorKey: 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP',
           });
-          for (const [savedOrigin, destination] of [
-            ['https://example.net:8443', 'https://www.example.net:8443'],
-            ['https://www.example.org:9443', 'https://example.org:9443'],
-            ['https://tenant.github.io:8443', 'https://www.tenant.github.io:8443'],
-            ['https://xn--bcher-kva.de:7443', 'https://www.xn--bcher-kva.de:7443'],
-          ] as const) {
-            observedOrigin = destination;
-            const saved = await vault.saveLogin({
-              label: 'Synthetic root and www account',
-              origin: savedOrigin,
-              username: 'synthetic-account@example.test',
-              password: 'synthetic-www-password',
-              authenticatorKey: 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP',
-            });
-            const original = (
+          const original = (
+            await pool.query('SELECT origin,ciphertext FROM vault_entries WHERE id=$1', [saved.id])
+          ).rows[0];
+          const task = await turn();
+          assert.equal(await vault.fill(task, owner, saved.id, identifier(destination)), true);
+          assert.equal(injections.at(-1)?.origin, destination);
+          assert.equal(injections.at(-1)?.username, 'synthetic-account@example.test');
+          assert.equal(await vault.fill(task, owner, saved.id, password(destination)), true);
+          assert.equal(injections.at(-1)?.password, 'synthetic-www-password');
+          assert.equal(await vault.fill(task, owner, saved.id, password(destination)), false);
+          assert.equal((await vault.authenticatorLogin(task, owner, destination))?.id, saved.id);
+          assert.equal(await vault.fill(task, owner, saved.id, code(destination)), true);
+          assert.match(injections.at(-1)?.code ?? '', /^\d{6}$/);
+          assert.equal(await vault.fill(task, owner, saved.id, code(destination)), false);
+          assert.deepEqual(
+            (
+              await pool.query('SELECT DISTINCT origin FROM vault_uses WHERE item_id=$1', [
+                saved.id,
+              ])
+            ).rows,
+            [{ origin: destination }],
+          );
+          assert.deepEqual(
+            (
               await pool.query('SELECT origin,ciphertext FROM vault_entries WHERE id=$1', [
                 saved.id,
               ])
-            ).rows[0];
-            const name = `www-${saved.id}`;
-            await addTask(name);
-            const url = await form(name, destination);
-            const request = await describe(url);
-            assert.equal(request.origin, destination);
-            assert.deepEqual(
-              request.savedEntries?.map((entry) => entry.id),
-              [saved.id],
-            );
-            const before = injections.length;
-            const view = await vaultPage(
-              createElement(Credentials, { id: url.split('/').at(-1)!, embedded: true }),
-              async (path, init) => {
-                const response = await app.inject({
-                  method: (init.method ?? 'GET') as 'GET' | 'POST',
-                  url: path,
-                  headers: init.body ? { 'content-type': 'application/json' } : {},
-                  payload: init.body ? String(init.body) : undefined,
-                });
-                return new Response(response.body, {
-                  status: response.statusCode,
-                  headers: { 'content-type': 'application/json' },
-                });
-              },
-              'http://localhost:4310/',
-            );
-            try {
-              let button: HTMLButtonElement | undefined;
-              for (let attempt = 0; attempt < 100 && !button; attempt++) {
-                button = [...view.document.querySelectorAll('button')].find((item) =>
-                  item.textContent?.includes(saved.label),
-                );
-                if (!button)
-                  await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
-              }
-              assert.ok(button);
-              assert.ok(view.document.body.textContent?.includes(new URL(destination).host));
-              await act(async () => button.click());
-              for (let attempt = 0; attempt < 100 && !resumed.includes(name); attempt++)
-                await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
-              assert.ok(resumed.includes(name));
-            } finally {
-              await view.close();
-            }
-            assert.equal(injections.length, before + 1);
-            assert.equal(injections.at(-1)?.origin, destination);
-            assert.equal(injections.at(-1)?.username, 'synthetic-account@example.test');
-            assert.equal((await choose(url, saved.id)).statusCode, 409);
-            assert.equal(
-              await vault.fillSelected(
-                task(name),
-                'local-development',
-                input('password', destination),
-              ),
-              true,
-            );
-            assert.equal(injections.at(-1)?.origin, destination);
-            assert.equal(injections.at(-1)?.password, 'synthetic-www-password');
-            assert.equal(
-              await vault.fillSelected(
-                task(name),
-                'local-development',
-                input('password', destination),
-              ),
-              undefined,
-            );
-            const keyed = await vault.authenticatorLogin(
-              task(name),
-              'local-development',
-              destination,
-            );
-            assert.equal(keyed?.id, saved.id);
-            assert.equal(
-              await vault.fillAuthenticatorCode(
-                task(name),
-                'local-development',
-                saved.id,
-                input('otp', destination),
-              ),
-              true,
-            );
-            assert.match(injections.at(-1)?.code ?? '', /^\d{6}$/);
-            assert.equal(injections.at(-1)?.origin, destination);
-            assert.equal(
-              await vault.fillAuthenticatorCode(
-                task(name),
-                'local-development',
-                saved.id,
-                input('otp', destination),
-              ),
-              false,
-            );
-            const email = { ...input('otp', destination), emailCode: true };
-            assert.equal(await vault.fillEmailCode(task(name), 'local-development', email), true);
-            assert.equal(injections.at(-1)?.code, '381742');
-            assert.equal(injections.at(-1)?.origin, destination);
-            assert.equal(emailCodeRequests.at(-1)?.origin, destination);
-            assert.equal(emailCodeRequests.at(-1)?.recipient, 'synthetic-account@example.test');
-            assert.equal(await vault.fillEmailCode(task(name), 'local-development', email), false);
-            assert.deepEqual(
-              (
-                await pool.query('SELECT DISTINCT origin FROM vault_uses WHERE item_id=$1', [
-                  saved.id,
-                ])
-              ).rows,
-              [{ origin: destination }],
-            );
-            assert.deepEqual(
-              (
-                await pool.query('SELECT origin,ciphertext FROM vault_entries WHERE id=$1', [
-                  saved.id,
-                ])
-              ).rows[0],
-              original,
-            );
-            assert.deepEqual(
-              (
-                await pool.query(
-                  'SELECT origin FROM credential_account_selections WHERE entry_id=$1',
-                  [saved.id],
-                )
-              ).rows,
-              [{ origin: destination }],
-            );
-          }
-        },
-      );
+            ).rows[0],
+            original,
+          );
+        }
+      });
 
       await t.test('www matching refuses other sites and keeps exact excluded hosts', async (t) => {
         t.after(() => {
@@ -1218,27 +659,19 @@ test(
           ['https://fixture.invalid', 'https://www.fixture.invalid'],
           ['https://localhost', 'https://www.localhost'],
         ] as const) {
-          const saved = await save(
-            'Synthetic excluded login',
-            savedOrigin,
-            'excluded',
-            'excluded-password',
-          );
+          const saved = await vault.saveLogin({
+            label: 'Synthetic excluded login',
+            origin: savedOrigin,
+            username: 'excluded',
+            password: 'excluded-password',
+          });
           observedOrigin = destination;
-          const name = `excluded-${saved.id}`;
-          await addTask(name, 'password');
-          const url = await form(name, destination);
-          assert.ok(!(await describe(url)).savedEntries?.some((entry) => entry.id === saved.id));
           const before = injections.length;
-          assert.notEqual((await choose(url, saved.id)).json().ok, true);
+          await assert.rejects(vault.fill(await turn(), owner, saved.id, combined(destination)));
           assert.equal(injections.length, before);
           observedOrigin = savedOrigin;
-          await addTask(`${name}-exact`, 'password');
           assert.equal(
-            await vault.fillSaved(task(`${name}-exact`), 'local-development', saved.id, {
-              ...input('password', savedOrigin),
-              usernameSelector: '#account',
-            }),
+            await vault.fill(await turn(), owner, saved.id, combined(savedOrigin)),
             true,
           );
           assert.equal(injections.at(-1)?.origin, savedOrigin);
@@ -1247,225 +680,76 @@ test(
           ['https://127.0.0.1:9449', 'https://www.127.0.0.1:9449'],
           ['https://[::1]:9449', 'https://www.[::1]:9449'],
         ] as const) {
-          const saved = await save('Synthetic IP login', origin, 'ip-account', 'ip-password');
-          const name = `ip-${saved.id}`;
-          await addTask(name, 'password');
+          const saved = await vault.saveLogin({
+            label: 'Synthetic IP login',
+            origin,
+            username: 'ip-account',
+            password: 'ip-password',
+          });
           observedOrigin = alternate;
           const before = injections.length;
           await assert.rejects(
-            vault.request(task(name), 'local-development', input('password', alternate)),
-            /website address is not valid/,
-          );
-          await assert.rejects(
-            vault.fillSaved(
-              task(name),
-              'local-development',
-              saved.id,
-              input('password', alternate),
-            ),
+            vault.fill(await turn(), owner, saved.id, combined(alternate)),
             /website address is not valid/,
           );
           assert.equal(injections.length, before);
           observedOrigin = origin;
-          assert.equal(
-            await vault.fillSaved(task(name), 'local-development', saved.id, {
-              ...input('password', origin),
-              usernameSelector: '#account',
-            }),
-            true,
-          );
+          assert.equal(await vault.fill(await turn(), owner, saved.id, combined(origin)), true);
           assert.equal(injections.at(-1)?.origin, origin);
         }
       });
 
-      await t.test('www matching keeps account choice, owner and actual-page fences', async (t) => {
-        t.after(() => {
-          observedOrigin = 'https://example.com';
-        });
-        observedOrigin = 'https://www.example.com';
-        await addTask('www-accounts');
-        const url = await form('www-accounts', observedOrigin);
-        assert.deepEqual(
-          new Set((await describe(url)).savedEntries?.map((entry) => entry.id)),
-          new Set([first.id, second.id]),
+      await t.test('saved logins stay with their owner, live task and actual page', async () => {
+        const foreign = {
+          id: randomUUID(),
+          owner_id: 'foreign-owner',
+          origin: 'https://example.com',
+        };
+        await pool.query(
+          'INSERT INTO vault_entries(id,owner_id,label,origin,username_hint,ciphertext) VALUES($1,$2,$3,$4,$5,$6)',
+          [
+            foreign.id,
+            foreign.owner_id,
+            'Foreign',
+            foreign.origin,
+            'fo…',
+            sealCredential(key, foreign, { username: 'foreign-user', password: 'foreign-secret' }),
+          ],
         );
         const before = injections.length;
-        assert.notEqual((await choose(url, foreign.id)).json().ok, true);
-        assert.equal(injections.length, before);
-        await addTask('www-chosen');
-        const chosenUrl = await form('www-chosen', observedOrigin);
-        assert.equal((await choose(chosenUrl, first.id)).json().ok, true);
-        assert.equal(
-          await vault.fillSaved(
-            task('www-chosen'),
-            'local-development',
-            second.id,
-            input('password', observedOrigin),
-          ),
-          false,
+        await assert.rejects(vault.fill(await turn(), owner, foreign.id, combined()));
+        await assert.rejects(
+          vault.fill(await turn('foreign-owner'), 'foreign-owner', foreign.id, combined()),
         );
-        assert.equal(injections.length, before + 1);
-        assert.equal(
-          await vault.fillSelected(
-            task('www-chosen'),
-            'local-development',
-            input('password', observedOrigin),
-          ),
-          true,
+        observedOrigin = 'https://www.example.com';
+        await assert.rejects(
+          vault.fill(await turn(), owner, first.id, combined()),
+          /origin changed/,
         );
-        assert.equal(injections.at(-1)?.password, 'first-password');
-        await addTask('www-changed');
-        const changedUrl = await form('www-changed', observedOrigin);
         observedOrigin = 'https://example.com';
-        assert.notEqual((await choose(changedUrl, first.id)).json().ok, true);
-        assert.equal(injections.length, before + 2);
+        const ended = await turn();
+        await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [ended.turnId]);
+        await assert.rejects(vault.fill(ended, owner, first.id, combined()));
+        const archived = await turn();
+        await archive();
+        await assert.rejects(vault.fill(archived, owner, first.id, combined()));
+        assert.equal(injections.length, before);
       });
 
-      await t.test(
-        'one task can use two saved accounts after each sign-in completes without replay',
-        async () => {
-          await addTask('two-accounts', 'password');
-          const turn = task('two-accounts');
-          const combined = { ...input('password'), usernameSelector: '#account' };
-          const before = injections.length;
-          assert.equal(await vault.fillSaved(turn, 'local-development', first.id, combined), true);
-          assert.equal(await vault.fillSelected(turn, 'local-development', combined), undefined);
-          assert.equal(await vault.fillSaved(turn, 'local-development', second.id, combined), true);
-          assert.deepEqual(
-            injections.slice(before).map((entry) => entry.username),
-            ['same-first@example.test', 'same-second@example.test'],
-          );
-          assert.equal(await vault.fillSaved(turn, 'local-development', first.id, combined), false);
-          assert.equal(
-            await vault.fillSaved(turn, 'local-development', second.id, combined),
-            false,
-          );
-          assert.equal(injections.length, before + 2);
-          await addTask('staged-account');
-          await vault.fillSaved(task('staged-account'), 'local-development', first.id, input());
-          assert.equal(
-            await vault.fillSaved(
-              task('staged-account'),
-              'local-development',
-              second.id,
-              input('password'),
-            ),
-            false,
-          );
-          assert.equal(injections.length, before + 3);
-        },
-      );
-
-      await t.test(
-        'deleted chosen entry cannot switch automatically to the sole remaining account',
-        async () => {
-          const disposable = await save(
-            'Disposable',
-            'example.com',
-            'removed-account',
-            'removed-password',
-          );
-          await addTask('deleted');
-          const url = await form('deleted');
-          assert.equal((await choose(url, disposable.id)).json().ok, true);
-          await app.inject({ method: 'DELETE', url: `/api/vault/${disposable.id}` });
-          const before = injections.length;
-          assert.equal(
-            await vault.fillSelected(task('deleted'), 'local-development', input('password')),
-            false,
-          );
-          assert.equal(injections.length, before);
-          const passwordUrl = await form('deleted');
-          assert.deepEqual((await describe(passwordUrl)).savedEntries, []);
-          assert.equal((await choose(passwordUrl, first.id)).statusCode, 409);
-          const replacement = (await choose(passwordUrl, disposable.id)).json<{
-            ok: boolean;
-            retryUrl: string;
-          }>();
-          assert.equal(replacement.ok, false);
-          assert.equal((await describe(passwordUrl)).status, 'expired');
-          const replacementId = replacement.retryUrl.split('/').at(-1)!;
-          assert.deepEqual((await app.inject({ url: `${passwordUrl}/flow` })).json(), {
-            nextId: replacementId,
-          });
-          assert.equal(
-            (
-              await app.inject({
-                method: 'POST',
-                url: passwordUrl,
-                payload: { password: 'synthetic-stale-password' },
-              })
-            ).statusCode,
-            409,
-          );
-          const view = await vaultPage(
-            createElement(Credentials, { id: passwordUrl.split('/').at(-1)!, embedded: true }),
-            async (url, init) => {
-              const result = await app.inject({
-                method: (init.method ?? 'GET') as 'GET' | 'POST',
-                url,
-                headers: init.body ? { 'content-type': 'application/json' } : {},
-                payload: init.body ? String(init.body) : undefined,
-              });
-              return new Response(result.body, {
-                status: result.statusCode,
-                headers: { 'content-type': 'application/json' },
-              });
-            },
-            'http://localhost:4310/?conversation=synthetic',
-          );
-          try {
-            for (
-              let attempt = 0;
-              attempt < 100 && !view.document.querySelector('input[name="password"]');
-              attempt++
-            )
-              await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
-            const field = view.document.querySelector<HTMLInputElement>('input[name="password"]');
-            assert.ok(field);
-            assert.equal(field.value, '');
-            assert.equal(window.location.search, '?conversation=synthetic');
-          } finally {
-            await view.close();
-          }
-          assert.equal(injections.length, before);
-        },
-      );
-
-      await t.test(
-        'expired, archived and foreign requests cannot select saved entries and OTP has no accounts',
-        async () => {
-          for (const state of ['ended', 'archived']) {
-            await addTask(state);
-            const url = await form(state);
-            if (state === 'ended')
-              await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [
-                task(state).turnId,
-              ]);
-            else {
-              await pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [
-                task(state).threadId,
-              ]);
-              threads.delete('local-development');
-            }
-            const before = injections.length;
-            assert.equal((await choose(url, first.id)).statusCode, 409);
-            assert.equal((await describe(url)).savedEntries, undefined);
-            assert.equal(injections.length, before);
-          }
-          const foreignTask = await startTurn('foreign-owner');
-          const foreignRequest = await vault.request(foreignTask, 'foreign-owner', input());
-          const foreignUrl = foreignRequest.url.replace('/vault/', '/api/credential-requests/');
-          assert.equal((await app.inject({ url: foreignUrl })).statusCode, 404);
-          assert.equal((await choose(foreignUrl, foreign.id)).statusCode, 409);
-          await addTask('otp', 'otp');
-          const otpUrl = await form('otp');
-          assert.equal((await describe(otpUrl)).savedEntries, undefined);
-          assert.equal((await choose(otpUrl, first.id)).statusCode, 409);
-        },
-      );
+      await t.test('one task can use two saved accounts once each', async () => {
+        const task = await turn();
+        const before = injections.length;
+        assert.equal(await vault.fill(task, owner, first.id, combined()), true);
+        assert.equal(await vault.fill(task, owner, second.id, combined()), true);
+        assert.deepEqual(
+          injections.slice(before).map((entry) => entry.username),
+          ['same-first@example.test', 'same-second@example.test'],
+        );
+        assert.equal(await vault.fill(task, owner, first.id, combined()), false);
+        assert.equal(await vault.fill(task, owner, second.id, combined()), false);
+        assert.equal(injections.length, before + 2);
+      });
     } finally {
-      await app.close();
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();
@@ -1507,11 +791,8 @@ test(
       const app = Fastify({ logger: false });
       registerLocalAccess(app, 4310, { key: 'synthetic-local-access' });
       const vault = await createVault(pool, {
-        requestKey: Buffer.alloc(32, 42),
         keyStore: { id: 'synthetic', configured: true, getKey: async () => key },
         inject: async () => assert.fail('Cards must never enter a website login.'),
-        resume: async () => assert.fail('Card management must not resume a task.'),
-        retry: async () => assert.fail('Card management must not retry a task.'),
       });
       vault.registerRoutes(app);
       return { app, vault };
@@ -1609,11 +890,8 @@ test(
       const instance = Fastify({ logger: false });
       registerLocalAccess(instance, 4310, { key: 'synthetic-local-access' });
       const vault = await createVault(pool, {
-        requestKey: Buffer.alloc(32, 42),
         keyStore: checkedKeyStore(pool, { id: 'fixture', configured: true, getKey }),
         inject: async () => assert.fail('Viewing or editing a login must not fill a browser.'),
-        resume: async () => assert.fail('Viewing or editing a login must not resume a turn.'),
-        retry: async () => assert.fail('Viewing or editing a login must not restart a turn.'),
       });
       vault.registerRoutes(instance);
       return instance;
@@ -1874,17 +1152,14 @@ test(
       const owner = 'local-development';
       const origin = 'https://bank.example.test';
       let observedOrigin = origin;
-      const injections: CredentialInjection[] = [];
+      const injections: CredentialInput[] = [];
       const vault = await createVault(pool, {
-        requestKey: Buffer.alloc(32, 42),
         keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 9) },
         page: async () => ({ origin: observedOrigin, url: `${observedOrigin}/verify` }),
         inject: async (input) => {
           injections.push(input);
           return { status: 'submitted' as const };
         },
-        resume: async () => {},
-        retry: async () => {},
       });
       const authenticator =
         'otpauth://totp/Bank:first?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Bank';
@@ -1901,25 +1176,16 @@ test(
         username: 'second@bank.example.test',
         password: 'second-synthetic-password',
       });
-      const code = { origin, label: 'Bank code', kind: 'otp' as const, passwordSelector: '#code' };
-      const password = {
-        origin,
-        label: 'Bank',
-        kind: 'password' as const,
-        usernameSelector: '#user',
-        passwordSelector: '#password',
-      };
+      const code = { origin, kind: 'otp' as const, passwordSelector: '#code' };
+      const password = { origin, usernameSelector: '#user', passwordSelector: '#password' };
 
       await t.test('another account in the same task never receives the key', async () => {
         const task = await turn();
-        assert.equal(await vault.fillSaved(task, owner, second.id, password), true);
+        assert.equal(await vault.fill(task, owner, second.id, password), true);
         assert.equal(await vault.authenticatorLogin(task, owner, origin), undefined);
         assert.equal(await vault.authenticatorLogin(task, owner, origin, first.id), undefined);
         const entered = injections.length;
-        await assert.rejects(
-          vault.fillAuthenticatorCode(task, owner, first.id, code),
-          /matches the account already entered/,
-        );
+        assert.notEqual(await vault.fill(task, owner, first.id, code).catch(() => false), true);
         assert.equal(injections.length, entered);
       });
     } finally {
@@ -1930,480 +1196,10 @@ test(
   },
 );
 
-test(
-  'a password manager login picked in the private form is saved sealed and entered once',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async (t) => {
-    const schema = `test_vault_manager_${randomUUID().replaceAll('-', '')}`;
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
-    const app = Fastify();
-    const bare = Fastify();
-    try {
-      const { turn, wait } = await seedTurns(pool);
-      const owner = 'local-development';
-      const origin = 'https://bank.example.test';
-      const calls: string[] = [];
-      const injections: CredentialInjection[] = [];
-      const resumed: string[] = [];
-      const password = 'manager-synthetic-password';
-      const manager: PasswordManager = {
-        name: '1Password',
-        logins: async (account, site) => {
-          calls.push(`logins ${account} ${site}`);
-          if (account === 'Unreachable')
-            throw new PasswordManagerError('unavailable', 'The library did not load.');
-          return [
-            { id: 'v1/i1', title: 'Bank', username: 'owner@bank.example.test', website: origin },
-          ];
-        },
-        login: async (account, site, id) => {
-          calls.push(`login ${account} ${site} ${id}`);
-          if (id !== 'v1/i1')
-            throw new PasswordManagerError(
-              'missing',
-              'This 1Password login is not for this website.',
-            );
-          return {
-            title: 'Bank',
-            username: 'owner@bank.example.test',
-            password,
-            authenticatorKey: 'otpauth://totp/Bank:owner?secret=JBSWY3DPEHPK3PXP&issuer=Bank',
-          };
-        },
-        close: async () => {},
-      };
-      const options = {
-        requestKey: Buffer.alloc(32, 42),
-        keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 5) },
-        page: async () => ({ origin, url: `${origin}/login` }),
-        inject: async (input: CredentialInjection) => {
-          injections.push(input);
-          return { status: 'submitted' as const };
-        },
-        resume: async (turnId: string) => {
-          resumed.push(turnId);
-        },
-        retry: async () => {},
-      };
-      const vault = await createVault(pool, { ...options, passwordManager: manager });
-      vault.registerRoutes(app);
-      const request = {
-        origin,
-        label: 'Bank',
-        kind: 'password' as const,
-        usernameSelector: '#user',
-        passwordSelector: '#password',
-      };
-      const task = await turn();
-      const token = (await vault.request(task, owner, request)).url.split('/').at(-1)!;
-      await wait(task);
-      const path = `/api/credential-requests/${token}`;
-      const describe = async () => (await app.inject({ url: path })).json<CredentialRequest>();
-      const post = (suffix: string, payload: Record<string, unknown>) =>
-        app.inject({ method: 'POST', url: `${path}${suffix}`, payload });
-
-      await t.test('the form offers the manager and explains a missing app', async () => {
-        assert.deepEqual((await describe()).passwordManager, { name: '1Password' });
-        const failed = await post('/password-manager', { account: 'Unreachable' });
-        assert.equal(failed.statusCode, 502);
-        assert.match(failed.json().error, /Integrate with other apps/);
-        assert.deepEqual((await describe()).passwordManager, { name: '1Password' });
-        assert.equal((await post('/password-manager', { account: ' ' })).statusCode, 400);
-      });
-
-      await t.test('listing remembers the account and returns no secret', async () => {
-        const listed = await post('/password-manager', { account: 'Synthetic Family' });
-        assert.equal(listed.statusCode, 200);
-        assert.deepEqual(listed.json().logins, [
-          { id: 'v1/i1', title: 'Bank', username: 'owner@bank.example.test', website: origin },
-        ]);
-        assert.doesNotMatch(listed.body, /manager-synthetic-password|JBSWY3DP/);
-        assert.deepEqual((await describe()).passwordManager, {
-          name: '1Password',
-          account: 'Synthetic Family',
-        });
-        assert.equal(calls.at(-1), `logins Synthetic Family ${origin}`);
-      });
-
-      await t.test('a login for another website is refused before anything is saved', async () => {
-        const refused = await post('/password-manager/use', {
-          account: 'Synthetic Family',
-          id: 'v1/elsewhere',
-        });
-        assert.equal(refused.statusCode, 409);
-        assert.match(refused.json().error, /not for this website/);
-        assert.equal((await pool.query('SELECT 1 FROM vault_entries')).rowCount, 0);
-        assert.equal(injections.length, 0);
-      });
-
-      await t.test('the picked login is sealed with its key and entered once', async () => {
-        const used = await post('/password-manager/use', {
-          account: 'Synthetic Family',
-          id: 'v1/i1',
-        });
-        assert.equal(used.statusCode, 200, used.body);
-        assert.deepEqual(used.json(), { ok: true });
-        assert.equal(injections.length, 1);
-        assert.equal(calls.at(-1), `login Synthetic Family ${origin} v1/i1`);
-        assert.equal(injections[0]!.password, password);
-        assert.equal(injections[0]!.username, 'owner@bank.example.test');
-        assert.deepEqual(resumed, [task.turnId]);
-        const [saved] = await vault.list();
-        assert.equal(saved?.label, 'Bank');
-        assert.equal(saved?.origin, origin);
-        const { secret } = await vault.readCredential(saved!.id);
-        assert.equal(secret.password, password);
-        assert.ok(secret.authenticator);
-        const sealed = JSON.stringify((await pool.query('SELECT * FROM vault_entries')).rows);
-        assert.doesNotMatch(sealed, /manager-synthetic-password|JBSWY3DP|owner@bank/);
-        assert.equal((await describe()).status, 'filled');
-        assert.equal((await describe()).passwordManager, undefined);
-        const reads = calls.length;
-        const again = await post('/password-manager/use', {
-          account: 'Synthetic Family',
-          id: 'v1/i1',
-        });
-        assert.equal(again.statusCode, 409);
-        assert.equal(calls.length, reads);
-        assert.equal(injections.length, 1);
-      });
-    } finally {
-      await app.close();
-      await bare.close();
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
-    }
-  },
-);
-
-test(
-  'one Vault form securely carries a password across identifier stages and restart',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async (t) => {
-    const schema = `test_vault_one_form_${randomUUID().replaceAll('-', '')}`;
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
-    const app = Fastify();
-    try {
-      await admin.query(`CREATE SCHEMA ${schema}`);
-      await pool.query(
-        'CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz)',
-      );
-      await pool.query(
-        "CREATE TABLE turns(id uuid PRIMARY KEY,parent_turn_id uuid,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED)",
-      );
-      const threadId = randomUUID();
-      await pool.query("INSERT INTO threads(id,owner_id) VALUES($1,'local-development')", [
-        threadId,
-      ]);
-      const tasks = new Map<string, TurnRef>();
-      const roots = new Map<string, string>();
-      const startTurn = async (resumeOf?: string) => {
-        const turnId = randomUUID();
-        await pool.query(
-          "INSERT INTO turns(id,owner_id,thread_id,source,source_id,parent_turn_id,started_at) VALUES($1,'local-development',$2,$3,$4,$5,clock_timestamp())",
-          [
-            turnId,
-            threadId,
-            resumeOf ? 'resume' : 'user',
-            resumeOf ? `credentials:${resumeOf}` : null,
-            resumeOf ?? null,
-          ],
-        );
-        return { threadId, turnId };
-      };
-      const task = (name: string) => tasks.get(name)!;
-      const key = randomBytes(32);
-      const stages = new Map<string, CredentialKind>();
-      const injections: CredentialInjection[] = [];
-      const origin = 'https://accounts.example.test';
-      let observedOrigin = origin;
-      let unavailable = false;
-      const options = {
-        requestKey: Buffer.alloc(32, 42),
-        keyStore: { id: 'fixture', configured: true, getKey: async () => key },
-        page: async () => ({ origin: observedOrigin, url: observedOrigin + '/login' }),
-        inject: async (input: CredentialInjection) => {
-          injections.push(input);
-          if (unavailable && input.kind === 'password') throw new Error('Synthetic unavailable');
-          stages.set(input.threadId, input.kind === 'identifier' ? 'password' : 'otp');
-          return { status: 'submitted' as const };
-        },
-        retry: async () => {},
-        resume: async (turnId: string) => {
-          const name = [...tasks].find(([, value]) => value.turnId === turnId)?.[0];
-          assert.ok(name);
-          const result = await pool.query(
-            "SELECT 1 FROM turns WHERE id=$1 AND status='waiting' AND waiting_reason='credentials'",
-            [turnId],
-          );
-          assert.equal(result.rowCount, 1);
-          tasks.set(name, await startTurn(turnId));
-        },
-      };
-      const vault = await createVault(pool, options);
-      vault.registerRoutes(app);
-      const requestInput = (kind: CredentialKind) => ({
-        origin,
-        label: 'Website login',
-        kind,
-        ...(kind === 'identifier'
-          ? { usernameSelector: '#observed' }
-          : { passwordSelector: '#observed' }),
-      });
-      const wait = (turn: TurnRef) =>
-        pool.query("UPDATE turns SET status='waiting',waiting_reason='credentials' WHERE id=$1", [
-          turn.turnId,
-        ]);
-      const begin = async (
-        id: string,
-        credentials = {
-          username: 'synthetic@example.test',
-          password: 'one-form-synthetic-password',
-        } as { username: string; password?: string },
-      ) => {
-        if (!tasks.has(id)) {
-          const turn = await startTurn();
-          tasks.set(id, turn);
-          roots.set(id, turn.turnId);
-        }
-        stages.set(threadId, 'identifier');
-        const request = await vault.request(
-          task(id),
-          'local-development',
-          requestInput('identifier'),
-        );
-        await wait(task(id));
-        const url = request.url.replace('/vault/', '/api/credential-requests/');
-        const submitted = await app.inject({
-          method: 'POST',
-          url,
-          payload: credentials,
-        });
-        assert.equal(submitted.statusCode, 200);
-        assert.equal(submitted.json().ok, true);
-        assert.equal(injections.at(-1)?.kind, 'identifier');
-        assert.equal(injections.at(-1)?.password, undefined);
-        return url;
-      };
-
-      await t.test('identifier recovery never fills or replays a held password', async () => {
-        await begin('held-password-recovery');
-        const turn = task('held-password-recovery');
-        assert.equal(
-          await vault.fillSelected(turn, 'local-development', requestInput('identifier')),
-          true,
-        );
-        assert.equal(injections.at(-1)?.username, 'synthetic@example.test');
-        assert.equal(injections.at(-1)?.password, undefined);
-        assert.equal(
-          await vault.fillSelected(turn, 'local-development', requestInput('password')),
-          true,
-        );
-        assert.equal(injections.at(-1)?.password, 'one-form-synthetic-password');
-        const before = injections.length;
-        assert.equal(
-          await vault.fillSelected(turn, 'local-development', requestInput('password')),
-          undefined,
-        );
-        assert.equal(injections.length, before);
-      });
-
-      await t.test('a page with both sign-in fields gets one private form', async () => {
-        const turn = await startTurn();
-        tasks.set('both-fields', turn);
-        const request = await vault.request(turn, 'local-development', {
-          origin,
-          label: 'Website login',
-          usernameSelector: '#email',
-          passwordSelector: '#password',
-        });
-        await wait(turn);
-        const url = request.url.replace('/vault/', '/api/credential-requests/');
-        const form = (await app.inject({ method: 'GET', url })).json();
-        assert.deepEqual(
-          form.fields.map((field: { kind: string }) => field.kind),
-          ['identifier', 'password'],
-        );
-        const submitted = await app.inject({
-          method: 'POST',
-          url,
-          payload: {
-            username: 'synthetic@example.test',
-            password: 'both-fields-synthetic-password',
-          },
-        });
-        assert.equal(submitted.statusCode, 200);
-        assert.equal(injections.at(-1)?.username, 'synthetic@example.test');
-        assert.equal(injections.at(-1)?.password, 'both-fields-synthetic-password');
-      });
-
-      await t.test(
-        'held credentials remain bound to owner, origin, running turn and expiry',
-        async () => {
-          const second = await app.inject({
-            method: 'POST',
-            url: '/api/vault',
-            payload: {
-              label: 'Second account',
-              origin,
-              username: 'second-member@example.test',
-              password: 'second-synthetic-password',
-            },
-          });
-          assert.equal(second.statusCode, 200);
-          for (const kind of ['password', 'identifier'] as const) {
-            const name = `fences-${kind}`;
-            await begin(
-              name,
-              kind === 'identifier' ? { username: 'fenced-member@example.test' } : undefined,
-            );
-            const turn = task(name);
-            const input = requestInput(kind);
-            const count = injections.length;
-            assert.equal(await vault.fillSelected(turn, 'another-owner', input), undefined);
-            assert.equal(
-              await vault.fillSelected(turn, 'local-development', {
-                ...input,
-                origin: 'https://other.example.test',
-              }),
-              undefined,
-            );
-            observedOrigin = 'https://other.example.test';
-            assert.equal(await vault.fillSelected(turn, 'local-development', input), false);
-            observedOrigin = origin;
-            await pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turn.turnId]);
-            assert.equal(await vault.fillSelected(turn, 'local-development', input), false);
-            await pool.query("UPDATE turns SET status='running' WHERE id=$1", [turn.turnId]);
-            assert.equal(
-              await vault.fillSelected(turn, 'local-development', requestInput('otp')),
-              false,
-            );
-            await pool.query(
-              "UPDATE credential_account_selections SET expires_at=now()-interval '1 second' WHERE root_turn_id=$1",
-              [roots.get(name)],
-            );
-            assert.equal(await vault.fillSelected(turn, 'local-development', input), false);
-            assert.equal(injections.length, count);
-            const later = await startTurn();
-            assert.equal(await vault.fillSelected(later, 'local-development', input), undefined);
-            const request = await vault.request(later, 'local-development', input);
-            if (kind === 'password') {
-              const expired = (
-                await pool.query(
-                  'SELECT * FROM credential_account_selections WHERE root_turn_id=$1',
-                  [roots.get(name)],
-                )
-              ).rows[0];
-              assert.equal(expired.ciphertext, '');
-              assert.equal(expired.blocked, true);
-            }
-            await wait(later);
-            const response = await app.inject({
-              url: request.url.replace('/vault/', '/api/credential-requests/'),
-            });
-            assert.ok(response.json().savedEntries.length > 1);
-            assert.equal(injections.length, count);
-          }
-        },
-      );
-    } finally {
-      try {
-        await app.close();
-      } finally {
-        try {
-          await pool.end();
-        } finally {
-          try {
-            await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
-          } finally {
-            await admin.end();
-          }
-        }
-      }
-    }
-  },
-);
-
-const now = Date.now();
-const request = {
-  recipient: 'owner@example.com',
-  origin: 'https://app20.toconline.pt',
-  after: now - 30_000,
-  before: now,
-};
-const message: VerificationEmail = {
-  id: 'fixture-mail',
-  receivedAt: now - 1000,
-  sender: 'login@toconline.pt',
-  authenticatedDomain: 'toconline.pt',
-  recipients: ['owner@example.com'],
-  text: 'O seu código de autenticação é 381742.',
-};
-
 test('verification addresses reject missing or invalid values before normalization', () => {
   for (const value of [undefined, null, 42, {}, '', 'invalid'])
     assert.equal(normalizedEmail(value), undefined);
   assert.equal(normalizedEmail('  OWNER@EXAMPLE.COM  '), 'owner@example.com');
-});
-
-test('site matching uses public suffix boundaries and separates hosted tenants', () => {
-  for (const [origin, domain] of [
-    ['https://app20.toconline.pt', 'toconline.pt'],
-    ['https://accounts.google.com', 'google.com'],
-    ['https://login.example.co.uk', 'example.co.uk'],
-    ['https://login.tenant.github.io', 'tenant.github.io'],
-  ])
-    assert.equal(verificationSenderDomain(origin), domain);
-  for (const origin of [
-    'https://co.uk',
-    'https://github.io',
-    'https://127.0.0.1',
-    'https://[::1]',
-    'http://example.com',
-    'https://example.com/path',
-    'https://user@example.com',
-    'https://example.invalid',
-    'broken',
-  ])
-    assert.equal(verificationSenderDomain(origin), undefined);
-  const tenant = { ...request, origin: 'https://login.tenant.github.io' };
-  assert.equal(
-    verificationCode(
-      [{ ...message, sender: 'login@other.github.io', authenticatedDomain: 'other.github.io' }],
-      tenant,
-    ),
-    undefined,
-  );
-  assert.equal(
-    verificationCode(
-      [
-        {
-          ...message,
-          sender: 'login@mail.tenant.github.io',
-          authenticatedDomain: 'mail.tenant.github.io',
-        },
-      ],
-      tenant,
-    ),
-    '381742',
-  );
-  assert.equal(
-    verificationCode(
-      [{ ...message, sender: 'login@evil-toconline.pt', authenticatedDomain: 'evil-toconline.pt' }],
-      request,
-    ),
-    undefined,
-  );
 });
 
 test(
@@ -2433,15 +1229,12 @@ test(
         CREATE TABLE turns(id uuid PRIMARY KEY,parent_turn_id uuid,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',background boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED);
       `);
       const vault = await createVault(pool, {
-        requestKey: Buffer.alloc(32, 42),
         keyStore: checkedKeyStore(pool, {
           id: 'synthetic',
           configured: true,
           getKey: async () => key,
         }),
         inject: async () => assert.fail('A payment never types a login.'),
-        resume: async () => assert.fail('Card management must not resume a task.'),
-        retry: async () => assert.fail('Card management must not retry a task.'),
       });
       vault.registerRoutes(app);
       const fills: CardEntry[] = [];
@@ -3042,882 +1835,6 @@ test(
   },
 );
 
-test('Gmail verification uses fixed account-bound read endpoints and validates received MIME headers', async (t) => {
-  const client = new Composio({
-    apiKey: 'fixture-not-live',
-    allowTracking: false,
-    disableVersionCheck: true,
-  });
-  let nextPageToken: string | undefined;
-  let auth = 'mx.google.com; dmarc=pass (p=REJECT) header.from=toconline.pt; dkim=pass';
-  let sender = 'TOConline <login@toconline.pt>';
-  let recipient = 'owner@example.com';
-  let date = now - 1000;
-  let labels = ['INBOX'];
-  let mimeType = 'text/plain';
-  let body = 'O seu código de autenticação é 381742.';
-  let extraHeaders: Array<{ name: string; value: string }> = [];
-  let parts: unknown[] | undefined;
-  t.mock.method(client.tools, 'proxyExecute', async (input: { endpoint: string }) => {
-    if (input.endpoint.endsWith('/messages')) {
-      return { status: 200, headers: {}, data: { messages: [{ id: 'mail1' }], nextPageToken } };
-    }
-    assert.equal(input.endpoint, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/mail1');
-    return {
-      status: 200,
-      headers: {},
-      data: {
-        id: 'mail1',
-        internalDate: String(date),
-        labelIds: labels,
-        payload: {
-          mimeType,
-          parts,
-          headers: [
-            { name: 'From', value: sender },
-            { name: 'To', value: recipient },
-            { name: 'Authentication-Results', value: auth },
-            ...extraHeaders,
-            { name: 'Subject', value: 'Account verification' },
-          ],
-          body: { data: Buffer.from(body).toString('base64url') },
-        },
-      },
-    };
-  });
-  const read = () =>
-    readVerificationEmails(
-      client.tools,
-      'owned-account',
-      {
-        recipient: request.recipient,
-        senderDomain: 'toconline.pt',
-        after: request.after,
-        before: request.before,
-      },
-      new AbortController().signal,
-    );
-  assert.equal(verificationCode((await read())!, request), '381742');
-  mimeType = 'multipart/alternative';
-  parts = [
-    {
-      mimeType: 'text/plain',
-      body: {
-        data: Buffer.from(
-          'Your verification code is 381742.\n> Your verification code is 999999.',
-        ).toString('base64url'),
-      },
-    },
-    {
-      mimeType: 'text/html',
-      body: {
-        data: Buffer.from(
-          '<p>Your verification code is 381742.</p><blockquote>Your verification code is 999999.</blockquote>',
-        ).toString('base64url'),
-      },
-    },
-    {
-      mimeType: 'text/html',
-      headers: [{ name: 'Content-Disposition', value: 'attachment' }],
-      body: {
-        data: Buffer.from('<p>Your verification code is 999998.</p>').toString('base64url'),
-      },
-    },
-  ];
-  const unquoted = (await read())![0];
-  assert.equal(verificationCode([unquoted], request), '381742');
-  assert.doesNotMatch(unquoted.text, /999999|999998/);
-  parts = undefined;
-  mimeType = 'text/plain';
-  sender = 'login@transactional.toconline.pt';
-  assert.equal((await read())?.length, 1);
-  for (const [authenticated, from] of [
-    ['attacker.pt', 'login@transactional.toconline.pt'],
-    ['co.uk', 'login@co.uk'],
-    ['github.io', 'login@tenant.github.io'],
-    ['other.github.io', 'login@tenant.github.io'],
-  ]) {
-    auth = `mx.google.com; dmarc=pass header.from=${authenticated}`;
-    sender = from;
-    assert.deepEqual(await read(), []);
-  }
-  for (const [spoofed, spoofedAuth] of [
-    [
-      '"TOConline <login@toconline.pt>" <attacker@attacker.pt>',
-      'mx.google.com; dmarc=pass header.from=toconline.pt',
-    ],
-    [
-      'login@toconline.pt',
-      'mx.google.com; spf=pass smtp.mailfrom="; dmarc=pass header.from=toconline.pt;"@attacker.pt; dmarc=fail (p=NONE) header.from=attacker.pt',
-    ],
-    [
-      'login@toconline.pt',
-      'mx.google.com; spf=pass smtp.mailfrom="x\\" ; dmarc=pass header.from=toconline.pt ; y"@attacker.pt; dmarc=fail (p=NONE) header.from=attacker.pt',
-    ],
-  ]) {
-    sender = spoofed;
-    auth = spoofedAuth;
-    assert.deepEqual(await read(), []);
-  }
-  sender = 'TOConline <login@toconline.pt> (reports <noreply@elsewhere.net>)';
-  auth = 'mx.google.com; dmarc=pass header.from=toconline.pt';
-  assert.equal((await read())?.length, 1);
-  auth = 'mx.google.com; dmarc=pass header.from=toconline.pt';
-  sender = 'login@mail.toconline.pt';
-  assert.equal((await read())?.length, 1);
-  auth = 'mx.google.com; dmarc=pass header.from=toconline.pt';
-  sender = 'login@toconline.pt';
-  auth = 'mx.google.com; dmarc=fail header.from=toconline.pt';
-  assert.deepEqual(await read(), []);
-  auth = 'untrusted.example; dmarc=pass header.from=toconline.pt';
-  extraHeaders = [
-    { name: 'Authentication-Results', value: 'mx.google.com; dmarc=pass header.from=toconline.pt' },
-  ];
-  assert.deepEqual(await read(), []);
-  extraHeaders = [];
-  auth = 'mx.google.com; dmarc=pass header.from=toconline.pt';
-  sender = 'TOConline <login@toconline.pt>, attacker@example.com';
-  assert.deepEqual(await read(), []);
-  sender = 'login@toconline.pt';
-  recipient = 'other@example.com';
-  assert.deepEqual(await read(), []);
-  recipient = request.recipient;
-  date = request.after - 1;
-  assert.deepEqual(await read(), []);
-  date = now - 1000;
-  labels = ['SPAM'];
-  assert.deepEqual(await read(), []);
-  labels = ['INBOX'];
-  mimeType = 'text/html';
-  body =
-    '<p>Your verification code is <b>381742</b>.</p><script>security code 930184</script><blockquote>Your verification code is 999999.</blockquote><div class="gmail_quote">Your verification code is 999998.</div>';
-  assert.equal(verificationCode((await read())!, request), '381742');
-  mimeType = 'multipart/mixed';
-  for (const attachment of [
-    {
-      mimeType: 'text/plain',
-      headers: [{ name: 'Content-Disposition', value: 'attachment' }],
-      body: { data: Buffer.from('Your verification code is 381742.').toString('base64url') },
-    },
-    {
-      mimeType: 'multipart/mixed',
-      filename: 'forwarded.eml',
-      parts: [
-        {
-          mimeType: 'text/plain',
-          body: { data: Buffer.from('Your verification code is 381742.').toString('base64url') },
-        },
-      ],
-    },
-    {
-      mimeType: 'message/rfc822',
-      parts: [
-        {
-          mimeType: 'text/plain',
-          body: { data: Buffer.from('Your verification code is 381742.').toString('base64url') },
-        },
-      ],
-    },
-  ]) {
-    parts = [
-      {
-        mimeType: 'text/plain',
-        body: { data: Buffer.from('See the attachment.').toString('base64url') },
-      },
-      attachment,
-    ];
-    assert.equal(verificationCode((await read())!, request), undefined);
-  }
-  parts = undefined;
-  nextPageToken = 'more-matches';
-  assert.equal(await read(), undefined);
-  await assert.rejects(
-    readVerificationEmails(
-      client.tools,
-      'owned-account',
-      {
-        recipient: request.recipient,
-        senderDomain: 'toconline.pt',
-        after: request.after,
-        before: request.before,
-      },
-      AbortSignal.abort(),
-    ),
-  );
-});
-
-const owner = 'local-development';
-const origin = 'https://app20.toconline.pt';
-const username = 'owner@example.com';
-const code = '381742';
-const login = { origin, label: 'Fixture login' };
-const input = { ...login, kind: 'password' as const, passwordSelector: '#password' };
-const otpInput = {
-  ...login,
-  kind: 'otp' as const,
-  passwordSelector: '#otp',
-  emailCode: true,
-  emailRecipient: username,
-};
-
-async function seedCodeTurns(pool: pg.Pool) {
-  await pool.query(
-    'CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz)',
-  );
-  await pool.query(
-    "CREATE TABLE turns(id uuid PRIMARY KEY,parent_turn_id uuid,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running',waiting_reason text,background boolean NOT NULL DEFAULT false,started_at timestamptz,session_id uuid GENERATED ALWAYS AS (CASE WHEN background THEN id ELSE thread_id END) STORED)",
-  );
-  let threadId = '';
-  const tasks = new Map<string, TurnRef>();
-  const archive = async () => {
-    if (threadId) await pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [threadId]);
-    threadId = randomUUID();
-    await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
-  };
-  await archive();
-  const start = async (name: string, resumeOf?: string) => {
-    const turn = { threadId, turnId: randomUUID() };
-    await pool.query(
-      'INSERT INTO turns(id,owner_id,thread_id,source,source_id,parent_turn_id,started_at) VALUES($1,$2,$3,$4,$5,$6,clock_timestamp())',
-      [
-        turn.turnId,
-        owner,
-        turn.threadId,
-        resumeOf ? 'resume' : 'user',
-        resumeOf ? `credentials:${resumeOf}` : null,
-        resumeOf ?? null,
-      ],
-    );
-    tasks.set(name, turn);
-    return turn;
-  };
-  const failures: string[] = [];
-  const resume = async (turnId: string) => {
-    const name = [...tasks].find(([, value]) => value.turnId === turnId)?.[0];
-    const parent = await pool.query(
-      "SELECT 1 FROM turns WHERE id=$1 AND status='waiting' AND waiting_reason='credentials'",
-      [turnId],
-    );
-    if (!name || !parent.rowCount) {
-      failures.push(turnId);
-      throw new Error(`Unexpected resume of ${turnId}.`);
-    }
-    await start(name, turnId);
-  };
-  const wait = async (turn: TurnRef) => {
-    await pool.query(
-      "UPDATE turns SET status='waiting',waiting_reason='credentials' WHERE id=$1 AND status='running'",
-      [turn.turnId],
-    );
-  };
-  const resumed = async (turnId: string) => {
-    assert.deepEqual(failures, []);
-    return (
-      await pool.query(
-        `SELECT p.status AS parent,p.waiting_reason AS reason,r.status,r.source FROM turns p
-         JOIN turns r ON r.source_id='credentials:'||p.id::text WHERE p.id=$1`,
-        [turnId],
-      )
-    ).rows;
-  };
-  return { task: (name: string) => tasks.get(name)!, start, resume, archive, wait, resumed };
-}
-
-test(
-  'automatic email codes bind page delivery to a recent account and recheck task, page and mailbox before filling once',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    const schema = `test_vault_email_${randomUUID().replaceAll('-', '')}`;
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
-    const turns = await seedCodeTurns(pool);
-    const { task } = turns;
-    const app = Fastify();
-    t.after(async () => {
-      await app.close();
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
-    });
-    const origins = new Map<string, string>();
-    const shown = new Map<string, string | undefined>();
-    const injected: Array<{ threadId: string; code?: string }> = [];
-    let read = 0;
-    let lookup: (() => Promise<void>) | undefined;
-    let available = true;
-    let injectionFailure = false;
-    let resultCode: string | undefined = code;
-    let emails: VerificationEmail[] | undefined;
-    const currentCode = '492615';
-    const vault = await createVault(pool, {
-      requestKey: Buffer.alloc(32, 42),
-      keyStore: { id: 'fixture', configured: true, getKey: async () => randomKey },
-      page: async (id) => {
-        const current = origins.get(id) ?? origin;
-        return { origin: current, url: `${current}/login` };
-      },
-      inject: async (value) => {
-        injected.push({ threadId: value.threadId, code: value.code });
-        if (injectionFailure && value.kind === 'otp') throw new Error('Uncertain code submission.');
-        return { status: 'submitted' as const };
-      },
-      resume: turns.resume,
-      retry: async () => {},
-      emailCode: async (request) => {
-        read++;
-        assert.equal(request.recipient, username);
-        assert.equal(request.origin, origin);
-        await lookup?.();
-        const found = emails ? verificationCode(emails, request) : resultCode;
-        return found ? { code: found, current: async () => available } : undefined;
-      },
-    });
-    const randomKey = randomBytes(32);
-    vault.registerRoutes(app);
-    const saved = (
-      await app.inject({
-        method: 'POST',
-        url: '/api/vault',
-        payload: { ...login, kind: 'login', username, password: 'fixture-private-password' },
-      })
-    ).json();
-    assert.ok(saved.id);
-    const begin = async (id: string) => {
-      const turn = await turns.start(id);
-      origins.delete(turn.threadId);
-      shown.delete(turn.threadId);
-      return turn;
-    };
-    const show = (id: string, recipient: string | undefined) =>
-      shown.set(task(id).threadId, recipient);
-    const start = async (id: string, entryId = saved.id) => {
-      const turn = await begin(id);
-      await vault.fillSaved(turn, owner, entryId, input);
-    };
-    const fill = (id: string) => {
-      const threadId = task(id).threadId;
-      const { emailRecipient: _recipient, ...withoutRecipient } = otpInput;
-      const recipient = shown.has(threadId) ? shown.get(threadId) : username;
-      return vault.fillEmailCode(
-        task(id),
-        owner,
-        recipient === undefined ? withoutRecipient : { ...otpInput, emailRecipient: recipient },
-      );
-    };
-    const root = (id: string) => task(id).turnId;
-    await start('success');
-    assert.equal(
-      await vault.fillEmailCode(task('success'), owner, { ...otpInput, emailCode: false }),
-      false,
-    );
-    const { emailCode: _emailCode, ...unobservedOtp } = otpInput;
-    assert.equal(await vault.fillEmailCode(task('success'), owner, unobservedOtp), false);
-    assert.equal(read, 0);
-    assert.equal(await fill('success'), true);
-    assert.equal(await fill('success'), false);
-    assert.equal(read, 1);
-    assert.equal(injected.filter((value) => value.code).length, 1);
-    await start('simultaneous');
-    assert.deepEqual((await Promise.all([fill('simultaneous'), fill('simultaneous')])).sort(), [
-      false,
-      true,
-    ]);
-    assert.equal(injected.filter((value) => value.code).length, 2);
-    const afterConcurrentReads = read;
-    for (const [id, change] of [
-      [
-        'wrong-recipient',
-        async (id: string) => {
-          show(id, 'other@example.com');
-        },
-      ],
-      [
-        'mismatched-masked-recipient',
-        async (id: string) => {
-          show(id, 'someone***@example.com');
-        },
-      ],
-      [
-        'mismatched-masked-tld',
-        async (id: string) => {
-          show(id, 'o***@example.n**');
-        },
-      ],
-      [
-        'wrong-origin',
-        async (id: string) => {
-          origins.set(task(id).threadId, 'https://evil.com');
-        },
-      ],
-      [
-        'cancelled',
-        async (id: string) => {
-          await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [task(id).turnId]);
-        },
-      ],
-    ] as const) {
-      await start(id);
-      await change(id);
-      assert.equal(await fill(id), false, id);
-      assert.equal(read, afterConcurrentReads, id);
-    }
-    for (const [id, entered] of [
-      ['entered-long-ago', "now()-interval '6 minutes'"],
-      ['never-entered', 'NULL'],
-    ] as const) {
-      await start(id);
-      await pool.query(
-        `UPDATE credential_account_selections SET credential_entered_at=${entered} WHERE root_turn_id=$1`,
-        [root(id)],
-      );
-      assert.equal(await fill(id), true, id);
-    }
-    const readsBeforeOwner = read;
-    await start('wrong-owner');
-    assert.equal(await vault.fillEmailCode(task('wrong-owner'), 'other', otpInput), false);
-    assert.equal(read, readsBeforeOwner);
-    for (const [id, recipient] of [
-      ['masked', 'o***@example.com'],
-      ['masked-bullets', 'ow•••@example.com'],
-      ['masked-tld', 'o***@example.***'],
-      ['masked-tld-bullets', 'ow•••@example.•••'],
-      ['selected-without-recipient', undefined],
-    ] as const) {
-      await start(id);
-      show(id, recipient);
-      assert.equal(await fill(id), true, id);
-      assert.equal(await fill(id), false, id);
-    }
-    await begin('direct-email');
-    assert.equal(await fill('direct-email'), true);
-    assert.equal(await fill('direct-email'), false);
-    await begin('prior-challenge-email');
-    emails = [{ ...message, receivedAt: Date.now() - 2 * 60_000 }];
-    const attemptsBeforePriorChallenge = injected.length;
-    assert.equal(await fill('prior-challenge-email'), false);
-    assert.equal(injected.length, attemptsBeforePriorChallenge);
-    await begin('current-challenge-email');
-    emails.push({
-      ...message,
-      id: 'current-challenge-code',
-      receivedAt: Date.now() - 1000,
-      text: `Your verification code is ${currentCode}.`,
-    });
-    assert.equal(await fill('current-challenge-email'), true);
-    assert.equal(injected.at(-1)?.code, currentCode);
-    const unrelatedTurn = await begin('unrelated-sender');
-    emails = [
-      {
-        ...message,
-        receivedAt: Date.now() - 1000,
-        sender: 'sender@unrelated.example.org',
-        authenticatedDomain: 'unrelated.example.org',
-        text: `Your verification code is 123456. Verify email: ${origin}/verify?token=abcdefghijklmnop`,
-      },
-    ];
-    const beforeUnrelated = injected.length;
-    assert.equal(await fill('unrelated-sender'), false);
-    assert.equal(injected.length, beforeUnrelated);
-    const manualCode = await vault.request(unrelatedTurn, owner, otpInput);
-    await turns.wait(unrelatedTurn);
-    const manualForm = await app.inject({
-      url: manualCode.url.replace('/vault/', '/api/credential-requests/'),
-    });
-    assert.equal(manualForm.statusCode, 200);
-    assert.equal(manualForm.json().kind, 'otp');
-    assert.equal(manualForm.json().status, 'pending');
-    assert.equal(manualForm.body.includes('123456'), false);
-    emails = undefined;
-    const nonEmailLogin = (
-      await app.inject({
-        method: 'POST',
-        url: '/api/vault',
-        payload: {
-          ...login,
-          kind: 'login',
-          username: 'synthetic-tax-identifier',
-          password: 'fixture-private-password',
-        },
-      })
-    ).json();
-    assert.ok(nonEmailLogin.id);
-    await start('non-email-login', nonEmailLogin.id);
-    assert.equal(await fill('non-email-login'), true);
-    for (const [id, recipient] of [
-      ['non-email-login-mask', 'o***@example.com'],
-      ['non-email-login-missing', undefined],
-    ] as const) {
-      await start(id, nonEmailLogin.id);
-      show(id, recipient);
-      const before: number = read;
-      assert.equal(await fill(id), false, id);
-      assert.equal(read, before, id);
-    }
-    for (const [id, recipient] of [
-      ['unbound-mask', 'o***@example.com'],
-      ['unbound-recipient', undefined],
-    ] as const) {
-      await begin(id);
-      show(id, recipient);
-      const before: number = read;
-      assert.equal(await fill(id), false, id);
-      assert.equal(read, before, id);
-    }
-    for (const [id, offset, filled] of [
-      ['long-direct-email', -6 * 60_000, true],
-      ['future-direct-email', 60_000, false],
-    ] as const) {
-      const turn = await begin(id);
-      await pool.query('UPDATE turns SET started_at=$2 WHERE id=$1', [
-        turn.turnId,
-        new Date(Date.now() + offset),
-      ]);
-      const before: number = read;
-      assert.equal(await fill(id), filled, id);
-      assert.equal(read, before + (filled ? 1 : 0), id);
-    }
-    for (const [id, change] of [
-      [
-        'cancelled-direct-email',
-        async (turn: TurnRef) => {
-          await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [turn.turnId]);
-        },
-      ],
-      [
-        'changed-origin-direct-email',
-        async (turn: TurnRef) => {
-          origins.set(turn.threadId, 'https://evil.com');
-        },
-      ],
-    ] as const) {
-      const turn = await begin(id);
-      lookup = () => change(turn);
-      const before = injected.length;
-      assert.equal(await fill(id), false, id);
-      assert.equal(injected.length, before, id);
-    }
-    lookup = undefined;
-    await start('uncertain-submission');
-    injectionFailure = true;
-    const attemptsBeforeUncertain = injected.length;
-    await assert.rejects(fill('uncertain-submission'));
-    assert.equal(await fill('uncertain-submission'), false);
-    assert.equal(injected.length, attemptsBeforeUncertain + 1);
-    injectionFailure = false;
-    for (const [id, change] of [
-      [
-        'late-cancel',
-        async (id: string) => {
-          await pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [task(id).turnId]);
-        },
-      ],
-      [
-        'late-origin',
-        async (id: string) => {
-          origins.set(task(id).threadId, 'https://evil.com');
-        },
-      ],
-      [
-        'late-archive',
-        async () => {
-          await turns.archive();
-        },
-      ],
-      [
-        'late-expiry',
-        async (id: string) => {
-          await pool.query(
-            'UPDATE credential_account_selections SET expires_at=now() WHERE root_turn_id=$1',
-            [root(id)],
-          );
-        },
-      ],
-    ] as const) {
-      await start(id);
-      lookup = () => change(id);
-      const codes = injected.filter((value) => value.code).length;
-      assert.equal(await fill(id), false, id);
-      assert.equal(injected.filter((value) => value.code).length, codes, id);
-    }
-    lookup = undefined;
-    await start('revoked');
-    available = false;
-    assert.equal(await fill('revoked'), false);
-    available = true;
-    await start('missing');
-    resultCode = undefined;
-    assert.equal(await fill('missing'), false);
-    resultCode = code;
-    assert.equal(await fill('missing'), true);
-    assert.equal(await fill('missing'), false);
-    const manualTurn = await begin('manual-password');
-    const manual = await vault.request(manualTurn, owner, input);
-    await turns.wait(manualTurn);
-    const readsBeforePassword = read;
-    assert.equal(await fill('manual-password'), false);
-    assert.equal(read, readsBeforePassword);
-    const submitted = await app.inject({
-      method: 'POST',
-      url: manual.url.replace('/vault/', '/api/credential-requests/'),
-      payload: { username, password: 'fixture-private-password' },
-    });
-    assert.equal(submitted.statusCode, 200);
-    assert.deepEqual(await turns.resumed(manualTurn.turnId), [
-      { parent: 'waiting', reason: 'credentials', status: 'running', source: 'resume' },
-    ]);
-    assert.equal(
-      (
-        await pool.query(
-          'SELECT blocked FROM credential_account_selections WHERE root_turn_id=$1',
-          [manualTurn.turnId],
-        )
-      ).rows[0]?.blocked,
-      true,
-    );
-    assert.equal(await fill('manual-password'), true);
-    await start('provider-error');
-    lookup = async () => {
-      throw new Error('provider-private-mail 381742');
-    };
-    assert.equal(await fill('provider-error'), false);
-    lookup = undefined;
-    assert.equal(await fill('provider-error'), true);
-    await start('entry-removed');
-    lookup = async () => {
-      await pool.query('DELETE FROM vault_entries WHERE id=$1', [saved.id]);
-    };
-    assert.equal(await fill('entry-removed'), false);
-    const persisted = JSON.stringify([
-      (await pool.query('SELECT * FROM credential_requests')).rows,
-      (await pool.query('SELECT * FROM credential_account_selections')).rows,
-      (await pool.query('SELECT * FROM vault_uses')).rows,
-    ]);
-    for (const secret of [
-      code,
-      currentCode,
-      username,
-      'fixture-private-password',
-      'provider-private-mail',
-    ])
-      assert.equal(persisted.includes(secret), false);
-  },
-);
-
-test(
-  'private mailbox codes require one owned verified connection and retain revocation fences',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    const schema = `test_email_code_${randomUUID().replaceAll('-', '')}`;
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
-    t.after(async () => {
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
-    });
-    const owner = 'local-development';
-    const recipient = 'owner@example.com';
-    let inspected: string[] = [];
-    let reads: string[] = [];
-    let active = true;
-    let remoteEmail = recipient;
-    let requestedRecipient = recipient;
-    let fail = false;
-    let duringRead: (() => Promise<void>) | undefined;
-    let messages: VerificationEmail[] = [];
-    const provider: IntegrationProvider = {
-      id: 'mail-fixture',
-      configured: true,
-      webhooksConfigured: false,
-      supportsSubscriptions: [],
-      createSession: async () => {
-        throw new Error('Mailbox reads must not use model sessions.');
-      },
-      deleteSession: async () => {},
-      deleteAccount: async () => {
-        assert.fail('Must not disconnect.');
-      },
-      inspectAccount: async (id, user) => {
-        inspected.push(id);
-        assert.equal(user, owner);
-        return { active, service: 'gmail', accountEmail: remoteEmail };
-      },
-      verificationEmails: async (id, query) => {
-        reads.push(id);
-        assert.equal(query.recipient, requestedRecipient);
-        if (fail) throw new Error('private-message-body 381742');
-        await duringRead?.();
-        return messages;
-      },
-      parseCallback: () => ({ state: '', accountId: '', success: false }),
-      subscribe: async () => ({ id: '' }),
-      unsubscribe: async () => {},
-      verifyWebhook: async () => {
-        throw new Error('Unused');
-      },
-      matchesSubscription: () => false,
-    };
-    const integrations = await createIntegrations(pool, {
-      ownerId: 'local-development',
-      provider,
-      baseUrl: 'http://localhost:4310',
-      wake: async () => {},
-      emailCodePollMs: 50,
-    });
-    const connection = randomUUID();
-    await pool.query(
-      `INSERT INTO app_connections(id,owner_id,slug,account_id,provider_id,account_email) VALUES
-    ($1,$2,'gmail','owned-mailbox','mail-fixture',$3),
-    (gen_random_uuid(),'another-owner','gmail','foreign-mailbox','mail-fixture',$3),
-    (gen_random_uuid(),$2,'gmail','different-mailbox','mail-fixture','other@example.com')`,
-      [connection, owner, recipient],
-    );
-    const now = Date.now();
-    const input = {
-      recipient,
-      origin: 'https://app20.toconline.pt',
-      after: now - 20_000,
-      before: now,
-      length: 6,
-    };
-    const mail: VerificationEmail = {
-      id: 'mail1',
-      receivedAt: now - 1000,
-      sender: 'security@toconline.pt',
-      authenticatedDomain: 'toconline.pt',
-      recipients: [recipient],
-      text: 'Your login verification code is 381742.',
-    };
-    messages = [mail];
-    const read = (changes = {}, signal = new AbortController().signal) =>
-      integrations.emailCode(owner, { ...input, ...changes }, signal);
-    const result = await read();
-    assert.equal(result?.code, '381742');
-    assert.equal(await result?.current(), true);
-    assert.deepEqual(inspected, ['owned-mailbox']);
-    assert.deepEqual(reads, ['owned-mailbox']);
-    requestedRecipient = 'owner+trial@example.com';
-    messages = [{ ...mail, recipients: [requestedRecipient] }];
-    const alias = await read({ recipient: requestedRecipient });
-    assert.equal(alias?.code, '381742');
-    assert.equal(await alias?.current(), true);
-    messages = [mail];
-    assert.equal(await read({ recipient: requestedRecipient }), undefined);
-    messages = [{ ...mail, recipients: [requestedRecipient] }];
-    remoteEmail = requestedRecipient;
-    assert.equal(await read({ recipient: requestedRecipient }), undefined);
-    remoteEmail = recipient;
-    await pool.query('UPDATE app_connections SET account_email=$2 WHERE id=$1', [
-      connection,
-      requestedRecipient,
-    ]);
-    assert.equal(await alias?.current(), false);
-    await pool.query('UPDATE app_connections SET account_email=$2 WHERE id=$1', [
-      connection,
-      recipient,
-    ]);
-    const aliasedDuplicate = randomUUID();
-    await pool.query(
-      "INSERT INTO app_connections(id,owner_id,slug,account_id,provider_id,account_email) VALUES($1,$2,'gmail','aliased-mailbox','mail-fixture','owner+other@example.com')",
-      [aliasedDuplicate, owner],
-    );
-    assert.equal(await read({ recipient: requestedRecipient }), undefined);
-    await pool.query('DELETE FROM app_connections WHERE id=$1', [aliasedDuplicate]);
-    for (const [primary, aliasRecipient, expected] of [
-      ['first.last@example.com', 'firstlast+trial@example.com', false],
-      ['first.last@example.com', 'first.last+trial@example.com', true],
-      ['first.last@gmail.com', 'firstlast+trial@gmail.com', true],
-      ['first.last@gmail.com', 'first.last+trial@googlemail.com', true],
-      ['first.last@googlemail.com', 'firstlast+trial@gmail.com', true],
-      ['first.last@googlemail.com', 'firstlast+trial@googlemail.com', true],
-      ['first.last@example.com', 'firstlast+trial@googlemail.com', false],
-    ] as const) {
-      await pool.query('UPDATE app_connections SET account_email=$2 WHERE id=$1', [
-        connection,
-        primary,
-      ]);
-      remoteEmail = primary;
-      requestedRecipient = aliasRecipient;
-      messages = [{ ...mail, recipients: [aliasRecipient] }];
-      assert.equal(Boolean(await read({ recipient: aliasRecipient })), expected);
-    }
-    await pool.query('UPDATE app_connections SET account_email=$2 WHERE id=$1', [
-      connection,
-      recipient,
-    ]);
-    remoteEmail = recipient;
-    requestedRecipient = recipient;
-    messages = [mail];
-    await pool.query('UPDATE app_connections SET revoked=true WHERE id=$1', [connection]);
-    assert.equal(await result?.current(), false);
-    inspected = [];
-    reads = [];
-    assert.equal(await read(), undefined);
-    assert.equal(
-      await integrations.emailCode('another-owner', input, new AbortController().signal),
-      undefined,
-    );
-    assert.equal(await read({ recipient: 'missing@example.com' }), undefined);
-    assert.equal(await read({ origin: 'https://co.uk' }), undefined);
-    assert.equal(await read({ after: now - 10 * 60_000 }), undefined);
-    assert.equal(await read({}, AbortSignal.abort()), undefined);
-    assert.deepEqual(inspected, []);
-    assert.deepEqual(reads, []);
-    await pool.query('UPDATE app_connections SET revoked=false WHERE id=$1', [connection]);
-    remoteEmail = 'other@example.com';
-    assert.equal(await read(), undefined);
-    assert.deepEqual(reads, []);
-    remoteEmail = recipient;
-    active = false;
-    assert.equal(await read(), undefined);
-    assert.deepEqual(reads, []);
-    active = true;
-    const duplicate = randomUUID();
-    await pool.query(
-      "INSERT INTO app_connections(id,owner_id,slug,account_id,provider_id,account_email) VALUES($1,$2,'gmail','duplicate-mailbox','mail-fixture',$3)",
-      [duplicate, owner, recipient],
-    );
-    assert.equal(await read(), undefined);
-    assert.deepEqual(reads, []);
-    await pool.query('DELETE FROM app_connections WHERE id=$1', [duplicate]);
-    messages = [];
-    assert.equal(await read({}, AbortSignal.timeout(200)), undefined);
-    const arrival = setTimeout(() => {
-      messages = [mail];
-    }, 200);
-    assert.equal((await read({}, AbortSignal.timeout(15_000)))?.code, '381742');
-    clearTimeout(arrival);
-    messages = [];
-    messages = [mail, { ...mail, id: 'mail2', text: 'Your login verification code is 940173.' }];
-    assert.equal(await read(), undefined);
-    messages = [{ ...mail, receivedAt: now - 60_000 }];
-    assert.equal(await read(), undefined);
-    fail = true;
-    assert.equal(await read(), undefined);
-    fail = false;
-    messages = [mail];
-    duringRead = async () => {
-      await pool.query('UPDATE app_connections SET revoked=true WHERE id=$1', [connection]);
-    };
-    assert.equal(await read(), undefined);
-    const persisted = JSON.stringify([
-      (await pool.query('SELECT * FROM integration_events')).rows,
-      (await pool.query('SELECT * FROM app_connections')).rows,
-    ]);
-    for (const secret of ['381742', '940173', 'private-message-body', mail.text])
-      assert.equal(persisted.includes(secret), false);
-    assert.ok(reads.every((id) => id === 'owned-mailbox'));
-  },
-);
-
 async function vaultPage(
   element: React.ReactNode,
   response: (path: string, init: RequestInit) => Promise<Response>,
@@ -4019,7 +1936,6 @@ test(
           let unavailable = operation === 'create';
           const privateFailure = 'Synthetic private key-store detail';
           const vault = await createVault(pool, {
-            requestKey: Buffer.alloc(32, 42),
             keyStore: {
               id: 'fixture',
               configured: true,
@@ -4030,8 +1946,6 @@ test(
             },
             page: async () => assert.fail('Unexpected website inspection.'),
             inject: async () => assert.fail('Unexpected private website entry.'),
-            resume: async () => assert.fail('Unexpected task resume.'),
-            retry: async () => assert.fail('Unexpected credential retry.'),
           });
           vault.registerRoutes(app);
           const secret = kind === 'login' ? 'Synthetic saved password' : '4242424242424242';
@@ -4154,321 +2068,31 @@ test(
   },
 );
 
-test(
-  'beside-chat private entry clears closed fields and follows owned server submission without replay',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async (t) => {
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    const schema = `test_private_panel_${randomUUID().replaceAll('-', '')}`;
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
-    const app = Fastify();
-    const turns = await seedTurns(pool);
-    const turn = await turns.turn();
-    let release = () => {};
-    let started = () => {};
-    let completed = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const injectionStarted = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    const submissionCompleted = new Promise<void>((resolve) => {
-      completed = resolve;
-    });
-    let submitted = 0;
-    let entered = 0;
-    let retried = 0;
-    let failed = false;
-    let requestSignal: AbortSignal | null | undefined;
-    const key = randomBytes(32);
-    const vault = await createVault(pool, {
-      requestKey: Buffer.alloc(32, 42),
-      keyStore: { id: 'fixture', configured: true, getKey: async () => key },
-      page: async () => ({
-        origin: 'https://panel.example.test',
-        url: 'https://panel.example.test/login',
-      }),
-      inject: async (input) => {
-        entered++;
-        assert.equal(input.password, 'synthetic-panel-password');
-        if (failed) throw new Error('Synthetic private entry interruption');
-        started();
-        await gate;
-        return { status: 'submitted' as const };
-      },
-      resume: async () => {},
-      retry: async () => {
-        retried++;
-      },
-    });
-    vault.registerRoutes(app);
-    const request = await vault.request(turn, 'local-development', {
-      origin: 'https://panel.example.test',
-      label: 'Synthetic sign-in',
-      kind: 'password',
-      passwordSelector: '#password',
-    });
-    await turns.wait(turn);
-    const accepted: boolean[] = [];
-    function OpenEntry({ href }: { href: string }) {
-      const entry = usePrivateEntry();
-      return createElement(
-        'button',
-        {
-          id: 'open-private',
-          onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
-            accepted.push(entry?.open(href, event.currentTarget) ?? false);
-          },
-        },
-        'Open private form',
-      );
-    }
-    const panel = (href = request.url, owner = 'first') =>
-      createElement(PrivateEntryWorkspace, {
-        key: owner,
-        children: createElement(OpenEntry, { href }),
-      });
-    const view = await vaultPage(
-      panel(),
-      async (path, init) => {
-        if (init.method === 'POST') {
-          submitted++;
-          requestSignal = init.signal;
-        }
-        const result = await app.inject({
-          method: (init.method ?? 'GET') as 'GET' | 'POST',
-          url: path,
-          headers: init.body ? { 'content-type': 'application/json' } : {},
-          payload: init.body ? String(init.body) : undefined,
-        });
-        if (init.method === 'POST') completed();
-        return new Response(result.body, {
-          status: result.statusCode,
-          headers: { 'content-type': 'application/json' },
-        });
-      },
-      'http://localhost:4310/?conversation=synthetic',
-    );
-    t.after(async () => {
-      release();
-      await view.close();
-      await app.close();
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
-    });
-    const click = async (selector: string) =>
-      act(async () => {
-        const target = view.document.querySelector<HTMLButtonElement>(selector);
-        assert.ok(target, selector);
-        target.click();
-      });
-    const settle = async (predicate: () => boolean) => {
-      for (let attempt = 0; attempt < 100 && !predicate(); attempt++)
-        await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
-      assert.ok(predicate());
-    };
-    await click('#open-private');
-    await settle(() => Boolean(view.document.querySelector('input[name="password"]')));
-    const password = view.document.querySelector<HTMLInputElement>('input[name="password"]')!;
-    password.value = 'synthetic-unsent-password';
-    await click('.private-entry-toolbar button');
-    assert.equal(view.document.querySelector('input[name="password"]'), null);
-    await click('#open-private');
-    await settle(() => Boolean(view.document.querySelector('input[name="password"]')));
-    assert.equal(
-      view.document.querySelector<HTMLInputElement>('input[name="password"]')!.value,
-      '',
-    );
-    view.document.querySelector<HTMLInputElement>('input[name="password"]')!.value =
-      'synthetic-panel-password';
-    await click('.password-input-toggle');
-    assert.equal(
-      view.document.querySelector<HTMLInputElement>('input[name="password"]')!.type,
-      'text',
-    );
-    await act(async () => view.document.querySelector('form')!.reset());
-    const clearedPassword =
-      view.document.querySelector<HTMLInputElement>('input[name="password"]')!;
-    assert.equal(clearedPassword.value, '');
-    assert.equal(clearedPassword.type, 'password');
-    clearedPassword.value = 'synthetic-panel-password';
-    await act(async () => {
-      const form = view.document.querySelector('form')!;
-      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    });
-    await injectionStarted;
-    assert.equal(submitted, 1);
-    assert.equal(entered, 1);
-    await click('.private-entry-toolbar button');
-    assert.equal(requestSignal?.aborted, true);
-    await click('#open-private');
-    await settle(() => Boolean(view.document.querySelector('.credential-complete')));
-    assert.equal(view.document.querySelector('form'), null);
-    await act(async () => {
-      release();
-      await submissionCompleted;
-    });
-    await act(async () => window.dispatchEvent(new Event('focus')));
-    await settle(() => Boolean(view.document.querySelector('.success-mark')));
-    assert.equal(submitted, 1);
-    assert.equal(entered, 1);
-    assert.equal(window.location.pathname, '/');
-    assert.equal(window.location.search, '?conversation=synthetic');
-    assert.equal(window.localStorage.length, 0);
-    assert.equal(window.sessionStorage.length, 0);
-    await view.render(panel(request.url, 'second'));
-    assert.equal(view.document.querySelector('.private-entry-panel'), null);
-    for (const href of [
-      `https://other.example.test${request.url}`,
-      `${request.url}?secret=synthetic`,
-      `${request.url}#synthetic`,
-      `${request.url}/extra`,
-      'javascript:alert(1)',
-    ]) {
-      await view.render(panel(href, 'second'));
-      await click('#open-private');
-      assert.equal(accepted.at(-1), false);
-      assert.equal(view.document.querySelector('.private-entry-panel'), null);
-    }
-    const next = await turns.turn();
-    failed = true;
-    const uncertain = await vault.request(next, 'local-development', {
-      origin: 'https://panel.example.test',
-      label: 'Synthetic sign-in',
-      kind: 'password',
-      passwordSelector: '#password',
-    });
-    await turns.wait(next);
-    await view.render(panel(uncertain.url, 'second'));
-    await click('#open-private');
-    await settle(() =>
-      Boolean(view.document.querySelector('.credential-accounts .button-outline')),
-    );
-    await click('.credential-accounts .button-outline');
-    await settle(
-      () =>
-        Boolean(view.document.querySelector('.credential-complete')) &&
-        !view.document.querySelector('[aria-busy="true"]'),
-    );
-    assert.equal(view.document.querySelector('form'), null);
-    assert.equal(view.document.querySelector('.success-mark'), null);
-    assert.equal(view.document.querySelector('.credential-card .notice'), null);
-    assert.deepEqual(
-      (
-        await app.inject({
-          url: uncertain.url.replace('/vault/', '/api/credential-requests/') + '/status',
-        })
-      ).json(),
-      { status: 'uncertain' },
-    );
-    assert.equal(submitted, 2);
-    assert.equal(entered, 2);
-    await click('.credential-complete button');
-    await settle(() => retried === 1);
-    assert.equal(entered, 2);
-    await view.render(panel('/vault?add=card', 'card-owner'));
-    await click('#open-private');
-    const unsentCard = view.document.querySelector<HTMLInputElement>('input[name="cardNumber"]')!;
-    assert.ok(unsentCard);
-    unsentCard.value = '4242424242424242';
-    await click('.private-entry-toolbar button');
-    assert.equal(view.document.querySelector('input[name="cardNumber"]'), null);
-    await click('#open-private');
-    assert.equal(
-      view.document.querySelector<HTMLInputElement>('input[name="cardNumber"]')!.value,
-      '',
-    );
-    for (const [name, value] of Object.entries({
-      label: 'Synthetic review card',
-      cardholder: 'Synthetic Owner',
-      cardNumber: '4242424242424242',
-      expiry: '12 / 2030',
-    }))
-      view.document.querySelector<HTMLInputElement>(`input[name="${name}"]`)!.value = value;
-    await act(async () =>
-      view.document
-        .querySelector('form')!
-        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
-    );
-    await settle(() => Boolean(view.document.querySelector('.private-entry-card [role="status"]')));
-    assert.equal(view.document.querySelector('form'), null);
-    const savedCards = (await app.inject({ url: '/api/vault' }))
-      .json()
-      .filter((entry: { kind: string }) => entry.kind === 'card');
-    assert.equal(savedCards.length, 1);
-    assert.equal(savedCards[0].last4, '4242');
-    assert.equal(JSON.stringify(savedCards).includes('4242424242424242'), false);
-    assert.equal(window.localStorage.length, 0);
-    assert.equal(window.sessionStorage.length, 0);
-    assert.equal(window.location.search, '?conversation=synthetic');
-    pageDataCache.clear();
-    for (const href of [
-      '/vault?add=card&cardNumber=4242424242424242',
-      '/vault?add=card&add=card',
-      '/vault?add=card#synthetic',
-      '/vault?add=login',
-      'https://foreign.example.test/vault?add=card',
-    ]) {
-      await view.render(panel(href, 'card-owner'));
-      await click('#open-private');
-      assert.equal(accepted.at(-1), false);
-      assert.equal(view.document.querySelector('form'), null);
-    }
-    const foreign = await turns.turn('foreign-owner');
-    const foreignRequest = await vault.request(foreign, 'foreign-owner', {
-      origin: 'https://panel.example.test',
-      label: 'Foreign sign-in',
-      kind: 'password',
-      passwordSelector: '#password',
-    });
-    await turns.wait(foreign);
-    await view.render(panel(foreignRequest.url, 'third'));
-    await click('#open-private');
-    await settle(() => Boolean(view.document.querySelector('.notice')));
-    assert.equal(view.document.querySelector('form'), null);
-    assert.equal(submitted, 4);
-  },
-);
-
-test('chat removes private-entry actions only after the server confirms submission', async () => {
-  const token = 'synthetic-private-entry-token';
+test('chat removes a payment action only after the server confirms submission', async () => {
   const payment = randomUUID();
-  let credentialStatus: CredentialRequest['status'] = 'pending';
+  const missing = { [randomUUID()]: 404, [randomUUID()]: 410 };
   let paymentSubmitted = false;
   let unavailable = false;
   const missingReads = new Map<string, number>();
   const view = await vaultPage(
     createElement(SetupActions, {
       actions: [
-        { href: `/vault/${token}`, setup: 'vault', label: 'Private login' },
         { href: `/payments/${payment}`, setup: 'vault', label: 'Private payment' },
-        { href: `/vault/${token}-uncertain`, setup: 'vault', label: 'Uncertain login' },
-        { href: `/vault/${token}-expired`, setup: 'vault', label: 'Expired login' },
-        { href: `/vault/${token}-404`, setup: 'vault', label: 'Missing login' },
-        { href: `/vault/${token}-410`, setup: 'vault', label: 'Removed login' },
+        ...Object.keys(missing).map((id) => ({
+          href: `/payments/${id}`,
+          setup: 'vault' as const,
+          label: 'Removed payment',
+        })),
       ],
     }),
     async (path) => {
-      const gone = /-(404|410)\/status$/.exec(path);
-      if (gone) {
+      const id = /^\/api\/payment-requests\/([^/]+)\/status$/.exec(path)?.[1];
+      if (id && missing[id]) {
         missingReads.set(path, (missingReads.get(path) ?? 0) + 1);
-        return Response.json({ error: 'Unavailable' }, { status: Number(gone[1]) });
+        return Response.json({ error: 'Unavailable' }, { status: missing[id] });
       }
       if (unavailable) return Response.json({ error: 'Unavailable' }, { status: 503 });
-      if (path === `/api/credential-requests/${token}/status`)
-        return Response.json({ status: credentialStatus });
-      if (path === `/api/credential-requests/${token}-uncertain/status`)
-        return Response.json({ status: 'uncertain' });
-      if (path === `/api/credential-requests/${token}-expired/status`)
-        return Response.json({ status: 'expired' });
-      if (path === `/api/payment-requests/${payment}/status`)
+      if (id === payment)
         return Response.json({ status: paymentSubmitted ? 'submitted' : 'pending' });
       throw new Error(`Unexpected fixture request ${path}`);
     },
@@ -4477,20 +2101,14 @@ test('chat removes private-entry actions only after the server confirms submissi
   const refresh = () => act(async () => window.dispatchEvent(new Event('focus')));
   const actions = () => view.document.querySelectorAll('[data-setup="vault"]').length;
   try {
-    assert.equal(actions(), 6);
-    credentialStatus = 'entering';
-    await refresh();
-    assert.equal(actions(), 6);
-    credentialStatus = 'filled';
+    assert.equal(actions(), 3);
+    paymentSubmitted = true;
     unavailable = true;
     await refresh();
-    assert.equal(actions(), 6);
+    assert.equal(actions(), 3);
     unavailable = false;
     await refresh();
-    assert.equal(actions(), 5);
-    paymentSubmitted = true;
-    await refresh();
-    assert.equal(actions(), 4);
+    assert.equal(actions(), 2);
     assert.deepEqual([...missingReads.values()], [1, 1]);
   } finally {
     await view.close();
@@ -4515,11 +2133,10 @@ test('analytics routes collapse private paths to known pages', async () => {
     ['/usage?private=synthetic#private', '/usage'],
     ['/vault?item=synthetic-private-id', '/vault'],
     ['https://private.invalid/apps?connect=synthetic-private', '/apps'],
-    ['/vault/synthetic-private-id', '/credentials'],
-    ['/credentials/synthetic-private-id?token=synthetic-private', '/credentials'],
+    ['/vault/synthetic-private-id', '/not-found'],
+    ['/credentials/synthetic-private-id?token=synthetic-private', '/not-found'],
     ['/payments/synthetic-private-id', '/payments'],
     ['/payments/synthetic-private-id/extra', '/not-found'],
-    ['/credentials', '/credentials'],
     ['/privacy', '/not-found'],
     ['/memory', '/not-found'],
     ['/login', '/not-found'],
@@ -4563,8 +2180,7 @@ let saves=0;
 let reads=0;
 let rendererReady=0;
 let delayApps=false;
-let completePreparation;
-let preparationCompleted=false;
+let completionFailure;
 let completions=0;
 let statusListener;
 let modelConnected=true;
@@ -4581,7 +2197,6 @@ window.nodDesktop={
 const calls=[];
 window.fetch=globalThis.fetch=async(url,options={})=>{
  const path=new URL(url,window.location.href).pathname;calls.push(path);
- if(path==='/api/account/prepare')return new Promise((resolve,reject)=>{completePreparation=(response=Response.json({ok:true}))=>response instanceof Error?reject(response):resolve(response)});
  if(path==='/api/models'){modelReads++;return Response.json({connections:modelConnected?[{id:'synthetic',provider:'anthropic',method:'api_key',label:'Synthetic model',managed:false,status:'connected',models:[{id:'synthetic-model',name:'Synthetic model',efforts:['medium'],images:false,contextWindow:1000}]}]:[],selection:modelConnected?{connectionId:'synthetic',modelId:'synthetic-model',effort:'medium'}:null,...(modelFailure?{selectionIssue:{reason:modelFailure}}:{})})}
  if(path==='/api/preferences')return Response.json({timeZone:'Europe/Lisbon',locale:'en-GB',hourCycle:'h23',quietHoursEnabled:false,quietStart:'22:00',quietEnd:'08:00',speechReply:'auto',speechVoice:null});
  if(path==='/api/speech')return Response.json({transcription:false,synthesis:false,voices:[],speechVoice:null,speechReply:'auto'});
@@ -4610,7 +2225,7 @@ globalThis.EventSource=class{
  close(){this.closed=true;this.readyState=2}
 };
 let root=createRoot(document.getElementById('root'));
-const render=()=>act(async()=>root.render(createElement(Onboarding,{user:session.user,onComplete:async()=>{completions++;assert.equal(preparationCompleted,true,'No completion before server preparation finishes')}})));
+const render=()=>act(async()=>root.render(createElement(Onboarding,{user:session.user,onComplete:async()=>{completions++;if(completionFailure){const failure=completionFailure;completionFailure=undefined;throw failure}}})));
 const realTimeout=setTimeout;
 mock.timers.enable({apis:['setTimeout']});
 const settle=()=>act(async()=>{await new Promise(resolve=>realTimeout(resolve,20));mock.timers.tick(20)});
@@ -4631,16 +2246,20 @@ assert.equal(saves,1);
 assert.notEqual((await store.get()).onboardingPreferenceStep,'complete');
 failSave=false;
 await act(async()=>button('Try again').click());
-await waitFor(()=>document.querySelector('main [role="status"]'));
+await waitFor(async()=>(await store.get()).onboardingPreferenceStep==='complete');
 assert.equal((await store.get()).launchAtLogin,true);
 assert.equal((await store.get()).notifications,false,'onboarding does not request notification permission');
 assert.equal((await store.get()).onboardingPreferenceStep,'complete');
 assert.equal(saves,2);
+await waitFor(()=>completions===1);
 await act(async()=>root.unmount());
 store=createSettingsStore(join(directory,'settings.json'),{});
+const completedReads=reads;
+window.history.replaceState(null,'','/onboarding?preferences=required');
 root=createRoot(document.getElementById('root'));
 await render();
-await waitFor(()=>document.querySelector('main [role="status"]'));
+await waitFor(()=>reads>completedReads);
+await waitFor(()=>completions===2);
 assert.equal(document.querySelector('[role="switch"]'),null);
 assert.equal(saves,2,'a completed native step is never written again');
 await act(async()=>root.unmount());
@@ -4673,17 +2292,22 @@ const blockedPath=join(directory,'blocked-settings.json');
 store=createSettingsStore(blockedPath,{});
 failLogin=true;
 const beforeBlocked=saves;
+window.history.replaceState(null,'','/onboarding?preferences=required');
 root=createRoot(document.getElementById('root'));
 await render();
 await waitFor(async()=>(await store.get()).onboardingPreferenceStep==='complete');
+await waitFor(()=>completions===3);
 assert.equal(saves,beforeBlocked+1);
 assert.equal((await store.get()).launchAtLogin,false);
 assert.equal((await store.get()).onboardingPreferenceStep,'complete');
 await act(async()=>root.unmount());
 store=createSettingsStore(blockedPath,{});
+const blockedReads=reads;
+window.history.replaceState(null,'','/onboarding?preferences=required');
 root=createRoot(document.getElementById('root'));
 await render();
-await waitFor(()=>document.querySelector('main [role="status"]'));
+await waitFor(()=>reads>blockedReads);
+await waitFor(()=>completions===4);
 assert.equal(saves,beforeBlocked+1);
 assert.equal(Object.hasOwn(await store.get(),'onboardingCompleted'),false);
 assert.equal((await store.get()).onboardingPreferenceStep,'complete');
@@ -4721,41 +2345,18 @@ await act(async()=>button('Continue').click());
 await waitFor(()=>document.querySelector('[data-step="join"]'));
 assert.ok(calls.includes('/api/onboarding/profile'));
 assert.equal(document.querySelector('.ob-dots').getAttribute('aria-label'),'Step 4 of 4');
+completionFailure=new Error('Synthetic account save failed.');
+const beforeFinish=completions;
 await act(async()=>button('Continue').click());
-await waitFor(()=>document.querySelector('.setup-progress [role="status"]'));
+await waitFor(()=>document.querySelector('.setup-progress [role="alert"]'));
+assert.ok(document.querySelector('.setup-progress [role="alert"]').textContent.includes('Synthetic account save failed.'));
 assert.equal((await store.get()).onboardingPreferenceStep,'complete');
-assert.equal(completions,0);
-await act(async()=>statusListener({phase:'ready',runtime:{phase:'ready'}}));
-await settle();
-assert.equal(completions,0,'Desktop readiness must not complete onboarding before server preparation');
-assert.ok(document.querySelector('.setup-progress [role="status"]'));
-const preparationFailure='Synthetic workspace could not mount its volume.';
-await act(async()=>completePreparation(Response.json({error:preparationFailure},{status:503})));
-await waitFor(()=>document.querySelector('.setup-progress [role="alert"]'));
-assert.ok(document.querySelector('.setup-progress [role="alert"]').textContent.includes(preparationFailure));
-assert.ok(document.querySelector('.setup-progress details').textContent.includes('503'));
-assert.equal(document.querySelector('.setup-progress details').open,false);
-assert.equal(completions,0);
-await act(async()=>statusListener({phase:'ready',runtime:{phase:'ready'}}));
-assert.ok(document.querySelector('.setup-progress [role="alert"]').textContent.includes(preparationFailure));
-const preparationCalls=calls.filter(path=>path==='/api/account/prepare').length;
+assert.equal(completions,beforeFinish+1);
 await act(async()=>button('Try again').click());
-await waitFor(()=>calls.filter(path=>path==='/api/account/prepare').length===preparationCalls+1);
-assert.equal(document.querySelector('.setup-progress [role="alert"]'),null);
-assert.equal(completions,0);
-const transportFailure='Synthetic fetch TypeError during workspace setup.';
-await act(async()=>completePreparation(new TypeError(transportFailure)));
-await waitFor(()=>document.querySelector('.setup-progress [role="alert"]'));
-assert.equal(document.querySelector('.setup-progress [role="alert"]').textContent.includes(transportFailure),false);
-assert.ok(document.querySelector('.setup-progress details').textContent.includes(transportFailure));
-assert.equal(completions,0);
-await act(async()=>button('Try again').click());
-await waitFor(()=>calls.filter(path=>path==='/api/account/prepare').length===preparationCalls+2);
-assert.equal(document.querySelector('.setup-progress [role="alert"]'),null);
-await act(async()=>{preparationCompleted=true;completePreparation()});
-await waitFor(()=>completions===1);
+await waitFor(()=>completions===beforeFinish+2);
 await settle();
-assert.equal(completions,1);
+assert.equal(completions,beforeFinish+2);
+assert.equal(calls.includes('/api/account/prepare'),false);
 await act(async()=>root.unmount());
 modelConnected=false;
 writeStep({owner:session.user.id,step:'brain',version:onboardingVersion});
@@ -4796,517 +2397,6 @@ process.exit(0);
   });
   assert.equal(result.exitCode, 0, result.stderr);
 });
-
-test(
-  'sign-in method choices claim once and carry only active owned browser steps into the private flow',
-  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async (t) => {
-    for (const scenario of [
-      'staged continuity',
-      'uncertain selection',
-      'expired retry',
-      'late method choice',
-      'trust refusal',
-    ])
-      await t.test(scenario, async (t) => {
-        const schema = `test_method_flow_${randomUUID().replaceAll('-', '')}`;
-        const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-        await admin.query(`CREATE SCHEMA ${schema}`);
-        const pool = new pg.Pool({
-          connectionString: process.env.TEST_DATABASE_URL,
-          options: `-c search_path=${schema}`,
-        });
-        const app = Fastify();
-        t.after(async () => {
-          await app.close();
-          await pool.end();
-          await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-          await admin.end();
-        });
-        const turns = await seedTurns(pool);
-        const origin = 'https://choice.example.test';
-        let currentOrigin = origin;
-        let clicks = 0;
-        let resumed = 0;
-        const fail = scenario === 'uncertain selection';
-        const refused = scenario === 'trust refusal';
-        const entered: CredentialInjection[] = [];
-        const key = randomBytes(32);
-        const options = {
-          requestKey: Buffer.alloc(32, 42),
-          keyStore: { id: 'fixture', configured: true, getKey: async () => key },
-          page: async () => ({ origin: currentOrigin, url: `${currentOrigin}/login` }),
-          signInMethods: async (
-            _browser: string,
-            actualOrigin: string,
-            choices: { label: string; selector: string }[],
-          ) => {
-            assert.equal(actualOrigin, currentOrigin);
-            return {
-              document: 'synthetic-document',
-              methods: choices.map((choice) => ({
-                id: randomUUID(),
-                label: choice.label,
-                page: { origin: currentOrigin, url: `${currentOrigin}/login` },
-              })),
-            };
-          },
-          checkMethods: async (
-            _turn: TurnRef,
-            methods: { selector: string; page: { origin: string } }[],
-          ) => {
-            assert.ok(methods.every((method) => method.page.origin === currentOrigin));
-            if (refused) throw new Error('Synthetic trust refusal');
-          },
-          selectSignInMethod: async (
-            _browser: string,
-            choice: { origin: string; document: string; methodId: string },
-          ) => {
-            assert.equal(choice.origin, currentOrigin);
-            assert.equal(choice.document, 'synthetic-document');
-            assert.ok(choice.methodId);
-            clicks++;
-            if (fail) throw new Error('Synthetic interrupted selection');
-          },
-          inject: async (input: CredentialInjection) => {
-            entered.push(input);
-          },
-          resume: async () => {
-            resumed++;
-          },
-          retry: async () => {},
-        };
-        const vault = await createVault(pool, options);
-        vault.registerRoutes(app);
-        const get = async (url: string) =>
-          (await app.inject({ method: 'GET', url })).json<CredentialRequest>();
-        if (scenario === 'uncertain selection') {
-          const failureTurn = await turns.turn();
-          const failure = await vault.request(failureTurn, 'local-development', {
-            origin: currentOrigin,
-            label: 'Identity',
-            kind: 'method',
-            methods: [{ label: 'Continue', selector: '#continue' }],
-          });
-          await turns.wait(failureTurn);
-          const failurePath = `/api/credential-requests/${failure.url.split('/').at(-1)}`;
-          const failureRequest = await get(failurePath);
-          assert.equal(
-            (
-              await app.inject({
-                method: 'POST',
-                url: `${failurePath}/method`,
-                payload: { methodId: failureRequest.methods![0].id },
-              })
-            ).statusCode,
-            502,
-          );
-          assert.equal((await get(failurePath)).status, 'uncertain');
-          assert.equal(
-            (
-              await app.inject({
-                method: 'POST',
-                url: `${failurePath}/method`,
-                payload: { methodId: failureRequest.methods![0].id },
-              })
-            ).statusCode,
-            409,
-          );
-          assert.equal(clicks, 1);
-          assert.equal(resumed, 0);
-          assert.deepEqual(
-            (await app.inject({ method: 'GET', url: `${failurePath}/flow` })).json(),
-            {},
-          );
-          return;
-        }
-        if (scenario === 'expired retry') {
-          const expiredTurn = await turns.turn();
-          const expired = await vault.request(expiredTurn, 'local-development', {
-            origin: currentOrigin,
-            label: 'Identity',
-            kind: 'method',
-            methods: [{ label: 'Continue', selector: '#continue' }],
-          });
-          await turns.wait(expiredTurn);
-          const expiredPath = `/api/credential-requests/${expired.url.split('/').at(-1)}`;
-          const expiredRequest = await get(expiredPath);
-          await pool.query(
-            "UPDATE credential_requests SET created_at=now()-interval '31 minutes',flow_expires_at=now()-interval '1 second' WHERE turn_id=$1",
-            [expiredTurn.turnId],
-          );
-          assert.equal((await get(expiredPath)).status, 'expired');
-          assert.equal(
-            (
-              await app.inject({
-                method: 'POST',
-                url: `${expiredPath}/method`,
-                payload: { methodId: expiredRequest.methods![0].id },
-              })
-            ).statusCode,
-            409,
-          );
-          assert.equal(clicks, 0);
-          assert.equal(
-            (await app.inject({ method: 'POST', url: `${expiredPath}/retry`, payload: {} }))
-              .statusCode,
-            200,
-          );
-          assert.equal(
-            (await app.inject({ method: 'POST', url: `${expiredPath}/retry`, payload: {} }))
-              .statusCode,
-            409,
-          );
-          const retriedTurn = await turns.resume(expiredTurn, 'credentials-retry');
-          const retried = await vault.request(retriedTurn, 'local-development', {
-            origin: currentOrigin,
-            label: 'Identity',
-            kind: 'identifier',
-            usernameSelector: '#email',
-          });
-          await turns.wait(retriedTurn);
-          assert.equal(
-            (await app.inject({ method: 'GET', url: `${expiredPath}/flow` })).json().nextId,
-            retried.url.split('/').at(-1),
-          );
-          assert.equal(clicks, 0);
-          return;
-        }
-        if (scenario === 'late method choice') {
-          const firstTurn = await turns.turn();
-          const first = await vault.request(firstTurn, 'local-development', {
-            origin: currentOrigin,
-            label: 'Identity',
-            kind: 'method',
-            methods: [{ label: 'Continue', selector: '#continue' }],
-          });
-          await turns.wait(firstTurn);
-          const firstPath = `/api/credential-requests/${first.url.split('/').at(-1)}`;
-          const firstRequest = await get(firstPath);
-          assert.equal(
-            (
-              await app.inject({
-                method: 'POST',
-                url: `${firstPath}/method`,
-                payload: { methodId: firstRequest.methods![0].id },
-              })
-            ).statusCode,
-            200,
-          );
-          await pool.query(
-            "UPDATE credential_requests SET flow_expires_at=clock_timestamp()+interval '5 seconds' WHERE turn_id=$1",
-            [firstTurn.turnId],
-          );
-          const nextTurn = await turns.resume(firstTurn);
-          const next = await vault.request(nextTurn, 'local-development', {
-            origin: currentOrigin,
-            label: 'Identity',
-            kind: 'method',
-            methods: [{ label: 'Use password', selector: '#password' }],
-          });
-          await turns.wait(nextTurn);
-          const nextPath = `/api/credential-requests/${next.url.split('/').at(-1)}`;
-          const nextRequest = await get(nextPath);
-          assert.equal(nextRequest.status, 'pending');
-          const { rows } = await pool.query<{
-            first_flow_id: string;
-            next_flow_id: string;
-            first_deadline: Date;
-            next_deadline: Date;
-          }>(
-            `SELECT first.flow_id AS first_flow_id,next.flow_id AS next_flow_id,
-              first.flow_expires_at AS first_deadline,next.flow_expires_at AS next_deadline
-             FROM credential_requests first,credential_requests next
-             WHERE first.turn_id=$1 AND next.turn_id=$2`,
-            [firstTurn.turnId, nextTurn.turnId],
-          );
-          assert.equal(rows[0].next_flow_id, rows[0].first_flow_id);
-          assert.equal(rows[0].next_deadline.getTime(), rows[0].first_deadline.getTime());
-          const waitMs = rows[0].first_deadline.getTime() - Date.now() + 100;
-          assert.ok(waitMs > 0 && waitMs < 5_100);
-          await pool.query(
-            "UPDATE credential_requests SET flow_expires_at=flow_expires_at-$2::int*interval '1 millisecond' WHERE turn_id=ANY($1::uuid[])",
-            [[firstTurn.turnId, nextTurn.turnId], waitMs],
-          );
-          assert.equal(
-            (
-              await pool.query(
-                'SELECT 1 FROM credential_requests WHERE turn_id=ANY($1::uuid[]) AND flow_expires_at<clock_timestamp()',
-                [[firstTurn.turnId, nextTurn.turnId]],
-              )
-            ).rowCount,
-            2,
-          );
-          assert.equal((await get(nextPath)).status, 'pending');
-          assert.equal(
-            (await app.inject({ method: 'GET', url: `${nextPath}/status` })).json().status,
-            'pending',
-          );
-          assert.deepEqual(
-            (await app.inject({ method: 'GET', url: `${firstPath}/flow` })).json(),
-            {},
-          );
-          assert.equal(
-            (await app.inject({ method: 'POST', url: `${nextPath}/retry`, payload: {} }))
-              .statusCode,
-            409,
-          );
-          assert.equal(
-            (
-              await app.inject({
-                method: 'POST',
-                url: `${nextPath}/method`,
-                payload: { methodId: nextRequest.methods![0].id },
-              })
-            ).statusCode,
-            200,
-          );
-          assert.equal(clicks, 2);
-          assert.equal(resumed, 2);
-          return;
-        }
-        if (scenario === 'trust refusal') {
-          const refusedTurn = await turns.turn();
-          await assert.rejects(
-            vault.request(refusedTurn, 'local-development', {
-              origin: currentOrigin,
-              label: 'Identity',
-              kind: 'method',
-              methods: [{ label: 'Continue', selector: '#continue' }],
-            }),
-            /trust refusal/,
-          );
-          assert.equal(
-            (
-              await pool.query('SELECT 1 FROM credential_requests WHERE turn_id=$1', [
-                refusedTurn.turnId,
-              ])
-            ).rowCount,
-            0,
-          );
-          return;
-        }
-        const turn = await turns.turn();
-        const requested = await vault.request(turn, 'local-development', {
-          origin,
-          label: 'Synthetic website',
-          kind: 'method',
-          methods: [
-            { label: 'Continue with Identity', selector: '#identity' },
-            { label: 'Use email', selector: '#email' },
-          ],
-        });
-        const path = `/api/credential-requests/${requested.url.split('/').at(-1)}`;
-        await turns.wait(turn);
-        const initial = await get(path);
-        assert.equal(initial.kind, 'method');
-        assert.equal(initial.status, 'pending');
-        assert.equal(initial.methods?.length, 2);
-        assert.doesNotMatch(JSON.stringify(initial), /#identity|#email|synthetic-document/);
-        const wrong = await app.inject({
-          method: 'POST',
-          url: `${path}/method`,
-          payload: { methodId: randomUUID() },
-        });
-        assert.equal(wrong.statusCode, 409);
-        assert.equal(clicks, 0);
-        let viewOpen = true;
-        let clientRequests = 0;
-        let pendingRequests = 0;
-        const view = await vaultPage(
-          createElement(Credentials, { id: initial.id, embedded: true }),
-          async (url, init) => {
-            clientRequests++;
-            pendingRequests++;
-            const result = await app.inject({
-              method: (init.method ?? 'GET') as 'GET' | 'POST',
-              url,
-              headers: init.body ? { 'content-type': 'application/json' } : {},
-              payload: init.body ? String(init.body) : undefined,
-            });
-            pendingRequests--;
-            return new Response(result.body, {
-              status: result.statusCode,
-              headers: { 'content-type': 'application/json' },
-            });
-          },
-          'http://localhost:4310/?conversation=synthetic',
-        );
-        t.after(async () => {
-          if (viewOpen) await view.close();
-        });
-        const settle = async (predicate: () => boolean) => {
-          await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
-          for (let attempt = 0; attempt < 100 && (!predicate() || pendingRequests > 0); attempt++)
-            await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
-          await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
-          assert.ok(predicate());
-          assert.equal(pendingRequests, 0);
-        };
-        const focus = async () => act(async () => window.dispatchEvent(new window.Event('focus')));
-        await settle(() => Boolean(view.document.querySelector('.credential-accounts button')));
-        const choice = view.document.querySelector<HTMLButtonElement>(
-          '.credential-accounts button',
-        )!;
-        choice.focus();
-        const [, duplicate] = await Promise.all([
-          act(async () => {
-            choice.click();
-            choice.click();
-          }),
-          app.inject({
-            method: 'POST',
-            url: `${path}/method`,
-            payload: { methodId: initial.methods![0].id },
-          }),
-        ]);
-        assert.ok([200, 409].includes(duplicate.statusCode));
-        await settle(
-          () =>
-            resumed === 1 &&
-            view.document.querySelector('.credential-card')?.getAttribute('aria-busy') === 'false',
-        );
-        assert.equal(view.document.activeElement, view.document.querySelector('.credential-card'));
-        assert.equal(clicks, 1);
-        assert.equal(resumed, 1);
-        assert.equal((await get(path)).status, 'filled');
-        assert.deepEqual((await app.inject({ method: 'GET', url: `${path}/flow` })).json(), {});
-        const nextTurn = await turns.resume(turn);
-        currentOrigin = 'https://identity.example.test';
-        const next = await vault.request(nextTurn, 'local-development', {
-          origin: currentOrigin,
-          label: 'Identity',
-          kind: 'identifier',
-          usernameSelector: '#email',
-          submitSelector: '#next',
-        });
-        assert.deepEqual((await app.inject({ method: 'GET', url: `${path}/flow` })).json(), {});
-        await turns.wait(nextTurn);
-        const flow = (await app.inject({ method: 'GET', url: `${path}/flow` })).json<{
-          nextId: string;
-        }>();
-        assert.equal(flow.nextId, next.url.split('/').at(-1));
-        const nextPath = `/api/credential-requests/${flow.nextId}`;
-        assert.equal((await get(nextPath)).origin, currentOrigin);
-        await focus();
-        await settle(() => Boolean(view.document.querySelector('input[name="username"]')));
-        assert.equal(view.document.querySelector('input[name="password"]'), null);
-        assert.equal(window.location.search, '?conversation=synthetic');
-
-        const stale = await app.inject({
-          method: 'POST',
-          url: path,
-          payload: { username: 'synthetic@example.test' },
-        });
-        assert.equal(stale.statusCode, 409);
-        assert.equal(entered.length, 0);
-        view.document.querySelector<HTMLInputElement>('input[name="username"]')!.value =
-          'synthetic@example.test';
-        await act(async () =>
-          view.document
-            .querySelector('form')!
-            .dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })),
-        );
-        await settle(
-          () =>
-            resumed === 2 &&
-            entered.length === 1 &&
-            view.document.querySelector('.credential-card')?.getAttribute('aria-busy') === 'false',
-        );
-        assert.equal(entered.length, 1);
-        const passwordTurn = await turns.resume(nextTurn);
-        const password = await vault.request(passwordTurn, 'local-development', {
-          origin: currentOrigin,
-          label: 'Identity',
-          kind: 'password',
-          passwordSelector: '#password',
-          submitSelector: '#continue',
-        });
-        await turns.wait(passwordTurn);
-        await focus();
-        await settle(() => Boolean(view.document.querySelector('input[name="password"]')));
-        assert.equal(
-          view.document.querySelector<HTMLInputElement>('input[name="password"]')!.value,
-          '',
-        );
-        assert.equal(
-          view.document.querySelector<HTMLInputElement>('input[name="username"]')!.value,
-          'synthetic@example.test',
-        );
-        assert.equal(
-          (await app.inject({ method: 'GET', url: `${path}/flow` })).json().nextId,
-          password.url.split('/').at(-1),
-        );
-        view.document.querySelector<HTMLInputElement>('input[name="password"]')!.value =
-          'synthetic-flow-password';
-        await act(async () =>
-          view.document
-            .querySelector('form')!
-            .dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })),
-        );
-        await settle(
-          () =>
-            resumed === 3 &&
-            entered.length === 2 &&
-            view.document.querySelector('.credential-card')?.getAttribute('aria-busy') === 'false',
-        );
-        const codeTurn = await turns.resume(passwordTurn);
-        const code = await vault.request(codeTurn, 'local-development', {
-          origin: currentOrigin,
-          label: 'Identity',
-          kind: 'otp',
-          passwordSelector: '#code',
-          submitSelector: '#verify',
-        });
-        await turns.wait(codeTurn);
-        await focus();
-        await settle(() => Boolean(view.document.querySelector('input[name="code"]')));
-        view.document.querySelector<HTMLInputElement>('input[name="code"]')!.value = '732814';
-        await view.render(createElement('div'));
-        const closedRequests = clientRequests;
-        await focus();
-        await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
-        assert.equal(clientRequests, closedRequests);
-        await view.render(createElement(Credentials, { id: initial.id, embedded: true }));
-        await settle(() => Boolean(view.document.querySelector('input[name="code"]')));
-        assert.equal(
-          view.document.querySelector<HTMLInputElement>('input[name="code"]')!.value,
-          '',
-        );
-        assert.equal(window.location.search, '?conversation=synthetic');
-        assert.equal(window.localStorage.length, 0);
-        assert.equal(window.sessionStorage.length, 0);
-        await view.close();
-        viewOpen = false;
-
-        assert.equal(
-          (await app.inject({ method: 'GET', url: `${path}/flow` })).json().nextId,
-          code.url.split('/').at(-1),
-        );
-        const restarted = await createVault(pool, options);
-        const reopened = Fastify();
-        restarted.registerRoutes(reopened);
-        assert.equal(
-          (await reopened.inject({ method: 'GET', url: `${path}/flow` })).json().nextId,
-          code.url.split('/').at(-1),
-        );
-        await reopened.close();
-        await pool.query(
-          'UPDATE credential_requests SET owner_id=$1 WHERE token_hash=(SELECT token_hash FROM credential_requests WHERE kind=$2 LIMIT 1)',
-          ['another-owner', 'otp'],
-        );
-        assert.deepEqual((await app.inject({ method: 'GET', url: `${path}/flow` })).json(), {});
-        await pool.query(
-          "UPDATE credential_requests SET owner_id='local-development' WHERE kind='otp'",
-        );
-        await pool.query('UPDATE credential_requests SET browser_id=$1 WHERE kind=$2', [
-          randomUUID(),
-          'otp',
-        ]);
-        assert.deepEqual((await app.inject({ method: 'GET', url: `${path}/flow` })).json(), {});
-      });
-  },
-);
 
 test('visible outputs keep private content out of analytics and fence delayed file actions', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {

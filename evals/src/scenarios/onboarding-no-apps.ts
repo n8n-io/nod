@@ -9,6 +9,7 @@ export default scenario({
   title: 'Finish setup without apps and get a checked supplier comparison',
   capabilities: ['progress'],
   tier: 'pr',
+  set: 'happy-path',
   complexity: 'simple',
   stance: 'regression',
   calibration: 'pending',

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { packager } from '@electron/packager';
 import { copyEngineSource, verifyApplicationRuntime } from './engine-source.mjs';
 import { copyBundleSource as copy, copyEngineDependencies } from './engine-dependencies.mjs';
+import { copyPostgres } from './postgres-binaries.mjs';
 import { buildDesktopUI } from './build-ui.mjs';
 import { assetHash, runtimeRelease as readRuntimeRelease } from '../runtime/assets.mjs';
 import {
@@ -59,6 +60,7 @@ await mkdir(appSource, { recursive: true });
 await mkdir(output, { recursive: true });
 await copyEngineSource({ root, target: engine, platform: 'linux' });
 await copyEngineDependencies({ root, target: engine, platform: 'linux', arch: process.arch });
+await copyPostgres({ target: engine });
 for (const path of ['main', 'preload']) await copy(join(desktop, path), join(appSource, path));
 await buildDesktopUI(join(appSource, 'ui'));
 if (full)

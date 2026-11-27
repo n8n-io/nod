@@ -1,4 +1,4 @@
-import { browserErrorCodes, browserSignInGuards } from '../../shared/browser-errors.ts';
+import { browserErrorCodes } from '../../shared/browser-errors.ts';
 import { z } from 'zod';
 import { browserHandoffInput } from '../../shared/browser-handoff.ts';
 import { fileBytes } from '../../shared/files.ts';
@@ -88,6 +88,7 @@ const browserAction = z
       .regex(/^[0-9a-f]{64}$/)
       .optional(),
     readOnly: z.boolean().optional(),
+    observe: z.boolean().optional(),
   })
   .strict();
 export const browserCredentialInput = z.object({
@@ -188,35 +189,17 @@ export const browserRequest = z.discriminatedUnion('method', [
   z
     .object({
       ...identity,
+      method: z.literal('typedLogin'),
+      threadId: thread,
+      since: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      ...identity,
       method: z.literal('currentPage'),
       threadId: thread,
       input: browserAction.optional(),
-    })
-    .strict(),
-  z
-    .object({
-      ...identity,
-      method: z.literal('signInMethods'),
-      threadId: thread,
-      origin: z.string().min(1).max(2048),
-      methods: z
-        .array(z.object({ label: z.string().max(300), selector: selector.max(8192) }).strict())
-        .min(1)
-        .max(10),
-    })
-    .strict(),
-  z
-    .object({
-      ...identity,
-      method: z.literal('selectSignInMethod'),
-      threadId: thread,
-      input: z
-        .object({
-          origin: z.string().min(1).max(2048),
-          document: z.string().min(1).max(200),
-          methodId: z.uuid(),
-        })
-        .strict(),
     })
     .strict(),
   z
@@ -260,6 +243,7 @@ export type BrowserCall = BrowserRequest extends infer R
     : never
   : never;
 export const browserFrame = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('multiplex') }).strict(),
   z.object({ type: z.literal('request'), request: browserRequest }).strict(),
   z.object({ type: z.literal('cancel'), id: z.uuid() }).strict(),
   z
@@ -280,6 +264,11 @@ export const viewFrame = z
       .string()
       .max(4 * 1024 * 1024)
       .regex(/^[A-Za-z0-9+/]*={0,2}$/),
+    origin: z
+      .string()
+      .max(300)
+      .regex(/^https?:\/\/[^\s/?#]+$/)
+      .optional(),
   })
   .strict();
 export const browserInputResult = z.discriminatedUnion('ok', [
@@ -325,7 +314,6 @@ export const browserResponse = z.discriminatedUnion('ok', [
       ok: z.literal(false),
       error: z.union([z.enum(['cancelled', 'locked', 'unavailable']), z.enum(browserErrorCodes)]),
       detail: z.string().optional(),
-      signInGuard: z.enum(browserSignInGuards).optional(),
       metadata: browserMetadata,
     })
     .strict(),

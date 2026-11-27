@@ -117,22 +117,23 @@ Before another import, Nod removes a partial disk only from a generated folder n
 
 Startup repairs the private computer instead of stopping:
 
+- If the workspace or browser stops right after it starts, Nod deletes its container images and loads them again from the runtime files. It does this once per start. Your data stays.
 - If WSL no longer lists a completed computer, Nod registers its saved disk again. Your data stays.
 - If that disk is gone or WSL can't open it, Nod sets up a new computer and leaves the old disk where it was.
-- If the saved configuration is missing, damaged or invalid while WSL still lists the computer, Nod can't open its database. It removes that computer, which deletes its data, and sets up a new one.
-- If WSL lists the computer but still reports it as installing or uninstalling, its disk is unfinished. Nod removes it, which deletes its data, and sets up a new one.
+- If the saved configuration is missing, damaged or invalid while WSL still lists the computer, Nod can't open it. It removes that computer, which deletes its workspace files, and sets up a new one. Conversations and settings stay in your database, unless its data had not moved out of that computer yet.
+- If WSL lists the computer but still reports it as installing or uninstalling, its disk is unfinished. Nod removes it, which deletes its workspace files, and sets up a new one.
 
 If setup needs more disk space, select a folder on another drive or free space. A different folder on the same drive still needs space for both the setup files and the private computer. Nod keeps a verified download for the next attempt.
 
 On a Mac, setup keeps runtime files that passed their checks, even if a later download fails. **Try again** checks and reuses those files. It does not remove a verified image while the private computer loads it.
 
-On Windows, database errors show whether PostgreSQL stopped, reached a memory limit, or failed its TCP check inside WSL. If PostgreSQL answers inside WSL, the error names the Windows connection that failed. Open **Technical details** to read the original error, its code, its stack, and available native command output. These details also appear in the startup log. Saved secrets are removed.
+Database errors name the step that failed: reading its saved settings (`NOD_DATABASE_STATE_INVALID`), finding free disk space (`NOD_DATABASE_STORAGE_FULL`), creating the database (`NOD_DATABASE_SETUP_FAILED`), starting it (`NOD_DATABASE_START_FAILED`), connecting to it (`NOD_DATABASE_CONNECTION_FAILED`), or moving data out of the private computer (`NOD_DATABASE_MOVE_FAILED`). A failed move changes nothing; select **Try again** or open Nod again to retry it. Before a move, Nod checks for free disk space of about twice the data's size plus 256 MB and reports `NOD_DATABASE_STORAGE_FULL` when there isn't enough. Open **Technical details** to read the original error, its code, its stack, the last lines of the database log and available native command output. These details also appear in the startup log. Saved secrets are removed.
 
 During use, Nod waits up to 30 seconds for each query reply after it gets a database connection. The wait for a connection has a separate timeout. If the connection stops returning data, Nod closes it and reports the failure. Nod does not repeat the failed work. After the connection is restored, a new request can use a new connection. Check the result of an action before you ask Nod to do it again.
 
 **Technical details** and the startup log also show the cause of a runtime download failure, such as a connection error or a damaged archive. Downloads use the same network settings as the app window, including your system proxy. Select **Try again** after you restore the connection. If Nod can keep the saved part, an interrupted download resumes. Otherwise it starts again.
 
-Quit Nod and open it again. If the error continues, restart Windows. Keep your app data. WSL setup errors also include the original Windows error.
+Choose **Turn Off Nod** in the tray and open Nod again. If the error continues, restart Windows. Keep your app data. WSL setup errors also include the original Windows error.
 
 To start over, select **Remove all data…** in the **Nod** menu. Nod deletes your profile and private computer, then restarts and opens setup. See [Remove Nod](/get-started/install-desktop/#remove-nod) for what it keeps.
 
@@ -148,15 +149,15 @@ Nod versions before 0.7.0 on Windows can't install their own updates. Quit Nod f
 
 ### Windows says WSL is missing
 
-Nod says it could not start WSL 2 when WSL is missing, when Windows has not turned on its virtual machine feature, or when WSL needs an update. The message ends with the error from Windows, in your language.
+Nod needs WSL 2 only for its workspace and browser. Chat, apps, memory and schedules work without it. Nod says it could not start WSL 2 when WSL is missing, when Windows has not turned on its virtual machine feature, or when WSL needs an update. The message ends with the error from Windows, in your language.
 
-Select **Install WSL** in Nod, approve the administrator request, restart the PC and open Nod again. This installs or updates WSL and turns on the features it needs. A device policy can block WSL installation. If the Windows error says virtualization is turned off, turn it on in your PC's firmware settings first.
+When WSL is missing, Nod starts installing it once after setup. Approve the administrator request, then restart the PC. If you declined or the install failed, select **Install WSL** in Nod's notice. This installs or updates WSL and turns on the features it needs. A device policy can block WSL installation. If the Windows error says virtualization is turned off, turn it on in your PC's firmware settings first.
 
 A recognized WSL location conflict, access error, or import error keeps its specific cause. These errors do not offer **Install WSL**.
 
-### PostgreSQL fails after a Mac VM kernel update
+### Moving data fails after a Mac VM kernel update
 
-Ubuntu kernels `7.0.0-42` and `7.0.0-43` can block signals inside containers. The PostgreSQL user-switch process then waits forever, and Nod reports `NOD_DATABASE_CONNECTION_FAILED`.
+Ubuntu kernels `7.0.0-42` and `7.0.0-43` can block signals inside containers. When Nod starts the old PostgreSQL inside the private computer to move your data, its user-switch process then waits forever, and Nod reports `NOD_DATABASE_MOVE_FAILED`.
 
 Install a Nod build with the container profile repair, then quit and reopen Nod. The repair keeps AppArmor active and preserves the database volume. It also prevents further automatic kernel changes and VM restarts. A restart alone does not repair the old profile. Do not delete the VM or database to fix this failure.
 
@@ -218,7 +219,7 @@ The bot was set up with a webhook elsewhere. Remove that webhook to use local po
 
 ### A scheduled task didn't run
 
-For a local desktop assistant, scheduled tasks run only while Nod is open and your computer is awake. Closing the window keeps Nod running in the menu bar or tray, but **Quit Nod** stops it. **Open at login** is on after setup; keep it on in **Settings → General** if you rely on schedules. After a restart or power cut, Nod starts only once you sign in to your computer, and a Mac with FileVault turned on never signs in automatically. For a remote assistant, check that the server is running; closing a desktop client does not stop its schedules.
+For a local desktop assistant, scheduled tasks run only while Nod is on and your computer is awake. Closing the window or pressing `Cmd+Q` keeps Nod on in the menu bar or tray, but **Turn Off Nod** stops it. **Open at login** and **Keep this computer awake when plugged in** are on after setup; keep them on in **Settings → General** if you rely on schedules. Closing a laptop's lid still puts it to sleep. After a restart or power cut, Nod starts only once you sign in to your computer, and a Mac with FileVault turned on never signs in automatically. For a remote assistant, check that the server is running; closing a desktop client does not stop its schedules.
 
 A run that starts while the computer has no internet connection, such as right after it wakes, fails with "Nod couldn't reach Anthropic because this computer had no internet connection", naming your model provider, with the code (such as `ENOTFOUND`) beside it. The chat shows when the run was due, which runs were skipped and when Nod tried. OpenAI-compatible, Azure OpenAI and Amazon Bedrock connections keep their usual error, because their address or Region may be wrong, and so do providers that report no network code, such as Google. Nod doesn't run it again on its own; select **Run now** once you're online, or wait for the next run. To keep schedules running while your computer sleeps, [run Nod on a server](/deploy/self-host/).
 
@@ -245,7 +246,7 @@ Select **Report bug** in the chat. When something in Nod itself fails, Nod also 
 
 If the workspace crashes, use **Report bug** on the error screen before **Reload Nod** to include the captured error.
 
-In the desktop app, if Nod's background service or its window stops, Nod shows its error screen. Select **Report bug** there. A separate report form opens without restarting the failed service. The menu bar **Report bug…** entry opens the same form while startup has failed.
+In the desktop app, if Nod's background service stops after it was running, Nod restarts it by itself up to three times in 10 minutes. If it keeps stopping, or the window stops, Nod shows its error screen. Select **Report bug** there. A separate report form opens without restarting the failed service. The menu bar **Report bug…** entry opens the same form while startup has failed.
 
 Describe the failure, then select **Review**. The startup report contains only fixed startup states and steps, error classes and codes, exit codes, versions, counts and event ages. Nod omits startup prose, log text, paths, URLs, account details and message content. It keeps up to 100 technical events and 48 KB in memory. It does not read a log file or earlier disk history for the report. Unknown fields are omitted. The report reads error codes only from structured fields. The Windows runtime puts WSL error codes in a separate field. The report keeps the step that failed, the exit code, and values shaped like error codes or class names, such as `ENOSPC`, `NOD_WSL_REQUIRED`, `ERROR_FILE_EXISTS` or `TimeoutError`. It drops values with spaces, lowercase text, paths or other characters. A runtime command that runs out of time is marked as a timeout. The report also reads codes from an error's cause, such as the connection error behind a failed download. If cleanup fails after a startup failure, the report keeps the startup failure's code. Your description stays exactly as you wrote it. Review the exact attachment, then select **Send report**. You can untick **Include startup report** to send only your description. Keep the form open until you send it; the startup form does not save an unsent draft.
 

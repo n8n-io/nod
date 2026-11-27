@@ -240,7 +240,6 @@ check('NR3-bounded',event.properties.tab==='general'&&!Object.keys(event.propert
 check('NR3-session',event.properties.$session_id==='synthetic-session'&&event.properties.$window_id==='synthetic-window');
 for(const [path,route] of [
  ['https://private-host.example.test/payments/private-id?code=PRIVATE_URL_CANARY#PRIVATE_FRAGMENT_CANARY','/payments'],
- ['/credentials/private-id?key=PRIVATE_URL_CANARY','/credentials'],
  ['/prepared/00000000-0000-4000-8000-000000000705?token=PRIVATE_URL_CANARY','/prepared'],
 ]){
  capturePageview(path);
@@ -312,7 +311,7 @@ const client={
  },
  _send_request(){},reset(){},set_config(options){this.options={...this.options,...options}},
 };
-const {setAnalyticsClient,configureAnalytics}=await import('./src/web/lib/analytics.ts');
+const {setAnalyticsClient,configureAnalytics,captureAnalytics}=await import('./src/web/lib/analytics.ts');
 const {setRequestAccount}=await import('./src/web/lib/api.ts');
 const settle=async()=>{for(let i=0;i<12;i++)await new Promise(setImmediate)};
 const distinctId='local:00000000-0000-4000-8000-000000000001';
@@ -354,6 +353,13 @@ assert.equal(captured.length,3);
 assert.equal(captured[2].properties.entry,'native_setup');
 assert.equal(captured[2].properties.server_connection_telemetry_available,true);
 assert.equal(captured[2].uuid,'00000000-0000-4000-8000-000000000006');
+const beforeLoginItem=captured.length;
+captureAnalytics('login_item_observed',{login_item:'registered'});
+captureAnalytics('login_item_observed',{login_item:'/Users/private-name'});
+const loginItems=captured.slice(beforeLoginItem).filter(event=>event.event==='login_item_observed');
+assert.equal(loginItems.length,1);
+assert.equal(loginItems[0].properties.login_item,'registered');
+assert.equal(JSON.stringify(captured.slice(beforeLoginItem)).includes('private-name'),false);
 configureAnalytics(undefined,'desktop');dom.window.close();
 `,
   });

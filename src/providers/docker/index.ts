@@ -102,27 +102,30 @@ export function createDockerWorkspace(options: {
   container: string;
   workspaceRoot: string;
   spawn?: WorkspaceCommandLauncher;
+  ready?(signal?: AbortSignal): Promise<void>;
+  available?(): boolean;
 }): Workspace {
+  const command = (threadId: string, args: string[], input: CommandInput) =>
+    runWorkspaceCommand({
+      container: options.container,
+      threadId,
+      args,
+      ...input,
+      spawn: options.spawn,
+    });
+  const ready = options.ready;
+  const run = ready
+    ? async (threadId: string, args: string[], input: CommandInput) => {
+        await ready(input.signal);
+        return command(threadId, args, input);
+      }
+    : command;
   return createCommandWorkspace({
     workspaceRoot: options.workspaceRoot,
     instructions:
       'Installed: Node, Python (pypdf, pdfplumber, pillow_heif, openpyxl, python-docx, python-pptx), LibreOffice (soffice), ffmpeg, yt-dlp, poppler-utils, qpdf, Ghostscript, Tesseract OCR, git, curl, ripgrep, jq and pipx. Install trusted Python libraries with pip install <package>, trusted CLIs with npm install -g <package> or pipx install <package>; /home/node persists across tasks and restarts. You have no sudo or display, so use a CLI or a web app in the browser, and IPv4 for internet access. Keep outputs in this workspace and never install on the owner\u2019s device.',
-    runCommand: (id, args, input) =>
-      runWorkspaceCommand({
-        container: options.container,
-        threadId: id,
-        args,
-        ...input,
-        spawn: options.spawn,
-      }),
-    runConnectedCommand: (id, args, input) =>
-      runWorkspaceCommand({
-        container: options.container,
-        threadId: id,
-        args,
-        ...input,
-        spawn: options.spawn,
-      }),
+    runCommand: run,
+    runConnectedCommand: run,
     retireBot: (id, bot) =>
       retireWorkspaceBot({
         container: options.container,
@@ -130,6 +133,7 @@ export function createDockerWorkspace(options: {
         bot,
         spawn: options.spawn,
       }),
+    available: options.available,
   });
 }
 
@@ -155,6 +159,7 @@ export function createCommandWorkspace(options: {
     input: CommandInput & { environment: Record<string, string>; cli: ConnectedCli },
   ): Promise<CommandResult>;
   retireBot?(id: string, bot: BotAccount): Promise<void>;
+  available?(): boolean;
 }): Workspace {
   let unavailable: string | undefined;
   let disposed = false;
@@ -212,6 +217,7 @@ export function createCommandWorkspace(options: {
     if (result.exitCode) throw new Error('The workspace file operation failed.');
     return result;
   }
+  const available = () => !disposed && !unavailable && options.available?.() !== false;
   return {
     connectedCliAvailable: Boolean(options.runConnectedCommand),
     ...(options.retireBot
@@ -229,6 +235,7 @@ export function createCommandWorkspace(options: {
           },
         }
       : {}),
+    available,
     dispose: async () => {
       disposed = true;
       lifecycle.abort();
@@ -341,6 +348,7 @@ export function createCommandWorkspace(options: {
       return {
         path,
         instructions: options.instructions,
+        available,
         async exec(script, { input: stdin, signal, timeoutMs = 600_000, onData, notices } = {}) {
           if (bot) await prepare();
           const result = await command(

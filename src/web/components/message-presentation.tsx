@@ -10,6 +10,7 @@ import {
   CardPickSend,
   Compare,
   Draft,
+  FactAction,
   FactList,
   Items,
   pickLinks,
@@ -102,6 +103,7 @@ export function MessagePresentation({
       {visual.type === 'compare' && <Compare visual={visual} />}
       {visual.type === 'draft' && <Draft visual={visual} />}
       {'note' in visual && <CardNote note={visual.note} />}
+      {visual.type === 'facts' && <FactAction action={visual.action} />}
       {(visual.type === 'items' || visual.type === 'compare') && (
         <CardPickSend links={pickLinks(visual)} />
       )}

@@ -85,11 +85,10 @@ export function createWorkConsumers() {
     instances: Set<Instance>;
   };
   const consumers = new Set<Consumer>();
-  let paused = false;
   let closed = false;
 
   function start(consumer: Consumer) {
-    if (paused || closed) return Promise.resolve();
+    if (closed) return Promise.resolve();
     if ([...consumer.instances].some((instance) => instance.failed))
       return Promise.reject(unavailable());
     const existing = [...consumer.instances].find((instance) => !instance.stopping);
@@ -110,8 +109,7 @@ export function createWorkConsumers() {
       });
     return instance.stopping;
   }
-  function pause() {
-    paused = true;
+  function stopAll() {
     return Promise.all(
       [...consumers].flatMap((consumer) =>
         [...consumer.instances].map((instance) => stop(consumer, instance)),
@@ -125,15 +123,9 @@ export function createWorkConsumers() {
       consumers.add(consumer);
       await start(consumer);
     },
-    pause,
-    async resume() {
-      if (closed) throw unavailable();
-      paused = false;
-      await Promise.all([...consumers].map(start));
-    },
     close() {
       closed = true;
-      return pause();
+      return stopAll();
     },
   };
 }

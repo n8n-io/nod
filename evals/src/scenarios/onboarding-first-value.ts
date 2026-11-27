@@ -66,6 +66,7 @@ export default scenario({
   title: 'Finish setup, choose an inbox task, and get a usable reply draft',
   capabilities: ['apps'],
   tier: 'pr',
+  set: 'happy-path',
   complexity: 'medium',
   stance: 'regression',
   seconds: 600,

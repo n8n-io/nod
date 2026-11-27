@@ -33,45 +33,12 @@ const browserErrors = {
     'The checkout page changed. The operation may have reached the site. Check the result before another attempt.',
   browser_target_changed:
     'Nod could not confirm it was still on the page and control it checked, so nothing was done. Take a fresh snapshot and choose the control again.',
-  browser_sign_in_choice:
-    "This control cannot be a sign-in choice. A choice must be one visible, enabled button or link on this website's own page, not inside another website's frame. Offer the other methods without it, or click it with browser if it is the method to use.",
   browser_script_writes: 'This script changes the page, so it needs a check before it runs.',
   browser_download_control:
     'This control is not a download link. Click it, then download without a selector to save the file it starts.',
 } as const;
 
 export type BrowserErrorCode = keyof typeof browserErrors;
-export const browserSignInGuards = [
-  'invalid_request',
-  'browser_unavailable',
-  'navigation_failed',
-  'origin_changed',
-  'reference_missing',
-  'selector_rejected',
-  'choice_missing',
-  'choice_ineligible',
-  'choice_accessibility',
-  'choice_foreign_origin',
-  'choice_duplicate',
-  'control_changed',
-  'document_changed',
-  'frame_changed',
-  'selection_missing',
-  'selection_unknown',
-  'selection_origin_changed',
-  'selection_document_changed',
-  'control_hidden',
-  'frame_transform',
-  'control_covered',
-  'click_guard_changed',
-  'click_not_received',
-] as const;
-export type BrowserSignInGuard = (typeof browserSignInGuards)[number];
-
-export function browserSignInGuard(value: unknown): BrowserSignInGuard | undefined {
-  return browserSignInGuards.find((guard) => guard === value);
-}
-
 export const browserErrorCodes = Object.keys(browserErrors) as [
   BrowserErrorCode,
   ...BrowserErrorCode[],

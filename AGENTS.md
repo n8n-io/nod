@@ -20,7 +20,7 @@ How Nod works is in the docs site, whose pages live in `docs/src/content/docs` (
 ## Architecture
 
 - `src/server/composition.ts` is the only place that selects providers and runtime implementations, apart from the startup feedback exception in [architecture](docs/src/content/docs/how-it-works/architecture.mdx). Capabilities are ports in `src/ports`; vendor SDKs stay in `src/providers`; product policy stays in `src/server`; `src/web` imports only web and shared code.
-- Every write from a turn goes through `withTurnLock`, so a Stop refuses it. Turns and tool calls are never retried automatically.
+- Every write from a turn goes through `withTurnLock` (fenced by a turn lease and monotonic `fence_token`), so a Stop or expired lease refuses it. Turns and tool calls are never retried automatically after any side effect, approval, or reply has started; a single bounded auto-retry is allowed only on provably read-only, pre-commit transient model/transport failures.
 - `model_usage` is the only cost ledger. Keep execution IDs internal.
 
 ## Safety invariants

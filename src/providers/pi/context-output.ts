@@ -41,6 +41,18 @@ export function createContextOutput(workspace: WorkspaceSession, ownerHeader?: s
     signal?.throwIfAborted();
     const text = content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n');
     const key = createHash('sha256').update(JSON.stringify(content)).digest('hex');
+    const tail = Math.floor(previewCharacters / 2);
+    const preview =
+      text.length > previewCharacters ? text.slice(0, previewCharacters - tail) : text;
+    const ending = tail && text.length > previewCharacters ? { tail: text.slice(-tail) } : {};
+    if (!files.has(key) && workspace.available?.() === false)
+      return JSON.stringify({
+        characters: text.length,
+        preview,
+        ...ending,
+        message:
+          'Nod’s workspace is unavailable right now, so only this preview of the full content is kept.',
+      });
     let file = files.get(key);
     if (!file) {
       const directory = `${workspace.path}/.nod/outputs`;
@@ -81,12 +93,11 @@ export function createContextOutput(workspace: WorkspaceSession, ownerHeader?: s
         await writeWorkspaceFile(workspace, `${workspace.path}/${file}`, Buffer.from(text), signal);
       files.set(key, file);
     }
-    const tail = Math.floor(previewCharacters / 2);
     return JSON.stringify({
       workspaceFile: file,
       characters: text.length,
-      preview: text.length > previewCharacters ? text.slice(0, previewCharacters - tail) : text,
-      ...(tail && text.length > previewCharacters ? { tail: text.slice(-tail) } : {}),
+      preview,
+      ...ending,
     });
   };
   return {

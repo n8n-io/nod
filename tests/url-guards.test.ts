@@ -1508,6 +1508,93 @@ test('charts accept signed finite data and reject ambiguous series or excessive 
     assert.equal(presentationSchema.safeParse(value).success, false);
 });
 
+test('facts presentations validate references, copyable items, and public HTTPS action links', () => {
+  const receipt = {
+    version: 1,
+    type: 'facts',
+    title: 'Trattoria Alba · Table for 2',
+    status: { label: 'Confirmed', tone: 'done' },
+    reference: { label: 'Confirmation', value: 'TB-5529' },
+    items: [
+      { label: 'When', value: 'Fri 27 Nov · 19:30' },
+      { label: 'Ticket ID', value: 'RES-90210', copy: true },
+    ],
+    action: {
+      label: 'View booking',
+      url: 'https://tables.example.com/bookings/TB-5529',
+    },
+    sources: [{ label: 'Forkful', url: 'https://tables.example.com/bookings/TB-5529' }],
+  } as const;
+  const parsed = presentationInputSchema.parse(receipt);
+  assert.equal(parsed.type, 'facts');
+  const text = presentationText(parsed);
+  assert.match(text, /Confirmation: TB-5529/);
+  assert.match(text, /View booking: https:\/\/tables\.example\.com\/bookings\/TB-5529/);
+
+  const actionOnly = presentationInputSchema.safeParse({
+    version: 1,
+    type: 'facts',
+    title: 'Shopping cart',
+    sources: [],
+    action: { url: 'https://shop.example.com/cart' },
+  });
+  assert.equal(actionOnly.success, true);
+
+  const appAction = presentationInputSchema.parse({
+    version: 1,
+    type: 'facts',
+    title: 'Morning standup prep',
+    status: { label: 'Active', tone: 'done' },
+    items: [{ label: 'Schedule', value: 'Weekdays at 08:30' }],
+    action: { label: 'Open Scheduled', url: '/tasks' },
+    sources: [],
+  });
+  assert.equal(appAction.type, 'facts');
+  assert.match(
+    presentationText(appAction),
+    /Open Scheduled: https:\/\/nod\.n8n\.io\/docs\/open\/#\/tasks/,
+  );
+
+  const hashAndConfirmActions = [
+    'https://shop.example.com/#/orders/123',
+    'https://tables.example.com/confirm/TB-5529',
+    'https://events.example.com/verify/42?ticket=T-99&booking_code=BK-12',
+  ];
+  for (const href of hashAndConfirmActions) {
+    const ok = presentationInputSchema.parse({
+      version: 1,
+      type: 'facts',
+      title: 'Order confirmed',
+      sources: [],
+      action: { label: 'View order', url: href },
+    });
+    assert.equal(ok.type, 'facts');
+    assert.equal(ok.action?.url, href);
+  }
+
+  for (const bad of [
+    { ...receipt, action: { url: 'http://shop.example.com/cart' } },
+    { ...receipt, action: { url: 'https://localhost/cart' } },
+    { ...receipt, action: { url: 'https://user:pass@shop.example.com/cart' } },
+    { ...receipt, action: { url: 'https://shop.example.com/cart?token=secret123' } },
+    { ...receipt, action: { url: 'https://shop.example.com/reset-password/abc' } },
+    { ...receipt, action: { url: 'https://app.foo.com/#/orders?token=abc123' } },
+    {
+      ...receipt,
+      action: { url: 'https://app.foo.com/#id_token=eyJhbGciOiJub25lIn0.eyJzdWIiOiIxIn0.' },
+    },
+    { ...receipt, action: { url: `https://app.foo.com/#/magic/${'a'.repeat(64)}` } },
+    { ...receipt, action: { url: 'https://app.foo.com/#login' } },
+    { ...receipt, action: { url: 'https://app.foo.com/#reset-password/abc' } },
+    { ...receipt, action: { url: '/api/artifacts/secret' } },
+    { ...receipt, action: { url: '/browser' } },
+    { ...receipt, reference: { label: 'Ref', value: '   ' } },
+    { ...receipt, reference: { label: 'Ref', value: 'R'.repeat(81) } },
+    { version: 1, type: 'facts', title: 'Empty', sources: [] },
+  ])
+    assert.equal(presentationInputSchema.safeParse(bad).success, false, JSON.stringify(bad));
+});
+
 test('the browser proxy refuses a WebSocket upgrade to a private destination', async () => {
   let reached = 0;
   const sockets = new Set<import('node:stream').Duplex>();

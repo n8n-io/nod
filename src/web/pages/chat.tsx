@@ -86,10 +86,10 @@ function verificationFailure(
   ambiguous: boolean,
 ) {
   if (ambiguous)
-    return 'More than one sign-in needs a code. Reply to the verification request you want to complete.';
+    return 'More than one payment needs a security code. Reply to the payment request you want to complete.';
   if (status === 'unavailable')
-    return 'The result could not be confirmed. Check the sign-in or payment before trying again.';
-  return 'The verification code could not be confirmed. Check the sign-in request and try again.';
+    return 'The result could not be confirmed. Check the payment before trying again.';
+  return 'The security code could not be confirmed. Check the payment request and try again.';
 }
 function scrollBehavior(): ScrollBehavior {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth';
@@ -956,12 +956,12 @@ export function Chat({
   };
   for (const id of streamTimes.current.keys())
     if (!streamIds.has(id)) streamTimes.current.delete(id);
-  const codeRequests = new Map(
+  const codeRequests = new Set(
     (state.verificationRequests ?? []).flatMap((request) => {
       const target = allMessages.findLast(
         (message) => message.role === 'assistant' && message.turnId === request.turnId,
       );
-      return target ? [[target.id, request.kind] as const] : [];
+      return target ? [target.id] : [];
     }),
   );
   const displayMessages: Message[] = [
@@ -1030,7 +1030,8 @@ export function Chat({
       message.role === 'user' &&
       message.replyTo?.role === 'assistant' &&
       !cardChoices.has(message.replyTo.id) &&
-      cardOptionTexts.get(message.replyTo.id)?.has(message.text)
+      cardOptionTexts.has(message.replyTo.id) &&
+      (message.cardChoice || cardOptionTexts.get(message.replyTo.id)!.has(message.text))
     )
       cardChoices.set(message.replyTo.id, message.text);
   const lastOwnerIndex = visibleMessages.findLastIndex((message) => message.role === 'user');
@@ -1394,6 +1395,8 @@ export function Chat({
         state.pendingAnswerChoiceMessageIds?.includes(reply.id))
         ? { custom: true }
         : undefined;
+    const cardChoice =
+      source === 'answer_choice' && !questionAnswer && !approvalAnswer && Boolean(replyId);
     const directAnswer = source === 'answer_choice' || source === 'approval_card';
     const captureAnalytics = analyticsForCurrentSession();
     const sentThread = threadId;
@@ -1410,19 +1413,13 @@ export function Chat({
     );
     const explicitVerification =
       classifyVerificationReply(value).kind !== 'ordinary' || Boolean(securityCodeIn(value));
-    let privateVerification =
-      (classifyVerificationReply(value).kind !== 'ordinary' &&
-        verificationRequests.some((request) => request.kind === 'otp')) ||
-      (Boolean(securityCodeIn(value)) &&
-        verificationRequests.some((request) => request.kind === 'payment'));
+    let privateVerification = Boolean(securityCodeIn(value)) && verificationRequests.length > 0;
     const verificationRequestId =
       privateVerification && verificationRequests.length === 1
         ? verificationRequests[0].id
         : undefined;
     let verificationStatus: SubmitMessageResponse['verificationStatus'];
-    const masked = verificationRequests.every((request) => request.kind === 'payment')
-      ? 'Security code sent securely.'
-      : 'Verification code sent securely.';
+    const masked = 'Security code sent securely.';
     const recordingKey = recording && recordingSource(recording);
     if (recordingKey && !recordingIds.current.has(recordingKey))
       recordingIds.current.set(recordingKey, crypto.randomUUID());
@@ -1514,6 +1511,7 @@ export function Chat({
       ...((questionAnswer || approvalAnswer) && value.trim() && !attachments.length && !recording
         ? { cardAnswer: true as const }
         : {}),
+      ...(cardChoice ? { cardChoice: true as const } : {}),
       ...(reply
         ? {
             replyToMessageId: reply.id,
@@ -1622,6 +1620,7 @@ export function Chat({
           ...(seenMessageId ? { seenMessageId } : {}),
           ...(verificationRequestId ? { verificationRequestId } : {}),
           ...(questionAnswer ? { questionAnswer } : {}),
+          ...(cardChoice ? { cardChoice: true } : {}),
           ...(approvalAnswer ? { approvalAnswer } : {}),
         });
       submittedBody = messageBody;
@@ -1778,7 +1777,7 @@ export function Chat({
       setOptimistic((current) => current.filter((item) => item.message.id !== id));
       const failure = privateVerification
         ? attachments.length
-          ? 'Send the verification code by itself, without attachments.'
+          ? 'Send the security code by itself, without attachments.'
           : verificationFailure(verificationStatus, verificationRequests.length > 1)
         : errorMessage(cause);
       if (!directAnswer) setError(failure);
@@ -2495,6 +2494,25 @@ export function Chat({
                       }
                       taskStopped={approvalTask(message)?.status === 'cancelled'}
                       answersDisabled={sending || !state.configuration.llmReady || welcoming}
+                      onRetry={
+                        message.role === 'assistant' &&
+                        message.retryable &&
+                        index === visibleMessages.length - 1 &&
+                        !sending &&
+                        !state.turns.some(
+                          (turn) => turn.status === 'running' || turn.status === 'queued',
+                        ) &&
+                        state.configuration.llmReady
+                          ? () => {
+                              void send(
+                                'Continue',
+                                [],
+                                { id: message.id, role: 'assistant', text: message.text },
+                                'composer',
+                              );
+                            }
+                          : undefined
+                      }
                       pickQuestion={cardQuestions.get(message.id)}
                       choicesOnCard={questionsOnCard.has(message.id)}
                       chosenText={cardChoices.get(message.id)}
@@ -2536,6 +2554,26 @@ export function Chat({
                             'Send your answer from the composer to include your edits.',
                           );
                         }
+                        if (
+                          target.interaction?.id &&
+                          target.interaction.status === 'open' &&
+                          'choiceIds' in answer &&
+                          !answer.custom
+                        ) {
+                          try {
+                            await post(`/api/interactions/${target.interaction.id}/select`, {
+                              optionIds: answer.choiceIds,
+                            });
+                            if (replying(replyTo?.id) && !composer.current?.hasDraft())
+                              setReplyTo((current) => (replying(current?.id) ? null : current));
+                            return true;
+                          } catch (caught) {
+                            const code = (caught as { code?: string })?.code;
+                            if (code === 'interaction_closed' || code === 'interaction_expired')
+                              return 'unavailable';
+                            throw caught;
+                          }
+                        }
                         const result = await send(
                           value,
                           [],
@@ -2570,7 +2608,7 @@ export function Chat({
                             }
                           : undefined
                       }
-                      codeRequest={codeRequests.get(message.id)}
+                      codeRequest={codeRequests.has(message.id)}
                       pendingAudio={
                         optimistic.find((item) => item.message.id === message.id)?.audio
                       }

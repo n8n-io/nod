@@ -25,6 +25,7 @@ const skillInput = z.discriminatedUnion('action', [
       name: skillName,
       description: z.string().trim().min(1),
       body: z.string().trim().min(1),
+      overlayFor: skillName.optional(),
     })
     .strict(),
   z
@@ -36,6 +37,8 @@ const skillInput = z.discriminatedUnion('action', [
     })
     .strict(),
 ]);
+const maxSkillHistory = 5;
+const staleFailureThreshold = 2;
 const ownerChange = z
   .object({ description: skillDescription.optional(), body: skillBody.optional() })
   .strict()
@@ -52,6 +55,14 @@ function fail(message: string, statusCode = 400): never {
 }
 
 function makeRoom(tree: Tree, keep: Skill) {
+  while (!fits(tree, { preserveArchive: true })) {
+    const withHistory = tree.skills
+      .filter((skill) => skill.history?.length)
+      .toSorted((a, b) => (a.used ?? a.updated).localeCompare(b.used ?? b.updated))[0];
+    if (!withHistory) break;
+    withHistory.history = withHistory.history!.slice(1);
+    if (!withHistory.history.length) delete withHistory.history;
+  }
   while (tree.skills.length > maxSkills || !fits(tree)) {
     const idle = tree.skills
       .filter((skill) => skill !== keep && !skill.edited)
@@ -117,9 +128,12 @@ export function createLearnedSkills(options: {
   ) {
     signal?.throwIfAborted();
     const input = skillInput.parse(raw);
+    const isOverlay = input.action === 'save' && Boolean(input.overlayFor);
+    if (isOverlay && !options.builtIn.includes(input.overlayFor!))
+      throw new Error('overlayFor must name a built-in guide.');
     if (options.builtIn.includes(input.name))
       throw new Error(
-        'That name belongs to a built-in guide. Name a learned skill after its site, app and flow.',
+        'That name belongs to a built-in guide. Name a learned skill after its site, app and flow, or pass overlayFor with a distinct overlay name.',
       );
     const tree = await memory.load();
     if (!tree.enabled) throw new Error('Memory is turned off, so skills are not saved.');
@@ -155,12 +169,33 @@ export function createLearnedSkills(options: {
           );
         if (fresh.sensitive !== tree.sensitive)
           throw new Error('The sensitive-topics setting changed. Save the skill again.');
+        const priorVersion = existing?.version ?? (existing ? 1 : 0);
+        const history = existing
+          ? [
+              ...(existing.history ?? []),
+              {
+                version: priorVersion,
+                description: existing.description,
+                body: existing.body,
+                updated: existing.updated,
+              },
+            ].slice(-maxSkillHistory)
+          : undefined;
+        const overlayTarget =
+          input.action === 'save'
+            ? (input.overlayFor ?? existing?.overlayFor)
+            : existing?.overlayFor;
         const next: Skill = {
           ...existing,
           name: input.name,
           ...skill,
           learned: existing?.learned ?? now,
           updated: now,
+          version: priorVersion + 1,
+          failures: 0,
+          stale: false,
+          ...(history?.length ? { history } : {}),
+          ...(overlayTarget ? { overlayFor: overlayTarget } : {}),
           ...((existing?.turn ?? turn) ? { turn: existing?.turn ?? turn } : {}),
         };
         fresh.skills = [...fresh.skills.filter((item) => item !== existing), next];
@@ -185,13 +220,95 @@ export function createLearnedSkills(options: {
           { allowDisabled: true },
         )
         .catch(() => {});
-    return { name: skill.name, description: skill.description, body: skill.body };
+    return {
+      name: skill.name,
+      description: skill.description,
+      body: skill.body,
+      ...(skill.overlayFor ? { overlayFor: skill.overlayFor } : {}),
+      ...(skill.version ? { version: skill.version } : {}),
+      ...(skill.stale ? { stale: true } : {}),
+    };
+  }
+
+  async function overlayFor(builtInName: string) {
+    const overlays = (await memory.load()).skills.filter(
+      (item) => item.overlayFor === builtInName && !item.stale,
+    );
+    if (!overlays.length) return undefined;
+    return overlays.map(({ name, description, body, version }) => ({
+      name,
+      description,
+      body,
+      version: version ?? 1,
+    }));
+  }
+
+  async function recordOutcome(name: string, succeeded: boolean) {
+    const target = skillName.parse(name);
+    await memory
+      .edit(
+        (tree) => {
+          const skill = tree.skills.find((item) => item.name === target);
+          if (!skill) return;
+          if (succeeded) {
+            skill.failures = 0;
+            skill.stale = false;
+          } else {
+            const nextFailures = (skill.failures ?? 0) + 1;
+            skill.failures = nextFailures;
+            if (nextFailures >= staleFailureThreshold) skill.stale = true;
+          }
+        },
+        { allowDisabled: true },
+      )
+      .catch(() => {});
+  }
+
+  async function restore(name: string, version: number) {
+    const target = skillName.parse(name);
+    await memory.edit(
+      (tree) => {
+        const skill =
+          tree.skills.find((item) => item.name === target) ??
+          fail('This skill is no longer in memory.', 404);
+        const snapshot = skill.history?.find((entry) => entry.version === version);
+        if (!snapshot) fail(`Version ${version} is not available for this skill.`, 404);
+        const now = new Date().toISOString();
+        const currentVersion = skill.version ?? 1;
+        const history = [
+          ...(skill.history ?? []),
+          {
+            version: currentVersion,
+            description: skill.description,
+            body: skill.body,
+            updated: skill.updated,
+          },
+        ].slice(-maxSkillHistory);
+        Object.assign(skill, {
+          description: snapshot.description,
+          body: snapshot.body,
+          updated: now,
+          edited: now,
+          version: currentVersion + 1,
+          failures: 0,
+          stale: false,
+          history,
+        });
+        makeRoom(tree, skill);
+      },
+      { allowDisabled: true },
+    );
+    remembered('save', 'owner');
   }
 
   async function index() {
     return (await memory.load()).skills
+      .filter((skill) => !skill.stale)
       .toSorted((a, b) => a.name.localeCompare(b.name))
-      .map(({ name, description }) => ({ name, description }));
+      .map(({ name, description, overlayFor: target }) => ({
+        name,
+        description: target ? `${description} (overlay for ${target})` : description,
+      }));
   }
 
   async function change(name: string, raw: unknown) {
@@ -205,7 +322,24 @@ export function createLearnedSkills(options: {
           tree.skills.find((item) => item.name === target) ??
           fail('This skill is no longer in memory.', 404);
         const now = new Date().toISOString();
-        Object.assign(skill, input, { updated: now, edited: now });
+        const currentVersion = skill.version ?? 1;
+        const history = [
+          ...(skill.history ?? []),
+          {
+            version: currentVersion,
+            description: skill.description,
+            body: skill.body,
+            updated: skill.updated,
+          },
+        ].slice(-maxSkillHistory);
+        Object.assign(skill, input, {
+          updated: now,
+          edited: now,
+          version: currentVersion + 1,
+          failures: 0,
+          stale: false,
+          history,
+        });
         makeRoom(tree, skill);
       },
       { allowDisabled: true },
@@ -226,7 +360,7 @@ export function createLearnedSkills(options: {
     remembered('forget', 'owner');
   }
 
-  return { learn, read, index, change, forget };
+  return { learn, read, overlayFor, recordOutcome, restore, index, change, forget };
 }
 
 export type LearnedSkills = ReturnType<typeof createLearnedSkills>;

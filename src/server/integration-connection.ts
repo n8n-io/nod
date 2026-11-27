@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { IntegrationProvider } from '../ports/integrations.ts';
-import { normalizedEmail } from './email-code.ts';
+import { normalizedEmail } from './email-address.ts';
 
 export class IntegrationError extends Error {
   constructor(

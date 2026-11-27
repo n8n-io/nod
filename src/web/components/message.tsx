@@ -217,6 +217,7 @@ export const MessageText = memo(function MessageText({
   handoffTurnId?: string;
 }) {
   const content = useRef<HTMLDivElement>(null);
+  const [kept, setKept] = useState(false);
   const telegramUrl = useTelegramChatUrl(text);
   const origin = typeof window === 'undefined' ? 'http://localhost:4310' : window.location.origin;
   const actions = messageSetupLinks(text, origin);
@@ -269,8 +270,7 @@ export const MessageText = memo(function MessageText({
                       : '_blank'
                   }
                   rel={
-                    setup?.setup === 'vault' &&
-                    /^\/(?:vault|credentials)\/[A-Za-z0-9_-]+\/?$/.test(link.href)
+                    setup?.setup === 'vault' && link.href.startsWith('/payments/')
                       ? 'opener'
                       : 'noopener noreferrer'
                   }
@@ -292,8 +292,13 @@ export const MessageText = memo(function MessageText({
           {text}
         </Markdown>
         <SetupActions actions={actions.filter((action) => !connected(action.href))} />
-        {handoff && handoffTurnId && (
-          <BrowserHandoff key={handoffTurnId} turnId={handoffTurnId} paused={handoffPaused} />
+        {(handoff || kept) && handoffTurnId && (
+          <BrowserHandoff
+            key={handoffTurnId}
+            turnId={handoffTurnId}
+            paused={handoffPaused}
+            onKeep={setKept}
+          />
         )}
       </div>
       <MessageLinkTooltip content={content} text={text} />
@@ -356,6 +361,7 @@ export function MessageBubble({
   streaming = false,
   arriving = false,
   onReply,
+  onRetry,
   onAnswer,
   answersDisabled,
   onApprove,
@@ -388,12 +394,13 @@ export function MessageBubble({
   streaming?: boolean;
   arriving?: boolean;
   onReply?(quote?: string): void;
+  onRetry?(): void;
   onAnswer?: AnswerChoicesProps['onAnswer'];
   answersDisabled?: boolean;
   onApprove?(approved: boolean, label: string): Promise<boolean | 'unavailable'>;
   onStopTask?(): Promise<void>;
   taskStopped?: boolean;
-  codeRequest?: 'otp' | 'payment';
+  codeRequest?: boolean;
   handoff?: boolean;
   handoffPaused?: boolean;
 }) {
@@ -492,25 +499,40 @@ export function MessageBubble({
   const openChosen = openChoices.findIndex(
     (choice) => chosenText !== undefined && choiceAnswerText([choice]) === chosenText,
   );
-  const openAnswered = openChosen >= 0;
+  const openAnswered = chosenText !== undefined;
+  const interactionClosed = Boolean(
+    pickQuestion?.interaction &&
+    (pickQuestion.interaction.status === 'expired' ||
+      pickQuestion.interaction.status === 'superseded' ||
+      pickQuestion.interaction.status === 'cancelled'),
+  );
+  const interactionSelected = pickQuestion?.interaction?.selectedOptionIds;
+  const effectiveAnsweredIds = answeredIds ?? interactionSelected;
   const pickChoices = openChoices.length ? openChoices : (pickOptions ?? []);
   const answered = openChoices.length
     ? openChosen >= 0
       ? [openChosen]
       : []
-    : pickOptions && answeredIds
-      ? pickOptions.flatMap((option, index) => (answeredIds.includes(option.id) ? [index] : []))
+    : pickOptions && effectiveAnsweredIds
+      ? pickOptions.flatMap((option, index) =>
+          effectiveAnsweredIds.includes(option.id) ? [index] : [],
+        )
       : [];
   const pickedChoices = picked.map((index) => pickChoices[index]!);
-  const pickedChoice = picked.length === 1 ? pickedChoices[0] : undefined;
   const cardPick: CardPick | null = pickChoices.length
     ? {
         chosen: answered.length ? answered : picked,
         written,
         multiple,
-        sent: answered.length > 0 || openAnswered || Boolean(pickQuestion?.choiceAnswer),
+        sent:
+          answered.length > 0 ||
+          openAnswered ||
+          Boolean(pickQuestion?.choiceAnswer) ||
+          pickQuestion?.interaction?.status === 'selected' ||
+          pickQuestion?.interaction?.status === 'fulfilled',
         closed:
           gone ||
+          interactionClosed ||
           (!openChoices.length &&
             !pickQuestion!.answerChoicesPending &&
             !pickQuestion!.choiceAnswer &&
@@ -518,16 +540,11 @@ export function MessageBubble({
         disabled: openChoices.length
           ? answersDisabled === true || sending || openAnswered
           : gone ||
+            interactionClosed ||
             !pickQuestion!.answerChoicesPending ||
             !onAnswer ||
             answersDisabled === true ||
             sending,
-        label:
-          pickedChoice &&
-          (pickedChoice.description &&
-          pickChoices.filter((choice) => choice.label === pickedChoice.label).length > 1
-            ? `${pickedChoice.label} ${pickedChoice.description.split(' · ')[0]}`
-            : pickedChoice.label),
         choose(index) {
           if (sending || openAnswered) return;
           setPicked((current) =>
@@ -572,6 +589,32 @@ export function MessageBubble({
               if (result === true) {
                 setWritten('');
                 if (!chosen.length) setPicked([]);
+              } else if (result === 'unavailable') {
+                setGone(true);
+              } else if (result === false) {
+                setError('Your choice could not be sent. Try again.');
+              }
+            },
+            (cause) => {
+              setSending(false);
+              setError(errorMessage(cause));
+            },
+          );
+        },
+        skip() {
+          if (sending || openAnswered || gone) return;
+          const outcome = openChoices.length
+            ? onChoose?.('Skip')
+            : onAnswer?.('Skip', { custom: true });
+          if (!outcome) return;
+          setSending(true);
+          setError('');
+          void outcome.then(
+            (result) => {
+              setSending(false);
+              if (result === true) {
+                setWritten('');
+                setPicked([]);
               } else if (result === 'unavailable') {
                 setGone(true);
               } else if (result === false) {
@@ -1150,6 +1193,19 @@ export function MessageBubble({
             )}
           </div>
         </div>
+        {onRetry && !streaming && (
+          <div className="message-retry">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={answersDisabled}
+              onClick={onRetry}
+            >
+              Retry
+            </Button>
+          </div>
+        )}
         {task && <div className="message-task">{task}</div>}
         {message.role === 'assistant' &&
           !streaming &&
@@ -1168,9 +1224,7 @@ export function MessageBubble({
             />
           </ApprovalCard>
         )}
-        {message.role === 'assistant' && !streaming && codeRequest && (
-          <CodeRequestCard kind={codeRequest} />
-        )}
+        {message.role === 'assistant' && !streaming && codeRequest && <CodeRequestCard />}
         {quote &&
           onReply &&
           createPortal(

@@ -49,6 +49,11 @@ export type StartupStage =
   | 'ready'
   | 'unknown';
 export type StartupEvent =
+  | 'database_ready'
+  | 'database_failed'
+  | 'database_restarted'
+  | 'database_moved'
+  | 'database_restart_failed'
   | 'runtime_prepare'
   | 'runtime_ready'
   | 'runtime_failed'

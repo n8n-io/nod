@@ -53,6 +53,7 @@ test('container and native checks follow their inputs', () => {
   assert.equal(selectChecks(['src/server/vault-crypto.ts']).windows, true);
   assert.equal(selectChecks(['desktop/main/settings.mjs']).macos, true);
   assert.equal(selectChecks(['desktop/main/settings.mjs']).windows, true);
+  assert.equal(selectChecks(['desktop/runtime/database.mjs']).windows, true);
   assert.equal(selectChecks(['desktop/ui/setup.tsx']).macos, false);
   assert.equal(selectChecks(['desktop/runtime/index.mjs']).network, true);
   assert.equal(selectChecks(['desktop/runtime/index.mjs']).desktop, true);

@@ -126,7 +126,7 @@
 }
 .choice-card-title {
   font-size: 15px;
-  font-weight: 400;
+  font-weight: 500;
   line-height: 22px;
 }
 .choice-card-count {
@@ -137,7 +137,7 @@
 }
 .choice-card-title .message-text {
   margin: 0;
-  font-weight: 400;
+  font-weight: 500;
 }
 .choice-card-title .message-text strong,
 .chat-page .message .choice-card-title .message-text strong {
@@ -188,6 +188,28 @@
   justify-content: flex-end;
   gap: 8px;
   padding: 16px;
+}
+.choice-card-skip {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex: none;
+  cursor: pointer;
+}
+.choice-card-skip[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: default;
+}
+.choice-card-skip:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 .choice-card-done {
   min-height: 40px;
@@ -277,12 +299,16 @@ button.choice-card-row[aria-disabled='true'] {
   button.choice-card-row:hover:not([aria-disabled='true']) {
     background: var(--control-hover);
   }
+  .choice-card-skip:hover:not([aria-disabled='true']) {
+    color: var(--foreground);
+    background: var(--control-hover);
+  }
   .choice-card-done:hover:not([aria-disabled='true']) {
     background: var(--primary-hover);
   }
 }
 @media (max-width: 640px), (any-pointer: coarse) {
-  :is(.action-card-actions .button, .choice-card-done) {
+  :is(.action-card-actions .button, .choice-card-done, .choice-card-skip) {
     min-height: 44px;
   }
 }
@@ -328,6 +354,17 @@ button.choice-card-row[aria-disabled='true'] {
   border-radius: 16px;
   background: transparent;
   overflow: visible;
+}
+.chat-page .message .message-bubble > .message-body:has(> .action-card) > .message-text {
+  width: fit-content;
+  max-width: 100%;
+  padding: 10px 16px;
+  border-radius: 22px;
+  background: var(--surface-subtle);
+  margin-bottom: 8px;
+}
+.chat-page .message .message-bubble > .message-body:has(> .action-card) > .message-text:empty {
+  display: none;
 }
 .message-body > .action-card {
   margin-top: 0;

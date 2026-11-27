@@ -19,6 +19,7 @@ export default scenario({
   title: 'Save meeting notes as a Markdown file in Documents',
   capabilities: ['files'],
   tier: 'full',
+  set: 'happy-path',
   complexity: 'simple',
   stance: 'regression',
   calibration: 'pending',

@@ -247,6 +247,10 @@
   }
 }
 
+.chat-page .message-retry {
+  margin-top: 8px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .chat-page .message-time,
   .chat-page .message-actions,

@@ -1,18 +1,17 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { OnboardingStep } from '../../../../shared/onboarding';
 import { OnboardingFrame } from '../frame';
 import { Button, Notice } from '../../../components/ui';
+import { analyticsForCurrentSession } from '../../../lib/analytics';
 import { errorMessage } from '../../../lib/api';
 import { desktopSetup, completeDesktopPreferences } from '../../../lib/desktop';
 import { Messages } from '../motion';
 
 export function DesktopPreferencesSetup({
   onReady,
-  notice,
   steps,
 }: {
   onReady(): void;
-  notice?: ReactNode;
   steps: readonly OnboardingStep[];
 }) {
   const [error, setError] = useState('');
@@ -22,8 +21,17 @@ export function DesktopPreferencesSetup({
 
   useEffect(() => {
     let current = true;
+    const capture = analyticsForCurrentSession();
     void desktopSetup()
-      .then((value) => (value.preferenceStep === 'complete' ? value : completeDesktopPreferences()))
+      .then(async (value) => {
+        if (value.preferenceStep === 'complete') return value;
+        const completed = await completeDesktopPreferences();
+        if (completed.preferenceStep === 'complete' && typeof completed.launchAtLogin === 'boolean')
+          capture('login_item_observed', {
+            login_item: completed.launchAtLogin ? 'registered' : 'not_registered',
+          });
+        return completed;
+      })
       .then((value) => {
         if (!current) return;
         if (value.preferenceStep !== 'complete')
@@ -57,7 +65,6 @@ export function DesktopPreferencesSetup({
           </Notice>
         )}
       </section>
-      {notice}
     </OnboardingFrame>
   );
 }

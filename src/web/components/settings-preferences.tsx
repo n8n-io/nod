@@ -12,7 +12,12 @@ import { TimePicker } from './time-picker';
 import { useSettingsDraft } from './settings-drafts';
 import { usePageData } from '../hooks/use-page-data';
 import { errorMessage } from '../lib/api';
-import { desktopZoomAvailable, getDesktopZoomFactor, setDesktopZoomFactor } from '../lib/desktop';
+import {
+  desktopRuntimeAvailable,
+  desktopZoomAvailable,
+  getDesktopZoomFactor,
+  setDesktopZoomFactor,
+} from '../lib/desktop';
 import { savePreferences } from '../lib/preferences';
 import { localeRegion } from '../../shared/date-locale';
 import { communityLinks, legalLinks } from '../../shared/onboarding';
@@ -375,7 +380,24 @@ export function GeneralPreferences({
               }
             />
           </div>
-          <p className="field-hint">Open automatically when you sign in.</p>
+          <p className="field-hint">Starts Nod in the background when you sign in.</p>
+          {desktopRuntimeAvailable() && (
+            <>
+              <div className="account-preference-row">
+                <span>Keep this computer awake when plugged in</span>
+                <Switch
+                  checked={native.settings.keepAwake}
+                  disabled={native.busy}
+                  aria-label="Keep this computer awake when plugged in"
+                  onCheckedChange={(keepAwake) => void native.save({ keepAwake }).catch(() => {})}
+                />
+              </div>
+              <p className="field-hint">
+                Schedules and phone messages keep working. The screen still turns off, and closing
+                the lid still sleeps.
+              </p>
+            </>
+          )}
         </section>
       )}
       <section className="account-region account-links" aria-labelledby={`${id}-community`}>

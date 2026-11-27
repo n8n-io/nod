@@ -13,9 +13,9 @@ export async function copyEngineSource({ root, target, platform = 'darwin' }) {
     'desktop/main/engine.mjs',
     'desktop/main/feedback.mjs',
     'desktop/main/system-certificates.mjs',
-    'desktop/main/onepassword.mjs',
     'desktop/runtime/index.mjs',
     'desktop/runtime/assets.mjs',
+    'desktop/runtime/database.mjs',
     'desktop/runtime/guest-config.mjs',
     ...(platform === 'win32'
       ? ['desktop/runtime/windows.mjs', 'desktop/runtime/protect-profile.ps1']

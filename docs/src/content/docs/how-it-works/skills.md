@@ -53,8 +53,8 @@ Eight guides have a reference for one specific case: recurring meetings, data im
 The `skills` tool has these actions:
 
 - `{action: "list"}` returns the names and descriptions of built-in guides. Learned skills are listed in the owner context.
-- `{action: "read", name}` loads a guide's `SKILL.md` or a learned skill. Add `file: "references/<name>.md"` to load one reference of a guide.
-- `{action: "save", name, description, body}` and `{action: "patch", name, old, new}` write a learned skill. See [Learned skills](/how-it-works/memory/#learned-skills).
+- `{action: "read", name}` loads a guide's `SKILL.md` (along with any active owner overlays for that guide) or a learned skill. Add `file: "references/<name>.md"` to load one reference of a guide.
+- `{action: "save", name, description, body, overlayFor?}` and `{action: "patch", name, old, new}` write a learned skill or an overlay for a built-in guide without modifying the shipped default. Learned skills keep version history for rollback and auto-demote as stale after repeated turn failures. See [Learned skills](/how-it-works/memory/#learned-skills).
 
 The system prompt tells the model to pick a guide by the task's purpose, the user's constraints and the required result. A compound task can load more than one guide. After compaction, the model can read a guide again.
 

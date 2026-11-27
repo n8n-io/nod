@@ -65,6 +65,13 @@ export interface MemoryArchived {
   fact?: MemoryFact;
 }
 
+export interface LearnedSkillVersion {
+  version: number;
+  description: string;
+  body: string;
+  updated: string;
+}
+
 export interface LearnedSkill {
   name: string;
   description: string;
@@ -73,6 +80,10 @@ export interface LearnedSkill {
   updated: string;
   edited: string | null;
   task: string | null;
+  overlayFor?: string | null;
+  version?: number;
+  stale?: boolean;
+  history?: LearnedSkillVersion[];
 }
 
 export interface MemoryView {

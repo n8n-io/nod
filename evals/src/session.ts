@@ -6,8 +6,10 @@ import type { UserScript } from './scenario.ts';
 import type { Simulator } from './judge.ts';
 
 export interface Interaction {
-  kind: 'question' | 'chat' | 'approval' | 'secret' | 'method' | 'unanswered' | 'stalled';
+  kind:
+    'question' | 'chat' | 'approval' | 'secret' | 'method' | 'handoff' | 'unanswered' | 'stalled';
   text: string;
+  entered?: Array<'login' | 'code'>;
   reply?: string;
   action?: string;
   requestKind?: 'otp' | 'payment' | 'password';
@@ -61,15 +63,18 @@ export function createSession(options: {
   deadline: number;
   world?: unknown;
   stallSeconds?: number;
+  pageWaitMs?: number;
 }): Session {
   const { stack, user, deadline } = options;
   const stallMs = (options.stallSeconds ?? 240) * 1000;
+  const pageWaitMs = options.pageWaitMs ?? 2500;
   const pool: pg.Pool = stack.pool;
   const interactions: Interaction[] = [];
   const userMessages: Array<{ at: number; text: string }> = [];
   let secretIndex = 0;
   let approvalIndex = 0;
   const answeredRequests = new Set<string>();
+  const typedCodes = new Set<string>();
   let threadId: string | undefined;
 
   async function post(path: string, body: unknown, allowed: number[] = []) {
@@ -155,7 +160,10 @@ export function createSession(options: {
       : undefined;
   }
 
-  async function pendingFor(turn: { id: string; waiting_reason: string }, text: string) {
+  async function pendingFor(
+    turn: { id: string; waiting_reason: string; handoff?: boolean },
+    text: string,
+  ) {
     const approval = (
       await pool.query(
         `SELECT id,action,args,details - 'reason' AS shown,confirmation_message_id FROM approvals WHERE turn_id=$1 AND status='pending' ORDER BY ${await approvalOrder(pool)} DESC LIMIT 1`,
@@ -163,6 +171,7 @@ export function createSession(options: {
       )
     ).rows[0];
     if (approval) return { kind: 'approval' as const, approval, text };
+    if (turn.handoff) return { kind: 'handoff' as const, turnId: turn.id, text };
     if (turn.waiting_reason === 'credentials')
       for (const started = Date.now(); ; await sleep(250)) {
         const form = await credentialForm(text);
@@ -188,7 +197,7 @@ export function createSession(options: {
     const id = await thread();
     const turn = (
       await pool.query(
-        `SELECT t.id,t.waiting_reason,${stack.waiting('t')} AS waiting FROM turns t WHERE t.thread_id=$1 AND ($2 OR NOT t.background) ORDER BY t.created_at DESC, t.id DESC LIMIT 1`,
+        `SELECT t.id,t.waiting_reason,t.handoff_browser_id IS NOT NULL AS handoff,${stack.waiting('t')} AS waiting FROM turns t WHERE t.thread_id=$1 AND ($2 OR NOT t.background) ORDER BY t.created_at DESC, t.id DESC LIMIT 1`,
         [id, scheduled],
       )
     ).rows[0];
@@ -207,7 +216,7 @@ export function createSession(options: {
            SELECT chain.start, p.parent_turn_id, p.source FROM chain JOIN turns p ON p.id=chain.next
            WHERE chain.source='resume'
          )
-         SELECT t.id,t.waiting_reason FROM turns t
+         SELECT t.id,t.waiting_reason,t.handoff_browser_id IS NOT NULL AS handoff FROM turns t
          WHERE t.id IN (SELECT start FROM chain WHERE source IN ('task','user'))
          ORDER BY t.created_at, t.id LIMIT 1`,
         [id],
@@ -226,6 +235,57 @@ export function createSession(options: {
     };
   }
 
+  async function enterOnPage(turnId: string, text: string) {
+    const code = () => {
+      const value =
+        typeof user.secrets === 'function' ? user.secrets(text, options.world, 'otp') : undefined;
+      return value && !typedCodes.has(value) ? value : undefined;
+    };
+    if (!code() && !user.signIn) return undefined;
+    const view = new AbortController();
+    const stream = await stack.request(
+      `/api/browser-handoff/stream?turnId=${encodeURIComponent(turnId)}`,
+      { signal: view.signal },
+    );
+    if (!stream.ok)
+      throw new Error(
+        `The browser view did not open (${stream.status}): ${(await stream.text()).slice(0, 300)}`,
+      );
+    const reader = stream.body?.getReader();
+    const frames = (async () => {
+      try {
+        while (reader && !(await reader.read()).done);
+      } catch {}
+    })();
+    try {
+      const input = (inputs: unknown[]) => post('/api/browser-handoff', { turnId, inputs });
+      const field = (value: string) => [
+        { type: 'key', key: 'Control+a' },
+        { type: 'text', text: value },
+      ];
+      const entered: Array<'login' | 'code'> = [];
+      if (!code() && user.signIn) {
+        const { username, password } = user.signIn;
+        await input([...field(username), { type: 'key', key: 'Tab' }]);
+        await input([...field(password), { type: 'key', key: 'Enter' }]);
+        entered.push('login');
+        await sleep(pageWaitMs);
+      }
+      const value = code();
+      if (value) {
+        typedCodes.add(value);
+        await input([...field(value), { type: 'key', key: 'Enter' }]);
+        entered.push('code');
+        await sleep(pageWaitMs);
+      }
+      const done = await post('/api/browser-handoff/done', { turnId }, [423]);
+      return { entered, closed: !done, savable: Boolean(done?.savableLogin) };
+    } finally {
+      view.abort();
+      await frames;
+    }
+  }
+
   function approves(action: string, args: unknown, shown?: unknown) {
     return typeof user.approve === 'function'
       ? user.approve(action, args, shown)
@@ -237,6 +297,19 @@ export function createSession(options: {
     if (!pending) return false;
     if (pending.kind === 'resumed') return true;
     const at = Date.now();
+    if (pending.kind === 'handoff') {
+      const page = await enterOnPage(pending.turnId, pending.text);
+      if (page?.closed) {
+        interactions.push({ kind: 'unanswered', text: pending.text, at });
+        return false;
+      }
+      if (page) {
+        interactions.push({ kind: 'handoff', text: pending.text, entered: page.entered, at });
+        if (page.savable && user.saveLogin)
+          await post('/api/browser-handoff/save-login', { turnId: pending.turnId });
+        return true;
+      }
+    }
     if (pending.kind === 'approval') {
       const reply = user.approvalReplies
         ? user.approvalReplies[approvalIndex++]
@@ -318,6 +391,7 @@ export function createSession(options: {
     const scripted = user.answers?.find((answer) => answer.when.test(pending.text));
     const reply =
       scripted?.say ??
+      (pending.kind === 'handoff' ? user.signInReply : undefined) ??
       (user.persona && options.simulator
         ? await options.simulator.reply(user.persona, pending.text)
         : undefined);
@@ -325,7 +399,12 @@ export function createSession(options: {
       interactions.push({ kind: 'unanswered', text: pending.text, at });
       return false;
     }
-    interactions.push({ kind: 'question', text: pending.text, reply, at });
+    interactions.push({
+      kind: pending.kind === 'handoff' ? 'handoff' : 'question',
+      text: pending.text,
+      reply,
+      at,
+    });
     userMessages.push({ at, text: reply });
     await post('/api/messages', {
       text: reply,
@@ -482,7 +561,7 @@ export function createSession(options: {
     async assistantCount() {
       const id = await thread();
       const result = await pool.query(
-        "SELECT count(*)::int AS n FROM messages WHERE thread_id=$1 AND role='assistant' AND length(trim(text))>0",
+        "SELECT count(*)::int AS n FROM messages WHERE thread_id=$1 AND role='assistant' AND (length(trim(text))>0 OR (jsonb_typeof(to_jsonb(messages)->'presentation')='object' AND to_jsonb(messages)->'presentation'->>'type' IS DISTINCT FROM 'schedule-run'))",
         [id],
       );
       return result.rows[0].n as number;

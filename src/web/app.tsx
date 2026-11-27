@@ -10,7 +10,7 @@ import { Usage } from './pages/usage';
 import { Vault } from './pages/vault';
 import { Apps } from './pages/apps';
 import { Channels } from './pages/channels';
-import { Credentials, Payment } from './pages/credentials';
+import { Payment } from './pages/payment';
 import { Scheduled } from './pages/tasks';
 import { PreparedWork } from './pages/prepared';
 import { useAppState } from './hooks/use-app-state';
@@ -23,6 +23,7 @@ import { SetupProgress } from './components/setup-progress';
 import { ServerAccess } from './components/server-access';
 import { Sidebar } from './components/sidebar';
 import { PageHeader } from './components/page-title';
+import { ComputerNotice } from './components/computer-notice';
 import { DesktopUpdateToast } from './components/desktop-update-toast';
 import { FeedbackDialog } from './components/feedback';
 import { createFeedbackCapture } from './lib/feedback-capture';
@@ -43,6 +44,7 @@ import { resolveBrowserRegion, setDateFormat } from './lib/date-format';
 import { useBrowserTimeZone } from './hooks/use-browser-time-zone';
 import { finishOnboarding } from './lib/onboarding';
 import {
+  desktopRuntimeAvailable,
   desktopSettingsAvailable,
   desktopRendererReady,
   onFeedbackRequested,
@@ -488,11 +490,7 @@ function AuthenticatedApp({
   const onboarding =
     finishingOnboarding || !session.settings!.onboardingCompleted || replayingOnboarding(path);
   useEffect(() => {
-    if (
-      !onboarding ||
-      path === '/browser' ||
-      /^\/(vault|credentials|payments)\/[^/]+\/?$/.test(path)
-    )
+    if (!onboarding || path === '/browser' || /^\/payments\/[^/]+\/?$/.test(path))
       desktopRendererReady();
   }, [onboarding, path]);
   const [settingsRequest, setSettingsRequest] = useState(0);
@@ -618,7 +616,7 @@ function AuthenticatedApp({
     onTraces: (traces) => onAccountUpdate({ traces }),
   };
   const allowed = path !== '/browser' || session.capabilities.developer;
-  const match = /^\/(vault|credentials|payments)\/([^/]+)\/?$/.exec(path);
+  const payment = /^\/payments\/([^/]+)\/?$/.exec(path);
   return (
     <>
       {!allowed ? (
@@ -638,12 +636,8 @@ function AuthenticatedApp({
             onFocusMessage={setBrowserNotificationTarget}
           />
         )
-      ) : match ? (
-        match[1] === 'payments' ? (
-          <Payment key={match[2]} id={match[2]} />
-        ) : (
-          <Credentials key={match[2]} id={match[2]} />
-        )
+      ) : payment ? (
+        <Payment key={payment[1]} id={payment[1]} />
       ) : onboarding ? (
         <Onboarding
           user={session.user!}
@@ -762,7 +756,7 @@ function AccountApp({
   }, [sessionState.loading, session?.user, session?.settings]);
   useLayoutEffect(() => {
     if (sessionState.loading || !session?.user) return;
-    const secure = /^\/(?:vault|credentials|payments)\/[^/]+\/?$/.test(path) || path === '/browser';
+    const secure = /^\/payments\/[^/]+\/?$/.test(path) || path === '/browser';
     if (path === '/memory' && session.settings?.onboardingCompleted) return;
     capturePageview(
       (!session.settings?.onboardingCompleted || replayingOnboarding(path)) && !secure
@@ -780,7 +774,7 @@ function AccountApp({
   }, [path, sessionState.loading, session]);
   useEffect(() => {
     if (sessionState.loading || !session?.user || !session.settings) return;
-    const secure = /^\/(?:vault|credentials|payments)\/[^/]+\/?$/.test(path) || path === '/browser';
+    const secure = /^\/payments\/[^/]+\/?$/.test(path) || path === '/browser';
     const next =
       !session.settings.onboardingCompleted && !secure
         ? '/onboarding'
@@ -868,7 +862,12 @@ export function App({ sessionState }: { sessionState: ReturnType<typeof useSessi
           onFeedbackHandled={() => setFeedbackRequest(0)}
         />
       )}
-      {desktopSettingsAvailable() && !updating && <DesktopUpdateToast />}
+      {desktopSettingsAvailable() && !updating && (
+        <div className="desktop-toasts">
+          {desktopRuntimeAvailable() && <ComputerNotice />}
+          <DesktopUpdateToast />
+        </div>
+      )}
     </>
   );
 }

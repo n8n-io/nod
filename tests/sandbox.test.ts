@@ -595,7 +595,10 @@ test('connected CLIs run only their sealed install with a clean environment', as
   }
 });
 
-function fakeDocker(check: (args: string[]) => Promise<{ code: number; stderr?: string }>) {
+function fakeDocker(
+  check: (args: string[]) => Promise<{ code: number; stderr?: string }>,
+  ready?: (signal?: AbortSignal) => Promise<void>,
+) {
   const launches: Array<{
     workdir: string;
     request: Promise<{ args: string[] }>;
@@ -653,6 +656,7 @@ function fakeDocker(check: (args: string[]) => Promise<{ code: number; stderr?: 
     container: 'nod-workspace-fixture',
     workspaceRoot: '/synthetic',
     spawn: launch,
+    ready,
   });
   const session = workspace.open({
     threadId: 'fixture',
@@ -661,6 +665,36 @@ function fakeDocker(check: (args: string[]) => Promise<{ code: number; stderr?: 
   });
   return { launches, workspace, session, exit };
 }
+
+test('workspace commands wait for the private computer and fail with its reason', async () => {
+  const { createComputerReadiness } = await import('../src/server/computer-readiness.ts');
+  const starting = createComputerReadiness();
+  const failed = createComputerReadiness();
+  const waiting = fakeDocker(async () => ({ code: 0 }), starting.ready);
+  const refused = fakeDocker(async () => ({ code: 0 }), failed.ready);
+  try {
+    const command = execute(waiting.session, 'ok');
+    const stopping = new AbortController();
+    const stopped = waiting.session.exec('ok', { signal: stopping.signal });
+    await new Promise(setImmediate);
+    assert.equal(waiting.launches.length, 0);
+    stopping.abort(new Error('Stopped by the owner.'));
+    await assert.rejects(stopped, /Stopped by the owner/);
+    starting.update({ ready: true });
+    assert.equal(await command, '');
+    assert.equal(waiting.launches.length, 1);
+    failed.update({ error: { code: 'NOD_WSL_REQUIRED', message: 'WSL 2 is not installed.' } });
+    await assert.rejects(
+      execute(refused.session, 'ok'),
+      (error: Error & { code?: string }) =>
+        error.code === 'NOD_WSL_REQUIRED' && error.message.includes('WSL 2 is not installed.'),
+    );
+    assert.equal(refused.launches.length, 0);
+  } finally {
+    await waiting.workspace.dispose();
+    await refused.workspace.dispose();
+  }
+});
 
 test('an uncertain command is stopped once and the workspace keeps working', async () => {
   const docker = fakeDocker(async () => ({ code: 0 }));
@@ -2054,9 +2088,18 @@ test('computer use refuses blocked apps, keeps browsers view-only and acts only 
     'io.n8n.Nod',
   ])
     assert.equal(computerAppRule(bundle).kind, 'blocked', bundle);
-  for (const bundle of ['msedge.exe', 'firefox', 'org.mozilla.firefox', 'code'])
+  for (const bundle of [
+    'msedge.exe',
+    'firefox',
+    'org.mozilla.firefox',
+    'org.mozilla.firefoxdeveloperedition',
+    'org.mozilla.nightly',
+    'org.mozilla.seamonkey',
+    'code',
+  ])
     assert.equal(computerAppRule(bundle).kind, 'view', bundle);
-  assert.equal(computerAppRule('notepad.exe').kind, 'use');
+  for (const bundle of ['notepad.exe', 'org.mozilla.thunderbird'])
+    assert.equal(computerAppRule(bundle).kind, 'use', bundle);
   assert.equal(computerAppRule('C:\\Apps\\Slack\\slack.exe', ['slack']).kind, 'blocked');
   for (const platform of ['win32', 'linux'])
     for (const keys of ['win+r', 'super+a', 'alt+tab', 'ctrl+esc', 'ctrl+alt+t', 'ctrl+alt+delete'])
@@ -2306,6 +2349,7 @@ test('computer use refuses blocked apps, keeps browsers view-only and acts only 
     op: 'press',
     ref: '@sdraft01:e1',
     app: 'TextEdit',
+    bundle: 'com.apple.TextEdit',
     role: 'button',
     control: { role: 'button', name: 'Send' },
     expected: press.windowBinding!.state,
@@ -2318,7 +2362,13 @@ test('computer use refuses blocked apps, keeps browsers view-only and acts only 
   )) as { matches: string };
   assert.match(found.matches, /textfield "Message to Ada" @sfind001:e1/);
   assert.doesNotMatch(found.matches, /@sfind001:e2/);
-  assert.deepEqual(calls.at(-1), { op: 'find', app: 'TextEdit', window: 'w-1', role: 'textfield' });
+  assert.deepEqual(calls.at(-1), {
+    op: 'find',
+    app: 'TextEdit',
+    bundle: 'com.apple.TextEdit',
+    window: 'w-1',
+    role: 'textfield',
+  });
   await assert.rejects(
     computer.prepare(turn, 'COMPUTER_TYPE', { ref: '@sfind001:e2', text: 'x' }),
     /no snapshot with that ref/,
@@ -2442,6 +2492,48 @@ test('computer use refuses blocked apps, keeps browsers view-only and acts only 
   });
   assert.equal(computer.needsCheck('COMPUTER_TYPE', replacing), true);
   assert.equal(replacing.replacesText, true);
+  findings[0]!.states = ['focused'];
+  await computer.execute(
+    turn,
+    'COMPUTER_TYPE',
+    await computer.prepare(turn, 'COMPUTER_TYPE', { ref: '@sfind001:e1', text: 'Testing' }),
+  );
+  const appending = await computer.prepare(turn, 'COMPUTER_TYPE', {
+    ref: '@sfind001:e1',
+    text: ' — done',
+  });
+  assert.equal(appending.replacesText, false);
+  assert.equal(
+    (await computer.prepare(turn, 'COMPUTER_SET_VALUE', { ref: '@sfind001:e1', text: 'New' }))
+      .replacesText,
+    true,
+  );
+  delete findings[0]!.states;
+  await assert.rejects(
+    computer.execute(turn, 'COMPUTER_TYPE', appending),
+    (error: Error & { notRun?: boolean }) =>
+      error.notRun === true && /keyboard focus changed/.test(error.message),
+  );
+  findings[0]!.states = ['focused'];
+  await computer.execute(
+    turn,
+    'COMPUTER_FOCUS',
+    await computer.prepare(turn, 'COMPUTER_FOCUS', { ref: '@sfind001:e1' }),
+  );
+  const afterFocus = await computer.prepare(turn, 'COMPUTER_TYPE', {
+    ref: '@sfind001:e1',
+    text: 'All new',
+  });
+  assert.equal(afterFocus.replacesText, true);
+  await computer.execute(turn, 'COMPUTER_TYPE', afterFocus);
+  const typedOn = await computer.prepare(turn, 'COMPUTER_TYPE', {
+    ref: '@sfind001:e1',
+    text: ' and more',
+  });
+  assert.equal(typedOn.replacesText, false);
+  await computer.execute(turn, 'COMPUTER_TYPE', typedOn);
+  assert.equal(calls.at(-1)?.keepFocus, true);
+  delete findings[0]!.states;
   const renamed = await computer.prepare(turn, 'COMPUTER_PRESS', { ref: '@sdraft01:e1' });
   window.children[0]!.name = 'Delete';
   await assert.rejects(computer.execute(turn, 'COMPUTER_PRESS', renamed), /control changed/);
@@ -2620,6 +2712,71 @@ test('turning computer use off cancels input waiting on a read, even if that rea
     release();
     await server.close();
   }
+});
+
+test('computer use on macOS tells an app from its same-named helper processes by bundle ID', async () => {
+  const pool = {
+    query: async (sql: string) => {
+      if (sql.startsWith('SELECT computer_use'))
+        return { rows: [{ computer_use: true, computer_keep_out: [] }] };
+      if (sql.startsWith('WITH RECURSIVE'))
+        return { rows: [{ id: 'root', source: 'user', message_id: 'message', proactive: false }] };
+      assert.fail(`Unexpected query: ${sql}`);
+    },
+  } as unknown as Pool;
+  const mail = {
+    pid: 2211,
+    bundle: 'org.mozilla.thunderbird',
+    name: 'Thunderbird',
+    windows: [{ id: 'w-1', title: 'Inbox' }],
+  };
+  const helpers = [2213, 2214].map((pid) => ({ pid, bundle: 'Thunderbird', name: 'Thunderbird' }));
+  let apps: Array<{ pid: number; bundle: string; name: string; windows?: unknown[] }> = [
+    mail,
+    { ...mail, pid: 2220 },
+  ];
+  let sent: Record<string, unknown> = {};
+  const menu = {
+    role: 'menubar',
+    name: '',
+    children: ['Apple', 'Thunderbird', 'File'].map((name) => ({ role: 'menu', name })),
+  };
+  const computer = createComputerUse(pool, 'owner', {
+    platform: 'darwin',
+    desktop: {
+      request: async (request) => {
+        if (request.op === 'apps') return { apps };
+        if (request.op === 'windows')
+          return { windows: apps.find((item) => item.pid === request.pid)?.windows ?? [] };
+        if (request.op === 'snapshot') {
+          sent = request;
+          return { tree: menu };
+        }
+        return {};
+      },
+    },
+  });
+  const turn = { turnId: 'turn', threadId: 'thread' };
+  const open = async () =>
+    (await computer.execute(
+      turn,
+      'COMPUTER_OPEN',
+      await computer.prepare(turn, 'COMPUTER_OPEN', { bundle: mail.bundle }),
+    )) as { pid: number };
+  await assert.rejects(open(), /More than one running app matches Thunderbird/);
+  const namedLikeTheBundle = { pid: 2230, bundle: 'com.example.other', name: mail.bundle };
+  apps = [mail, namedLikeTheBundle];
+  await assert.rejects(open(), /More than one running app matches Thunderbird/);
+
+  apps = [mail, ...helpers];
+  assert.equal((await open()).pid, mail.pid);
+  const read = (await computer.execute(
+    turn,
+    'COMPUTER_SNAPSHOT',
+    await computer.prepare(turn, 'COMPUTER_SNAPSHOT', { pid: mail.pid, menu: true }),
+  )) as { tree: string };
+  assert.match(read.tree, /menu "File"/);
+  assert.equal(sent.bundle, mail.bundle);
 });
 
 test('computer use on Windows keeps an opened app granted however the app list names it, and refuses apps it cannot identify', async () => {

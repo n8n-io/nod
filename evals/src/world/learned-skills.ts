@@ -40,7 +40,7 @@ export function skillCalls(run: Run, action: 'read' | 'save' | 'patch', window?:
   );
 }
 
-export function steps(run: Run, window: Window, names = ['browser']) {
+export function steps(run: Run, window: Window, names = ['browser', 'browser_run']) {
   return run.tools.filter((call) => names.includes(call.name) && within(call.at, window)).length;
 }
 

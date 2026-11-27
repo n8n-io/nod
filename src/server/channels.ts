@@ -1,6 +1,10 @@
 import { laterSupersedingTurnSql } from './turn-chain.ts';
 import { presentationSchema, presentationText } from '../shared/presentation.ts';
-import { answerChoicesSchema, questionWithChoices } from '../shared/answer-choices.ts';
+import {
+  answerChoicesSchema,
+  choiceAnswerText,
+  questionWithChoices,
+} from '../shared/answer-choices.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Artifact, SubmitMessageResponse } from '../shared/contracts.ts';
 import type { FastifyInstance } from 'fastify';
@@ -18,12 +22,14 @@ import { MessagingConnectionError } from '../ports/messaging.ts';
 import type {
   ChannelPairingRequest,
   InboundApproval,
+  InboundInteraction,
   InboundMessage,
   InboundReaction,
   MessagingAttachment,
   MessagingChannel,
   MessagingTransport,
 } from '../ports/messaging.ts';
+import { createCardInteractions } from './card-interactions.ts';
 import type { ChatConfirmationInput } from './approvals.ts';
 import { channelText } from './channel-text.ts';
 import { appPages } from '../shared/app-links.ts';
@@ -47,7 +53,6 @@ export type ChannelPresentation =
       fileLimitMb?: number;
       languageMessage?: { at: string; text: string };
     }
-  | { kind: 'verification_failure'; verification: 'otp' }
   | { kind: 'paired'; channel: string }
   | {
       kind: 'command';
@@ -70,7 +75,6 @@ interface ChannelOptions {
       replyToMessageId?: string;
       receiptOnly?: boolean;
       persistOrdinary: (client: PoolClient) => Promise<void>;
-      persistVerification?: (client: PoolClient, response: SubmitMessageResponse) => Promise<void>;
     },
   ) => Promise<
     | {
@@ -112,6 +116,19 @@ interface ChannelOptions {
       stopSignal?: AbortSignal;
     },
   ) => Promise<void>;
+  acceptInteraction?: (
+    client: PoolClient,
+    input: {
+      threadId: string;
+      sourceId: string;
+      channel: string;
+      messageId: string;
+      replyToMessageId: string;
+      text: string;
+      choiceIds: string[];
+      stopSignal?: AbortSignal;
+    },
+  ) => Promise<string>;
   reacted?: (messageId: string, reaction: string | null) => Promise<unknown>;
   subscribe: (listener: () => void) => () => void;
   refresh?: () => void;
@@ -610,6 +627,124 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     if (approval && channelText(approval.text).text === approval.text.trim()) return approval;
   }
 
+  async function pendingTelegramInteraction(database: Pool | PoolClient, messageId: string) {
+    try {
+      const { rows } = await database.query<{ id: string; options: Array<{ label: string }> }>(
+        `SELECT id,options FROM card_interactions
+         WHERE owner_id=$1 AND message_id=$2 AND status='open' AND NOT multiple
+         ORDER BY created_at DESC LIMIT 1`,
+        [ownerId, messageId],
+      );
+      const row = rows[0];
+      if (!row || !Array.isArray(row.options) || !row.options.length || row.options.length > 6)
+        return undefined;
+      return row;
+    } catch (error) {
+      if ((error as { code?: string })?.code === '42P01') return undefined;
+      throw error;
+    }
+  }
+
+  const cardInteractions = createCardInteractions(pool, ownerId);
+
+  async function acceptInteraction(input: InboundInteraction, channelId: string) {
+    if (channelId !== 'telegram' || input.channelId !== channelId) return;
+    const identity = {
+      provider: channelId,
+      account_id: input.accountId,
+      sender_id: input.senderId,
+      thread_id: input.threadId,
+    };
+    const stop = options.stopSignal?.();
+    const signal = stop ? AbortSignal.any([receiving.signal, stop]) : receiving.signal;
+    const active = () =>
+      !signal.aborted &&
+      !options.admission?.paused &&
+      !options.admission?.closed &&
+      permitted(identity);
+    let result: Parameters<InboundInteraction['acknowledge']>[0] = 'unavailable';
+    if (active()) {
+      result = await transaction<Parameters<InboundInteraction['acknowledge']>[0]>(
+        async (client) => {
+          const current = await options.activeThread?.(client);
+          const row = (
+            await client.query<{
+              options: Array<{ id: string; label: string }>;
+              thread_id: string;
+            }>(
+              "SELECT options,thread_id FROM card_interactions WHERE id=$1 AND owner_id=$2 AND status='open' FOR UPDATE",
+              [input.interactionId, ownerId],
+            )
+          ).rows[0];
+          if (!row || (current && current.id !== row.thread_id) || !active()) return 'unavailable';
+          const option = row.options?.[input.optionIndex];
+          if (!option) return 'unavailable';
+          const outcome = await cardInteractions.selectInteraction(client, input.interactionId, [
+            option.id,
+          ]);
+          if (!outcome.ok) return 'unavailable';
+          if (!outcome.alreadySelected) {
+            const text = choiceAnswerText(outcome.selected);
+            const channel = conversationChannel(identity);
+            const sourceId = `interaction:${input.interactionId}:${option.id}`;
+            const messageId = randomUUID();
+            const turnId = options.acceptInteraction
+              ? await options.acceptInteraction(client, {
+                  threadId: row.thread_id,
+                  sourceId,
+                  channel,
+                  messageId,
+                  replyToMessageId: outcome.interaction.messageId,
+                  text,
+                  choiceIds: outcome.selected.map((opt) => opt.id),
+                  stopSignal: stop,
+                })
+              : await options.submit(
+                  text,
+                  sourceId,
+                  client,
+                  channel,
+                  messageId,
+                  undefined,
+                  outcome.interaction.messageId,
+                  undefined,
+                  undefined,
+                  stop,
+                );
+            await client.query(
+              `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,message_id,state,turn_id,owner_id,channel,conversation_thread_id)
+               VALUES($1,$2,$3,$4,$5,$6,now(),$7,'submitted',$8,$9,$10,$11) ON CONFLICT(source_id) DO NOTHING`,
+              [
+                sourceId,
+                channelId,
+                input.accountId,
+                input.senderId,
+                input.threadId,
+                text,
+                messageId,
+                turnId,
+                ownerId,
+                channel,
+                row.thread_id,
+              ],
+            );
+          }
+          return 'recorded';
+        },
+        pool,
+        signal,
+      ).catch((cause) => {
+        logFailure('channel_interaction_failed', cause);
+        return 'unavailable' as const;
+      });
+    }
+    await input.acknowledge(result).catch((cause) => {
+      logRepeatedFailure('channel_interaction_ack_failed', channelId, cause, {
+        provider: channelId,
+      });
+    });
+  }
+
   async function acceptApproval(input: InboundApproval, channelId: string) {
     if (channelId !== 'telegram' || input.channelId !== channelId) return;
     const identity = {
@@ -838,7 +973,6 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       const acceptedMessageId = inboundMessageId(ownerId, sourceId);
       let verification: Awaited<ReturnType<NonNullable<ChannelOptions['acceptVerification']>>>;
       let ordinaryPersisted = false;
-      let verificationPersisted = false;
       const persist = async (database: PoolClient, strict = true) => {
         if (closed || replacing || receiveSignal.aborted || !permitted(identity)) {
           if (!strict) return false;
@@ -928,75 +1062,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
               await persist(client);
               ordinaryPersisted = true;
             },
-            persistVerification: async (client, response) => {
-              verification = response;
-              verificationPersisted = true;
-              if (
-                closed ||
-                replacing ||
-                !permitted(identity) ||
-                response.messageId !== acceptedMessageId
-              )
-                return;
-              if (!(await currentConversation(client))) return;
-              const current = await client.query(
-                `SELECT 1 FROM messages m JOIN turns u ON u.id=m.turn_id JOIN threads th ON th.id=m.thread_id
-                 WHERE m.id=$1 AND m.owner_id=$2 AND m.thread_id=$3 AND m.turn_id=$4
-                   AND u.owner_id=$2 AND u.thread_id=m.thread_id AND u.channel=$5
-                   AND th.owner_id=$2 AND th.archived_at IS NULL FOR SHARE OF th`,
-                [
-                  acceptedMessageId,
-                  ownerId,
-                  response.threadId,
-                  response.turnId,
-                  conversationChannel(identity),
-                ],
-              );
-              if (!current.rowCount) return;
-              await client.query('SAVEPOINT channel_verification_receipt');
-              const persisted = await persist(client, false);
-              if (
-                persisted &&
-                response.verificationStatus === 'unavailable' &&
-                !closed &&
-                !replacing &&
-                permitted(identity)
-              ) {
-                const noticeId = inboundMessageId(
-                  ownerId,
-                  `verification-failure:${acceptedMessageId}`,
-                );
-                await client.query(
-                  `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
-                   VALUES($1,$2,'assistant','',$3,$4) ON CONFLICT(id) DO NOTHING`,
-                  [noticeId, ownerId, response.threadId, response.turnId],
-                );
-                await client.query(
-                  `INSERT INTO channel_outbox(message_id,source_id,presentation)
-                   SELECT id,$2,$3 FROM messages WHERE id=$1 AND owner_id=$4 AND thread_id=$5 AND turn_id=$6
-                   ON CONFLICT(message_id) DO NOTHING`,
-                  [
-                    noticeId,
-                    sourceId,
-                    JSON.stringify({ kind: 'verification_failure', verification: 'otp' }),
-                    ownerId,
-                    response.threadId,
-                    response.turnId,
-                  ],
-                );
-              }
-              if (closed || replacing || !permitted(identity))
-                await client.query('ROLLBACK TO SAVEPOINT channel_verification_receipt');
-              await client.query('RELEASE SAVEPOINT channel_verification_receipt');
-            },
           });
-          if (!verification && !ordinaryPersisted && !recorded) {
-            if (hasMedia && (modelMissingAtIntake || options.modelConfigured?.() === false)) {
-              await requestModelSetup();
-              return;
-            }
-            throw new Error('Verification did not persist its receipt.');
-          }
         } catch (cause) {
           const conflict =
             cause instanceof Error && 'statusCode' in cause && cause.statusCode === 409;
@@ -1027,7 +1093,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         await requestModelSetup();
         return;
       }
-      if (!ordinaryPersisted && !verificationPersisted) await transaction(persist, pool);
+      if (!ordinaryPersisted) await transaction(persist, pool);
     } catch (cause) {
       logFailure('channel_accept_failed', cause);
       throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {
@@ -1513,6 +1579,10 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         options.acceptApproval &&
         text === row.text.trim() &&
         (await pendingTelegramApproval(pool, row.message_id));
+      const interaction =
+        row.provider === 'telegram' && !approval
+          ? await pendingTelegramInteraction(pool, row.message_id)
+          : undefined;
       const post = (database: Pool | PoolClient) => {
         const input = {
           ...(target
@@ -1535,6 +1605,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
                     : { approve: 'Approve', decline: 'Cancel' },
               }
             : {}),
+          ...(interaction ? { interaction } : {}),
           ...(attachments
             ? {
                 attachments,
@@ -1783,7 +1854,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       const last = presence.get(channel);
       if (
         !settings?.presenceMs ||
-        !row.source_id.startsWith(prefix) ||
+        (!row.source_id.startsWith(prefix) && !row.source_id.startsWith('interaction:')) ||
         (settings.replyWindowMs !== undefined &&
           Date.now() - row.at.getTime() >= settings.replyWindowMs) ||
         (last?.status === status && Date.now() - last.at < settings.presenceMs)
@@ -1904,6 +1975,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
               completePairing,
               (reaction) => acceptReaction(reaction, reaction.channelId),
               (approval) => acceptApproval(approval, approval.channelId),
+              (interaction) => acceptInteraction(interaction, interaction.channelId),
             );
             pollingError = null;
           } catch (cause) {
@@ -2058,6 +2130,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
               await acceptReaction(reaction, channelId);
             for (const approval of result.approvals ?? [])
               await acceptApproval(approval, channelId);
+            for (const interaction of result.interactions ?? [])
+              await acceptInteraction(interaction, channelId);
             if (result.messages?.length) void drain();
             if (result.pairing?.channelId === channelId) await completePairing(result.pairing);
           }
