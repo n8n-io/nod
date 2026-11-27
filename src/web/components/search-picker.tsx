@@ -251,6 +251,7 @@ export function SearchPicker(props: SearchPickerProps) {
               if (
                 event.defaultPrevented ||
                 event.nativeEvent.isComposing ||
+                event.keyCode === 229 ||
                 event.altKey ||
                 event.metaKey ||
                 event.ctrlKey ||
