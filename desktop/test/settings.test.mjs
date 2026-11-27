@@ -638,6 +638,7 @@ async function runningDesktop(
   const externalURLs = [];
   const trashed = [];
   const blockers = new Map();
+  const systemHolds = [];
   let blockerId = 0;
   const updateMenu = {};
   const restartMenu = {};
@@ -889,6 +890,10 @@ async function runningDesktop(
     },
     clipboard: { writeText: (text) => clipboardText.push(text) },
     powerMonitor: { isOnBatteryPower: () => onBattery() },
+    createSystemAwake: () => ({
+      set: (hold) => systemHolds.push(hold),
+      close: () => systemHolds.push('closed'),
+    }),
     powerSaveBlocker: {
       start: (type) => {
         blockers.set(++blockerId, type);
@@ -1178,6 +1183,7 @@ async function runningDesktop(
     externalURLs,
     trashed,
     awake: () => [...blockers.values()],
+    systemHolds,
     rendererReady,
     healthWaits: () => healthWaits,
     updateMenu,
@@ -5024,48 +5030,90 @@ test('quitting releases the computer at once and a late working message cannot t
 });
 
 test('the computer stays awake for an upcoming run or phone channel only on power and while the setting is on', async (t) => {
-  let upcoming = { running: [], next: null, channels: [] };
-  let battery = false;
-  const f = await runningDesktop(
-    t,
-    async (url) =>
-      Response.json(new URL(url).pathname === '/api/desktop/status' ? upcoming : { ok: true }),
-    { allowStart: true, onBattery: () => battery },
-  );
-  f.crash();
-  assert.equal((await f.prepare()).phase, 'ready');
-  await f.checkWaiting();
-  assert.deepEqual(f.awake(), []);
-  upcoming = {
-    running: [],
-    next: { title: 'Synthetic briefing', at: new Date(Date.now() + 3_600_000).toISOString() },
-    channels: [],
-  };
-  await f.checkWaiting();
-  assert.deepEqual(f.awake(), ['prevent-app-suspension']);
-  battery = true;
-  f.holdAwake();
-  assert.deepEqual(f.awake(), []);
-  battery = false;
-  upcoming = { running: [], next: null, channels: ['telegram'] };
-  await f.checkWaiting();
-  assert.deepEqual(f.awake(), ['prevent-app-suspension']);
-  f.showEngine();
-  const window = f.windows.at(-1);
-  const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
-  await f.handlers.get('nod:preferences:save')(event, { keepAwake: false });
-  assert.equal((await f.storage.reopen().get()).keepAwake, false);
-  assert.deepEqual(f.awake(), []);
-  f.children[0].emit('message', { type: 'nod-working', working: true });
-  assert.deepEqual(f.awake(), ['prevent-app-suspension']);
-  f.children[0].emit('message', { type: 'nod-working', working: false });
-  await f.handlers.get('nod:preferences:save')(event, { keepAwake: true });
-  assert.deepEqual(f.awake(), ['prevent-app-suspension']);
-  const quitting = f.quit(async () => {});
-  assert.deepEqual(f.awake(), []);
-  f.crash();
-  await quitting;
+  for (const platform of ['darwin', 'win32'])
+    await t.test(platform, async (t) => {
+      let upcoming = { running: [], next: null, channels: [] };
+      let battery = false;
+      const f = await runningDesktop(
+        t,
+        async (url) =>
+          Response.json(new URL(url).pathname === '/api/desktop/status' ? upcoming : { ok: true }),
+        { allowStart: true, onBattery: () => battery, platform },
+      );
+      const awake = (held) => {
+        assert.deepEqual(f.awake(), held ? ['prevent-app-suspension'] : []);
+        assert.equal(f.systemHolds.at(-1) ?? false, platform === 'win32' && held);
+      };
+      f.crash();
+      assert.equal((await f.prepare()).phase, 'ready');
+      await f.checkWaiting();
+      awake(false);
+      upcoming = {
+        running: [],
+        next: { title: 'Synthetic briefing', at: new Date(Date.now() + 3_600_000).toISOString() },
+        channels: [],
+      };
+      await f.checkWaiting();
+      awake(true);
+      battery = true;
+      f.holdAwake();
+      awake(false);
+      battery = false;
+      upcoming = { running: [], next: null, channels: ['telegram'] };
+      await f.checkWaiting();
+      awake(true);
+      f.showEngine();
+      const window = f.windows.at(-1);
+      const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+      await f.handlers.get('nod:preferences:save')(event, { keepAwake: false });
+      assert.equal((await f.storage.reopen().get()).keepAwake, false);
+      awake(false);
+      f.children[0].emit('message', { type: 'nod-working', working: true });
+      awake(true);
+      f.children[0].emit('message', { type: 'nod-working', working: false });
+      await f.handlers.get('nod:preferences:save')(event, { keepAwake: true });
+      awake(true);
+      const quitting = f.quit(async () => {});
+      assert.deepEqual(f.awake(), []);
+      f.crash();
+      await quitting;
+      assert.equal(f.systemHolds.includes('closed'), platform === 'win32');
+      assert.equal(f.systemHolds.filter((hold) => hold !== 'closed').at(-1) ?? false, false);
+    });
 });
+
+test(
+  'Windows keep-awake helper holds a system power request until Nod releases it',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const { createSystemAwake } = await import('../main/system-awake.mjs');
+    const failures = [];
+    const helper = createSystemAwake({ onFailure: (reason) => failures.push(reason) });
+    const reason = 'Nod is keeping this computer awake for its work and schedules';
+    const listed = async () => {
+      const { stdout } = await promisify(execFile)('powercfg.exe', ['/requests']);
+      const system = /SYSTEM:\r?\n([\s\S]*?)(?:\r?\n\r?\n|$)/.exec(stdout)?.[1] ?? '';
+      return system.includes(reason);
+    };
+    const until = async (expected) => {
+      for (let attempt = 0; attempt < 120 && (await listed()) !== expected; attempt++)
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      return listed();
+    };
+    try {
+      helper.set(true);
+      assert.equal(await until(true), true);
+      helper.set(false);
+      assert.equal(await until(false), false);
+      helper.set(true);
+      assert.equal(await until(true), true);
+    } finally {
+      helper.close();
+    }
+    assert.equal(await until(false), false);
+    assert.deepEqual(failures, []);
+  },
+);
 
 test('closing the app leaves Nod on and turning it off names what stops first', async (t) => {
   const prompts = [];

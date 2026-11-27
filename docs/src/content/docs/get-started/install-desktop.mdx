@@ -161,6 +161,8 @@ If Nod's background service stops unexpectedly, Nod restarts it after 2 seconds,
 
 **Keep this computer awake when plugged in** is on by default in **Settings → General**. While your computer is plugged in and Nod has a scheduled task or a connected Telegram or WhatsApp channel, Nod stops it from going to sleep when it's left idle, so runs and replies still happen. The screen still turns off and locks. On battery, Nod keeps the computer awake only while it's working.
 
+On Windows, Nod also asks Windows to keep the system running through a small hidden PowerShell helper, because many laptops otherwise go to standby when the screen turns off. If the helper can't start, for example on a managed PC that blocks PowerShell, Nod writes the reason to its startup log, and such a laptop may still go to standby.
+
 Closing a laptop's lid or choosing **Sleep** still puts the computer to sleep. A Mac laptop keeps running with its lid closed only when it's plugged in with an external display. When the computer wakes, a missed run happens once, and the chat says it was late. To keep schedules running while your computer sleeps, [run Nod on a server](/deploy/self-host/).
 
 When connected to a server, the server keeps your assistant, channels and schedules running after you turn off the app or put your computer to sleep. The server must stay running and connected, and the keep-awake setting isn't shown.

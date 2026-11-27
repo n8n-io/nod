@@ -82,6 +82,7 @@ import {
   setOpenAtLogin,
 } from './login-item.mjs';
 import { createStartupFeedbackClient } from './feedback-client.mjs';
+import { createSystemAwake } from './system-awake.mjs';
 
 trustSystemCertificates();
 
@@ -149,6 +150,13 @@ const agentDesktop = app.isPackaged
     : join(process.resourcesPath, 'agent-desktop')
   : join(desktopRoot, 'node_modules', 'agent-desktop', 'bin');
 const executable = process.platform === 'win32' ? '.exe' : '';
+const systemAwake =
+  process.platform === 'win32'
+    ? createSystemAwake({
+        onFailure: (reason) =>
+          void writeDiagnostic(`Windows keep-awake failed. ${reason}`).catch(() => {}),
+      })
+    : undefined;
 const computerOverlay = createComputerOverlay({
   onStop: () => {
     void computerHelper.cancel();
@@ -2076,6 +2084,7 @@ function holdAwake() {
       (preferences.keepAwake &&
         Boolean(waiting?.next || waiting?.channels.length) &&
         !powerMonitor.isOnBatteryPower()));
+  systemAwake?.set(hold);
   if (hold && awakeBlocker === undefined)
     awakeBlocker = powerSaveBlocker.start('prevent-app-suspension');
   if (!hold && awakeBlocker !== undefined) {
@@ -3064,6 +3073,7 @@ async function quit(complete, failure = 'Nod could not finish shutting down.', u
   quitting = true;
   startupFeedback.close();
   stayAwake(false);
+  systemAwake?.close();
   await persistCurrentZoomFactor().catch(
     (error) => void writeDiagnostic(error.message).catch(() => {}),
   );

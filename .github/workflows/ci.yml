@@ -345,6 +345,8 @@ jobs:
             --test-reporter=spec --test-reporter-destination=stdout `
             --test-reporter=junit --test-reporter-destination=.local/windows-setup/desktop.xml `
             desktop/test/settings.test.mjs
+      - name: Check the Windows keep-awake power request
+        run: node --test --test-name-pattern="Windows keep-awake helper" desktop/test/settings.test.mjs
       - name: Check Windows browser app sign-in bridge
         shell: pwsh
         run: |

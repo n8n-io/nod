@@ -125,7 +125,7 @@ export function selectChecks(paths, event = 'workflow_dispatch') {
       )
         enable('macos');
       if (
-        /^desktop\/(package\.json|pnpm-(lock|workspace)\.yaml|main\/(settings|windows-update)\.mjs|runtime\/(index\.mjs|windows\.mjs|database\.mjs|protect-profile\.ps1)|scripts\/(drop-admin-privileges\.ps1|check-windows-updates\.mjs|postgres-binaries\.mjs|prepare-windows-electron\.mjs|windows-installer\.nsi)|test\/settings\.test\.mjs)$/.test(
+        /^desktop\/(package\.json|pnpm-(lock|workspace)\.yaml|main\/(settings|system-awake|windows-update)\.mjs|runtime\/(index\.mjs|windows\.mjs|database\.mjs|protect-profile\.ps1)|scripts\/(drop-admin-privileges\.ps1|check-windows-updates\.mjs|postgres-binaries\.mjs|prepare-windows-electron\.mjs|windows-installer\.nsi)|test\/settings\.test\.mjs)$/.test(
           path,
         )
       )
