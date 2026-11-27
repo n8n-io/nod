@@ -234,18 +234,7 @@ test(
           await computer.close('attachment');
           await computer.act('popup', { action: 'open', url: `${fixture.origin}/session` });
           const beforePopup = fixture.authenticatedDownloads();
-          try {
-            await computer.act('popup', { action: 'click', selector: '#popup' });
-          } catch (error) {
-            if (
-              !(error instanceof Error) ||
-              !(error.cause instanceof BrowserActionError) ||
-              error.cause.code !== 'browser_observation_failed'
-            )
-              throw error;
-            assert.ok((await computer.screenshot('popup'))?.length);
-            assert.equal(computer.screenStatus!('popup').state, 'live');
-          }
+          await computer.act('popup', { action: 'click', selector: '#popup' });
           assert.deepEqual(
             (await computer.download!('popup', { name: 'popup.pdf' })).bytes,
             browserDownloadPdf,

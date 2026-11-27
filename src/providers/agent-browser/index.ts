@@ -466,7 +466,19 @@ export function createAgentBrowserComputer(options: {
       opened.at(-1) ??
       (state.targetId && tabs.includes(state.targetId) ? state.targetId : tabs.at(-1));
     if (!next || next === state.targetId) return;
-    await requestDaemon(state.socket, { action: 'tab_switch', tabId: next }, signal);
+    try {
+      await requestDaemon(state.socket, { action: 'tab_switch', tabId: next }, signal);
+    } catch (error) {
+      state.seenTabs.delete(next);
+      if (
+        signal?.aborted ||
+        error instanceof DaemonTransportError ||
+        !state.targetId ||
+        !owner.watch.tabs(state.root).includes(state.targetId)
+      )
+        throw error;
+      return;
+    }
     state.targetId = next;
   }
 

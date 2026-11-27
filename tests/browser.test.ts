@@ -40,6 +40,7 @@ import {
 } from '../src/providers/agent-browser/index.ts';
 import {
   DaemonCommandError,
+  DaemonTransportError,
   existingDaemonCommand,
 } from '../src/providers/agent-browser/screens.ts';
 import { RuntimeTimeLimitError, runProcess } from '../src/providers/process.ts';
@@ -2971,6 +2972,62 @@ describe('native browser controls', { concurrency: 3 }, () => {
         for (const id of ['a', 'c'])
           assert.match((await page(id)).text, new RegExp(`${id} signed in`));
         assert.equal((await page('c')).url, `${origin}/c`);
+      } finally {
+        await computer.dispose().catch(() => {});
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test(
+    'native sessions report a driver failure during a tab switch instead of continuing on the old tab',
+    { skip: process.env.NOD_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 120_000 },
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'nod-tab-switch-native-'));
+      const server = createHttpServer((request, response) => {
+        response.setHeader('content-type', 'text/html');
+        response.end(
+          request.url === '/popup'
+            ? '<h1>Popup page</h1>'
+            : '<h1>Opener</h1><a id="popup" href="/popup" target="_blank">Open popup</a>',
+        );
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      assert.ok(address && typeof address !== 'string');
+      const origin = `http://127.0.0.1:${address.port}`;
+      let failSwitch = false;
+      const computer = createAgentBrowserComputer({
+        ...(process.platform === 'linux'
+          ? containerBrowserOptions(directory)
+          : {
+              dataRoot: directory,
+              browserExecutable: process.env.NOD_TEST_BROWSER_EXECUTABLE,
+              headless: true,
+            }),
+        privateNetwork: true,
+        daemonCommand: async (path, command, signal, timeoutMs) => {
+          if (failSwitch && command.action === 'tab_switch')
+            throw new DaemonTransportError('timeout');
+          return existingDaemonCommand(path, command, signal, timeoutMs);
+        },
+      });
+      try {
+        await computer.act('a', { action: 'open', url: origin });
+        failSwitch = true;
+        await assert.rejects(
+          computer.act('a', { action: 'click', selector: '#popup' }),
+          (error) => {
+            assert.ok(error instanceof DaemonTransportError);
+            assert.equal(error.kind, 'timeout');
+            return true;
+          },
+        );
+        failSwitch = false;
+        await computer.act('a', { action: 'open', url: origin });
+        assert.match((await computer.act('a', { action: 'snapshot' })).text, /Opener/);
       } finally {
         await computer.dispose().catch(() => {});
         server.closeAllConnections();
