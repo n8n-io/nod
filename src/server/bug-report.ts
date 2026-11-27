@@ -301,7 +301,7 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
     ),
     collect(
       'turns',
-      `SELECT id,parent_turn_id,session_id,source,channel,status,background,proactive,waiting_reason,
+      `SELECT id,parent_turn_id,session_id,source,split_part(channel,':',1) AS channel,status,background,proactive,waiting_reason,
        EXISTS(SELECT 1 FROM turn_events e WHERE e.turn_id=turns.id AND e.type='source_screened') AS screened,
        error IS NOT NULL AS error_present,
        CASE WHEN error IS NULL THEN NULL WHEN octet_length(error)<=65536 THEN error ELSE '[error omitted: content limit]' END AS error,
@@ -531,6 +531,8 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
           'message_owner_changed',
           'channel_access_changed',
           'thread_changed',
+          'question_closed',
+          'message_changed',
           'reply_window_closed',
           'presentation_unavailable',
         ]),
