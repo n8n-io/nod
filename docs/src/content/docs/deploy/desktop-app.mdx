@@ -40,10 +40,10 @@ The server owns account onboarding. Electron owns device preferences and local s
 | State                                               | Owner                     |
 | --------------------------------------------------- | ------------------------- |
 | Account onboarding and model connections            | The connected server      |
-| Theme, notifications and launch at login            | The desktop app           |
+| Theme, notifications, sound and launch at login     | The desktop app           |
 | Device setup progress and local runtime preparation | The local desktop profile |
 
-The web app selects a browser, remote desktop or local desktop adapter from the preload contract. Contract version 1 names the desktop mode. Only local mode exposes runtime preparation, device setup and setup reconciliation. Preference changes use a separate command that accepts only theme, notifications and launch at login. Native handlers check the owning main frame and mode before a command runs.
+The web app selects a browser, remote desktop or local desktop adapter from the preload contract. Contract version 1 names the desktop mode. Only local mode exposes runtime preparation, device setup and setup reconciliation. Preference changes use a separate command that accepts only theme, notifications, notification sound and launch at login. Native handlers check the owning main frame and mode before a command runs.
 
 ```mermaid
 flowchart LR
