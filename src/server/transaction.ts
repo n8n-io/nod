@@ -1,5 +1,9 @@
 import type { Pool, PoolClient } from 'pg';
 
+const begin =
+  process.platform === 'win32'
+    ? 'BEGIN'
+    : "BEGIN; SET LOCAL client_connection_check_interval='100ms'";
 const committed = new WeakMap<object, Array<() => void>>();
 const reverted = new WeakMap<object, Array<() => void>>();
 
@@ -52,9 +56,7 @@ export async function transaction<T>(
   };
   try {
     signal?.throwIfAborted();
-    await client.query(
-      signal ? "BEGIN; SET LOCAL client_connection_check_interval='100ms'" : 'BEGIN',
-    );
+    await client.query(signal ? begin : 'BEGIN');
     committed.set(client, callbacks);
     reverted.set(client, rollbackCallbacks);
     const value = await fn(client);
