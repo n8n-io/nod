@@ -2,6 +2,58 @@
 
 Releases from before the rename to Nod are the `desktop-v*` [GitHub releases](https://github.com/n8n-io/nod/releases).
 
+## 0.10.2 - 2026-11-27
+
+### Features
+
+- **desktop:** Keep Nod on when people leave. [#1596](https://github.com/n8n-io/nod/pull/1596) (3a2c01f)
+- **cards:** Show verifiable confirmation links and copyable references on facts cards. [commit](https://github.com/n8n-io/nod/commit/e58a7e6cb0659425d775f176bd7518790703be61) (e58a7e6)
+- **vault:** Sign in on the website's real page instead of a private form. [#1594](https://github.com/n8n-io/nod/pull/1594) (01ed8a1)
+- **desktop:** Silent notifications by default with a Play a sound switch. [#1589](https://github.com/n8n-io/nod/pull/1589) (d17c097)
+
+### Fixes
+
+- **thread:** Preserve labels when stripping URLs from speech text. [commit](https://github.com/n8n-io/nod/commit/9b1d0c53d008288a41f8a29f5ee486716a660252) (9b1d0c5)
+- **cards:** Validate action URL hashes and address review nits. [commit](https://github.com/n8n-io/nod/commit/91b2f4550dda10bbb0a693e6d70eff0885dc0b13) (91b2f45)
+- **cards:** Preserve action URL hashes and reject invalid action links. [commit](https://github.com/n8n-io/nod/commit/f1b1b1627803cddbe2c1a7e41a88ce3f9d18c3bc) (f1b1b16)
+- **desktop:** Reload the runtime images when a container stops at startup. [#1597](https://github.com/n8n-io/nod/pull/1597) (e21f618)
+- **chat:** Tighter message line height and real bold. [#1593](https://github.com/n8n-io/nod/pull/1593) (f43758b)
+- **runtime:** Improve multi-turn browser ordering reliability and chat UX. [commit](https://github.com/n8n-io/nod/commit/741a3a0528d0a79aeeabce31a47ae1880179bcab) (741a3a0)
+- **computer-use:** Tell a macOS app from its same-named helper processes. [commit](https://github.com/n8n-io/nod/commit/b6d3a3def8fc2b6710d64e29b2fa135c0091a57a) (b6d3a3d)
+- **desktop:** Stop asking to replace text when computer use only adds to a field. [commit](https://github.com/n8n-io/nod/commit/0f45312b1a3e35f1782241b845420921f8494618) (0f45312)
+
+### Performance
+
+- **memory:** Speed up recall, unblock ranker, and guide compaction summaries (LAB-2730). [commit](https://github.com/n8n-io/nod/commit/5c22889a8c1ae2e09ef1b3f92b9e98922f2c20a9) (5c22889)
+- **runtime:** Speed up main chat responses and delegate multi-step work to tasks. [commit](https://github.com/n8n-io/nod/commit/9789911678e3d58d8ec73757cf2b081dce18fff0) (9789911)
+
+### Documentation
+
+- **desktop:** Say that selections Nod didn't make can be replaced by typing. [commit](https://github.com/n8n-io/nod/commit/826ee44fcbbfb34e1b98897a721611b64b62e925) (826ee44)
+
+### Other changes
+
+- Only close open choice cards on explicit card choices (LAB-2720). [commit](https://github.com/n8n-io/nod/commit/9c96cc33eef3e5bc80639bf47f35d92e6bb3dcf6) (9c96cc3)
+- Improve reply readability and fix choice card UI (LAB-2720). [commit](https://github.com/n8n-io/nod/commit/8a5d7f88c82911fdc786fe4fee5924d44163946d) (8a5d7f8)
+
+<details>
+<summary>Maintenance (2 changes)</summary>
+
+- **evals:** Add a happy-path scenario set. [#1602](https://github.com/n8n-io/nod/pull/1602) (55967e3)
+- **computer-use:** Name the app whose display name is the bundle ID. [commit](https://github.com/n8n-io/nod/commit/102f6fe9e158247dc2a51375d873c5f8aa80ae59) (102f6fe)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/nod/compare/nod-v0.10.1...55967e37a3da9e542d71988d6d5372c04ab745c3)
+
+<details>
+<summary>Build details</summary>
+
+Source: `55967e37a3da9e542d71988d6d5372c04ab745c3`
+Previous release: `nod-v0.10.1`
+
+</details>
+
 ## 0.10.1 - 2026-11-27
 
 ### Features

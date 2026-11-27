@@ -1,10 +1,7 @@
 {
-  "version": "0.10.1",
-  "previousTag": "nod-v0.10.0",
-  "source": "f4497ca632e1a4cbfb3412730a297e74a210df34",
-  "highlights": "## Chat no longer waits for setup 🚀\n\nYou can talk to Nod while its private computer is still downloading and starting. The workspace and browser finish setting up in the background, and only the work that needs them waits.\n\nIf the private computer can't start, chat, apps, memory and schedules still work. Nod says what went wrong and offers a fix, such as **Install WSL** on Windows.\n\nThe first start after this update moves your saved data once, so it can take a little longer than usual.\n\n## Apps stay signed in 🔌\n\nNotion, n8n, Outreach and other apps you connect by address no longer sign out after a brief outage, or when your computer wakes before it's back online. Nod tries again the next time it uses them.\n\nIf an app already asks you to reconnect, reconnect it once after updating.\n\n## Also in this release\n\n- **Retry:** when a reply fails before Nod did anything, chat offers a **Retry** button.\n- **Telegram:** choices such as flight offers show up as buttons you can tap.\n- **Skills:** skills Nod learns keep a history, and you can restore an earlier version on the **Memory** page.\n- **Web tasks:** Nod can take several steps on a website in one go.\n- **Mac:** Nod's window and Dock icon stay visible while Nod uses your computer.",
-  "video": {
-    "url": "https://github.com/user-attachments/assets/6cb9f696-734c-45cb-8b7a-ed04581b3343",
-    "releaseSha256": "e5ada1310c46b7541bd9e1499c64ddd85c0d5c8b8be048d7e87ab02cd433c522"
-  }
+  "version": "0.10.2",
+  "previousTag": "nod-v0.10.1",
+  "source": "55967e37a3da9e542d71988d6d5372c04ab745c3",
+  "highlights": "## Nod stays on when you close it 🌙\n\nClosing the window or pressing ⌘Q now closes the app, not Nod. Nod keeps running in the menu bar or tray, so schedules and Telegram or WhatsApp replies keep working. To stop it, choose **Turn Off Nod**. If something would stop, Nod tells you first.\n\nWith **Open at login**, Nod starts in the background when you sign in. It restarts itself if it stops unexpectedly, and installs updates while idle.\n\n**Keep this computer awake when plugged in** is new in **Settings → General**, on by default. With a schedule or a connected channel, a plugged-in computer won't sleep when left idle. Closing the lid still sleeps.\n\n## Sign in on the website's own page 🔐\n\nWhen a task needs a login you haven't saved, you sign in on the website's real page in the **Browser** panel, with its real address.\n\n## Also in this release\n\n- **Faster chat:** replies come back sooner, and longer research runs as a task.\n- **Easier to read:** clearer replies, fixed choice cards, and links to check a booking or order.\n- **Quiet notifications:** silent by default. Turn on **Play a sound** in **Settings → Notifications**.\n- **Online orders:** Nod tries to continue the same order when you follow up.\n- **Setup:** Nod repairs damaged files that left it stuck at **Preparing your browser…**.\n- **Computer use:** no confirmation when Nod only adds text, and apps such as Thunderbird work.",
+  "video": null
 }
