@@ -2403,11 +2403,18 @@ export function Chat({
                       message.createdAt,
                       dateFormat,
                     )) && (
-                    <div className="day-divider">
+                    <div
+                      className="day-divider"
+                      ref={
+                        !index && !hasEarlier && message.id === unreadBoundary
+                          ? unreadDivider
+                          : undefined
+                      }
+                    >
                       <span>{formatDayLabel(message.createdAt, dateFormat)}</span>
                     </div>
                   )}
-                  {message.id === unreadBoundary && (
+                  {message.id === unreadBoundary && (index > 0 || hasEarlier) && (
                     <div
                       className="unread-divider"
                       ref={unreadDivider}
