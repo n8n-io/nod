@@ -5,6 +5,7 @@ import type { ProviderUsageEvent } from '../../ports/provider-usage.ts';
 import type { SpeechVoice } from '../../shared/speech.ts';
 import { appPages } from '../../shared/app-links.ts';
 import { nodFetch } from '../attribution.ts';
+import { modelServiceError } from '../model-error.ts';
 import { readSpeechResponse } from '../speech.ts';
 
 export class ElevenLabsConnectionError extends SpeechProviderError {}
@@ -107,8 +108,19 @@ export function createElevenLabsSpeechProvider(options: {
   let loadedAt = 0;
   let loadGeneration = 0;
   let catalogGeneration = 0;
-  async function checkResponse(response: Response, operation: 'synthesize' | 'transcribe') {
+  async function checkResponse(
+    response: Response,
+    operation: 'synthesize' | 'transcribe',
+    secret: string,
+  ) {
     if (![401, 403].includes(response.status)) return;
+    if (response.status === 401) {
+      const failure = await modelServiceError(response, 'ElevenLabs', [secret]);
+      if (failure.reason && failure.codes.includes('quota_exceeded'))
+        throw new SpeechProviderError(
+          `ElevenLabs refused this request: ${Array.from(failure.reason).slice(0, 300).join('')}`,
+        );
+    }
     await response.body?.cancel().catch(() => {});
     throw new SpeechProviderError(
       response.status === 401
@@ -218,7 +230,7 @@ export function createElevenLabsSpeechProvider(options: {
             signal: AbortSignal.any([AbortSignal.timeout(120_000), ...(signal ? [signal] : [])]),
           },
         );
-        await checkResponse(response, 'synthesize');
+        await checkResponse(response, 'synthesize', authorization);
         if (
           response.ok &&
           response.headers.get('content-type')?.split(';')[0].trim() !== 'audio/mpeg'
@@ -253,7 +265,7 @@ export function createElevenLabsSpeechProvider(options: {
           body,
           signal: AbortSignal.any([AbortSignal.timeout(120_000), ...(signal ? [signal] : [])]),
         });
-        await checkResponse(response, 'transcribe');
+        await checkResponse(response, 'transcribe', authorization);
         const result = z
           .object({ text: z.string().max(100_000) })
           .parse(

@@ -3299,6 +3299,51 @@ test('ElevenLabs preserves safe setup recovery through the speech service withou
   }
 });
 
+test('ElevenLabs keeps its own quota reason on a 401 and still asks to reconnect for a bad key', async () => {
+  const quota =
+    'This request exceeds your quota of 10000. You have 0 credits remaining, while 91 credits are required for this request.';
+  for (const [detail, expected] of [
+    [{ status: 'quota_exceeded', message: quota }, quota],
+    [{ code: 'quota_exceeded', message: quota }, quota],
+    [{ status: 'invalid_api_key', message: 'Invalid API key' }, /API key.*reconnect/i],
+    [
+      { status: 'invalid_api_key', message: 'Invalid API key; code: quota_exceeded' },
+      /API key.*reconnect/i,
+    ],
+    [{ code: 'quota_exceeded', message: 'q'.repeat(3000) }, /[^q]q{300}$/],
+  ] as const) {
+    const provider = createElevenLabsSpeechProvider({
+      apiKey: async () => 'fixture-private-key',
+      configured: () => true,
+      fetch: async (input) =>
+        new URL(String(input)).pathname === '/v2/voices'
+          ? Response.json({
+              voices: [{ voice_id: 'fixture_voice', name: 'Fixture' }],
+              has_more: false,
+            })
+          : Response.json({ detail }, { status: 401 }),
+    });
+    for (const attempt of [
+      () => provider.synthesize('Synthetic message.'),
+      () =>
+        provider.transcribe!({
+          bytes: Buffer.from('synthetic clip'),
+          mimeType: 'audio/wav',
+          name: 'voice.wav',
+        }),
+    ])
+      await assert.rejects(attempt(), (error) => {
+        assert.ok(error instanceof Error);
+        if (typeof expected === 'string') {
+          assert.ok(error.message.includes(expected));
+          assert.doesNotMatch(error.message, /reconnect/i);
+        } else assert.match(error.message, expected);
+        assert.doesNotMatch(error.message, /fixture-private/);
+        return true;
+      });
+  }
+});
+
 test('local pronunciation uses each bundled language dictionary and preserves Kokoro phonemes', async () => {
   const cases = [
     ['en-us', 'red fox', 'ɹˈɛd fˈɑːks'],
