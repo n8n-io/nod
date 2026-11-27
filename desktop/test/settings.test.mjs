@@ -11915,13 +11915,19 @@ test('computer use on Windows starts only windowed programs', async (t) => {
     await mkdir(release, { recursive: true });
     await writeFile(join(release, 'FixtureChat.exe'), program(2));
   }
-  await assert.rejects(desktop.helper.request({ op: 'locate', bundle: 'FixtureChat' }), /No program/);
+  await assert.rejects(
+    desktop.helper.request({ op: 'locate', bundle: 'FixtureChat' }),
+    /No program/,
+  );
   await writeFile(join(appDir, 'Update.exe'), program(2));
   assert.deepEqual(await desktop.helper.request({ op: 'open', bundle: 'FixtureChat' }), { pid: 9 });
   const newest = join(appDir, 'app-10.0', 'FixtureChat.exe');
   assert.equal((await desktop.calls()).at(-1), 'launch ' + newest);
   await writeFile(newest, program(3));
-  await assert.rejects(desktop.helper.request({ op: 'open', bundle: 'FixtureChat' }), /not a windowed app/);
+  await assert.rejects(
+    desktop.helper.request({ op: 'open', bundle: 'FixtureChat' }),
+    /not a windowed app/,
+  );
 });
 
 test('computer use on macOS reaches an app by bundle ID when helper processes share its name', async (t) => {
