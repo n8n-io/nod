@@ -111,6 +111,7 @@ const toolLabels = new Map([
   ['get search content', 'Reading search results'],
   ['flights', 'Searching flights'],
   ['browser', 'Using the browser'],
+  ['browser run', 'Using the browser'],
   ['computer', 'Using an app'],
   ['delegate', 'Working with helpers'],
   ['create audio', 'Making audio'],

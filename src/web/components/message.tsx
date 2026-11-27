@@ -357,6 +357,7 @@ export function MessageBubble({
   streaming = false,
   arriving = false,
   onReply,
+  onRetry,
   onAnswer,
   answersDisabled,
   onApprove,
@@ -385,6 +386,7 @@ export function MessageBubble({
   streaming?: boolean;
   arriving?: boolean;
   onReply?(quote?: string): void;
+  onRetry?(): void;
   onAnswer?: AnswerChoicesProps['onAnswer'];
   answersDisabled?: boolean;
   onApprove?(approved: boolean, label: string): Promise<boolean | 'unavailable'>;
@@ -490,13 +492,23 @@ export function MessageBubble({
     (choice) => chosenText !== undefined && choiceAnswerText([choice]) === chosenText,
   );
   const openAnswered = openChosen >= 0;
+  const interactionClosed = Boolean(
+    pickQuestion?.interaction &&
+    (pickQuestion.interaction.status === 'expired' ||
+      pickQuestion.interaction.status === 'superseded' ||
+      pickQuestion.interaction.status === 'cancelled'),
+  );
+  const interactionSelected = pickQuestion?.interaction?.selectedOptionIds;
+  const effectiveAnsweredIds = answeredIds ?? interactionSelected;
   const pickChoices = openChoices.length ? openChoices : (pickOptions ?? []);
   const answered = openChoices.length
     ? openChosen >= 0
       ? [openChosen]
       : []
-    : pickOptions && answeredIds
-      ? pickOptions.flatMap((option, index) => (answeredIds.includes(option.id) ? [index] : []))
+    : pickOptions && effectiveAnsweredIds
+      ? pickOptions.flatMap((option, index) =>
+          effectiveAnsweredIds.includes(option.id) ? [index] : [],
+        )
       : [];
   const pickedChoices = picked.map((index) => pickChoices[index]!);
   const pickedChoice = picked.length === 1 ? pickedChoices[0] : undefined;
@@ -505,9 +517,15 @@ export function MessageBubble({
         chosen: answered.length ? answered : picked,
         written,
         multiple,
-        sent: answered.length > 0 || openAnswered || Boolean(pickQuestion?.choiceAnswer),
+        sent:
+          answered.length > 0 ||
+          openAnswered ||
+          Boolean(pickQuestion?.choiceAnswer) ||
+          pickQuestion?.interaction?.status === 'selected' ||
+          pickQuestion?.interaction?.status === 'fulfilled',
         closed:
           gone ||
+          interactionClosed ||
           (!openChoices.length &&
             !pickQuestion!.answerChoicesPending &&
             !pickQuestion!.choiceAnswer &&
@@ -515,6 +533,7 @@ export function MessageBubble({
         disabled: openChoices.length
           ? answersDisabled === true || sending || openAnswered
           : gone ||
+            interactionClosed ||
             !pickQuestion!.answerChoicesPending ||
             !onAnswer ||
             answersDisabled === true ||
@@ -1145,6 +1164,19 @@ export function MessageBubble({
             )}
           </div>
         </div>
+        {onRetry && !streaming && (
+          <div className="message-retry">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={answersDisabled}
+              onClick={onRetry}
+            >
+              Retry
+            </Button>
+          </div>
+        )}
         {task && <div className="message-task">{task}</div>}
         {message.role === 'assistant' &&
           !streaming &&

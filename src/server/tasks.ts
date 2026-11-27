@@ -9,6 +9,8 @@ import { recordedAction, toolTitle } from './action-presentation.ts';
 import { workspaceCommandsSql, workspaceCommand } from './workspace-commands.ts';
 import type { ChannelPresentation } from './channels.ts';
 import { classifyVerificationReply } from '../shared/verification-code.ts';
+import { previewableUrl } from '../shared/link-preview.ts';
+import { logFailure } from './failure-log.ts';
 import {
   abortTurns,
   activeHandoffSql,
@@ -45,6 +47,15 @@ const waits = z.array(
   z.object({ who: z.string().trim().min(1), via: z.string().trim().min(1) }).strict(),
 );
 const nextCheck = z.iso.datetime({ offset: true });
+const wakeCheck = z
+  .object({
+    kind: z.enum(['url_change', 'file_exists']),
+    target: z.string().trim().min(1).max(2000),
+    baseline: z.string().max(256).optional(),
+    intervalMinutes: z.number().int().min(1).max(1440).optional(),
+    failures: z.number().int().min(0).max(10).optional(),
+  })
+  .strict();
 const credentialUrl = /(?<![\w/])(?:[a-z][a-z\d+.-]*:)?\/\/[^/\s?#<>]*@/iu;
 const input = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }).strict(),
@@ -81,6 +92,7 @@ const input = z.discriminatedUnion('action', [
       stepIndex: z.number().int().nonnegative().optional(),
       waitingFor: waits.optional(),
       nextCheck: nextCheck.optional(),
+      wakeCheck: wakeCheck.nullable().optional(),
     })
     .strict(),
   z
@@ -89,6 +101,7 @@ const input = z.discriminatedUnion('action', [
       id: z.uuid(),
       status: z.enum(['done', 'cancelled']),
       result: z.string().trim().min(1),
+      verified: z.string().trim().min(1).max(500).optional(),
     })
     .strict(),
 ]);
@@ -163,6 +176,12 @@ export function createTasks(options: {
   refresh?: () => void;
   clearBrowser?: (id: string) => Promise<void>;
   validateModel?: (choice: ModelSelection) => ModelSelection;
+  evaluateWakeCheck?: (
+    threadId: string,
+    taskId: string,
+    check: z.infer<typeof wakeCheck>,
+  ) => Promise<{ changed: boolean; baseline?: string; summary?: string }>;
+  onTaskDone?: (taskId: string) => void;
 }) {
   const { pool, ownerId } = options;
   const refresh = options.refresh ?? (() => {});
@@ -356,6 +375,16 @@ export function createTasks(options: {
       ownerId,
     ]);
     await client.query(
+      `UPDATE approvals a SET status='expired' FROM turns u
+       WHERE u.id=a.turn_id AND u.owner_id=a.owner_id AND a.owner_id=$1 AND a.status='pending'
+         AND u.session_id=$2 AND u.id<>$3 AND u.status IN ('waiting','cancelled')`,
+      [ownerId, task.session_id, turnId],
+    );
+    await client.query(
+      "UPDATE card_interactions SET status='superseded',updated_at=now() WHERE owner_id=$1 AND session_id=$2 AND status='open' AND turn_id IS DISTINCT FROM $3",
+      [ownerId, task.session_id, turnId],
+    );
+    await client.query(
       "UPDATE turns SET status='cancelled',finished_at=now() WHERE session_id=$1 AND owner_id=$2 AND status='waiting' AND id<>$3",
       [task.session_id, ownerId, turnId],
     );
@@ -472,6 +501,10 @@ export function createTasks(options: {
     const updated = await client.query(
       "UPDATE tasks SET state='cancelled',closed_at=now(),updated_at=now() WHERE id=$1 AND owner_id=$2 AND state='open'",
       [id, ownerId],
+    );
+    await client.query(
+      "UPDATE card_interactions SET status='cancelled',updated_at=now() WHERE owner_id=$1 AND session_id=$2 AND status='open'",
+      [ownerId, task.session_id],
     );
     if (updated.rowCount)
       afterCommit(client, () =>
@@ -645,11 +678,25 @@ export function createTasks(options: {
       id = request.id;
       if (current.task_id !== id)
         throw failure('Only the task session can change its progress or result.');
+      if (request.action === 'update' && request.wakeCheck) {
+        if (request.wakeCheck.kind === 'url_change') {
+          if (!previewableUrl(request.wakeCheck.target)?.startsWith('https://'))
+            throw failure(
+              'wakeCheck url_change requires a public HTTPS URL without embedded credentials.',
+            );
+        } else if (
+          request.wakeCheck.target.startsWith('/') ||
+          request.wakeCheck.target.split(/[\\/]/).includes('..')
+        ) {
+          throw failure('wakeCheck file_exists requires a relative path inside the task folder.');
+        }
+      }
       const updated =
         request.action === 'update'
           ? await client.query(
               `UPDATE tasks SET title=COALESCE($8,title),now_text=COALESCE($3,now_text),steps=COALESCE($4,steps),step_index=COALESCE($5,step_index),
-           waiting_for=COALESCE($6,waiting_for),next_check=COALESCE($7,next_check),updated_at=now()
+           waiting_for=COALESCE($6,waiting_for),next_check=COALESCE($7,next_check),
+           wake_check=CASE WHEN $9::boolean THEN $10::jsonb ELSE wake_check END,updated_at=now()
            WHERE id=$1 AND owner_id=$2 AND state='open'
              AND COALESCE($5,step_index)<GREATEST(jsonb_array_length(COALESCE($4,steps)),1)`,
               [
@@ -661,24 +708,27 @@ export function createTasks(options: {
                 request.waitingFor ? JSON.stringify(request.waitingFor) : null,
                 request.nextCheck ?? null,
                 request.title ?? null,
+                request.wakeCheck !== undefined,
+                request.wakeCheck ? JSON.stringify(request.wakeCheck) : null,
               ],
             )
           : await client.query(
-              `UPDATE tasks SET state=$3,result=$4,closed_at=now(),updated_at=now() WHERE id=$1 AND owner_id=$2 AND state='open'
-           AND applied_revision=revision`,
-              [id, ownerId, request.status, request.result],
+              `UPDATE tasks SET state=$3,result=$4,verified_note=COALESCE($5,verified_note),wake_check=NULL,closed_at=now(),updated_at=now()
+           WHERE id=$1 AND owner_id=$2 AND state='open' AND applied_revision=revision`,
+              [id, ownerId, request.status, request.result, request.verified ?? null],
             );
       if (!updated.rowCount)
         throw failure(
           'The task is closed, its step index is out of range, or it has an owner update to read.',
         );
       if (request.action === 'finish')
-        afterCommit(client, () =>
+        afterCommit(client, () => {
           capture?.({
             event: 'task_finished',
             properties: { status: request.status, actor: 'agent' },
-          }),
-        );
+          });
+          if (request.status === 'done') options.onTaskDone?.(id);
+        });
     }
     const checkAt = 'nextCheck' in request ? request.nextCheck : undefined;
     if (checkAt) await wakeThreadAt(client, new Date(checkAt));
@@ -686,11 +736,16 @@ export function createTasks(options: {
   }
 
   async function resumeDue(threadId: string) {
-    const resumed = await transaction(async (client) => {
-      if ((await lockThread(client)).id !== threadId) return false;
-      const { rows } = await client.query<{ id: string; turn_id: string; next_check: Date }>(
+    const { immediate, prechecks } = await transaction(async (client) => {
+      if ((await lockThread(client)).id !== threadId) return { immediate: false, prechecks: [] };
+      const { rows } = await client.query<{
+        id: string;
+        turn_id: string;
+        next_check: Date;
+        wake_check: z.infer<typeof wakeCheck> | null;
+      }>(
         `WITH due AS (
-           SELECT t.id,t.next_check,(SELECT u.id FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id
+           SELECT t.id,t.next_check,t.wake_check,(SELECT u.id FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id
              ORDER BY u.started_at DESC NULLS LAST,u.created_at DESC,u.id DESC LIMIT 1) AS turn_id
            FROM tasks t WHERE t.owner_id=$1 AND t.state='open' AND t.next_check<=now()
              AND (t.activity_key IS NULL OR NOT EXISTS (SELECT 1 FROM preferences p WHERE p.owner_id=t.owner_id AND p.proactive_paused))
@@ -698,20 +753,112 @@ export function createTasks(options: {
              AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=t.owner_id AND u.session_id=t.session_id
                AND (u.status IN ('queued','running') OR (${waitingTurnSql('u')})))
          )
-         UPDATE tasks t SET next_check=NULL FROM due WHERE t.id=due.id AND t.owner_id=$1
-         RETURNING due.id,due.turn_id,due.next_check`,
+         SELECT due.id,due.turn_id,due.next_check,due.wake_check FROM due`,
         [ownerId, threadId],
       );
-      for (const row of rows)
+      const plain: typeof rows = [];
+      const withCheck: typeof rows = [];
+      for (const row of rows) {
+        if (
+          row.wake_check &&
+          wakeCheck.safeParse(row.wake_check).success &&
+          options.evaluateWakeCheck
+        )
+          withCheck.push(row);
+        else plain.push(row);
+      }
+      if (plain.length) {
+        await client.query(
+          'UPDATE tasks SET next_check=NULL WHERE id=ANY($1::uuid[]) AND owner_id=$2',
+          [plain.map((row) => row.id), ownerId],
+        );
+        for (const row of plain)
+          await resumeTurn(
+            row.turn_id,
+            `task-check:${row.id}:${row.next_check.getTime()}`,
+            "This task's planned check is due. Check what changed, then update or finish the task.",
+            false,
+            client,
+          );
+      }
+      return { immediate: plain.length > 0, prechecks: withCheck };
+    }, pool);
+    let resumed = immediate;
+    for (const row of prechecks) {
+      const parsedCheck = wakeCheck.parse(row.wake_check);
+      let outcome: { changed: boolean; baseline?: string; summary?: string };
+      let failedReason: string | undefined;
+      try {
+        outcome = await options.evaluateWakeCheck!(threadId, row.id, parsedCheck);
+      } catch (error) {
+        logFailure('task_wake_check_failed', error, { threadId, taskId: row.id });
+        const failures = (parsedCheck.failures ?? 0) + 1;
+        failedReason = error instanceof Error ? error.message : String(error);
+        if (failures >= 3) {
+          outcome = {
+            changed: true,
+            summary: `Wake check failed ${failures} times in a row (${failedReason.slice(0, 200)}).`,
+          };
+        } else {
+          const minutes = parsedCheck.intervalMinutes ?? 15;
+          const nextAt = new Date(Date.now() + minutes * 60_000);
+          await transaction(async (client) => {
+            if ((await lockThread(client)).id !== threadId) return;
+            const nextWake = { ...parsedCheck, failures };
+            const res = await client.query(
+              `UPDATE tasks SET next_check=$3,wake_check=$4::jsonb,updated_at=now()
+               WHERE id=$1 AND owner_id=$2 AND state='open' AND next_check=$5
+                 AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=tasks.owner_id AND u.session_id=tasks.session_id
+                   AND (u.status IN ('queued','running') OR (${waitingTurnSql('u')})))`,
+              [row.id, ownerId, nextAt, JSON.stringify(nextWake), row.next_check],
+            );
+            if (res.rowCount) await wakeThreadAt(client, nextAt);
+          }, pool);
+          continue;
+        }
+      }
+      if (!outcome.changed) {
+        const minutes = parsedCheck.intervalMinutes ?? 15;
+        const nextAt = new Date(Date.now() + minutes * 60_000);
+        await transaction(async (client) => {
+          if ((await lockThread(client)).id !== threadId) return;
+          const { failures: _failures, ...restCheck } = parsedCheck;
+          const nextWake = outcome.baseline
+            ? { ...restCheck, baseline: outcome.baseline }
+            : restCheck;
+          const res = await client.query(
+            `UPDATE tasks SET next_check=$3,wake_check=$4::jsonb,updated_at=now()
+             WHERE id=$1 AND owner_id=$2 AND state='open' AND next_check=$5
+               AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=tasks.owner_id AND u.session_id=tasks.session_id
+                 AND (u.status IN ('queued','running') OR (${waitingTurnSql('u')})))`,
+            [row.id, ownerId, nextAt, JSON.stringify(nextWake), row.next_check],
+          );
+          if (res.rowCount) await wakeThreadAt(client, nextAt);
+        }, pool);
+        continue;
+      }
+      const summary = outcome.summary ? ` Pre-check detected: ${outcome.summary}` : '';
+      const woke = await transaction(async (client) => {
+        if ((await lockThread(client)).id !== threadId) return false;
+        const claimed = await client.query(
+          `UPDATE tasks SET next_check=NULL,wake_check=NULL,updated_at=now()
+           WHERE id=$1 AND owner_id=$2 AND state='open' AND next_check=$3
+             AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.owner_id=tasks.owner_id AND u.session_id=tasks.session_id
+               AND (u.status IN ('queued','running') OR (${waitingTurnSql('u')})))`,
+          [row.id, ownerId, row.next_check],
+        );
+        if (!claimed.rowCount) return false;
         await resumeTurn(
           row.turn_id,
           `task-check:${row.id}:${row.next_check.getTime()}`,
-          "This task's planned check is due. Check what changed, then update or finish the task.",
+          `This task's planned check is due.${summary} Check what changed, then update or finish the task.`,
           false,
           client,
         );
-      return rows.length > 0;
-    }, pool);
+        return true;
+      }, pool);
+      if (woke) resumed = true;
+    }
     if (resumed) refresh();
   }
 
@@ -751,17 +898,21 @@ export function createTasks(options: {
       await withTurnLock(
         turn.turnId,
         async () => {
-          const settled = await client.query(
+          const settled = await client.query<{ id: string }>(
             `UPDATE tasks t SET state='done',result=$3,closed_at=now(),updated_at=now()
              FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND t.id=u.task_id AND t.owner_id=u.owner_id
                AND t.state='open' AND t.applied_revision=t.revision AND t.waiting_for='[]'::jsonb
-               AND (t.next_check IS NULL OR t.next_check<=now())`,
+               AND (t.next_check IS NULL OR t.next_check<=now())
+             RETURNING t.id`,
             [turn.turnId, ownerId, result],
           );
-          if (settled.rowCount)
-            afterCommit(client, () =>
-              capture?.({ event: 'task_finished', properties: { status: 'done', actor: 'agent' } }),
-            );
+          if (settled.rowCount) {
+            const doneId = settled.rows[0]!.id;
+            afterCommit(client, () => {
+              capture?.({ event: 'task_finished', properties: { status: 'done', actor: 'agent' } });
+              options.onTaskDone?.(doneId);
+            });
+          }
         },
         client,
       );
@@ -809,6 +960,8 @@ export function createTasks(options: {
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS step_index integer NOT NULL DEFAULT 0;
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS revision integer NOT NULL DEFAULT 1;
       ALTER TABLE tasks ADD COLUMN IF NOT EXISTS applied_revision integer NOT NULL DEFAULT 0;
+      ALTER TABLE tasks ADD COLUMN IF NOT EXISTS wake_check jsonb;
+      ALTER TABLE tasks ADD COLUMN IF NOT EXISTS verified_note text;
       ALTER TABLE turns ADD COLUMN IF NOT EXISTS task_revision integer NOT NULL DEFAULT 1;
       CREATE INDEX IF NOT EXISTS tasks_session ON tasks(owner_id,session_id);
       CREATE INDEX IF NOT EXISTS tasks_owner ON tasks(owner_id,state,updated_at DESC);

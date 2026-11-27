@@ -40,11 +40,12 @@ const whatsappImageBytes = 5 * 1024 * 1024;
 const telegramTextLimit = 3500;
 const approveData = 'nod:approval:yes';
 const declineData = 'nod:approval:no';
+const interactionPrefix = 'nod:pick:';
 const approvalReplyHint = 'Reply directly to this message with yes or no.';
 const telegramId = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
-const telegramApproval = z.object({
+const telegramCallback = z.object({
   id: z.string().min(1).max(128),
-  data: z.enum([approveData, declineData]),
+  data: z.string().min(1).max(128),
   from: z.object({ id: telegramId, is_bot: z.literal(false) }),
   message: z.object({
     message_id: telegramId,
@@ -170,6 +171,34 @@ class Telegram extends TelegramAdapter {
             { text: labels.decline, callback_data: declineData },
           ],
         ],
+      },
+      threadId,
+      this.buildReplyParameters(replyToMessageId, thread.chatId),
+    );
+    return this.encodeMessageId(thread.chatId, sent.message_id);
+  }
+
+  async postInteraction(
+    threadId: string,
+    markdown: string,
+    interaction: { id: string; options: Array<{ label: string }> },
+    replyToMessageId?: string,
+  ) {
+    const thread = this.decodeThreadId(threadId);
+    const { text, plainText } = this.renderMessageBodies({ markdown }, null, 'MarkdownV2');
+    const compactId = interaction.id.replaceAll('-', '');
+    const sent = await this.sendRegularMessage(
+      thread,
+      text,
+      plainText,
+      'MarkdownV2',
+      {
+        inline_keyboard: interaction.options.slice(0, 6).map((opt, index) => [
+          {
+            text: opt.label.slice(0, 60),
+            callback_data: `${interactionPrefix}${compactId}:${index}`,
+          },
+        ]),
       },
       threadId,
       this.buildReplyParameters(replyToMessageId, thread.chatId),
@@ -653,7 +682,7 @@ export function createChatSdkTransport(
       channel.missing = channel.missing.filter((name) => name !== 'TELEGRAM_ALLOWED_USER_ID');
       if (!channel.missing.length) channel.status = 'configured';
     },
-    async poll(accept, pair, react, approve) {
+    async poll(accept, pair, react, approve, interact) {
       if (closed || polling || !telegram || env.TELEGRAM_MODE !== 'polling') return;
       fetching ??= fetchUpdates();
       polling = true;
@@ -678,6 +707,7 @@ export function createChatSdkTransport(
           for (const message of parsed.messages ?? []) await accept(message);
           for (const reaction of parsed.reactions ?? []) await react?.(reaction);
           for (const approval of parsed.approvals ?? []) await approve?.(approval);
+          for (const interaction of parsed.interactions ?? []) await interact?.(interaction);
           if (parsed.pairing) await pair?.(parsed.pairing);
           await pool.query(
             `INSERT INTO channel_poll_offsets(provider,account_id,next_offset,updated_at) VALUES('telegram',$1,$2,now())
@@ -749,7 +779,7 @@ export function createChatSdkTransport(
           })
           .safeParse(payload);
         if (update.success && update.data.callback_query !== undefined) {
-          const callback = telegramApproval.safeParse(update.data.callback_query);
+          const callback = telegramCallback.safeParse(update.data.callback_query);
           if (!callback.success) return accepted();
           const { id, data, from, message } = callback.data;
           if (
@@ -759,20 +789,45 @@ export function createChatSdkTransport(
             message.chat.id !== from.id
           )
             return accepted();
-          return {
-            ...accepted(),
-            approvals: [
-              {
-                channelId: 'telegram',
-                accountId: telegramAccountId,
-                senderId: String(from.id),
-                threadId: telegram.encodeThreadId({ chatId: String(message.chat.id) }),
-                messageId: `${message.chat.id}:${message.message_id}`,
-                approved: data === approveData,
-                acknowledge: (result) => acknowledgeApproval(id, result),
-              },
-            ],
-          };
+          if (data === approveData || data === declineData) {
+            return {
+              ...accepted(),
+              approvals: [
+                {
+                  channelId: 'telegram',
+                  accountId: telegramAccountId,
+                  senderId: String(from.id),
+                  threadId: telegram.encodeThreadId({ chatId: String(message.chat.id) }),
+                  messageId: `${message.chat.id}:${message.message_id}`,
+                  approved: data === approveData,
+                  acknowledge: (result) => acknowledgeApproval(id, result),
+                },
+              ],
+            };
+          }
+          if (data.startsWith(interactionPrefix)) {
+            const match = /^([0-9a-f]{32}):(\d+)$/.exec(data.slice(interactionPrefix.length));
+            if (match) {
+              const hex = match[1]!;
+              const interactionId = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+              return {
+                ...accepted(),
+                interactions: [
+                  {
+                    channelId: 'telegram',
+                    accountId: telegramAccountId,
+                    senderId: String(from.id),
+                    threadId: telegram.encodeThreadId({ chatId: String(message.chat.id) }),
+                    messageId: `${message.chat.id}:${message.message_id}`,
+                    interactionId,
+                    optionIndex: Number(match[2]),
+                    acknowledge: (result) => acknowledgeApproval(id, result),
+                  },
+                ],
+              };
+            }
+          }
+          return accepted();
         }
         const reacted = telegramReaction.safeParse(
           update.success ? update.data.message_reaction : undefined,
@@ -999,6 +1054,24 @@ export function createChatSdkTransport(
         const [part, ...rest] = telegram.chunks(`${telegramParts[last]}\n\n${approvalReplyHint}`);
         if (part && !rest.length) telegramParts[last] = part;
         else sendApprovalHint = true;
+      }
+      if (
+        telegram &&
+        telegramParts?.length === 1 &&
+        input.interaction &&
+        !input.approval &&
+        !attachments.length &&
+        env.TELEGRAM_ALLOWED_USER_ID &&
+        input.threadId === telegram.encodeThreadId({ chatId: env.TELEGRAM_ALLOWED_USER_ID }) &&
+        (await supportsApprovalButtons())
+      ) {
+        const id = await telegram.postInteraction(
+          input.threadId,
+          telegramParts[0]!,
+          input.interaction,
+          input.replyToMessageId,
+        );
+        return { id, ids: [id], approvalButtons: true };
       }
       const thread = bot.thread(input.threadId);
       const unsent = attachments.filter((file) =>

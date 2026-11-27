@@ -717,6 +717,7 @@ function ArchivedDetail({
 function SkillDetail({
   skill,
   onChange,
+  onRestore,
   onForget,
   onBack,
   onDirtyChange,
@@ -724,6 +725,7 @@ function SkillDetail({
 }: {
   skill: LearnedSkill;
   onChange(body: { description: string; body: string }): Promise<void>;
+  onRestore(version: number): Promise<void>;
   onForget(): Promise<void>;
   onBack?: () => void;
   onDirtyChange?(dirty: boolean): void;
@@ -802,7 +804,9 @@ function SkillDetail({
       <Back onBack={onBack} disabled={dirty || busy} />
       <p className="memory-status">
         <MemoryMark stage="skills" />
-        Skill
+        {skill.overlayFor ? `Overlay for ${skill.overlayFor}` : 'Skill'}
+        {skill.version ? ` · v${skill.version}` : ''}
+        {skill.stale ? ' · Needs review' : ''}
       </p>
       {mode === 'edit' ? (
         <form
@@ -908,6 +912,17 @@ function SkillDetail({
             <Button variant="ghost" size="sm" disabled={busy} onClick={() => setMode('forget')}>
               Forget skill
             </Button>
+            {skill.history && skill.history.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={() => void run(() => onRestore(skill.history!.at(-1)!.version))}
+              >
+                <Undo2 size={15} aria-hidden="true" />
+                Restore v{skill.history.at(-1)!.version}
+              </Button>
+            )}
           </div>
         )
       )}
@@ -1512,6 +1527,9 @@ export function Memory({
       onBack={back}
       onChange={async (body) => {
         await send(`/api/memory/skills/${skill.name}`, 'PATCH', body);
+      }}
+      onRestore={async (version) => {
+        await send(`/api/memory/skills/${skill.name}/restore`, 'POST', { version });
       }}
       onForget={async () => {
         await send(`/api/memory/skills/${skill.name}`, 'DELETE');

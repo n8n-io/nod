@@ -69,6 +69,12 @@ export const skillName = z
   .max(64);
 export const skillDescription = line(skillDescriptionChars);
 export const skillBody = lines(skillChars);
+const skillVersionSchema = z.object({
+  version: z.number().int().positive(),
+  description: skillDescription,
+  body: skillBody,
+  updated: timestamp,
+});
 const skillSchema = z.object({
   name: skillName,
   description: skillDescription,
@@ -78,6 +84,11 @@ const skillSchema = z.object({
   used: timestamp.optional(),
   edited: timestamp.optional(),
   turn: z.uuid().optional(),
+  overlayFor: skillName.optional(),
+  version: z.number().int().positive().optional(),
+  history: z.array(skillVersionSchema).max(5).optional(),
+  failures: z.number().int().nonnegative().optional(),
+  stale: z.boolean().optional(),
 });
 
 export const factSchema = z
@@ -308,7 +319,31 @@ export function render(tree: Tree) {
   return bytes;
 }
 
-export function fits(tree: Tree) {
+export function fits(tree: Tree, { preserveArchive = false }: { preserveArchive?: boolean } = {}) {
+  if (preserveArchive) {
+    const bytes = new TextEncoder().encode(
+      JSON.stringify(
+        {
+          version: 2,
+          enabled: tree.enabled,
+          sensitive: tree.sensitive,
+          reflected: tree.reflected,
+          generation: tree.generation,
+          retries: tree.retries,
+          entries: tree.entries.toSorted(
+            (a, b) => areas.indexOf(a.area) - areas.indexOf(b.area) || bySlug(a, b),
+          ),
+          archive: tree.archive,
+          ...(tree.skills.length
+            ? { skills: tree.skills.toSorted((a, b) => a.name.localeCompare(b.name)) }
+            : {}),
+        },
+        null,
+        1,
+      ),
+    );
+    return bytes.length <= maxBytes;
+  }
   try {
     render(tree);
     return true;
@@ -442,6 +477,10 @@ export function view(
         updated: skill.updated,
         edited: skill.edited ?? null,
         task: task(skill.turn),
+        ...(skill.overlayFor ? { overlayFor: skill.overlayFor } : {}),
+        ...(skill.version ? { version: skill.version } : {}),
+        ...(skill.stale ? { stale: true } : {}),
+        ...(skill.history?.length ? { history: skill.history } : {}),
       })),
   };
 }

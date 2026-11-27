@@ -84,6 +84,7 @@ const tools = [
   'usage_get',
   'ask_user',
   'browser',
+  'browser_run',
   'computer',
   'create_audio',
   'delegate',

@@ -65,6 +65,7 @@ export interface BrowserAction {
   expectUrl?: string;
   expectTarget?: string;
   readOnly?: boolean;
+  observe?: boolean;
 }
 export interface BrowserControl {
   role: string;

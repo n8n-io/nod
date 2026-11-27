@@ -15258,3 +15258,112 @@ test(
     }
   },
 );
+
+test(
+  'card interactions enforce idempotent selection, revision superseding, expiry, and DB offer hydration',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const schema = `test_card_interactions_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const url = new URL(process.env.TEST_DATABASE_URL!);
+    url.searchParams.set('options', `-c search_path=${schema}`);
+    const pool = new pg.Pool({ connectionString: url.href });
+    const owner = 'interaction-owner';
+    try {
+      const { createCardInteractions } = await import('../src/server/card-interactions.ts');
+      await pool.query(`
+        CREATE TABLE threads(id uuid PRIMARY KEY, owner_id text NOT NULL);
+        CREATE TABLE turns(id uuid PRIMARY KEY, owner_id text NOT NULL);
+        CREATE TABLE messages(id uuid PRIMARY KEY, owner_id text NOT NULL);
+        CREATE TABLE tasks(id uuid PRIMARY KEY, owner_id text NOT NULL, revision integer NOT NULL DEFAULT 1);
+        CREATE TABLE card_offers (
+          id text NOT NULL, owner_id text NOT NULL, thread_id uuid NOT NULL REFERENCES threads(id),
+          kind text NOT NULL, payload jsonb NOT NULL,
+          valid_until timestamptz, created_at timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY(owner_id,thread_id,id)
+        );
+        CREATE TABLE card_interactions (
+          id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid NOT NULL REFERENCES threads(id),
+          message_id uuid NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+          turn_id uuid REFERENCES turns(id), session_id uuid NOT NULL,
+          task_id uuid, task_revision integer,
+          options jsonb NOT NULL, multiple boolean NOT NULL DEFAULT false,
+          status text NOT NULL DEFAULT 'open' CHECK (status IN ('open','selected','fulfilled','superseded','expired','cancelled')),
+          selected_option_ids jsonb, valid_until timestamptz,
+          created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+        );
+      `);
+      const threadId = randomUUID();
+      const messageId = randomUUID();
+      const messageId2 = randomUUID();
+      const messageId3 = randomUUID();
+      const taskId = randomUUID();
+      await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, owner]);
+      await pool.query('INSERT INTO messages(id,owner_id) VALUES($1,$4),($2,$4),($3,$4)', [
+        messageId,
+        messageId2,
+        messageId3,
+        owner,
+      ]);
+      await pool.query('INSERT INTO tasks(id,owner_id,revision) VALUES($1,$2,1)', [taskId, owner]);
+
+      const store = createCardInteractions(pool, owner);
+      await store.saveOffers(pool, threadId, 'flights', [
+        { id: 'A1', payload: { price: '$420' }, validUntil: new Date(Date.now() + 60_000) },
+      ]);
+      const loaded = await store.loadOffers(pool, threadId, 'flights', ['A1', 'missing']);
+      assert.equal(loaded.size, 1);
+      assert.deepEqual(loaded.get('A1'), { payload: { price: '$420' }, expired: false });
+
+      const interactionId = await store.openInteraction(pool, {
+        threadId,
+        messageId,
+        sessionId: taskId,
+        taskId,
+        taskRevision: 1,
+        options: [
+          { id: 'opt-1', label: 'LH 402' },
+          { id: 'opt-2', label: 'BA 981' },
+        ],
+      });
+      const first = await store.selectInteraction(pool, interactionId, ['opt-1']);
+      assert.equal(first.ok, true);
+      assert.equal(first.alreadySelected, false);
+      const dup = await store.selectInteraction(pool, interactionId, ['opt-1']);
+      assert.equal(dup.ok, true);
+      assert.equal(dup.alreadySelected, true);
+      const conflict = await store.selectInteraction(pool, interactionId, ['opt-2']);
+      assert.equal(conflict.ok, false);
+      assert.equal(conflict.code, 'closed');
+
+      const staleId = await store.openInteraction(pool, {
+        threadId,
+        messageId: messageId2,
+        sessionId: taskId,
+        taskId,
+        taskRevision: 1,
+        options: [{ id: 'opt-a', label: 'A' }],
+      });
+      await pool.query('UPDATE tasks SET revision=2 WHERE id=$1', [taskId]);
+      const staleResult = await store.selectInteraction(pool, staleId, ['opt-a']);
+      assert.equal(staleResult.ok, false);
+      assert.equal(staleResult.status, 'superseded');
+
+      const expiredId = await store.openInteraction(pool, {
+        threadId,
+        messageId: messageId3,
+        sessionId: taskId,
+        options: [{ id: 'opt-x', label: 'X' }],
+        validUntil: new Date(Date.now() - 1000),
+      });
+      const expiredResult = await store.selectInteraction(pool, expiredId, ['opt-x']);
+      assert.equal(expiredResult.ok, false);
+      assert.equal(expiredResult.code, 'expired');
+    } finally {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);

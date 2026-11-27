@@ -273,6 +273,14 @@ export interface RuntimeContext {
     args: Record<string, unknown>,
     admit?: (asks: boolean, read?: boolean) => Promise<void>,
   ): Promise<unknown>;
+  saveOffers?(
+    kind: string,
+    offers: Array<{ id: string; payload: unknown; validUntil?: Date }>,
+  ): Promise<void>;
+  loadOffers?(
+    kind: string,
+    ids: string[],
+  ): Promise<Map<string, { payload: unknown; expired: boolean }>>;
   task?(input: unknown): Promise<unknown>;
   takeMessages?(): Promise<
     Array<{

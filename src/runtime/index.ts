@@ -122,7 +122,7 @@ const admissions = new AsyncLocalStorage<{
   admit(asks: boolean, read?: boolean): Promise<void>;
 }>();
 const nestedCalls = new AsyncLocalStorage<boolean>();
-const browserTools = new Set(['browser', 'sign_in', 'pay']);
+const browserTools = new Set(['browser', 'browser_run', 'sign_in', 'pay']);
 const confirmationNotice = 'The confirmation question is in chat. Wait for the reply.';
 const reportingTools = new Set(['ask_user', 'send_message', 'share_file']);
 const reportingTaskActions = new Set(['finish', 'list', 'stop', 'update']);
@@ -136,6 +136,7 @@ const delimitedTools = new Set([
   'computer',
   'delegate',
   'browser',
+  'browser_run',
   'sign_in',
   'web_search',
   'fetch_content',
@@ -429,7 +430,7 @@ export function createAgentRuntime(dependencies: {
       if (!owed.length || owedRefused || !speaks) return;
       owedRefused = true;
       throw new Error(
-        `Not run, and no question was asked: the owner's latest messages have no answer yet. ${question ? 'Put the answer to anything else they asked first, as its own paragraph, then the question alone, and call this again. If the question is all the answer they need, call it again unchanged' : 'Answer them in text now, then call this again'}.`,
+        `Not run, and no question was asked: the owner's latest messages have no answer yet. ${question ? 'Answer anything else they asked first with send_message (or one short lead line before the question), keep the question short, and call this again. If the question is all they need, call it again unchanged' : 'Answer them in text now, then call this again'}.`,
       );
     };
     let unreadRefused = -1;
@@ -749,8 +750,7 @@ export function createAgentRuntime(dependencies: {
             );
           const notice =
             output === confirmationNotice ||
-            (name === 'browser' &&
-              (params as { action?: unknown })?.action === 'steps' &&
+            (name === 'browser_run' &&
               typeof output === 'object' &&
               output !== null &&
               Object.keys(output).join() === 'steps,stopped,result' &&
@@ -972,12 +972,15 @@ export function createAgentRuntime(dependencies: {
                     { additionalProperties: false },
                   )
                 : tool.parameters;
+            const coordinator = !context.taskContext && !context.background && !context.proactivity;
+            const deferredByRole = coordinator && (name === 'computer' || name === 'files');
+            const eager = Boolean(tool.eager && !deferredByRole);
             const deferred = (tool as Partial<Pick<AgentTool, 'deferred'>>).deferred;
             return {
               name,
               description,
               parameters,
-              ...(tool.eager ? { eager: true } : {}),
+              ...(eager ? { eager: true } : {}),
               ...(tool.companions ? { companions: tool.companions } : {}),
               ...(deferred ? { deferred } : {}),
               parallel: Boolean(deferred) || parallelTools.has(name),

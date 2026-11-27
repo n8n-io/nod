@@ -85,8 +85,15 @@ import { lockKey } from './locks.ts';
 import { redactSecretText } from './redaction.ts';
 import { backgroundVisibilitySql, loadConversationLanguage } from './communication.ts';
 import { resemblesTaskAcknowledgement } from '../shared/task-ack.ts';
+import { createCardInteractions } from './card-interactions.ts';
 
 const queue = 'thread-drain';
+const cardInteractions = createCardInteractions(pool, ownerId);
+const turnLeaseMs = 60_000;
+const turnHeartbeatMs = 20_000;
+const turnMaxWallClockMs = 30 * 60_000;
+const maxReadOnlyRetries = 1;
+const readOnlyRetryDelayMs = 2_000;
 const rasterTypes = new Set([
   'image/png',
   'image/jpeg',
@@ -402,21 +409,24 @@ const messageIdInUse = () =>
   httpError('This message ID is already in use. Send this as a new message.');
 
 export async function withTurnLock<T>(
-  turn: string | { turnId: string; signal: AbortSignal },
+  turn: string | { turnId: string; signal: AbortSignal; fenceToken?: number },
   operation: (client: PoolClient) => Promise<T>,
   database?: PoolClient,
 ) {
   const turnId = typeof turn === 'string' ? turn : turn.turnId;
   const signal = typeof turn === 'string' ? running.get(turn)?.signal : turn.signal;
+  const expectedFence = typeof turn === 'string' ? undefined : turn.fenceToken;
   const execute = async (client: PoolClient) => {
     signal?.throwIfAborted();
-    const { rows } = await client.query(
-      `SELECT u.status FROM turns u JOIN threads th ON th.id=u.thread_id
+    const { rows } = await client.query<{ status: string; fence_token: number; expired: boolean }>(
+      `SELECT u.status,u.fence_token,(u.lease_expires_at IS NOT NULL AND u.lease_expires_at<=now()) AS expired
+       FROM turns u JOIN threads th ON th.id=u.thread_id
        WHERE u.id=$1 AND u.owner_id=$2 AND th.archived_at IS NULL FOR NO KEY UPDATE OF u`,
       [turnId, ownerId],
     );
     signal?.throwIfAborted();
-    if (rows[0]?.status !== 'running') throw turnStopped();
+    if (rows[0]?.status !== 'running' || rows[0]?.expired) throw turnStopped();
+    if (expectedFence !== undefined && rows[0].fence_token !== expectedFence) throw turnStopped();
     return operation(client);
   };
   return database ? execute(database) : transaction(execute, pool, signal);
@@ -1030,7 +1040,23 @@ export async function submitUserMessage(
       ],
     );
     if (taskTarget) await taskTarget.record(turnId);
-    if (live) await confirmAction?.close(client, sessionId, turnId);
+    if (live) {
+      await confirmAction?.close(client, sessionId, turnId);
+      if (
+        choiceQuestion &&
+        options.replyToMessageId &&
+        options.questionAnswer &&
+        'choiceIds' in options.questionAnswer
+      ) {
+        await client.query(
+          `UPDATE card_interactions SET status='selected',selected_option_ids=$3::jsonb,updated_at=now()
+           WHERE owner_id=$1 AND message_id=$2 AND status='open'`,
+          [ownerId, options.replyToMessageId, JSON.stringify(options.questionAnswer.choiceIds)],
+        );
+      } else {
+        await cardInteractions.supersedeSession(client, sessionId, turnId, 'superseded');
+      }
+    }
     const prepared = (await options.prepareAttachments?.(client, thread.id)) ?? [];
     await client.query(
       "INSERT INTO messages(id,owner_id,role,text,display_text,thread_id,turn_id,attachments,reply_to_message_id,reply_quote,audio_caption,question_answer) VALUES($1,$2,'user',$3,$4,$5,$6,$7,$8,$9,$10,$11)",
@@ -1503,7 +1529,7 @@ async function finishTurn(
   } = {},
 ) {
   const updated = await client.query(
-    "UPDATE turns SET status=$2,waiting_reason=$3,error=$4,handoff_browser_id=$5,context_exhausted=$6,finished_at=now() WHERE id=$1 AND status='running' RETURNING id",
+    "UPDATE turns SET status=$2,waiting_reason=$3,error=$4,handoff_browser_id=$5,context_exhausted=$6,lease_expires_at=NULL,fence_token=fence_token+1,finished_at=now() WHERE id=$1 AND status='running' RETURNING id",
     [
       turnId,
       status,
@@ -1740,10 +1766,10 @@ async function failTurn(
     if (modelFailure) await withdraw(client, [turnId], false);
     const task = turn.task_id
       ? (
-          await client.query('SELECT message_id FROM tasks WHERE id=$1 AND owner_id=$2', [
-            turn.task_id,
-            ownerId,
-          ])
+          await client.query(
+            'UPDATE tasks SET updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING message_id',
+            [turn.task_id, ownerId],
+          )
         ).rows[0]
       : undefined;
     return { ...turn, taskMessageId: task?.message_id as string | undefined };
@@ -1872,12 +1898,40 @@ async function claimTurns(threadId: string) {
       sessions.add(row.session_id);
       return true;
     });
-    await client.query(
-      "UPDATE turns SET status='running',started_at=now() WHERE id=ANY($1::uuid[])",
-      [claimed.map((row) => row.id)],
+    const updated = await client.query<{ id: string; fence_token: number }>(
+      `UPDATE turns SET status='running',started_at=now(),fence_token=fence_token+1,
+       lease_expires_at=now()+($2::bigint * interval '1 millisecond')
+       WHERE id=ANY($1::uuid[]) RETURNING id,fence_token`,
+      [claimed.map((row) => row.id), turnLeaseMs],
     );
-    return claimed;
+    const fences = new Map(updated.rows.map((row) => [row.id, row.fence_token]));
+    return claimed.map((row) => ({
+      ...row,
+      fence_token: fences.get(row.id) ?? row.fence_token ?? 0,
+    }));
   }, pool);
+}
+
+export async function sweepExpiredTurns(present?: ThreadDependencies['present']) {
+  await cardInteractions.expireOffers().catch(() => {});
+  const { rows } = await pool.query<{ id: string }>(
+    `SELECT id FROM turns
+     WHERE owner_id=$1 AND status='running' AND lease_expires_at IS NOT NULL AND lease_expires_at<=now()`,
+    [ownerId],
+  );
+  let swept = 0;
+  for (const row of rows) {
+    const expired = await pool
+      .query<{ id: string }>(
+        `SELECT id FROM turns
+         WHERE id=$1 AND owner_id=$2 AND status='running' AND lease_expires_at IS NOT NULL AND lease_expires_at<=now()`,
+        [row.id, ownerId],
+      )
+      .then((res) => res.rowCount ?? 0);
+    if (expired && (await failTurn(row.id, present))) swept++;
+    abortTurns([row.id]);
+  }
+  return swept;
 }
 
 async function takeQueuedMessages(turnId: string, sessionId: string, channel: string) {
@@ -2234,6 +2288,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       properties: { ...analyticsProperties, ...work },
     });
   const turnId = turn.id as string;
+  const fenceToken = typeof turn.fence_token === 'number' ? turn.fence_token : undefined;
   const threadId = turn.thread_id as string;
   const ref: TurnRef = { threadId, turnId, browserId: turn.session_id };
   const artifacts = dependencies.artifacts ?? localArtifacts;
@@ -2241,9 +2296,36 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   const { signal } = controller;
   running.set(turnId, controller);
   if (stopping) controller.abort();
+  let leaseLost = false;
+  const renewLease = () => {
+    if (signal.aborted || stopping) return;
+    void pool
+      .query(
+        `UPDATE turns SET lease_expires_at=now()+($3::bigint * interval '1 millisecond')
+         WHERE id=$1 AND owner_id=$2 AND status='running'
+           AND (lease_expires_at IS NULL OR lease_expires_at>now())
+           AND ($4::integer IS NULL OR fence_token=$4)`,
+        [turnId, ownerId, turnLeaseMs, fenceToken ?? null],
+      )
+      .then(({ rowCount }) => {
+        if (!rowCount) {
+          leaseLost = true;
+          abortTurns([turnId]);
+        }
+      })
+      .catch(() => {});
+  };
+  const leaseTimer = setInterval(renewLease, turnHeartbeatMs);
+  leaseTimer.unref();
+  let timedOut = false;
+  const wallClockTimer = setTimeout(() => {
+    timedOut = true;
+    abortTurns([turnId]);
+  }, turnMaxWallClockMs);
+  wallClockTimer.unref();
   const current = async <T>(operation: (client: PoolClient) => Promise<T>) => {
     if (signal.aborted) throw turnStopped();
-    return withTurnLock({ turnId, signal }, operation);
+    return withTurnLock({ turnId, signal, fenceToken }, operation);
   };
   const ensureCurrent = () => current(async () => {});
   const intentLine =
@@ -2271,6 +2353,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     };
   const replies: Array<{ id: string; text: string; source: string }> = [];
   let replyCommitted = false;
+  let taskStarted = false;
   let explicitAudio = false;
   const published = new Map<string, Artifact>();
   let sourceMessageId: string | null = null;
@@ -2800,6 +2883,10 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       manage: fenced((action, args, admit) =>
         dependencies.manage(ref, action, args, { sourceMessageId, signal, admit }),
       ),
+      saveOffers: fenced((kind, offers) =>
+        cardInteractions.saveOffers(pool, threadId, kind, offers),
+      ),
+      loadOffers: fenced((kind, ids) => cardInteractions.loadOffers(pool, threadId, kind, ids)),
       task:
         dependencies.task &&
         fenced(async (raw) => {
@@ -2828,7 +2915,17 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
               : undefined;
           const sourcePrompt =
             bound && burst.length > 1 && bound === burst.at(-1) ? initialPrompt : undefined;
-          return dependencies.task!(ref, input, bound, prior?.id, prior?.handoff, sourcePrompt);
+          return dependencies.task!(
+            ref,
+            input,
+            bound,
+            prior?.id,
+            prior?.handoff,
+            sourcePrompt,
+          ).then((res) => {
+            if (input.action === 'start') taskStarted = true;
+            return res;
+          });
         }),
       takeMessages:
         turn.background && !taskContext
@@ -3017,7 +3114,10 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       }
     }
     await current(async (client) => {
-      if (result.status === 'succeeded') return finishTurn(client, turnId, 'succeeded');
+      if (result.status === 'succeeded') {
+        await cardInteractions.fulfillSession(client, turn.session_id);
+        return finishTurn(client, turnId, 'succeeded');
+      }
       const waiting = await finishTurn(client, turnId, 'waiting', {
         waitingReason:
           result.status === 'waiting_credentials'
@@ -3047,12 +3147,38 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           answerChoices,
           dependencies.analytics,
         );
+        if (answerChoices) {
+          await cardInteractions.openInteraction(client, {
+            threadId,
+            messageId,
+            turnId,
+            sessionId: turn.session_id,
+            taskId: taskContext?.id ?? null,
+            taskRevision: taskContext?.revision ?? null,
+            options: answerChoices.options.map((opt) => ({
+              id: opt.id,
+              label: opt.label,
+              ...(opt.description ? { description: opt.description } : {}),
+            })),
+            multiple: answerChoices.multiple,
+          });
+        }
         if (result.status === 'waiting_credentials' || result.waitingFor === 'credentials')
           await dependencies.bindVerificationQuestion?.(turnId, messageId, client);
       }
     }).catch((error) => {
-      if (!signal.aborted) throw error;
+      if (!signal.aborted || timedOut) throw error;
     });
+    if (timedOut) {
+      outcome = 'failed';
+      await failTurn(
+        turnId,
+        dependencies.present,
+        'This turn reached its 30-minute runtime limit and was stopped.',
+        { expected: true, failure: 'unknown' },
+      );
+      return;
+    }
     outcome = signal.aborted ? 'cancelled' : result.status;
     if (outcome === 'waiting_credentials') waitingReason = 'credentials';
     else if (outcome === 'waiting_user') waitingReason = result.waitingFor ?? 'question';
@@ -3063,6 +3189,21 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     }
     if (shared.length) await post('', shared.splice(0)).catch(() => {});
     if (signal.aborted) {
+      if (timedOut) {
+        outcome = 'failed';
+        await failTurn(
+          turnId,
+          dependencies.present,
+          'This turn reached its 30-minute runtime limit and was stopped.',
+          { expected: true, failure: 'unknown' },
+        );
+        return;
+      }
+      if (leaseLost) {
+        outcome = 'interrupted';
+        await failTurn(turnId, dependencies.present);
+        return;
+      }
       outcome = 'cancelled';
       return;
     }
@@ -3100,6 +3241,48 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           waiting: pool.waitingCount,
         },
       });
+      const retryableReadOnly =
+        (failure === 'offline' || failure === 'model') &&
+        !replyCommitted &&
+        !taskStarted &&
+        ownerMessageIds.length <= 1 &&
+        !(error instanceof ContextLimitError) &&
+        !(error instanceof OutputLimitError) &&
+        Number(turn.retry_count ?? 0) < maxReadOnlyRetries;
+      if (retryableReadOnly) {
+        const requeued = await transaction(async (client) => {
+          if ((await lockThread(client)).id !== threadId) return false;
+          const safe = await client.query<{ id: string }>(
+            `${turnChainSql()}
+             SELECT u.id FROM turns u
+             WHERE u.id=$1 AND u.owner_id=$2 AND u.status='running'
+               AND ($4::integer IS NULL OR u.fence_token=$4)
+               AND u.outside_action_at IS NULL
+               AND NOT EXISTS (SELECT 1 FROM turns x JOIN chain c ON c.id=x.id WHERE x.outside_action_at IS NOT NULL)
+               AND NOT EXISTS (SELECT 1 FROM approvals a JOIN chain c ON c.id IN (a.turn_id,a.execution_turn_id)
+                 WHERE a.owner_id=u.owner_id AND a.status IN ('confirmed','executing','uncertain','completed'))
+               AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.owner_id=u.owner_id AND t.turn_id=u.id)
+             FOR UPDATE`,
+            [turnId, ownerId, threadId, fenceToken ?? null],
+          );
+          if (!safe.rowCount) return false;
+          const retryAt = new Date(Date.now() + readOnlyRetryDelayMs);
+          await client.query(
+            `UPDATE turns SET status='queued',retry_count=retry_count+1,started_at=NULL,
+             lease_expires_at=NULL,fence_token=fence_token+1,start_after=$3
+             WHERE id=$1 AND owner_id=$2`,
+            [turnId, ownerId, retryAt],
+          );
+          await insertEvent(client, turnId, 'retry', `Retrying after transient failure: ${text}`);
+          await sendDrain(client, threadId, retryAt);
+          return true;
+        }, pool).catch(() => false);
+        if (requeued) {
+          outcome = 'interrupted';
+          refresh();
+          return;
+        }
+      }
       await failTurn(turnId, dependencies.present, text, {
         failure,
         expected:
@@ -3115,10 +3298,12 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       });
     }
   } finally {
-    if (signal.aborted && !stopping)
+    clearInterval(leaseTimer);
+    clearTimeout(wallClockTimer);
+    if (signal.aborted && !stopping && !timedOut && !leaseLost)
       await cancellationTransaction((client) =>
         client.query(
-          "UPDATE turns SET status='cancelled',finished_at=now() WHERE id=$1 AND owner_id=$2 AND status='running'",
+          "UPDATE turns SET status='cancelled',lease_expires_at=NULL,fence_token=fence_token+1,finished_at=now() WHERE id=$1 AND owner_id=$2 AND status='running'",
           [turnId, ownerId],
         ),
       )

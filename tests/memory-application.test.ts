@@ -1512,6 +1512,101 @@ test('an agent cannot overwrite a skill the owner edited', async () => {
   assert.equal(await body('owner-flow'), 'Owner steps again.');
 });
 
+test('learned skill overlays, version history rollback, and staleness demotion work cleanly', async () => {
+  const memory = createMemoryService({
+    pool: {
+      query: async () => ({ rows: [{ now: new Date().toISOString() }] }),
+    } as unknown as pg.Pool,
+    ownerId: 'overlay-owner',
+    store: memoryObjectStore(),
+  });
+  const curator: MemoryCurator = {
+    id: 'fixture',
+    configured: true,
+    curate: async (request) => {
+      const draft = (request.input as { draft: { description: string; body: string } }).draft;
+      return { skill: { description: draft.description, body: draft.body } };
+    },
+  };
+  const skills = createLearnedSkills({
+    memory,
+    curator,
+    builtIn: ['travel'],
+    redact: (text) => text,
+  });
+
+  await assert.rejects(
+    skills.learn(
+      {
+        action: 'save',
+        name: 'travel',
+        description: 'Use when booking flights.',
+        body: 'Prefer nonstop.',
+      },
+      randomUUID(),
+    ),
+    /built-in guide/,
+  );
+
+  await assert.rejects(
+    skills.learn(
+      {
+        action: 'save',
+        name: 'my-travel-prefs',
+        description: 'Use when booking flights.',
+        body: 'Prefer nonstop.',
+        overlayFor: 'missing-guide',
+      },
+      randomUUID(),
+    ),
+    /overlayFor must name a built-in guide/,
+  );
+
+  await skills.learn(
+    {
+      action: 'save',
+      name: 'my-travel-prefs',
+      description: 'Use when booking flights.',
+      body: 'Prefer nonstop flights.',
+      overlayFor: 'travel',
+    },
+    randomUUID(),
+  );
+  assert.deepEqual(await skills.overlayFor('travel'), [
+    {
+      name: 'my-travel-prefs',
+      description: 'Use when booking flights.',
+      body: 'Prefer nonstop flights.',
+      version: 1,
+    },
+  ]);
+
+  await skills.learn(
+    {
+      action: 'save',
+      name: 'my-travel-prefs',
+      description: 'Use when booking flights.',
+      body: 'Prefer nonstop Lufthansa flights.',
+      overlayFor: 'travel',
+    },
+    randomUUID(),
+  );
+  assert.equal((await skills.read('my-travel-prefs')).version, 2);
+
+  await skills.restore('my-travel-prefs', 1);
+  assert.equal((await skills.read('my-travel-prefs')).body, 'Prefer nonstop flights.');
+  assert.equal((await skills.read('my-travel-prefs')).version, 3);
+
+  await skills.recordOutcome('my-travel-prefs', false);
+  assert.equal((await skills.overlayFor('travel'))?.length, 1);
+  await skills.recordOutcome('my-travel-prefs', false);
+  assert.equal(await skills.overlayFor('travel'), undefined);
+  assert.deepEqual(await skills.index(), []);
+
+  await skills.recordOutcome('my-travel-prefs', true);
+  assert.equal((await skills.overlayFor('travel'))?.length, 1);
+});
+
 test(
   'local memory moves from its old file into the database once and keeps parallel saves',
   { skip: !process.env.TEST_DATABASE_URL },

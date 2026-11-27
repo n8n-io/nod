@@ -68,10 +68,12 @@ export function createRuntimeProxy({
         )
           return denied(response);
         if (create[1] === browser) {
+          const cmd = JSON.stringify(body.Cmd);
           if (
             body.User !== 'node' ||
             (body.WorkingDir !== undefined && body.WorkingDir !== '') ||
-            JSON.stringify(body.Cmd) !== JSON.stringify(['node', '/app/bridge.mjs'])
+            (cmd !== JSON.stringify(['node', '/app/bridge.mjs']) &&
+              cmd !== JSON.stringify(['node', '/app/bridge.mjs', '--multiplex']))
           )
             return denied(response);
         } else if (body.User === 'node') {

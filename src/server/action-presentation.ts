@@ -400,6 +400,7 @@ const tools: Record<string, string> = {
   'read source': 'Read a source',
   flights: 'Searched flights',
   browser: 'Used the browser',
+  'browser run': 'Used the browser',
   'sign in': 'Signed in',
   pay: 'Entered a card',
   'browser session': 'Opened a saved session',

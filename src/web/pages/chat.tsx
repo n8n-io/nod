@@ -2462,6 +2462,25 @@ export function Chat({
                       }
                       taskStopped={approvalTask(message)?.status === 'cancelled'}
                       answersDisabled={sending || !state.configuration.llmReady || welcoming}
+                      onRetry={
+                        message.role === 'assistant' &&
+                        message.retryable &&
+                        index === visibleMessages.length - 1 &&
+                        !sending &&
+                        !state.turns.some(
+                          (turn) => turn.status === 'running' || turn.status === 'queued',
+                        ) &&
+                        state.configuration.llmReady
+                          ? () => {
+                              void send(
+                                'Continue',
+                                [],
+                                { id: message.id, role: 'assistant', text: message.text },
+                                'composer',
+                              );
+                            }
+                          : undefined
+                      }
                       pickQuestion={cardQuestions.get(message.id)}
                       choicesOnCard={questionsOnCard.has(message.id)}
                       chosenText={cardChoices.get(message.id)}
@@ -2502,6 +2521,26 @@ export function Chat({
                           throw new Error(
                             'Send your answer from the composer to include your edits.',
                           );
+                        }
+                        if (
+                          target.interaction?.id &&
+                          target.interaction.status === 'open' &&
+                          'choiceIds' in answer &&
+                          !answer.custom
+                        ) {
+                          try {
+                            await post(`/api/interactions/${target.interaction.id}/select`, {
+                              optionIds: answer.choiceIds,
+                            });
+                            if (replying(replyTo?.id) && !composer.current?.hasDraft())
+                              setReplyTo((current) => (replying(current?.id) ? null : current));
+                            return true;
+                          } catch (caught) {
+                            const code = (caught as { code?: string })?.code;
+                            if (code === 'interaction_closed' || code === 'interaction_expired')
+                              return 'unavailable';
+                            throw caught;
+                          }
                         }
                         const result = await send(
                           value,

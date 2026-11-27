@@ -1382,6 +1382,21 @@ export function createAgentBrowserComputer(options: {
         }
       }
       if (input.waitMs && input.action !== 'wait') await delay(input.waitMs, undefined, { signal });
+      if (input.observe === false) {
+        if (state.injecting || (await privateDocumentOpen(state, signal)))
+          throw new BrowserLockedError();
+        try {
+          const url = await currentUrl(state, signal);
+          return { text: '', url: redactBrowserUrl(url, state.secrets) };
+        } catch (error) {
+          const dialog =
+            error instanceof BrowserActionError &&
+            error.code === 'browser_dialog_open' &&
+            (await pendingDialog(state, signal));
+          if (dialog) return { text: dialog, url: state.saved.url };
+          throw error;
+        }
+      }
       return observe(state, signal, input);
     }).catch((error: unknown) => {
       if (error instanceof DaemonCommandError)
@@ -1716,9 +1731,7 @@ export function createAgentBrowserComputer(options: {
     const tabs = z
       .array(z.object({ active: z.boolean(), targetId: z.string() }).passthrough())
       .parse((await command(state, { action: 'tab_list' }, { signal })).tabs);
-    const tab = tabs.find((item) =>
-      state.targetId ? item.targetId === state.targetId : item.active,
-    );
+    const tab = tabs.find((item) => item.active);
     if (!tab) throw new Error('The checkout tab is no longer open.');
     return openDevtools(cdpUrl, tab.targetId, signal, options.clickReceiptMs);
   }

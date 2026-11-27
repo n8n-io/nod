@@ -41,6 +41,7 @@ export const analyticsTool = z.enum([
   'apps',
   'ask_user',
   'browser',
+  'browser_run',
   'computer',
   'create_audio',
   'delegate',

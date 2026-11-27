@@ -9,6 +9,7 @@ export class ApiError extends Error {
     readonly status: number,
     readonly step?: string,
     readonly workspaces?: ModelWorkspace[],
+    readonly code?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -173,6 +174,7 @@ export async function responseError(response: Response, signal?: AbortSignal) {
     message?: unknown;
     step?: unknown;
     workspaces?: unknown;
+    code?: unknown;
   } | null;
   signal?.throwIfAborted();
   const workspaces =
@@ -196,6 +198,7 @@ export async function responseError(response: Response, signal?: AbortSignal) {
     response.status,
     typeof body?.step === 'string' ? body.step : undefined,
     workspaces,
+    typeof body?.code === 'string' ? body.code : undefined,
   );
 }
 

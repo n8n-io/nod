@@ -203,49 +203,63 @@ export async function startContainerBrowserWorker(
     socket.setEncoding('utf8');
     connections.add(socket);
     let incoming = '';
-    let request: BrowserRequest | undefined;
-    let uploaded: Buffer[] = [];
-    let uploadedBytes = 0;
-    const controller = new AbortController();
-    let finishUpload = (_bytes: Buffer) => {};
-    const upload = new Promise<Buffer>((resolve, reject) => {
-      finishUpload = resolve;
-      controller.signal.addEventListener('abort', () => reject(controller.signal.reason), {
-        once: true,
-      });
-    });
-    upload.catch(() => {});
-    let terminal = false;
+    let writing = Promise.resolve();
+    let singleRequest: BrowserRequest | undefined;
     let viewing: Promise<Computer> | undefined;
     let inputs = Promise.resolve();
+    type Active = {
+      request: BrowserRequest;
+      controller: AbortController;
+      uploaded: Buffer[];
+      uploadedBytes: number;
+      finishUpload: (bytes: Buffer) => void;
+      upload: Promise<Buffer>;
+      done: boolean;
+    };
+    const active = new Map<string, Active>();
+    let multiplex = false;
     const stop = () => {
-      controller.abort();
+      for (const item of active.values()) item.controller.abort();
       socket.destroy();
     };
     socket.on('error', stop);
     socket.on('close', () => {
-      controller.abort();
       connections.delete(socket);
-      if (!terminal && request && !['quiesce', 'view'].includes(request.method))
-        void dispose(request.namespace).catch(() => {});
+      for (const item of active.values()) {
+        item.controller.abort();
+        if (!item.done && !['quiesce', 'view'].includes(item.request.method))
+          void dispose(item.request.namespace).catch(() => {});
+      }
+      active.clear();
     });
-    const send = async (line: string) => {
-      if (!socket.write(line))
-        await new Promise((resolve) => {
-          socket.once('drain', resolve);
-          socket.once('close', resolve);
-        });
+    const send = (line: string) => {
+      writing = writing
+        .then(async () => {
+          if (socket.destroyed) return;
+          if (!socket.write(line))
+            await new Promise<void>((resolve) => {
+              const done = () => {
+                socket.removeListener('drain', done);
+                socket.removeListener('close', done);
+                resolve();
+              };
+              socket.once('drain', done);
+              socket.once('close', done);
+            });
+        })
+        .catch(() => {});
+      return writing;
     };
-    const view = async (computer: Computer, threadId: string, id: string) => {
-      for await (const image of computer.view(threadId, controller.signal)) {
+    const view = async (computer: Computer, threadId: string, id: string, signal: AbortSignal) => {
+      for await (const image of computer.view(threadId, signal)) {
         await send(JSON.stringify(viewFrame.parse({ id, frame: image.toString('base64') })) + '\n');
         if (socket.destroyed) break;
       }
       return null;
     };
-    const download = async (file: BrowserDownload, id: string) => {
+    const download = async (file: BrowserDownload, id: string, signal: AbortSignal) => {
       for (let offset = 0; offset < file.bytes.length; offset += transferBytes) {
-        controller.signal.throwIfAborted();
+        signal.throwIfAborted();
         await send(
           JSON.stringify({
             id,
@@ -255,7 +269,9 @@ export async function startContainerBrowserWorker(
       }
       return { name: file.name, mimeType: file.mimeType, size: file.bytes.length };
     };
-    const execute = async (input: BrowserRequest) => {
+    const execute = async (item: Active) => {
+      const input = item.request;
+      const { controller, upload } = item;
       let entry: Namespace | undefined;
       let registered = false;
       let response: BrowserResponse;
@@ -275,10 +291,11 @@ export async function startContainerBrowserWorker(
           if (entry.pending.has(input.id)) throw new Error();
           if (input.method === 'view') viewing = entry.computer;
           const done = entry.computer.then(async (computer) => {
-            if (input.method === 'view') return view(computer, input.threadId, input.id);
+            if (input.method === 'view')
+              return view(computer, input.threadId, input.id, controller.signal);
             const result = await dispatch(computer, input, controller.signal, upload);
             return input.method === 'download'
-              ? download(result as BrowserDownload, input.id)
+              ? download(result as BrowserDownload, input.id, controller.signal)
               : result;
           });
           entry.pending.set(input.id, { controller, done });
@@ -319,55 +336,88 @@ export async function startContainerBrowserWorker(
         };
       } finally {
         if (registered) entry?.pending.delete(input.id);
+        item.done = true;
+        active.delete(input.id);
       }
-      terminal = true;
       if (socket.destroyed) return;
+      let line: string;
       try {
-        const line = JSON.stringify(browserResponse.parse(response)) + '\n';
+        line = JSON.stringify(browserResponse.parse(response)) + '\n';
         if (Buffer.byteLength(line) > responseBytes) throw new Error();
-        socket.end(line);
       } catch {
-        socket.end(
+        line =
           JSON.stringify({ id: input.id, ok: false, error: 'unavailable', metadata: metadata() }) +
-            '\n',
-        );
+          '\n';
+      }
+      if (!multiplex || input.method === 'view') {
+        await send(line);
+        socket.end();
+      } else {
+        await send(line);
       }
     };
     socket.on('data', (chunk: string) => {
-      if (terminal) return stop();
       incoming += chunk;
       for (let line = incoming.indexOf('\n'); line >= 0; line = incoming.indexOf('\n')) {
         const raw = incoming.slice(0, line);
         incoming = incoming.slice(line + 1);
         try {
           const frame = browserFrame.parse(JSON.parse(raw));
-          if (frame.type === 'request') {
-            if (request) return stop();
-            request = frame.request;
-            void execute(request);
+          if (frame.type === 'multiplex') {
+            if (singleRequest || active.size > 0) return stop();
+            multiplex = true;
+          } else if (frame.type === 'request') {
+            if (!multiplex && singleRequest) return stop();
+            if (active.has(frame.request.id)) return stop();
+            if (singleRequest?.method === 'view') return stop();
+            if (frame.request.method === 'view' && (multiplex || singleRequest || active.size > 0))
+              return stop();
+            singleRequest = frame.request;
+            const controller = new AbortController();
+            let finishUpload = (_bytes: Buffer) => {};
+            const upload = new Promise<Buffer>((resolve, reject) => {
+              finishUpload = resolve;
+              controller.signal.addEventListener('abort', () => reject(controller.signal.reason), {
+                once: true,
+              });
+            });
+            upload.catch(() => {});
+            const item: Active = {
+              request: frame.request,
+              controller,
+              uploaded: [],
+              uploadedBytes: 0,
+              finishUpload,
+              upload,
+              done: false,
+            };
+            active.set(frame.request.id, item);
+            void execute(item);
           } else if (frame.type === 'data') {
-            if (request?.method !== 'upload' || frame.id !== request.id) return stop();
+            const item = active.get(frame.id);
+            if (!item || item.request.method !== 'upload') return stop();
             const bytes = Buffer.from(frame.data, 'base64');
-            uploadedBytes += bytes.length;
-            if (uploadedBytes > request.input.size) return stop();
-            uploaded.push(bytes);
-            if (uploadedBytes === request.input.size) {
-              finishUpload(Buffer.concat(uploaded));
-              uploaded = [];
+            item.uploadedBytes += bytes.length;
+            if (item.uploadedBytes > item.request.input.size) return stop();
+            item.uploaded.push(bytes);
+            if (item.uploadedBytes === item.request.input.size) {
+              item.finishUpload(Buffer.concat(item.uploaded));
+              item.uploaded = [];
             }
           } else if (frame.type === 'input') {
-            if (request?.method !== 'view' || frame.id !== request.id || !viewing) return stop();
-            const { threadId } = request;
+            const item = active.get(frame.id);
+            if (!item || item.request.method !== 'view' || !viewing) return stop();
+            const { threadId } = item.request;
             const computer = viewing;
             inputs = inputs
               .then(async () => {
                 let result;
                 try {
-                  controller.signal.throwIfAborted();
+                  item.controller.signal.throwIfAborted();
                   const text = await (
                     await computer
-                  ).control(threadId, frame.input, controller.signal);
-                  controller.signal.throwIfAborted();
+                  ).control(threadId, frame.input, item.controller.signal);
+                  item.controller.signal.throwIfAborted();
                   result = {
                     id: frame.id,
                     inputId: frame.inputId,
@@ -387,8 +437,9 @@ export async function startContainerBrowserWorker(
               })
               .catch(stop);
           } else {
-            if (!request || frame.id !== request.id) return stop();
-            controller.abort();
+            const item = active.get(frame.id);
+            if (!item) continue;
+            item.controller.abort();
           }
         } catch {
           return stop();

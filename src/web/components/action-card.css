@@ -328,6 +328,12 @@ button.choice-card-row[aria-disabled='true'] {
   background: transparent;
   overflow: visible;
 }
+.chat-page .message .message-bubble > .message-body:has(> .action-card) > .message-text {
+  padding: 10px 16px;
+  border-radius: 22px;
+  background: var(--surface-subtle);
+  margin-bottom: 8px;
+}
 .message-body > .action-card {
   margin-top: 0;
 }

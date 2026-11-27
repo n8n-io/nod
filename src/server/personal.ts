@@ -380,6 +380,28 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       changed(memory?.forgetArchived(request.body), 'forget'),
     );
     const skillName = (params: unknown) => (params as { name: string }).name;
+    app.get('/api/memory/skills/:name/history', async (request) => {
+      if (!learnedSkills) return { history: [] };
+      const name = skillName(request.params);
+      const loaded = await memory?.load();
+      const skill = loaded?.skills.find((item) => item.name === name);
+      if (!skill)
+        throw Object.assign(new Error('This skill is no longer in memory.'), { statusCode: 404 });
+      return {
+        name: skill.name,
+        version: skill.version ?? 1,
+        stale: Boolean(skill.stale),
+        overlayFor: skill.overlayFor ?? null,
+        history: skill.history ?? [],
+      };
+    });
+    app.post('/api/memory/skills/:name/restore', (request) => {
+      const { version } = z
+        .object({ version: z.number().int().positive() })
+        .strict()
+        .parse(request.body);
+      return changed(learnedSkills?.restore(skillName(request.params), version));
+    });
     app.patch('/api/memory/skills/:name', (request) =>
       changed(learnedSkills?.change(skillName(request.params), request.body)),
     );

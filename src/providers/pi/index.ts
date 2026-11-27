@@ -607,6 +607,7 @@ export function createPiAgent(options: {
         input = { ...input, ...input.compactInstructions };
       const output = createContextOutput(input.workspace, input.ownerContext?.split('\n', 1)[0]);
       let toolCallCount = 1;
+      let contextUsed = 0;
       const boundedOutput = async (
         name: string,
         run: () => ReturnType<ToolDefinition['execute']>,
@@ -618,6 +619,9 @@ export function createPiAgent(options: {
         const text = result.content
           .flatMap((part) => (part.type === 'text' ? [part.text] : []))
           .join('\n');
+        const room = contextUsed
+          ? Math.max(0, model.contextWindow - budget.margin - contextUsed)
+          : Infinity;
         if (
           Buffer.byteLength(text) <= budget.toolOutput.maxBytes / toolCallCount &&
           estimateTokens({
@@ -628,12 +632,12 @@ export function createPiAgent(options: {
             isError: result.isError ?? false,
             timestamp: 0,
           }) <=
-            budget.toolOutput.maxTokens / toolCallCount
+            Math.min(budget.toolOutput.maxTokens, room) / toolCallCount
         )
           return result;
         const saved = await output.save(
           result.content,
-          Math.floor(budget.toolOutput.previewCharacters / toolCallCount),
+          Math.floor(Math.min(budget.toolOutput.previewCharacters, room * 3) / toolCallCount),
           signal,
         );
         return {
@@ -1443,6 +1447,7 @@ export function createPiAgent(options: {
                   ? 'cancelled'
                   : undefined;
           const tokens = event.message.usage;
+          contextUsed = tokens.input + tokens.cacheRead + tokens.cacheWrite + tokens.output;
           contextExhausted =
             overflow ||
             (status === 'incomplete' &&

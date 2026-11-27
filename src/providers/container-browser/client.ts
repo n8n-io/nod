@@ -3,6 +3,7 @@ import {
   type BrowserErrorCode,
   type BrowserSignInGuard,
 } from '../../shared/browser-errors.ts';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { z } from 'zod';
@@ -56,10 +57,12 @@ const pageSchema = z
 export function createBridgeComputer(options: {
   namespace: string;
   launch(input: BrowserCall): CommandProcess;
+  launchPersistent?(): CommandProcess;
   available?(input: BrowserCall): boolean;
   ready?(signal?: AbortSignal): Promise<void>;
   timeoutMs?: number;
   drainTimeoutMs?: number;
+  readyTimeoutMs?: number;
 }): Computer & { quiesce(): Promise<boolean> } {
   let disposed = false;
   let uncertain = false;
@@ -79,6 +82,144 @@ export function createBridgeComputer(options: {
   const recovering = new Map<string, Promise<void>>();
   const reopenNotice =
     'Explicitly reopen the website to start a new page. The previous action may have completed; do not repeat it.';
+  type MultiplexEntry = {
+    order: number;
+    chunks?: Buffer[];
+    received: number;
+    onResponse(response: BrowserResponse): void;
+    onUnavailable(
+      reason: string,
+      error?: unknown,
+      exit?: { exitCode: number | null; signal: string | null },
+    ): void;
+  };
+  let persistentDisabled = false;
+  let persistent:
+    | {
+        child: CommandProcess;
+        entries: Map<string, MultiplexEntry>;
+        stderr: string;
+        output: string;
+        closed: boolean;
+        ready: Promise<void>;
+        resolveReady: () => void;
+        rejectReady: (error: Error) => void;
+        isReady: boolean;
+        readyTimer: ReturnType<typeof setTimeout>;
+      }
+    | undefined;
+
+  function dropPersistent(
+    reason?: string,
+    error?: unknown,
+    exit?: { exitCode: number | null; signal: string | null },
+  ) {
+    const channel = persistent;
+    if (!channel || channel.closed) return;
+    channel.closed = true;
+    clearTimeout(channel.readyTimer);
+    persistent = undefined;
+    if (!channel.isReady) {
+      channel.rejectReady(new Error(reason ?? 'exit'));
+    }
+    try {
+      channel.child.stdin.destroy();
+      channel.child.kill('SIGKILL');
+    } catch {}
+    if (reason) {
+      for (const entry of channel.entries.values()) entry.onUnavailable(reason, error, exit);
+    }
+    channel.entries.clear();
+  }
+
+  function ensurePersistent() {
+    if (persistentDisabled) return undefined;
+    if (persistent && !persistent.closed) return persistent;
+    if (!options.launchPersistent) return undefined;
+    const child = options.launchPersistent();
+    let resolveReady!: () => void;
+    let rejectReady!: (error: Error) => void;
+    const ready = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
+    });
+    ready.catch(() => {});
+    const readyTimer = setTimeout(() => {
+      if (persistent === channel && !channel.isReady) dropPersistent('ready_timeout');
+    }, options.readyTimeoutMs ?? 5_000);
+    const channel = {
+      child,
+      entries: new Map<string, MultiplexEntry>(),
+      stderr: '',
+      output: '',
+      closed: false,
+      ready,
+      resolveReady,
+      rejectReady,
+      isReady: false,
+      readyTimer,
+    };
+    persistent = channel;
+    child.stdin.on('error', (error) => {
+      if (persistent === channel) dropPersistent('stream_error', error);
+    });
+    child.on('error', (error) => {
+      if (persistent === channel) dropPersistent('launch', error);
+    });
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => {
+      channel.stderr = (channel.stderr + chunk).slice(-2000);
+    });
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      if (channel.closed) return;
+      channel.output += chunk;
+      for (let end = channel.output.indexOf('\n'); end >= 0; end = channel.output.indexOf('\n')) {
+        const line = channel.output.slice(0, end);
+        channel.output = channel.output.slice(end + 1);
+        if (Buffer.byteLength(line) > responseBytes) {
+          dropPersistent('oversized_response');
+          return;
+        }
+        try {
+          const value = JSON.parse(line);
+          if (value && typeof value === 'object' && value.type === 'ready') {
+            if (!channel.isReady) {
+              channel.isReady = true;
+              clearTimeout(channel.readyTimer);
+              channel.resolveReady();
+            }
+            continue;
+          }
+          const part = chunkFrame.safeParse(value);
+          if (part.success) {
+            const entry = channel.entries.get(part.data.id);
+            if (!entry || !entry.chunks) throw new Error();
+            const bytes = Buffer.from(part.data.chunk, 'base64');
+            entry.received += bytes.length;
+            if (entry.received > fileBytes) throw new Error();
+            entry.chunks.push(bytes);
+            continue;
+          }
+          const response = browserResponse.parse(value);
+          const entry = channel.entries.get(response.id);
+          if (!entry) continue;
+          channel.entries.delete(response.id);
+          entry.onResponse(response);
+        } catch {
+          dropPersistent('malformed_response');
+          return;
+        }
+      }
+      if (Buffer.byteLength(channel.output) > responseBytes) dropPersistent('oversized_response');
+    });
+    child.on('close', (code, signal) => {
+      if (persistent === channel) {
+        dropPersistent('exit', undefined, { exitCode: code, signal: signal ?? null });
+      }
+    });
+    return channel;
+  }
 
   function recover(browserId?: string) {
     const scope = uncertain ? undefined : browserId;
@@ -129,6 +270,7 @@ export function createBridgeComputer(options: {
     signal?: AbortSignal,
     transfer: { data?: Uint8Array; chunks?: Buffer[] } = {},
     recovery = false,
+    forceOneShot = false,
   ): Promise<unknown> {
     if (!options.ready || input.method === 'dispose')
       return dispatch(input, signal, transfer, recovery);
@@ -205,7 +347,185 @@ export function createBridgeComputer(options: {
         );
       else logFailure('browser_bridge_failed', { message, stderr }, context);
     };
+    const settleResponse = (
+      response: BrowserResponse,
+      cancelling: boolean,
+      resolve: (value: unknown) => void,
+      reject: (reason?: unknown) => void,
+    ) => {
+      updateMetadata(response.metadata, order);
+      if (cancelling || (!response.ok && response.error === 'cancelled'))
+        return reject(new Error('Browser operation cancelled.'));
+      if (response.ok) return resolve(response.result);
+      failed('error_response', new Error(response.error), {
+        ...(response.signInGuard ? { signInGuard: response.signInGuard } : {}),
+      });
+      if (browserErrorMessage(response.error))
+        return reject(
+          new BrowserActionError(
+            response.error as BrowserErrorCode,
+            response.detail,
+            response.signInGuard,
+          ),
+        );
+      if (response.error === 'locked') {
+        const error = new Error('Browser observations are paused during credential entry.');
+        return reject(Object.assign(error, { statusCode: 423 }));
+      }
+      reject(
+        Object.assign(
+          new Error(
+            response.detail
+              ? `The workspace browser could not complete this action: ${response.detail}`
+              : 'The workspace browser could not complete this action. Try again.',
+          ),
+          response.signInGuard ? { signInGuard: response.signInGuard } : {},
+        ),
+      );
+    };
+    const usePersistent =
+      !forceOneShot &&
+      Boolean(options.launchPersistent) &&
+      !persistentDisabled &&
+      input.method !== 'dispose';
     const result = new Promise<unknown>((resolve, reject) => {
+      if (usePersistent) {
+        let channel: NonNullable<typeof persistent>;
+        try {
+          channel = ensurePersistent()!;
+        } catch (error) {
+          failed('launch', error);
+          uncertain = true;
+          return reject(
+            new Error(`The workspace browser is unavailable. Start its container. ${reopenNotice}`),
+          );
+        }
+        let settled = false;
+        let cancelling = false;
+        let written = false;
+        let drainTimer: ReturnType<typeof setTimeout> | undefined;
+        let timedOut = false;
+        const timer =
+          options.timeoutMs === undefined
+            ? undefined
+            : setTimeout(() => {
+                timedOut = true;
+                cancel();
+              }, options.timeoutMs);
+        const cleanup = () => {
+          clearTimeout(timer);
+          clearTimeout(drainTimer);
+          signal?.removeEventListener('abort', cancel);
+          cancellations.delete(cancel);
+          channel.entries.delete(request.id);
+        };
+        const unavailable = (
+          reason: string,
+          error?: unknown,
+          exit?: { exitCode: number | null; signal: string | null },
+        ) => {
+          if (settled) return;
+          if (
+            !written &&
+            !channel.isReady &&
+            !cancelling &&
+            (reason === 'exit' || reason === 'ready_timeout')
+          ) {
+            settled = true;
+            const proxyRefused = /403|forbidden|not allowed/i.test(channel.stderr);
+            if (proxyRefused || reason === 'ready_timeout') {
+              persistentDisabled = true;
+              logFailure('browser_bridge_multiplex_fallback', new Error(channel.stderr || reason), {
+                method: input.method,
+              });
+            }
+            cleanup();
+            void call(input, signal, transfer, recovery, true).then(resolve, reject);
+            return;
+          }
+          settled = true;
+          uncertain = true;
+          stderr = channel.stderr;
+          failed(reason, error, exit);
+          cleanup();
+          reject(new Error(`The workspace browser did not finish safely. ${reopenNotice}`));
+        };
+        function cancel() {
+          if (settled || cancelling) return;
+          cancelling = true;
+          clearTimeout(timer);
+          if (!written) {
+            settled = true;
+            cleanup();
+            reject(
+              signal?.aborted
+                ? signal.reason instanceof Error
+                  ? signal.reason
+                  : new DOMException('Aborted', 'AbortError')
+                : timedOut
+                  ? new Error('The browser action timed out. Check the page before trying again.')
+                  : new Error('The browser operation was cancelled before it was sent.'),
+            );
+            return;
+          }
+          if (!['currentPage', 'screenshot'].includes(input.method)) {
+            if (browserId) uncertainBrowsers.add(browserId);
+            else uncertain = true;
+          }
+          if (!channel.closed) {
+            try {
+              channel.child.stdin.write(JSON.stringify({ type: 'cancel', id: request.id }) + '\n');
+            } catch {}
+          }
+          drainTimer = setTimeout(() => {
+            if (persistent === channel) dropPersistent('timeout');
+            else unavailable('timeout');
+          }, options.drainTimeoutMs ?? 15_000);
+        }
+        signal?.addEventListener('abort', cancel, { once: true });
+        cancellations.set(cancel, browserId);
+        const runInContext = AsyncLocalStorage.snapshot();
+        channel.entries.set(request.id, {
+          order,
+          chunks: transfer.chunks,
+          received: 0,
+          onResponse: (response) =>
+            runInContext(() => {
+              if (settled) return;
+              settled = true;
+              cleanup();
+              settleResponse(response, cancelling, resolve, reject);
+            }),
+          onUnavailable: (reason, error, exit) =>
+            runInContext(() => unavailable(reason, error, exit)),
+        });
+        void (async () => {
+          try {
+            await channel.ready;
+          } catch {
+            return;
+          }
+          if (settled || cancelling || channel.closed) return;
+          written = true;
+          if (!channel.child.stdin.write(encoded)) await once(channel.child.stdin, 'drain');
+          const data = transfer.data ?? new Uint8Array();
+          for (let offset = 0; offset < data.length; offset += transferBytes) {
+            if (settled || cancelling || channel.closed) return;
+            const line = {
+              type: 'data',
+              id: request.id,
+              data: Buffer.from(data.subarray(offset, offset + transferBytes)).toString('base64'),
+            };
+            if (!channel.child.stdin.write(JSON.stringify(line) + '\n'))
+              await once(channel.child.stdin, 'drain');
+          }
+        })().catch((error) => {
+          if (persistent === channel) dropPersistent('stream_error', error);
+          else unavailable('stream_error', error);
+        });
+        if (signal?.aborted) cancel();
+        return;
+      }
       let child: CommandProcess;
       try {
         child = options.launch(input);
@@ -299,35 +619,7 @@ export function createBridgeComputer(options: {
           });
         settled = true;
         cleanup();
-        updateMetadata(response.metadata, order);
-        if (cancelling || (!response.ok && response.error === 'cancelled'))
-          return reject(new Error('Browser operation cancelled.'));
-        if (response.ok) return resolve(response.result);
-        failed('error_response', new Error(response.error), {
-          ...(response.signInGuard ? { signInGuard: response.signInGuard } : {}),
-        });
-        if (browserErrorMessage(response.error))
-          return reject(
-            new BrowserActionError(
-              response.error as BrowserErrorCode,
-              response.detail,
-              response.signInGuard,
-            ),
-          );
-        if (response.error === 'locked') {
-          const error = new Error('Browser observations are paused during credential entry.');
-          return reject(Object.assign(error, { statusCode: 423 }));
-        }
-        reject(
-          Object.assign(
-            new Error(
-              response.detail
-                ? `The workspace browser could not complete this action: ${response.detail}`
-                : 'The workspace browser could not complete this action. Try again.',
-            ),
-            response.signInGuard ? { signInGuard: response.signInGuard } : {},
-          ),
-        );
+        settleResponse(response, cancelling, resolve, reject);
       });
       void (async () => {
         child.stdin.write(encoded);
@@ -654,6 +946,7 @@ export function createBridgeComputer(options: {
         disposed = true;
         for (const cancel of cancellations.keys()) cancel();
         await Promise.allSettled([...pending.keys()]);
+        dropPersistent();
         await call({ method: 'dispose' });
         screens.clear();
       })().catch((error) => {

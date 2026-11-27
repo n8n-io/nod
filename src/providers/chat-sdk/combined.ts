@@ -21,9 +21,9 @@ export function combineMessagingTransports(
     link(request) {
       forChannel(request.channelId)?.link?.(request);
     },
-    async poll(accept, pair, react, approve) {
+    async poll(accept, pair, react, approve, interact) {
       const results = await Promise.allSettled(
-        transports.map((transport) => transport.poll?.(accept, pair, react, approve)),
+        transports.map((transport) => transport.poll?.(accept, pair, react, approve, interact)),
       );
       const failed = results.find((result) => result.status === 'rejected');
       if (failed?.status === 'rejected') throw failed.reason;

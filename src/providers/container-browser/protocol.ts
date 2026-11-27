@@ -88,6 +88,7 @@ const browserAction = z
       .regex(/^[0-9a-f]{64}$/)
       .optional(),
     readOnly: z.boolean().optional(),
+    observe: z.boolean().optional(),
   })
   .strict();
 export const browserCredentialInput = z.object({
@@ -260,6 +261,7 @@ export type BrowserCall = BrowserRequest extends infer R
     : never
   : never;
 export const browserFrame = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('multiplex') }).strict(),
   z.object({ type: z.literal('request'), request: browserRequest }).strict(),
   z.object({ type: z.literal('cancel'), id: z.uuid() }).strict(),
   z
