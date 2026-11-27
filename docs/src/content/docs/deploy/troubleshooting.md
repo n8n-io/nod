@@ -117,6 +117,7 @@ Before another import, Nod removes a partial disk only from a generated folder n
 
 Startup repairs the private computer instead of stopping:
 
+- If the workspace or browser stops right after it starts, Nod deletes its container images and loads them again from the runtime files. It does this once per start. Your data stays.
 - If WSL no longer lists a completed computer, Nod registers its saved disk again. Your data stays.
 - If that disk is gone or WSL can't open it, Nod sets up a new computer and leaves the old disk where it was.
 - If the saved configuration is missing, damaged or invalid while WSL still lists the computer, Nod can't open it. It removes that computer, which deletes its workspace files, and sets up a new one. Conversations and settings stay in your database, unless its data had not moved out of that computer yet.

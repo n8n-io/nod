@@ -975,79 +975,96 @@ exec "$docker" "$@"
     close: () => stopRuntime({ dataRoot, resourcesPath }),
   };
   signal?.throwIfAborted();
-  status('starting', 'Preparing your workspace…', 'workspace');
-  await images.workspace;
-  await replaceContainer(
-    runDocker,
-    names.workspace,
-    image('workspace'),
-    [
+  const startContainers = async () => {
+    status('starting', 'Preparing your workspace…', 'workspace');
+    await images.workspace;
+    await replaceContainer(
+      runDocker,
+      names.workspace,
+      image('workspace'),
+      [
+        '--network',
+        `nod-workspace-${identity}`,
+        '--init',
+        '--cap-drop',
+        'ALL',
+        '--security-opt',
+        'no-new-privileges:true',
+        '--pids-limit',
+        '1024',
+        '--memory',
+        '2g',
+        '--cpus',
+        '2',
+        '--volume',
+        `${volumes.workspace}:/workspace`,
+        '--volume',
+        `${volumes.tools}:/home/node`,
+        '--entrypoint',
+        '/usr/bin/sleep',
+      ],
+      { command: ['infinity'] },
+    );
+    status('starting', 'Preparing your browser…', 'browser');
+    await images.browser;
+    await replaceContainer(runDocker, names.browser, image('browser'), [
       '--network',
-      `nod-workspace-${identity}`,
+      `nod-browser-${identity}`,
       '--init',
       '--cap-drop',
       'ALL',
       '--security-opt',
       'no-new-privileges:true',
+      '--read-only',
       '--pids-limit',
-      '1024',
+      '768',
       '--memory',
       '2g',
       '--cpus',
       '2',
+      '--shm-size',
+      '256m',
+      '--tmpfs',
+      '/tmp:size=1g',
+      '--tmpfs',
+      '/home/node:uid=1000,gid=1000,mode=700,size=256m',
       '--volume',
-      `${volumes.workspace}:/workspace`,
-      '--volume',
-      `${volumes.tools}:/home/node`,
-      '--entrypoint',
-      '/usr/bin/sleep',
-    ],
-    { command: ['infinity'] },
-  );
-  status('starting', 'Preparing your browser…', 'browser');
-  await images.browser;
-  await replaceContainer(runDocker, names.browser, image('browser'), [
-    '--network',
-    `nod-browser-${identity}`,
-    '--init',
-    '--cap-drop',
-    'ALL',
-    '--security-opt',
-    'no-new-privileges:true',
-    '--read-only',
-    '--pids-limit',
-    '768',
-    '--memory',
-    '2g',
-    '--cpus',
-    '2',
-    '--shm-size',
-    '256m',
-    '--tmpfs',
-    '/tmp:size=1g',
-    '--tmpfs',
-    '/home/node:uid=1000,gid=1000,mode=700,size=256m',
-    '--volume',
-    `${volumes.browser}:/data`,
-  ]);
-  await waitFor(
-    async () => {
-      if (
-        (await runDocker(['inspect', '--format', '{{.State.Running}}', names.browser])) !== 'true'
-      )
-        throw Object.assign(new Error('Nod’s local browser stopped during setup. Try again.'), {
-          code: 'NOD_CONTAINER_STOPPED',
-        });
-      return runDocker([
-        'exec',
-        names.browser,
-        'node',
-        '-e',
-        'const s=require("node:net").connect("/data/control.sock");s.on("connect",()=>{s.end();process.exit(0)});s.on("error",(e)=>{console.error("The browser did not answer: "+e.message);process.exit(1)})',
-      ]);
-    },
-    { signal },
-  );
+      `${volumes.browser}:/data`,
+    ]);
+    await waitFor(
+      async () => {
+        for (const [name, label] of [
+          [names.workspace, 'workspace'],
+          [names.browser, 'local browser'],
+        ])
+          if ((await runDocker(['inspect', '--format', '{{.State.Running}}', name])) !== 'true')
+            throw Object.assign(new Error(`Nod’s ${label} stopped during setup. Try again.`), {
+              code: 'NOD_CONTAINER_STOPPED',
+            });
+        return runDocker([
+          'exec',
+          names.browser,
+          'node',
+          '-e',
+          'const s=require("node:net").connect("/data/control.sock");s.on("connect",()=>{s.end();process.exit(0)});s.on("error",(e)=>{console.error("The browser did not answer: "+e.message);process.exit(1)})',
+        ]);
+      },
+      { signal },
+    );
+  };
+  try {
+    await startContainers();
+  } catch (error) {
+    if (error.code !== 'NOD_CONTAINER_STOPPED') throw error;
+    status('starting', 'Repairing your private computer…', 'workspace');
+    await runDocker(['rm', '--force', names.workspace, names.browser]);
+    await removeStaleImages(runDocker, runGuest, {
+      images: manifest.images.filter((item) => item.name === 'postgres'),
+    });
+    loadImage('workspace');
+    loadImage('browser');
+    await startContainers();
+  }
   await runtimeReady;
   await removeStaleImages(runDocker, runGuest, manifest).catch(() => {});
   status('ready', 'Your private computer is ready.', 'ready');

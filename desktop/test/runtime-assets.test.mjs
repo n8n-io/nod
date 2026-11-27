@@ -5209,7 +5209,7 @@ test('the Windows guest starts Docker and keeps waiting when a readiness check h
   assert.deepEqual((await windows.read()).commands, [['info'], ['dockerd'], ['info']]);
 });
 
-test('the computer starts without PostgreSQL unless a data move is pending, and a failed move stays pending', async (t) => {
+test('the computer starts without PostgreSQL unless a data move is pending, a failed move stays pending, and a stopped container gets fresh images once', async (t) => {
   const { computerNames, finishRuntime } = await import('../runtime/index.mjs');
   const { default: pg } = await import('pg');
   for (const outcome of [
@@ -5219,6 +5219,8 @@ test('the computer starts without PostgreSQL unless a data move is pending, and 
     'windows-ready',
     'windows-failed',
     'windows-damaged',
+    'repaired',
+    'stopped',
   ]) {
     await t.test(outcome, async (t) => {
       const root = await mkdtemp(join(tmpdir(), 'nod-computer-ready-'));
@@ -5277,6 +5279,7 @@ test('the computer starts without PostgreSQL unless a data move is pending, and 
           ]);
         }
         if (args[0] === 'run') created.add(args[args.indexOf('--name') + 1]);
+        if (args[0] === 'rm') for (const name of args.slice(1)) created.delete(name);
         if (args[0] === 'container' && args[1] === 'inspect') {
           if (!created.has(args[2])) throw new Error('Absent fixture container');
           return JSON.stringify([
@@ -5290,7 +5293,15 @@ test('the computer starts without PostgreSQL unless a data move is pending, and 
         }
         if (args[0] === 'exec' && args.includes('pg_dump'))
           throw new Error('Synthetic dump failure synthetic-host-password synthetic-old-password');
-        if (args[0] === 'inspect') return 'true';
+        if (args[0] === 'image' && args[1] === 'ls')
+          return ['postgres', 'workspace', 'browser', 'old-base']
+            .map((name) => `sha256:${name}`)
+            .join('\n');
+        if (args[0] === 'inspect')
+          return args[3] === names.workspace &&
+            (outcome === 'stopped' || (outcome === 'repaired' && runs(names.workspace) === 1))
+            ? 'false'
+            : 'true';
         if (args[0] === 'exec' && args[1] === names.browser && outcome === 'aborted') {
           blocked();
           await new Promise((_, reject) =>
@@ -5410,6 +5421,38 @@ test('the computer starts without PostgreSQL unless a data move is pending, and 
         assert.equal(error?.cause, signal.signal.reason);
         return;
       }
+      const prepared = (name) =>
+        calls.filter((command) => command[0] === 'prepare-image' && command[1] === name).length;
+      if (outcome === 'stopped') {
+        assert.equal(error?.code, 'NOD_CONTAINER_STOPPED');
+        assert.match(error.message, /workspace/);
+        assert.equal(runs(names.workspace), 2);
+        assert.equal(prepared('workspace'), 2);
+        return;
+      }
+      if (outcome === 'repaired') {
+        const repair = calls.findIndex(
+          (command) =>
+            Array.isArray(command) &&
+            command.join(' ') === `rm --force ${names.workspace} ${names.browser}`,
+        );
+        const rerun = calls.findIndex(
+          (command, index) =>
+            index > repair && command[0] === 'run' && command.includes(names.workspace),
+        );
+        assert.ok(repair >= 0 && rerun > repair);
+        assert.deepEqual(
+          calls
+            .slice(repair, rerun)
+            .filter((command) => command[0] === 'image' && command[1] === 'rm')
+            .map((command) => command[2])
+            .sort(),
+          ['sha256:browser', 'sha256:old-base', 'sha256:workspace'],
+        );
+        assert.equal(prepared('workspace'), 2);
+        assert.equal(prepared('browser'), 2);
+        assert.equal(runs(names.browser), 2);
+      } else assert.equal(runs(names.workspace), 1);
       assert.equal(error, undefined);
       assert.deepEqual(Object.keys(runtime).sort(), ['close', 'environment']);
       assert.deepEqual(Object.keys(runtime.environment).sort(), [
