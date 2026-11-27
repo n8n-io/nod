@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ChannelProvider } from '../../shared/contracts';
+import type { ChannelProvider, PhoneOffer } from '../../shared/contracts';
 import { analyticsForCurrentSession } from '../lib/analytics';
 import { errorMessage, post } from '../lib/api';
 import { navigate } from '../lib/navigation';
@@ -7,12 +7,12 @@ import { Button, Notice } from './ui';
 
 const names: Record<ChannelProvider, string> = { telegram: 'Telegram', whatsapp: 'WhatsApp' };
 
-export function PhoneOffer({
-  channels,
+export function PhoneOfferCard({
+  offer,
   path,
   onAnswered,
 }: {
-  channels: ChannelProvider[];
+  offer: PhoneOffer;
   path: 'chat' | 'form';
   onAnswered?(): void;
 }) {
@@ -39,7 +39,7 @@ export function PhoneOffer({
         <strong>Get the result on your phone too?</strong>
       </div>
       <div className="notification-choice-actions">
-        {channels.map((channel) => (
+        {offer.channels.map((channel) => (
           <Button
             key={channel}
             size="sm"

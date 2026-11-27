@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
 import { LoaderCircle, Pencil, Plus } from './icons';
-import type { ChannelProvider, Schedule } from '../../shared/contracts';
+import type { PhoneOffer, Schedule } from '../../shared/contracts';
 import {
   Button,
   Dialog,
@@ -12,7 +12,7 @@ import {
   Notice,
   Switch,
 } from './ui';
-import { PhoneOffer } from './phone-offer';
+import { PhoneOfferCard } from './phone-offer';
 import { SearchPicker, type PickerOption } from './search-picker';
 import { TimeZonePicker } from './time-zone-picker';
 import { api, ApiError, errorMessage, requestAccountVersion } from '../lib/api';
@@ -53,7 +53,7 @@ type Toast = {
   text: string;
   kind?: 'info' | 'error';
   undo?(): void;
-  phoneOffer?: ChannelProvider[];
+  phoneOffer?: PhoneOffer;
 };
 let toast: Toast | null = null;
 const toastListeners = new Set<() => void>();
@@ -114,7 +114,7 @@ export function PlanToast() {
         </Notice>
       )}
       {value?.phoneOffer && (
-        <PhoneOffer channels={value.phoneOffer} path="form" onAnswered={() => showToast(null)} />
+        <PhoneOfferCard offer={value.phoneOffer} path="form" onAnswered={() => showToast(null)} />
       )}
     </div>
   );
@@ -746,7 +746,7 @@ function TaskScheduleForm({
     setError('');
     let unconfirmed = false;
     try {
-      const { phoneOffer, ...saved } = await api<Schedule & { phoneOffer?: ChannelProvider[] }>(
+      const { phoneOffer, ...saved } = await api<Schedule & { phoneOffer?: PhoneOffer }>(
         '/api/schedules',
         {
           method: 'POST',

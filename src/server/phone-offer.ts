@@ -25,35 +25,47 @@ export function createPhoneOffer(dependencies: {
 }) {
   const { pool, ownerId } = dependencies;
 
-  async function channels(client: Pool | PoolClient = pool): Promise<ChannelProvider[]> {
+  function quietly(check: () => Promise<PhoneOffer | undefined>) {
+    return check().catch((error: unknown) => {
+      logFailure('phone_offer_check_failed', error);
+      return undefined;
+    });
+  }
+
+  async function channels(client: Pool | PoolClient): Promise<ChannelProvider[]> {
     const dismissed = (
       await client.query<{ dismissed: boolean }>(
         'SELECT phone_offer_dismissed AS dismissed FROM preferences WHERE owner_id=$1',
         [ownerId],
       )
     ).rows[0]?.dismissed;
-    if (dismissed) return [];
-    const states = (await dependencies.channels(client)) ?? [];
-    if (states.some(channelConnected)) return [];
-    return phoneChannels.filter((provider) =>
-      states.some((channel) => channel.provider === provider),
-    );
+    const states = dismissed ? [] : await dependencies.channels(client);
+    if (!states) return [];
+    const offered = states.some(channelConnected)
+      ? []
+      : phoneChannels.filter((provider) => states.some((channel) => channel.provider === provider));
+    if (!offered.length)
+      await client.query(
+        'UPDATE preferences SET phone_offer_turn=NULL WHERE owner_id=$1 AND phone_offer_turn IS NOT NULL',
+        [ownerId],
+      );
+    return offered;
   }
 
   async function saved(client: PoolClient, turnId: string) {
-    await client.query('SAVEPOINT phone_offer');
     try {
-      await record(client, turnId);
+      await client.query('SAVEPOINT phone_offer');
+      if ((await channels(client)).length) await record(client, turnId);
       await client.query('RELEASE SAVEPOINT phone_offer');
     } catch (error) {
-      await client.query('ROLLBACK TO SAVEPOINT phone_offer');
-      await client.query('RELEASE SAVEPOINT phone_offer');
       logFailure('phone_offer_record_failed', error);
+      await client
+        .query('ROLLBACK TO SAVEPOINT phone_offer; RELEASE SAVEPOINT phone_offer')
+        .catch((rollback: unknown) => logFailure('phone_offer_rollback_failed', rollback));
     }
   }
 
   async function record(client: PoolClient, turnId: string) {
-    if (!(await channels(client)).length) return;
     await client.query(
       `WITH RECURSIVE chain(id,next,source,depth) AS (
          SELECT id,parent_turn_id,source,0 FROM turns WHERE id=$2 AND owner_id=$1 AND session_id=thread_id
@@ -69,16 +81,25 @@ export function createPhoneOffer(dependencies: {
     );
   }
 
-  async function pending(): Promise<PhoneOffer | undefined> {
-    const turnId = (
-      await pool.query<{ turnId: string | null }>(
-        'SELECT phone_offer_turn AS "turnId" FROM preferences WHERE owner_id=$1',
-        [ownerId],
-      )
-    ).rows[0]?.turnId;
-    if (!turnId) return undefined;
-    const offered = await channels();
-    return offered.length ? { turnId, channels: offered } : undefined;
+  function offer() {
+    return quietly(async () => {
+      const offered = await channels(pool);
+      return offered.length ? { channels: offered } : undefined;
+    });
+  }
+
+  function pending() {
+    return quietly(async () => {
+      const turnId = (
+        await pool.query<{ turnId: string | null }>(
+          'SELECT phone_offer_turn AS "turnId" FROM preferences WHERE owner_id=$1',
+          [ownerId],
+        )
+      ).rows[0]?.turnId;
+      if (!turnId) return undefined;
+      const offered = await channels(pool);
+      return offered.length ? { turnId, channels: offered } : undefined;
+    });
   }
 
   async function answer(choice: ChannelProvider | 'not_now') {
@@ -102,5 +123,5 @@ export function createPhoneOffer(dependencies: {
     });
   }
 
-  return { channels, saved, pending, answer, registerRoutes };
+  return { offer, saved, pending, registerRoutes };
 }

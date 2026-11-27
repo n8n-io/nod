@@ -7,7 +7,7 @@ import type { Pool, PoolClient } from 'pg';
 import type { Job, PgBoss } from 'pg-boss';
 import { z } from 'zod';
 import type {
-  ChannelProvider,
+  PhoneOffer,
   Schedule,
   ScheduleObservation,
   ScheduleRun,
@@ -126,7 +126,7 @@ export interface ScheduleDependencies {
   sessionUsage?(sessionIds: string[]): Promise<Record<string, WorkUsage & { unpriced: boolean }>>;
   workPricing?(own: ModelSelection | null): WorkPrice | undefined;
   phoneOffer?: {
-    channels(): Promise<ChannelProvider[]>;
+    offer(): Promise<PhoneOffer | undefined>;
     saved(client: PoolClient, turnId: string): Promise<void>;
   };
 }
@@ -1395,11 +1395,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     });
     app.post('/api/schedules', async (request) => {
       const schedule = await create(request.body);
-      const phoneOffer = await dependencies.phoneOffer?.channels().catch((error: unknown) => {
-        logFailure('phone_offer_check_failed', error);
-        return [];
-      });
-      return phoneOffer?.length ? { ...schedule, phoneOffer } : schedule;
+      const phoneOffer = await dependencies.phoneOffer?.offer();
+      return phoneOffer ? { ...schedule, phoneOffer } : schedule;
     });
     app.patch<{ Params: { id: string } }>('/api/schedules/:id', (request) => {
       const { expectedRevision, ...body } = updateSchema

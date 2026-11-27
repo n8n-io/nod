@@ -285,7 +285,7 @@ export interface AppState {
   configuration: Configuration;
 }
 export interface PhoneOffer {
-  turnId: string;
+  turnId?: string;
   channels: ChannelProvider[];
 }
 export interface MessageHistoryPage {

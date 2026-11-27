@@ -7,6 +7,7 @@ import type { Job } from 'pg-boss';
 import { z } from 'zod';
 import type { InboundMessage, MessagingTransport } from '../src/ports/messaging.ts';
 import type {
+  PhoneOffer,
   Schedule,
   ScheduleHistory,
   ScheduleRun,
@@ -2113,7 +2114,7 @@ test(
             cron: '0 9 * * *',
           });
           assert.equal(response.statusCode, 200, response.body);
-          const body = response.json<Schedule & { phoneOffer?: string[] }>();
+          const body = response.json<Schedule & { phoneOffer?: PhoneOffer }>();
           created.push(body.id);
           return body.phoneOffer;
         };
@@ -2127,70 +2128,82 @@ test(
             available: false,
           },
         ];
-        phoneChannels = unlinked;
-        const approved = await thread.enqueueTurn('Synthetic approved action.', {
-          source: 'resume',
-          parentTurnId: origin.turnId,
-        });
-        await save(approved, 'Phone offer reminder');
-        assert.equal(await offered(), approved);
-        assert.deepEqual(await phoneOffer.pending(), {
-          turnId: approved,
-          channels: ['telegram', 'whatsapp'],
-        });
-        await answer('telegram');
-        assert.equal(await phoneOffer.pending(), undefined);
-        assert.equal((await save(origin.turnId, 'Phone offer reminder')).existing, true);
-        await manageRouted(
-          'schedule_update',
-          { id: created[0], title: 'Renamed phone offer reminder' },
-          from(origin.turnId),
-        );
-        assert.equal(await offered(), null);
-        for (const quiet of [
-          await thread.enqueueTurn('Synthetic background work.', {
+        const providers = ['telegram', 'whatsapp'];
+        try {
+          phoneChannels = unlinked;
+          const approved = await thread.enqueueTurn('Synthetic approved action.', {
             source: 'resume',
             parentTurnId: origin.turnId,
-            background: true,
-          }),
-          await thread.enqueueTurn('Synthetic scheduled run.', {
-            source: 'schedule',
-            background: false,
-          }),
-        ]) {
-          await save(quiet, `Quiet reminder ${created.length}`);
+          });
+          await save(approved, 'Phone offer reminder');
+          assert.equal(await offered(), approved);
+          assert.deepEqual(await phoneOffer.pending(), { turnId: approved, channels: providers });
+          await answer('telegram');
+          assert.equal(await phoneOffer.pending(), undefined);
+          assert.equal((await save(origin.turnId, 'Phone offer reminder')).existing, true);
+          await manageRouted(
+            'schedule_update',
+            { id: created[0], title: 'Renamed phone offer reminder' },
+            from(origin.turnId),
+          );
           assert.equal(await offered(), null);
+          for (const quiet of [
+            await thread.enqueueTurn('Synthetic background work.', {
+              source: 'resume',
+              parentTurnId: origin.turnId,
+              background: true,
+            }),
+            await thread.enqueueTurn('Synthetic scheduled run.', {
+              source: 'schedule',
+              background: false,
+            }),
+          ]) {
+            await save(quiet, `Quiet reminder ${created.length}`);
+            assert.equal(await offered(), null);
+          }
+          assert.deepEqual(await form('Form reminder'), { channels: providers });
+          phoneChannels = [unlinked[0]!, { ...linked[0]!, provider: 'whatsapp' }];
+          await save(origin.turnId, 'Connected reminder');
+          assert.equal(await offered(), null);
+          assert.equal(await form('Connected form reminder'), undefined);
+          phoneChannels = unlinked;
+          phoneStatusFails = true;
+          await save(origin.turnId, 'Unchecked reminder');
+          assert.equal(await offered(), null);
+          assert.equal(await form('Unchecked form reminder'), undefined);
+          phoneStatusFails = false;
+          await save(origin.turnId, 'Second phone offer reminder');
+          assert.equal(await offered(), origin.turnId);
+          phoneStatusFails = true;
+          assert.equal(await phoneOffer.pending(), undefined);
+          assert.equal(await offered(), origin.turnId);
+          phoneStatusFails = false;
+          assert.deepEqual(await phoneOffer.pending(), {
+            turnId: origin.turnId,
+            channels: providers,
+          });
+          phoneChannels = linked;
+          assert.equal(await phoneOffer.pending(), undefined);
+          assert.equal(await offered(), null);
+          phoneChannels = unlinked;
+          assert.equal(await phoneOffer.pending(), undefined);
+          await save(origin.turnId, 'Third phone offer reminder');
+          assert.equal(await offered(), origin.turnId);
+          await answer('not_now');
+          assert.equal(await offered(), null);
+          await save(origin.turnId, 'Declined reminder');
+          assert.equal(await offered(), null);
+          assert.equal(await phoneOffer.pending(), undefined);
+          assert.equal(await form('Declined form reminder'), undefined);
+          assert.equal(
+            (await request('POST', '/api/phone-offer', { choice: 'sms' })).statusCode,
+            400,
+          );
+        } finally {
+          phoneStatusFails = false;
+          phoneChannels = linked;
+          for (const id of new Set(created)) await request('DELETE', `/api/schedules/${id}`);
         }
-        assert.deepEqual(await form('Form reminder'), ['telegram', 'whatsapp']);
-        phoneChannels = [unlinked[0]!, { ...linked[0]!, provider: 'whatsapp' }];
-        await save(origin.turnId, 'Connected reminder');
-        assert.equal(await offered(), null);
-        assert.equal(await form('Connected form reminder'), undefined);
-        phoneChannels = unlinked;
-        phoneStatusFails = true;
-        await save(origin.turnId, 'Unchecked reminder');
-        assert.equal(await offered(), null);
-        assert.equal(await form('Unchecked form reminder'), undefined);
-        phoneStatusFails = false;
-        await save(origin.turnId, 'Second phone offer reminder');
-        assert.equal(await offered(), origin.turnId);
-        phoneChannels = linked;
-        assert.equal(await phoneOffer.pending(), undefined);
-        assert.equal(await offered(), origin.turnId);
-        phoneChannels = unlinked;
-        await answer('not_now');
-        assert.equal(await offered(), null);
-        await save(origin.turnId, 'Declined reminder');
-        assert.equal(await offered(), null);
-        assert.equal(await phoneOffer.pending(), undefined);
-        assert.equal(await form('Declined form reminder'), undefined);
-        assert.equal(
-          (await request('POST', '/api/phone-offer', { choice: 'sms' })).statusCode,
-          400,
-        );
-        phoneChannels = linked;
-        for (const id of new Set(created))
-          assert.equal((await request('DELETE', `/api/schedules/${id}`)).statusCode, 200);
       });
 
       await t.test(

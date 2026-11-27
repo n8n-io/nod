@@ -22,7 +22,7 @@ A schedule runs **One time** or is **Recurring**. Nod tells you when it's saved 
 
 When you save a new schedule and haven't connected Telegram or WhatsApp yet, Nod asks "Get the result on your phone too?" In chat, the question appears as its own card after Nod's answer. After you schedule a finished task from **Tasks**, it appears under the "Scheduled" confirmation. Select **Telegram** or **WhatsApp** to open that channel's setup in **Channels**, where you connect it yourself. The question never connects anything or changes the schedule.
 
-Select **Not now** to stop the question for good. Nod also stops asking once a channel is connected. It doesn't ask when Nod finds you already have the same schedule, when you change a schedule, or for schedules saved by scheduled runs or background work. If you ignore the question, Nod asks again after your next new schedule.
+Select **Not now** to stop the question for good. Nod also stops asking once a channel is connected, and removes a question it already showed. It doesn't ask when Nod finds you already have the same schedule, when you change a schedule, or for schedules saved by scheduled runs or background work. If you don't answer, the chat card stays under Nod's answer until you answer it or save another new schedule, which moves it under the newer answer. After the **Tasks** form, the question stays until you answer it or leave **Tasks**.
 
 Nod uses your time zone, saved from your browser the first time you use Nod. Change it in **Settings → General**. If Nod doesn't know your time zone, it asks.
 
