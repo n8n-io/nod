@@ -141,6 +141,7 @@ export function MessageQuote({
           )
         }
       >
+        {!composing && <CornerUpLeft className="message-reply-icon" size={14} />}
         <strong>
           {composing ? 'Replying to ' : ''}
           {message.role === 'assistant' ? 'Nod' : composing ? 'yourself' : 'You'}

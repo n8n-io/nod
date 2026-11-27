@@ -1,15 +1,16 @@
 .message-presentation {
   --presentation-actions-inset: 0px;
+  --border: color-mix(in srgb, var(--foreground) 7%, transparent);
   position: relative;
   container-type: inline-size;
   width: 100%;
   margin: 14px 0 6px;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: var(--card-radius);
+  border-radius: 22px;
   color: var(--foreground);
   background: var(--surface);
-  font-size: var(--text-control);
+  font-size: var(--text-body);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -23,10 +24,20 @@
 .chat-page .message .message-bubble > .message-body:has(.message-presentation) {
   width: 100%;
 }
-.chat-page .message .message-bubble > .message-body:has(> .message-presentation:only-child) {
+.chat-page .message .message-bubble > .message-body:has(> .message-presentation) {
   padding: 0;
   border-radius: 0;
   background: transparent;
+}
+.chat-page .message .message-bubble > .message-body:has(> .message-presentation) > .message-text {
+  width: fit-content;
+  max-width: 100%;
+  padding: 8px 16px;
+  border-radius: 22px;
+  background: var(--message-background);
+}
+.chat-page .message .message-bubble > .message-body > .message-text + .message-presentation {
+  margin-top: 8px;
 }
 .chat-page .message-body > .message-presentation:first-child {
   margin-top: 0;
