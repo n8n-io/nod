@@ -280,11 +280,17 @@ export async function openDatabase({ dataRoot, resourcesPath, signal, onEvent })
         );
         const stop = () => child.kill();
         const timer = setTimeout(stop, 330_000);
-        abort?.addEventListener('abort', stop, { once: true });
-        child.once('error', reject);
-        child.once('exit', (exitCode) => {
+        const settle = () => {
           clearTimeout(timer);
           abort?.removeEventListener('abort', stop);
+        };
+        abort?.addEventListener('abort', stop, { once: true });
+        child.once('error', (error) => {
+          settle();
+          reject(error);
+        });
+        child.once('exit', (exitCode) => {
+          settle();
           resolveStart(exitCode);
         });
       });

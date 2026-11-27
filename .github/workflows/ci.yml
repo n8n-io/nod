@@ -378,10 +378,10 @@ jobs:
             tests/integrations.test.ts
       - name: Check local file rules on Windows
         run: pnpm exec tsx --test --test-name-pattern="local file rules" tests/sandbox.test.ts
+      - name: Fetch the pinned PostgreSQL build for Windows
+        run: node desktop/scripts/postgres-binaries.mjs
       - name: Check the host database on Windows
-        run: |
-          node desktop/scripts/postgres-binaries.mjs
-          pnpm exec tsx --test tests/desktop-database.test.ts
+        run: pnpm exec tsx --test tests/desktop-database.test.ts
       - name: Execute the PowerShell installer fixtures
         shell: pwsh
         run: >-

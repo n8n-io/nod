@@ -208,7 +208,7 @@ function withFolders(session: WorkspaceSession, path: string, folders: string[])
       .then((result) => {
         if (result.exitCode)
           throw new Error(
-            `The working folder ${folders.join(', ')} could not be created (exit code ${result.exitCode}).`,
+            `Nod could not create the working folders for this work (exit code ${result.exitCode}).`,
           );
       })
       .catch((error) => {

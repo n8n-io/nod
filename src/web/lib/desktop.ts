@@ -377,9 +377,15 @@ export function retryDesktopComputer() {
   return localRuntime().prepare({ retry: true });
 }
 
-function runtimeAction(name: 'installWsl' | 'importRuntime' | 'chooseComputerDirectory') {
+const runtimeActions = {
+  installWsl: 'install WSL',
+  importRuntime: 'choose a Runtime pack',
+  chooseComputerDirectory: 'choose a folder for the private computer',
+};
+
+function runtimeAction(name: keyof typeof runtimeActions) {
   const action = localRuntime()[name];
-  if (!action) return Promise.reject(new Error('Update Nod to do this from here.'));
+  if (!action) return Promise.reject(new Error(`Update Nod to ${runtimeActions[name]} from here.`));
   return action();
 }
 

@@ -30,14 +30,6 @@ const binaries = join(
   process.platform === 'win32' ? 'postgres.exe' : 'postgres',
 );
 
-const url = process.env.TEST_DATABASE_URL;
-
-function databaseUrl(name: string) {
-  const address = new URL(url!);
-  address.pathname = `/${name}`;
-  return address.toString();
-}
-
 const pre = `\\restrict synthetic
 CREATE SCHEMA jobs;
 CREATE TABLE public.threads (
@@ -61,14 +53,31 @@ const snapshot = `SELECT
 
 test(
   'moving the database copies every row, sequence and constraint, or nothing',
-  { skip: !url },
+  { skip: !process.env.TEST_DATABASE_URL && !existsSync(binaries) },
   async (t) => {
+    const cleanup: (() => Promise<unknown>)[] = [];
+    t.after(async () => {
+      for (const step of cleanup.reverse()) await step().catch(() => {});
+    });
+    let url = process.env.TEST_DATABASE_URL;
+    if (!url) {
+      const root = await mkdtemp(join(tmpdir(), 'nod-move-server-'));
+      cleanup.push(() => rm(root, { recursive: true, force: true }));
+      const server = await openDatabase({ dataRoot: root, resourcesPath: process.cwd() });
+      cleanup.push(() => server.close());
+      url = server.url;
+    }
+    const databaseUrl = (name: string) => {
+      const address = new URL(url);
+      address.pathname = `/${name}`;
+      return address.toString();
+    };
     const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
     const names = ['from', 'to', 'busy', 'broken'].map((name) => `move_${name}_${suffix}`);
     const [source, target, busy, broken] = names;
     const admin = new pg.Client({ connectionString: url });
     const clients: pg.Client[] = [];
-    t.after(async () => {
+    cleanup.push(async () => {
       await Promise.all(clients.map((client) => client.end()));
       for (const name of names) await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
       await admin.end();
