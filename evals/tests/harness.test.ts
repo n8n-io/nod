@@ -4754,3 +4754,10 @@ test('sharding partitions scenarios cleanly and mergeRuns combines shard outputs
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('a named set selects only its own scenarios', () => {
+  const chosen = select({ tier: 'full', set: 'happy-path', ignoreWindow: true });
+  assert.ok(chosen.length > 0);
+  assert.ok(chosen.every((item) => item.set === 'happy-path'));
+  assert.throws(() => select({ tier: 'full', set: 'no-such-set', ignoreWindow: true }));
+});

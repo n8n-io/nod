@@ -561,7 +561,7 @@ export function createSession(options: {
     async assistantCount() {
       const id = await thread();
       const result = await pool.query(
-        "SELECT count(*)::int AS n FROM messages WHERE thread_id=$1 AND role='assistant' AND (length(trim(text))>0 OR jsonb_typeof(to_jsonb(messages)->'presentation')='object')",
+        "SELECT count(*)::int AS n FROM messages WHERE thread_id=$1 AND role='assistant' AND (length(trim(text))>0 OR (jsonb_typeof(to_jsonb(messages)->'presentation')='object' AND to_jsonb(messages)->'presentation'->>'type' IS DISTINCT FROM 'schedule-run'))",
         [id],
       );
       return result.rows[0].n as number;

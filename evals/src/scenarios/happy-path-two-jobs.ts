@@ -6,8 +6,11 @@ import { hoursAgo, localTime } from '../world/time.ts';
 
 const owner = { name: 'Petra Novak', email: 'petra@novakarchitects.example' };
 const zone = 'Europe/Lisbon';
-const agenda = /site visit|quinta|planning office|structural/i;
-const mail = /daniel|ferreira|permit|drawings/i;
+const agenda = [/site visit|quinta/i, /planning office/i, /structural|engineer/i];
+const mail = [/daniel|ferreira/i, /permit|drawings/i];
+const all = (keys: RegExp[], text: string) => keys.every((key) => key.test(text));
+const any = (keys: RegExp[], text: string) => keys.some((key) => key.test(text));
+const everyDay = ['*', '0-6', '1-7', '0-7', 'MON-SUN', 'SUN-SAT'];
 
 function mailbox(now: number): Mail[] {
   return [
@@ -109,13 +112,21 @@ export default scenario({
         'two-daily-jobs-saved',
         (run) => {
           const enabled = run.schedules.filter((item) => item.enabled && item.kind === 'recurring');
-          const hours = enabled.map((item) => (item.cron ?? '').trim().split(/\s+/).slice(0, 2));
+          const daily = enabled
+            .map((item) => (item.cron ?? '').trim().toUpperCase().split(/\s+/))
+            .filter(
+              (fields) =>
+                fields.length === 5 &&
+                fields[2] === '*' &&
+                fields[3] === '*' &&
+                everyDay.includes(fields[4]),
+            );
           return {
             pass:
               enabled.length === 2 &&
               enabled.every((item) => item.timeZone === zone) &&
-              hours.some(([minute, hour]) => Number(minute) === 0 && Number(hour) === 8) &&
-              hours.some(([minute, hour]) => Number(minute) === 30 && Number(hour) === 17),
+              daily.some(([minute, hour]) => Number(minute) === 0 && Number(hour) === 8) &&
+              daily.some(([minute, hour]) => Number(minute) === 30 && Number(hour) === 17),
             evidence:
               run.schedules
                 .map((item) => `${item.kind} ${item.cron ?? '-'} ${item.timeZone}`)
@@ -136,8 +147,8 @@ export default scenario({
         'each-result-is-its-own-message',
         (run) => {
           const results = byRun(run);
-          const agendaOnly = results.some((text) => agenda.test(text) && !mail.test(text));
-          const mailOnly = results.some((text) => mail.test(text) && !agenda.test(text));
+          const agendaOnly = results.some((text) => all(agenda, text) && !any(mail, text));
+          const mailOnly = results.some((text) => all(mail, text) && !any(agenda, text));
           return {
             pass: agendaOnly && mailOnly,
             evidence: `${results.length} runs with a message; agenda alone: ${agendaOnly}; email alone: ${mailOnly}`,

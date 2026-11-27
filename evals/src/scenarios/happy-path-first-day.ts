@@ -82,7 +82,7 @@ function mailbox(now: number): Mail[] {
 
 export default scenario({
   id: 'happy-path-first-day',
-  title: 'Day one: a first answer, two tasks, a saved job, and its result the next morning',
+  title: 'Day one: a first answer, two tasks, a saved job, and the result of its first run',
   linear: 'LAB-2703',
   capabilities: ['apps', 'schedules', 'progress'],
   tier: 'full',
@@ -102,7 +102,7 @@ export default scenario({
       apps: createApps(owner, { gmail: gmail(owner, mailbox(clock.now()), clock.now) }),
       now: clock.now,
       marks: { first: 0, inbox: 0, draft: 0, saved: 0, fired: 0, after: 0 },
-      waiting: [] as string[],
+      waiting: [] as Array<{ turnId: string | null; text: string }>,
     };
   },
   async play(session, world) {
@@ -143,11 +143,13 @@ export default scenario({
     const state = await session.api('GET', '/api/state');
     world.waiting = ((state.body.messages ?? []) as Message[])
       .filter((message) => message.role === 'assistant')
-      .map((message) =>
-        [message.text, message.presentation ? presentationText(message.presentation) : ''].join(
-          '\n',
-        ),
-      );
+      .map((message) => ({
+        turnId: message.turnId,
+        text: [
+          message.text,
+          message.presentation ? presentationText(message.presentation) : '',
+        ].join('\n'),
+      }));
   },
   evidence(run, world) {
     const { marks } = world;
@@ -259,10 +261,18 @@ export default scenario({
       ),
       check(
         'step-6-result-waits-in-the-chat',
-        () => ({
-          pass: world.waiting.some((text) => overnight.test(text)),
-          evidence: `${world.waiting.length} assistant messages in the chat`,
-        }),
+        (run) => {
+          const turns = new Set(
+            run.turns.filter((turn) => turn.source === 'schedule').map((turn) => turn.id),
+          );
+          const fromJob = world.waiting.filter(
+            (message) => message.turnId !== null && turns.has(message.turnId),
+          );
+          return {
+            pass: fromJob.some((message) => overnight.test(message.text)),
+            evidence: `${fromJob.length} messages from the scheduled run in the chat`,
+          };
+        },
         { failure: 'incomplete' },
       ),
       judge(

@@ -1,4 +1,4 @@
-import { noWrites } from '../checks.ts';
+import { noWrites, scheduledMessages } from '../checks.ts';
 import { check, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { createApps, gmail, type Mail } from '../world/apps.ts';
@@ -88,13 +88,7 @@ function runMessages(run: Run, from: number, count: number) {
     .filter((turn) => turn.source === 'schedule')
     .slice(from, from + count)
     .map((turn) => turn.id);
-  return run.messages.filter(
-    (message) =>
-      message.role === 'assistant' &&
-      message.turnId !== null &&
-      turns.includes(message.turnId) &&
-      message.text.trim(),
-  );
+  return scheduledMessages(run).filter((message) => turns.includes(message.turnId!));
 }
 
 export default scenario({

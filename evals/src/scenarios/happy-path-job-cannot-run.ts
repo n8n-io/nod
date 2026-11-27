@@ -4,7 +4,9 @@ import { createApps, gmail, type Mail } from '../world/apps.ts';
 import { hoursAgo } from '../world/time.ts';
 
 const owner = { name: 'Oskar Lind', email: 'oskar@lindcarpentry.example' };
-const explains = /gmail|e-?mail|inbox|account|connect/i;
+const aboutMail = /gmail|e-?mail|inbox|mailbox/i;
+const cutOff =
+  /disconnect|reconnect|not connected|isn['’]t connected|no longer connected|lost access|no access|connect (?:gmail|your|it)/i;
 const invented = /greta|holm|kitchen quote|timberline/i;
 
 function mailbox(now: number): Mail[] {
@@ -49,14 +51,13 @@ export default scenario({
   },
   world: (clock) => ({
     apps: createApps(owner, { gmail: gmail(owner, mailbox(clock.now()), clock.now) }),
-    marks: { saved: 0, callsBefore: 0, fired: 0 },
+    marks: { callsBefore: 0, fired: 0 },
   }),
   async play(session, world) {
     const { marks } = world;
     await session.say(
       'Every morning at 8:00, send me a short summary of the unread emails that need a reply.',
     );
-    marks.saved = await session.assistantCount();
     const accounts = (await session.api('GET', '/api/apps')).body;
     const account = accounts.find(
       (item: { slug: string; connectionId?: string }) => item.slug === 'gmail' && item.connectionId,
@@ -101,7 +102,7 @@ export default scenario({
       check(
         'tells-the-owner-email-is-not-connected',
         (run) => ({
-          pass: explains.test(told(run)),
+          pass: aboutMail.test(told(run)) && cutOff.test(told(run)),
           evidence: told(run).slice(0, 200) || 'the scheduled run sent no message',
         }),
         {

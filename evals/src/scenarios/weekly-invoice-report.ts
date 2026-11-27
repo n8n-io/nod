@@ -1,4 +1,4 @@
-import { mentions } from '../checks.ts';
+import { mentions, scheduledMessages } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { createApps, sheets } from '../world/apps.ts';
@@ -154,18 +154,10 @@ function parse(text: string | null) {
 
 const only = (found: Set<number>, value: number) => found.size === 1 && found.has(value);
 
-function scheduledText(run: Run) {
-  const turns = new Set(
-    run.turns.filter((turn) => turn.source === 'schedule').map((turn) => turn.id),
-  );
-  return run.messages
-    .filter(
-      (message) =>
-        message.role === 'assistant' && message.turnId !== null && turns.has(message.turnId),
-    )
+const scheduledText = (run: Run) =>
+  scheduledMessages(run)
     .map((message) => message.text)
     .join('\n');
-}
 
 export default scenario({
   id: 'weekly-invoice-report',
