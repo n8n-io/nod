@@ -19,7 +19,7 @@ If you ask Nod in chat, it sends a link to a private setup page in Nod, and you 
 
 If sign-in is cancelled or fails, select **Try again** in the connection dialog. Select **Start again** if you closed the sign-in window. Finish in the newest window, then dismiss the confirmed connection with **Done**.
 
-Nod can use every tool these servers offer, so it can read and change pages, issues, projects and files. Each change goes through the same [trust check](/trust/approvals/) as any app action. Nod renews each sign-in on its own, so you sign in once. When Nod is offline, or the service is down or busy, the connection stays and Nod tries again the next time it's used. Only when the service refuses the saved sign-in, because it expired or was revoked, does **Apps** show **Sign-in required** with **Reconnect**.
+Nod can use every tool these servers offer, so it can read and change pages, issues, projects and files. Each change goes through the same [trust check](/trust/approvals/) as any app action. Nod renews sign-ins on its own when the service allows it. When Nod is offline, or the service is down or busy, the connection stays and Nod tries again the next time it's used. **Apps** shows **Sign-in required** with **Reconnect** when a sign-in can't be renewed or the service refuses it, for example because it was revoked.
 
 ## n8n
 
