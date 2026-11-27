@@ -95,6 +95,61 @@ function htmlText(node: DefaultTreeAdapterMap['node']): string {
   return text.trimEnd();
 }
 
+function urlHost(url: string): string {
+  try {
+    return new URL(url.startsWith('//') ? `https:${url}` : url).hostname;
+  } catch {
+    return '';
+  }
+}
+
+export function plainPreview(text: string): string {
+  const parts: string[] = [];
+  let remaining = 1000;
+  let nodes = 4096;
+  const add = (value: string) => {
+    const piece = previewSlice(value, remaining);
+    parts.push(piece);
+    remaining -= piece.length;
+  };
+  function walk(node: Nodes, block = true) {
+    if (remaining <= 0 || nodes-- <= 0) return;
+    if (node.type === 'code' || node.type === 'definition' || node.type === 'footnoteDefinition')
+      return;
+    if (node.type === 'html') {
+      add(/^<br\s*\/?>$/i.test(node.value.trim()) ? ' ' : htmlText(parseFragment(node.value)));
+      if (block) add(' ');
+      return;
+    }
+    if (node.type === 'image' || node.type === 'imageReference') return add(node.alt || '');
+    if (node.type === 'break') return add(' ');
+    if (node.type === 'link') {
+      const [label, ...rest] = node.children;
+      if (!rest.length && label?.type === 'text' && label.value === node.url)
+        return add(urlHost(node.url) || label.value);
+    }
+    if ('value' in node) add(node.value);
+    if ('children' in node) {
+      const blocks = ['root', 'blockquote', 'list', 'listItem'].includes(node.type);
+      for (const child of node.children) walk(child, blocks);
+    }
+    if (['paragraph', 'heading', 'listItem', 'tableCell'].includes(node.type)) add(' ');
+  }
+  let source = text;
+  if (text.length > 2000) {
+    const window = previewSlice(text, 2000);
+    const block = window.lastIndexOf('\n\n');
+    const space = window.search(/\s\S*$/);
+    source = window.slice(0, block > 0 ? block : space > 0 ? space : window.length);
+  }
+  try {
+    walk(markdown.parse(source));
+  } catch {
+    return '';
+  }
+  return parts.join('').replace(/\s+/g, ' ').trim();
+}
+
 export function messagePreview(text: string): string {
   if (text.length <= 1000) return text;
   let remaining = 1000;

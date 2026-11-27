@@ -23,6 +23,7 @@ export interface Message {
   id: string;
   role: 'user' | 'assistant';
   text: string;
+  previewText?: string;
   displayText?: string;
   audioCaption?: string;
   turnId: string | null;
