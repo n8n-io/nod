@@ -1,0 +1,33 @@
+{
+  "$schema": "https://nod.n8n.io/docs/schemas/apps/v1/contract.schema.json",
+  "source": "https://developer.calendly.com/docs/mcp/supported-tools",
+  "tool": {
+    "name": "users-get_current_user",
+    "description": "Get the authenticated user",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  "input": {},
+  "output": {
+    "resource": {
+      "uri": "https://api.calendly.com/users/SYNTHETIC000USER",
+      "name": "Sample User",
+      "slug": "sample-user",
+      "email": "user@example.com",
+      "scheduling_url": "https://calendly.com/sample-user",
+      "timezone": "America/New_York",
+      "avatar_url": null,
+      "created_at": "2026-01-02T03:04:05.678123Z",
+      "updated_at": "2026-02-03T04:05:06.789123Z",
+      "current_organization": "https://api.calendly.com/organizations/SYNTHETIC0000ORG",
+      "resource_type": "User",
+      "locale": "en",
+      "time_notation": "12h"
+    }
+  }
+}

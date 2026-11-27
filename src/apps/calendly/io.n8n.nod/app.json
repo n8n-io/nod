@@ -1,0 +1,24 @@
+{
+  "$schema": "https://nod.n8n.io/docs/schemas/apps/v1/app.schema.json",
+  "displayName": "Calendly",
+  "icon": "./io.n8n.nod/icon.svg",
+  "categories": ["Scheduling"],
+  "connection": {
+    "type": "mcp",
+    "server": "calendly",
+    "authentication": ["oauth2"]
+  },
+  "prompts": [
+    "List my Calendly meetings for this week.",
+    "Show what my next invitee answered on the booking form.",
+    "Find open 30-minute slots next Tuesday for my intro call.",
+    "Create a single-use scheduling link for my intro call."
+  ],
+  "requirements": ["A Calendly account on any plan, including the free plan."],
+  "limitations": [
+    "Calendly allows 50 API requests per user per minute on the free plan and 500 on paid plans, including calls from this app.",
+    "Free and trial plans can create only 5 invitees per user per day through the API.",
+    "Routing form tools need a Calendly Teams plan or higher.",
+    "This app does not start automatic monitoring from its MCP connection alone."
+  ]
+}
