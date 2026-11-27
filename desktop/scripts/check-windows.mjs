@@ -525,6 +525,21 @@ if (process.env.WORKSPACE_CONTAINER) {
       else await run(wsl, ['--unregister', distribution]).catch(() => {});
     }
   }
+  const leftover = await run(
+    join(process.env.SYSTEMROOT, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      'Get-CimInstance Win32_Process -Filter "Name=\'postgres.exe\'" | Where-Object { $_.ExecutablePath -like ($env:NOD_INSTALLATION + \'\\*\') } | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.CommandLine)" }',
+    ],
+    { env: { ...process.env, NOD_INSTALLATION: installation } },
+  );
+  assert.equal(
+    leftover.trim(),
+    '',
+    `PostgreSQL is still running from the installation:\n${leftover}`,
+  );
   console.log('Checking that an update installs its runtime file.');
   await run(join(output, 'nod-Setup-x64.exe'), ['/S', `/D=${installation}`], { timeout: 600_000 });
   const { guest } = JSON.parse(

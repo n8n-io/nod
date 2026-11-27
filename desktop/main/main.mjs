@@ -401,6 +401,10 @@ const lifecycle = createDesktopLifecycle({
         database,
         onMoved: async () => {
           phase = 'engine';
+          await writeDiagnostic(
+            `Saved data moved. ${diagnosticFields({ ms: Date.now() - started })}`,
+            { event: 'database_moved', durationMs: Date.now() - started },
+          ).catch(() => {});
           await onMoved();
           phase = 'runtime';
         },

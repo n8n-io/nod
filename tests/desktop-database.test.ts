@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import type { AddressInfo } from 'node:net';
+import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
@@ -17,6 +19,7 @@ const { moveDatabase, openDatabase } = (await import(
     target: string;
     schema(section: string): Promise<string>;
     signal?: AbortSignal;
+    space?(bytes: number): Promise<void>;
   }): Promise<void>;
   openDatabase(options: { dataRoot: string; resourcesPath: string }): Promise<HostDatabase>;
 };
@@ -145,6 +148,24 @@ test(
     );
     assert.deepEqual(await tables(occupied), []);
 
+    let needed = 0;
+    await assert.rejects(
+      moveDatabase({
+        source: databaseUrl(source),
+        target: databaseUrl(broken),
+        schema,
+        space: async (bytes) => {
+          needed = bytes;
+          throw Object.assign(new Error('Synthetic disk is full.'), {
+            code: 'NOD_DATABASE_STORAGE_FULL',
+          });
+        },
+      }),
+      { code: 'NOD_DATABASE_STORAGE_FULL' },
+    );
+    assert.ok(needed > 0);
+    assert.deepEqual(await tables(await open(broken)), []);
+
     await assert.rejects(
       moveDatabase({
         source: databaseUrl(source),
@@ -196,16 +217,29 @@ test(
     assert.notEqual(postmaster(), crashed);
     process.kill(postmaster(), 'SIGKILL');
     await database.close();
-    const lock = join(root, 'database', 'data', 'postmaster.pid');
-    const lines = readFileSync(lock, 'utf8').split('\n');
-    lines[0] = String(process.pid);
-    writeFileSync(lock, lines.join('\n'));
-    const reopening = Date.now();
+    const kept = async (handle: HostDatabase) => {
+      const client = new pg.Client({ connectionString: handle.url });
+      await client.connect();
+      try {
+        return (await client.query('SELECT value FROM synthetic')).rows[0].value;
+      } finally {
+        await client.end();
+      }
+    };
     const reopened = await open();
+    assert.equal(await kept(reopened), 'kept');
+    await reopened.close();
+    const closed = createServer();
+    await new Promise<void>((resolve) => closed.listen(0, '127.0.0.1', resolve));
+    const { port } = closed.address() as AddressInfo;
+    await new Promise((resolve) => closed.close(resolve));
+    writeFileSync(
+      join(root, 'database', 'data', 'postmaster.pid'),
+      `${process.pid}\n${join(root, 'database', 'data')}\n0\n${port}\n\n127.0.0.1\n0 0\nready   \n`,
+    );
+    const reopening = Date.now();
+    const reused = await open();
     assert.ok(Date.now() - reopening < 15_000);
-    const client = new pg.Client({ connectionString: reopened.url });
-    await client.connect();
-    assert.equal((await client.query('SELECT value FROM synthetic')).rows[0].value, 'kept');
-    await client.end();
+    assert.equal(await kept(reused), 'kept');
   },
 );

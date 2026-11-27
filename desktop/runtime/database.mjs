@@ -93,12 +93,13 @@ function failure(code, message, cause, details) {
   });
 }
 
-async function checkSpace(path) {
+async function checkSpace(path, bytes = 0, purpose = 'for its database') {
+  const required = requiredSpace + bytes;
   const { bavail, bsize } = await statfs(path).catch(() => ({ bavail: Infinity, bsize: 1 }));
-  if (bavail * bsize < requiredSpace)
+  if (bavail * bsize < required)
     throw failure(
       'NOD_DATABASE_STORAGE_FULL',
-      `Nod needs about ${Math.round(requiredSpace / 1024 / 1024)} MB of free disk space for its database. Free some space, then try again.`,
+      `Nod needs about ${Math.round(required / 1024 / 1024)} MB of free disk space ${purpose}. Free some space, then try again.`,
     );
 }
 
@@ -378,6 +379,7 @@ export async function openDatabase({ dataRoot, resourcesPath, signal, onEvent })
     get pendingMove() {
       return !state.ready;
     },
+    ensureSpace: (bytes) => checkSpace(root, bytes * 2, 'to move your saved data'),
     async moved() {
       state = { ...state, ready: true };
       await writeState(statePath, state);
@@ -388,7 +390,7 @@ export async function openDatabase({ dataRoot, resourcesPath, signal, onEvent })
 
 const restrictLine = /^\\(?:un)?restrict [A-Za-z0-9]+$/gm;
 
-export async function moveDatabase({ source, target, schema, signal }) {
+export async function moveDatabase({ source, target, schema, signal, space }) {
   const { default: pg } = await import('pg');
   const { from: copyFrom, to: copyTo } = await import('pg-copy-streams');
   const [pre, post] = await Promise.all([schema('pre-data'), schema('post-data')]);
@@ -396,6 +398,12 @@ export async function moveDatabase({ source, target, schema, signal }) {
   const host = new pg.Client({ connectionString: target, connectionTimeoutMillis: 10_000 });
   await legacy.connect();
   try {
+    await space?.(
+      Number(
+        (await legacy.query('SELECT pg_database_size(current_database())::text AS bytes')).rows[0]
+          .bytes,
+      ),
+    );
     await host.connect();
     try {
       const copied = await host.query(

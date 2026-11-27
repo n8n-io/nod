@@ -822,6 +822,7 @@ async function moveComputerDatabase({
       source,
       target: database.url,
       signal,
+      space: database.ensureSpace,
       schema: (section) =>
         runDocker(
           [
@@ -841,9 +842,10 @@ async function moveComputerDatabase({
     });
   } catch (cause) {
     signal?.throwIfAborted();
+    if (cause.code === 'NOD_DATABASE_STORAGE_FULL') throw cause;
     throw Object.assign(
       new Error(
-        'Nod could not move your saved data out of its private computer. Your data is unchanged. Quit Nod and open it again.',
+        'Nod could not move your saved data out of its private computer. Your data is unchanged. Select Try again.',
       ),
       {
         code: 'NOD_DATABASE_MOVE_FAILED',
