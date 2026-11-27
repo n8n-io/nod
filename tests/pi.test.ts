@@ -10155,6 +10155,46 @@ test('LM Studio servers list tool-trained chat models with their loaded context 
   assert.deepEqual(aliased, definitions);
 });
 
+test('Google discovery adds Gemini 4 Neon only if the account lists it for generation', async () => {
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const backend = createPiModelBackend({
+    fetch: async (_input, init) => {
+      const key = new Headers(init?.headers).get('x-goog-api-key');
+      return Response.json({
+        models: [
+          { name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] },
+          ...(key === 'fixture-unlisted'
+            ? []
+            : [
+                {
+                  name: 'models/gemini-4-neon',
+                  supportedGenerationMethods: [
+                    key === 'fixture-generation' ? 'generateContent' : 'countTokens',
+                  ],
+                },
+              ]),
+        ],
+      });
+    },
+  });
+  const catalog = (key: string) => backend.catalog('google', 'api_key', { type: 'api_key', key });
+  const expected = ['gemini-2.5-flash'];
+  for (const key of ['fixture-unlisted', 'fixture-count-only']) {
+    assert.deepEqual(
+      (await catalog(key)).map(({ choice }) => choice.id),
+      expected,
+    );
+  }
+  const found = await catalog('fixture-generation');
+  assert.deepEqual([...found.map(({ choice }) => choice.id)].sort(), [
+    ...expected,
+    'gemini-4-neon',
+  ]);
+  const neon = found.find(({ choice }) => choice.id === 'gemini-4-neon')!;
+  assert.equal(neon.spec.api, 'google-generative-ai');
+  assert.deepEqual(neon.choice.efforts, ['low', 'medium', 'high']);
+});
+
 test('native provider discovery uses owned keys, bounded Google pagination and tool-capable account models', async () => {
   const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
   const calls: string[] = [];

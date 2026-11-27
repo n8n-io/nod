@@ -96,6 +96,28 @@ export function openAIModels(region: OpenAIRegion = 'global'): Model<'openai-res
   }));
 }
 
+const googleNeon: Model<'google-generative-ai'> = {
+  id: 'gemini-4-neon',
+  name: 'Gemini 4 Neon',
+  provider: 'google',
+  api: 'google-generative-ai',
+  baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+  reasoning: true,
+  input: ['text', 'image'],
+  contextWindow: 1_048_576,
+  maxTokens: 65_536,
+  cost: { input: 3, output: 15, cacheRead: 0.15, cacheWrite: 0 },
+  thinkingLevelMap: {
+    off: null,
+    minimal: null,
+    low: 'low',
+    medium: 'medium',
+    high: 'high',
+    xhigh: null,
+    max: null,
+  },
+};
+
 export const nativeAudioModel: Model<'openai-completions'> = {
   id: 'gpt-audio-1.5',
   name: 'GPT Audio 1.5',
@@ -303,7 +325,12 @@ export async function nativeCatalog(
           ids.add(model.name.slice('models/'.length));
       }
       token = data.nextPageToken;
-      if (!token) return select(ids);
+      if (!token) {
+        const matched = select(ids);
+        return ids.has(googleNeon.id) && !matched.some((model) => model.id === googleNeon.id)
+          ? [...matched, googleNeon]
+          : matched;
+      }
       if (tokens.has(token)) throw failed();
       tokens.add(token);
     }
