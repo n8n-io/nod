@@ -1,0 +1,70 @@
+{
+  "$schema": "https://nod.n8n.io/docs/schemas/apps/v1/contract.schema.json",
+  "source": "https://developer.todoist.com/api/v1/#tag/Todoist-MCP",
+  "tool": {
+    "name": "find-projects",
+    "description": "List or search by name the projects the user has joined. By default only active projects are returned; use archivedStatus ('archived' or 'all') to include archived projects. When searching, when archivedStatus is 'all', or when listing archived projects in a folder, all matching projects are returned (pagination is ignored). Otherwise projects are returned with pagination. Workspace projects the user hasn't joined are left out unless includeUnjoined is set, or a search matches no joined project.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "searchText": {
+          "type": "string",
+          "description": "Search for a project by name (partial and case insensitive match). Supports wildcards (e.g. \"work*\" for prefix match). Use \"\\*\" for a literal asterisk. If omitted, all projects are returned."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 50,
+          "description": "The maximum number of projects to return."
+        },
+        "cursor": {
+          "type": "string",
+          "description": "The cursor to get the next page of projects (cursor is obtained from the previous call to this tool, with the same parameters)."
+        },
+        "archivedStatus": {
+          "type": "string",
+          "enum": ["active", "archived", "all"],
+          "description": "Which projects to return by archive status: 'active' (default, non-archived only), 'archived' (archived only), or 'all' (both active and archived). Each project includes an isArchived field. Archived projects can be deleted via the delete-object tool (type: 'project')."
+        },
+        "folderId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Only projects in this workspace folder (see find-folders)."
+        },
+        "includeUnjoined": {
+          "type": "boolean",
+          "description": "Also list workspace projects the user can join but hasn't, in unjoinedProjects (first page only). They can't be read until joined; join with project-management (action 'join') only when the user asks."
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  "input": {
+    "searchText": "Home"
+  },
+  "output": {
+    "projects": [
+      {
+        "id": "synthetic-project",
+        "name": "Home",
+        "description": "",
+        "color": "charcoal",
+        "isFavorite": false,
+        "isShared": false,
+        "inboxProject": false,
+        "viewStyle": "list",
+        "childOrder": 1,
+        "isArchived": false
+      }
+    ],
+    "totalCount": 1,
+    "hasMore": false,
+    "appliedFilters": {
+      "searchText": "Home",
+      "limit": 50
+    }
+  }
+}

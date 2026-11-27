@@ -1,0 +1,17 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "todoist",
+  "version": "1.0.0",
+  "description": "Find and manage your tasks and projects.",
+  "homepage": "https://www.todoist.com",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.n8n.nod": {
+      "app": "./io.n8n.nod/app.json"
+    }
+  },
+  "author": {
+    "name": "DravenDou",
+    "url": "https://github.com/DravenDou"
+  }
+}

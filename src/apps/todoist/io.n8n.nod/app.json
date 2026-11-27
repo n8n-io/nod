@@ -1,0 +1,27 @@
+{
+  "$schema": "https://nod.n8n.io/docs/schemas/apps/v1/app.schema.json",
+  "displayName": "Todoist",
+  "icon": "./io.n8n.nod/icon.svg",
+  "categories": ["Productivity"],
+  "connection": {
+    "type": "mcp",
+    "server": "todoist",
+    "authentication": ["oauth2"],
+    "scopes": ["data:read_write"]
+  },
+  "prompts": [
+    "Show my Todoist tasks that are due today or overdue.",
+    "Add a task to call the accountant next Monday at 10am.",
+    "Move my overdue tasks to tomorrow.",
+    "Summarize the tasks I completed this week."
+  ],
+  "requirements": [
+    "A Todoist account. Sign-in asks for Todoist's data:read_write scope: read and write access to tasks, projects, labels and filters."
+  ],
+  "limitations": [
+    "This app is not created by, affiliated with, or supported by Todoist. It connects to Todoist's own MCP server.",
+    "Access covers every project the signed-in account can open. Todoist sign-in cannot limit it to one project.",
+    "Workspace projects the account hasn't joined appear by name only. Their tasks can't be read until the account joins the project.",
+    "This app does not start automatic monitoring from its MCP connection alone."
+  ]
+}
