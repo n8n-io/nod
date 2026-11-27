@@ -1,8 +1,12 @@
 import type { IntegrationFile } from './integrations.ts';
 import type { AppOAuthMetadata } from '../shared/app-definitions.ts';
 export class DiscoveredSignInRequired extends Error {
-  constructor() {
-    super('Connect this account again.');
+  constructor(reason?: string) {
+    super(
+      reason
+        ? `The service refused the saved sign-in (${reason}). Connect this account again.`
+        : 'Connect this account again.',
+    );
   }
 }
 
