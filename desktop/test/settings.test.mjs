@@ -6360,6 +6360,7 @@ app.whenReady().then(async () => {
       launchAtLogin: true,
       notifications: false,
       notificationSound: false,
+      keepAwake: true,
       theme: 'system',
       zoomFactor: 1,
       onboardingPreferenceStep: 'complete',
