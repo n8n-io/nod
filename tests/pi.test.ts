@@ -10239,6 +10239,10 @@ test('native provider discovery uses owned keys, bounded Google pagination and t
                     name: 'models/gemini-3.1-flash-live-preview',
                     supportedGenerationMethods: ['generateContent'],
                   },
+                  {
+                    name: 'models/gemini-4-hydrogen',
+                    supportedGenerationMethods: ['generateContent'],
+                  },
                   { name: 'models/gemini-4-argon', supportedGenerationMethods: ['countTokens'] },
                   {
                     name: 'models/../../evil.test?key=fixture-google-key',
@@ -10285,8 +10289,13 @@ test('native provider discovery uses owned keys, bounded Google pagination and t
   assert.deepEqual(google.map(({ choice }) => choice.id).sort(), [
     'gemini-2.5-flash',
     'gemini-2.5-pro',
+    'gemini-4-hydrogen',
   ]);
   assert.ok(google.every(({ spec }) => spec.api === 'google-generative-ai'));
+  const hydrogen = google.find(({ choice }) => choice.id === 'gemini-4-hydrogen')!;
+  assert.equal(hydrogen.choice.images, true);
+  assert.equal(hydrogen.choice.contextWindow, 1_048_576);
+  assert.equal(hydrogen.spec.provider, 'google');
   const mistral = await backend.catalog('mistral', 'api_key', {
     type: 'api_key',
     key: 'fixture-mistral-key',
