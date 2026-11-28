@@ -8,7 +8,12 @@ import {
 } from '../../../shared/onboarding';
 import { Button, Notice } from '../../components/ui';
 import { SetupProgress } from '../../components/setup-progress';
-import { desktopRuntimeAvailable, desktopRendererReady } from '../../lib/desktop';
+import {
+  desktopRuntimeAvailable,
+  desktopRendererReady,
+  desktopSettingsAvailable,
+  getDesktopSettings,
+} from '../../lib/desktop';
 import { DesktopPreferencesSetup } from './steps/desktop-preferences';
 import { useBrowserTimeZone } from '../../hooks/use-browser-time-zone';
 import { modelReady } from '../../hooks/use-models';
@@ -17,6 +22,7 @@ import { api, ApiError, errorMessage } from '../../lib/api';
 import { subscribeAppEvents } from '../../lib/app-events';
 import { pageDataCache } from '../../lib/page-data-cache';
 import { analyticsForCurrentSession, captureAnalytics } from '../../lib/analytics';
+import { browserNotificationStatus } from '../../lib/browser-notifications';
 import { clearStored, readStep, writeStep } from './storage';
 import { Welcome } from './steps/welcome';
 import { Brain } from './steps/brain';
@@ -24,9 +30,11 @@ import { Email } from './steps/email';
 import { Privacy } from './steps/privacy';
 import { About } from './steps/about';
 import { Join } from './steps/join';
+import { Notifications } from './steps/notifications';
 import { OnboardingFrame } from './frame';
 
 export type StepProps = {
+  ownerId: string;
   arrived: 'forward' | 'back';
   quiet?: boolean;
   onNext(): void;
@@ -43,9 +51,16 @@ const screens: Record<OnboardingStep, ComponentType<StepProps>> = {
   about: About,
   email: Email,
   brain: Brain,
+  notifications: Notifications,
   privacy: Privacy,
   join: Join,
 };
+
+function notificationsOff(ownerId: string) {
+  if (desktopSettingsAvailable()) return true;
+  const status = browserNotificationStatus(ownerId);
+  return status.available && status.permission !== 'denied' && !status.enabled;
+}
 
 function mineEmail() {
   void api('/api/onboarding/suggestions', { method: 'POST', body: '{}' }).catch(() => {});
@@ -113,7 +128,15 @@ export function Onboarding({
     };
   });
   const { arrived } = position;
-  const step = position.step === 'privacy' && !privacy ? 'join' : position.step;
+  const [askNotifications, setAskNotifications] = useState(() => notificationsOff(user.id));
+  const step =
+    position.step === 'notifications' && !askNotifications
+      ? privacy
+        ? 'privacy'
+        : 'join'
+      : position.step === 'privacy' && !privacy
+        ? 'join'
+        : position.step;
   const index = step === 'preferences' ? onboardingSteps.length : onboardingSteps.indexOf(step);
   const [finishing, setFinishing] = useState(0);
   const [completionFailed, setCompletionFailed] = useState(false);
@@ -121,7 +144,10 @@ export function Onboarding({
   const [missing, setMissing] = useState<'brain' | 'email' | null>(null);
   const [skipModelStep, setSkipModelStep] = useState<boolean | null>(null);
   const steps = onboardingSteps.filter(
-    (item) => (item !== 'brain' || skipModelStep !== true) && (item !== 'privacy' || privacy),
+    (item) =>
+      (item !== 'brain' || skipModelStep !== true) &&
+      (item !== 'notifications' || askNotifications) &&
+      (item !== 'privacy' || privacy),
   );
   const [mining, setMining] = useState(false);
   const emailSkipped = useRef(false);
@@ -137,6 +163,19 @@ export function Onboarding({
   useEffect(() => {
     desktopRendererReady();
   }, []);
+
+  useEffect(() => {
+    if (!desktopSettingsAvailable() || position.step === 'preferences') return;
+    let current = true;
+    void getDesktopSettings()
+      .then((settings) => {
+        if (current && settings.notifications) setAskNotifications(false);
+      })
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
+  }, [user.id]);
 
   useEffect(() => {
     if (step !== position.step) setPosition({ step, arrived });
@@ -197,7 +236,7 @@ export function Onboarding({
           setPosition({ step: 'brain', arrived: 'forward' });
         if (ready)
           setPosition((position) =>
-            position.step === 'brain' ? { step: 'privacy', arrived: 'forward' } : position,
+            position.step === 'brain' ? { step: 'notifications', arrived: 'forward' } : position,
           );
       })
       .catch(() => {
@@ -260,10 +299,9 @@ export function Onboarding({
   }
 
   function skipped() {
-    if (step === 'email') {
-      emailSkipped.current = true;
+    if (step === 'email') emailSkipped.current = true;
+    if (step === 'email' || step === 'notifications')
       captureAnalytics('onboarding_step_skipped', { step });
-    }
   }
 
   function next() {
@@ -318,6 +356,7 @@ export function Onboarding({
       <div className="ob-screen" inert={Boolean(finishing)} aria-busy={Boolean(finishing)}>
         <Screen
           key={step}
+          ownerId={user.id}
           arrived={arrived}
           quiet={position.quiet}
           onNext={next}

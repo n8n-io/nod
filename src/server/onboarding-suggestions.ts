@@ -625,7 +625,6 @@ export function createOnboardingSuggestions(options: {
        VALUES($1,$2,'assistant',$3,$4,$5,GREATEST(now(),(SELECT max(created_at)+interval '1 millisecond' FROM messages WHERE owner_id=$2 AND thread_id=$4)))`,
       [id, owner, text, threadId, suggestions && JSON.stringify(suggestions)],
     );
-    return id;
   }
 
   function deliver() {
@@ -687,13 +686,7 @@ export function createOnboardingSuggestions(options: {
         'UPDATE onboarding_suggestions SET greeted_at=now() WHERE owner_id=$1 AND greeted_at IS NULL',
         [owner],
       );
-      if (claimed.rowCount) {
-        const id = await insert(client, thread.id, welcomeGreeting(name));
-        await client.query(
-          'UPDATE onboarding_suggestions SET greeting_message_id=$2 WHERE owner_id=$1',
-          [owner, id],
-        );
-      }
+      if (claimed.rowCount) await insert(client, thread.id, welcomeGreeting(name));
       return true;
     }, pool);
     if (!greeted) return;
@@ -706,8 +699,8 @@ export function createOnboardingSuggestions(options: {
       owner_id text PRIMARY KEY, suggestions jsonb, greeted_at timestamptz, posted_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now()
     );
-    ALTER TABLE onboarding_suggestions DROP COLUMN IF EXISTS brief, DROP COLUMN IF EXISTS brief_at;
-    ALTER TABLE onboarding_suggestions ADD COLUMN IF NOT EXISTS greeting_message_id uuid`);
+    ALTER TABLE onboarding_suggestions DROP COLUMN IF EXISTS brief, DROP COLUMN IF EXISTS brief_at,
+      DROP COLUMN IF EXISTS greeting_message_id`);
     const unfinished = await pool.query(
       'SELECT 1 FROM onboarding_suggestions WHERE owner_id=$1 AND greeted_at IS NOT NULL AND posted_at IS NULL',
       [owner],
@@ -716,17 +709,6 @@ export function createOnboardingSuggestions(options: {
   }
 
   function registerRoutes(app: FastifyInstance) {
-    app.get('/api/onboarding/introduction', async (_request, response) => {
-      const result = await pool.query<{ id: string }>(
-        `SELECT messages.id FROM onboarding_suggestions
-         JOIN messages ON messages.id=onboarding_suggestions.greeting_message_id
-           AND messages.owner_id=onboarding_suggestions.owner_id
-         WHERE onboarding_suggestions.owner_id=$1`,
-        [owner],
-      );
-      response.header('cache-control', 'no-store');
-      return { messageId: result.rows[0]?.id ?? null };
-    });
     app.post('/api/onboarding/suggestions', async (request, response) => {
       z.object({})
         .strict()

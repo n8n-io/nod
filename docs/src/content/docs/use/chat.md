@@ -171,7 +171,7 @@ Nod keeps quick answers, simple lookups such as flight searches, status question
 
 ## Notifications
 
-Choose **Enable notifications** after the first introduction, or turn them on in **Settings → Notifications**. **Not now** dismisses the offer. Nod only asks your browser for permission after you choose to enable notifications. If you block the request, allow notifications in the browser’s site settings before trying again.
+Choose **Turn on notifications** during setup, or turn them on later in **Settings → Notifications**. **Not now** leaves them off. Nod only asks your browser for permission after you choose to turn notifications on. If you block the request, allow notifications in the browser’s site settings before trying again.
 
 If your browser resets or blocks permission, the switch turns off. Once your browser allows requests again, turn on **Notifications** in **Settings → Notifications** to ask for permission. The switch stays off until permission is granted. Dismissing the request leaves it off; you can try again with the same switch. When enabled, **Send test notification** lets you check delivery.
 

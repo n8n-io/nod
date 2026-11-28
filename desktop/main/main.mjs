@@ -135,6 +135,7 @@ const testInstall =
     true;
 const appName = testInstall ? 'nod Setup Test' : 'Nod';
 app.setName(process.platform === 'darwin' && app.isPackaged && !testInstall ? 'nod' : appName);
+if (process.platform === 'win32') app.setAppUserModelId(process.execPath);
 const developmentDataRoot =
   !app.isPackaged || testInstall ? process.env.NOD_DESKTOP_USER_DATA : undefined;
 if (developmentDataRoot && !isAbsolute(developmentDataRoot))

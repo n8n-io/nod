@@ -6340,9 +6340,16 @@ test(
           await waitFor(() => planInputs.length === 1);
           assert.equal((await prepare()).statusCode, 202);
           const landing = () => request('POST', '/api/account/welcome', {});
-          assert.deepEqual((await request('GET', '/api/onboarding/introduction')).json(), {
-            messageId: null,
-          });
+          const beforeSetup = (
+            await db.pool.query('SELECT id FROM messages WHERE owner_id=$1', [ownerId])
+          ).rows.map((row) => row.id);
+          const firstMessages = () =>
+            db.pool.query(
+              `SELECT id,text,thread_id AS "threadId",turn_id AS "turnId",suggestions FROM messages
+               WHERE owner_id=$1 AND turn_id IS NULL AND NOT (id=ANY($2::uuid[]))
+               ORDER BY created_at,id`,
+              [ownerId, beforeSetup],
+            );
           assert.equal((await landing()).statusCode, 409);
           const complete = () => request('PATCH', '/api/account', { onboardingCompleted: true });
           for (const response of await Promise.all([complete(), complete(), complete()]))
@@ -6366,16 +6373,8 @@ test(
               sources: ['gmail', 'web'],
             },
           });
-          const introduction = (await request('GET', '/api/onboarding/introduction')).json();
-          assert.equal(typeof introduction.messageId, 'string');
-          const posted = await db.pool.query(
-            `SELECT id,text,thread_id AS "threadId",turn_id AS "turnId",suggestions FROM messages
-             WHERE owner_id=$1 AND turn_id IS NULL AND (suggestions IS NOT NULL OR id=$2)
-             ORDER BY created_at,id`,
-            [ownerId, introduction.messageId],
-          );
+          const posted = await firstMessages();
           assert.equal(posted.rowCount, 2);
-          assert.equal(posted.rows[0].id, introduction.messageId);
           assert.equal(posted.rows[0].suggestions, null);
           const { tasks } = posted.rows[1].suggestions;
           assert.deepEqual(
@@ -6415,18 +6414,9 @@ test(
           assert.equal((await request('GET', '/api/state')).json().planningTasks, false);
           await onboarding.complete('Alex');
           await onboarding.delivered();
-          assert.equal(
-            (
-              await db.pool.query(
-                'SELECT 1 FROM messages WHERE owner_id=$1 AND (suggestions IS NOT NULL OR id=$2)',
-                [ownerId, introduction.messageId],
-              )
-            ).rowCount,
-            2,
-          );
           assert.deepEqual(
-            (await request('GET', '/api/onboarding/introduction')).json(),
-            introduction,
+            (await firstMessages()).rows.map((row) => row.id),
+            posted.rows.map((row) => row.id),
           );
           await db.pool.query("UPDATE messages SET role='user' WHERE id=ANY($1::uuid[])", [
             existingOwnerMessages.rows.map((message) => message.id),
@@ -6847,33 +6837,6 @@ test(
               (task: { origin?: string }) => task.origin,
             ),
             ['fixed', 'fixed', 'fixed', 'common', 'common'],
-          );
-          const firstGreeting = (
-            await db.pool.query(
-              'SELECT greeting_message_id FROM onboarding_suggestions WHERE owner_id=$1',
-              [ownerId],
-            )
-          ).rows[0].greeting_message_id;
-          assert.equal(
-            (await request('GET', '/api/onboarding/introduction')).json().messageId,
-            firstGreeting,
-          );
-          const otherGreeting = (
-            await db.pool.query(
-              'SELECT greeting_message_id FROM onboarding_suggestions WHERE owner_id=$1',
-              ['synthetic-other-owner'],
-            )
-          ).rows[0].greeting_message_id;
-          await db.pool.query(
-            'UPDATE onboarding_suggestions SET greeting_message_id=$2 WHERE owner_id=$1',
-            [ownerId, otherGreeting],
-          );
-          assert.deepEqual((await request('GET', '/api/onboarding/introduction')).json(), {
-            messageId: null,
-          });
-          await db.pool.query(
-            'UPDATE onboarding_suggestions SET greeting_message_id=$2 WHERE owner_id=$1',
-            [ownerId, firstGreeting],
           );
           assert.deepEqual(
             (await ownerCards('synthetic-other-owner')).map((row) => row.suggestions.intro),

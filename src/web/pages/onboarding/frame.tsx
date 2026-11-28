@@ -9,6 +9,7 @@ const stepNames: Record<OnboardingStep, string> = {
   about: 'About you',
   email: 'Connect your email',
   brain: 'Connect an AI provider',
+  notifications: 'Notifications',
   privacy: 'Help improve Nod',
   join: 'Stay up to date',
 };

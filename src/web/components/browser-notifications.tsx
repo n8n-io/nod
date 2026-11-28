@@ -11,7 +11,7 @@ import { sessionStore } from '../lib/session';
 import { Button, Notice, Switch } from './ui';
 import { analyticsForCurrentSession } from '../lib/analytics';
 
-function useNotificationChoice(ownerId: string) {
+export function useNotificationChoice(ownerId: string) {
   const [, refresh] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -103,37 +103,6 @@ function useNotificationChoice(ownerId: string) {
     }
   }
   return { ...browserNotificationStatus(ownerId), busy, error, change, dismiss };
-}
-
-export function BrowserNotificationPrompt({ ownerId }: { ownerId: string }) {
-  const choice = useNotificationChoice(ownerId);
-  if (
-    !choice.available ||
-    (!choice.error && (choice.choice !== null || choice.permission === 'denied'))
-  )
-    return null;
-  return (
-    <aside className="notification-choice" aria-label="Notifications">
-      <div className="notification-choice-copy">
-        <strong>Get notified by Nod</strong>
-        <p>Let Nod tell you when a reply is ready while you’re away. Keep this tab open.</p>
-      </div>
-      <div className="notification-choice-actions">
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={choice.busy || choice.permission === 'denied'}
-          onClick={() => void choice.change(true)}
-        >
-          {choice.busy ? 'Enabling…' : 'Enable notifications'}
-        </Button>
-        <Button size="sm" variant="ghost" disabled={choice.busy} onClick={choice.dismiss}>
-          Not now
-        </Button>
-      </div>
-      {choice.error && <Notice>{choice.error}</Notice>}
-    </aside>
-  );
 }
 
 export function BrowserNotificationSettings({ ownerId }: { ownerId: string }) {
