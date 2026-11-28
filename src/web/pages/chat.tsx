@@ -2452,7 +2452,7 @@ export function Chat({
                         (message.suggestions.offer === true &&
                           allMessages
                             .slice(allMessages.findIndex((item) => item.id === message.id) + 1)
-                            .some((item) => item.role === 'user'))
+                            .some((item) => item.role === 'user' && !item.cardAnswer))
                       }
                       onStart={(task, position) => {
                         captureAnalytics('task_card_started', {
