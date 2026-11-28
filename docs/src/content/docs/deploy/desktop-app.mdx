@@ -29,7 +29,7 @@ flatpak override --user --env="SSL_CERT_FILE=$HOME/.var/app/io.n8n.Nod/ca-bundle
 
 Quit Nod completely with `flatpak kill io.n8n.Nod`, start it again, then retry the connection. To remove the setting, run `flatpak override --user --unset-env=SSL_CERT_FILE io.n8n.Nod` and restart Nod.
 
-This applies to Node HTTPS requests in the desktop app and local engine. It includes server checks, Composio proxy calls, later API calls, and analytics. Certificate and hostname checks stay enabled. These Node requests use Node's certificate verification rules, which can differ from the app window's Chromium rules. An operating system distrust setting does not remove a certificate that Node trusts from another source.
+This applies to Node HTTPS requests that the desktop app makes itself, including the server check before a connection is saved. The local engine runs in its own process with a fixed environment, so it does not receive `SSL_CERT_FILE` and keeps using the certificate store the runtime provides. Certificate and hostname checks stay enabled. These Node requests use Node's certificate verification rules, which can differ from the app window's Chromium rules. An operating system distrust setting does not remove a certificate that Node trusts from another source.
 
 Update checks and the update and private computer downloads use the app window's network stack instead, so they follow your system proxy and certificate settings.
 
