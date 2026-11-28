@@ -3,13 +3,14 @@ import type { FastifyInstance } from 'fastify';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
-import type { SuggestedTask } from '../shared/onboarding.ts';
+import type { SuggestedTask, TaskSuggestions } from '../shared/onboarding.ts';
 import { senderApps as knownSenders, moreIdeasLine } from '../shared/sender-apps.ts';
 import { localTimestamp } from '../shared/date-locale.ts';
 import { ownerLanguage } from './communication.ts';
 import { pool } from './db.ts';
 import { logFailure } from './failure-log.ts';
-import { transaction } from './transaction.ts';
+import { afterCommit, transaction } from './transaction.ts';
+import type { CaptureAnalytics } from './analytics.ts';
 import { refresh } from './events.ts';
 import { hiddenEmail, privateEmailResult, type MailCheck } from './integration-result.ts';
 import { withoutSecretKeys } from './redaction.ts';
@@ -23,6 +24,7 @@ type PreparedSuggestions = {
   tasks: Task[];
   accounts: DiscoveryAccount[];
   seen?: string[];
+  read?: string[];
 };
 type DiscoveryAccount = AppAccount;
 type Checked = {
@@ -233,21 +235,21 @@ function assembled(checked: Checked, fallback: PreparedSuggestions, sources: rea
   };
 }
 
+const sourceName = (slug: string, apps: Array<{ slug: string; name: string }>) =>
+  slug === 'gmail' || slug === 'outlook'
+    ? 'email'
+    : slug === 'googlecalendar'
+      ? 'calendar'
+      : (apps.find((app) => app.slug === slug)?.name ?? slug);
+
 function learnedIntro(sources: string[], apps: Array<{ slug: string; name: string }>) {
-  const names = [
-    ...new Set(
-      sources.map((slug) =>
-        slug === 'gmail' || slug === 'outlook'
-          ? 'email'
-          : slug === 'googlecalendar'
-            ? 'calendar'
-            : (apps.find((app) => app.slug === slug)?.name ?? slug),
-      ),
-    ),
-  ];
+  const names = [...new Set(sources.map((slug) => sourceName(slug, apps)))];
   const read = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
   return `I looked at your recent ${read} and picked the first three ideas from what I saw. The rest are popular with most people. Tap one and I’ll get started.`;
 }
+
+const offerQuietMinutes = 10;
+const offerWindowHours = 24;
 
 function welcomeGreeting(name: string | undefined) {
   const firstName = name?.trim().split(/\s+/)[0]?.slice(0, 40);
@@ -308,6 +310,9 @@ export function createOnboardingSuggestions(options: {
   telegram(): Promise<boolean>;
   mailCheck: MailCheck;
   signal?: AbortSignal;
+  quiet?(): Promise<boolean>;
+  paused?(): Promise<boolean>;
+  analytics?: CaptureAnalytics;
   discovery: {
     accounts(): Promise<DiscoveryAccount[]>;
     search(account: DiscoveryAccount, signal: AbortSignal): Promise<unknown>;
@@ -508,14 +513,9 @@ export function createOnboardingSuggestions(options: {
       if (!(await options.discovery.current(accounts)))
         return fallbackSuggestions({ gmail: false, telegram });
       signal.throwIfAborted();
-      const intro =
-        briefs.length && !replaced
-          ? learnedIntro(
-              briefs.map((brief) => brief.source),
-              apps,
-            )
-          : suggestions.intro;
-      return { ...suggestions, intro, accounts, seen };
+      const read = [...new Set(briefs.map((brief) => brief.source))];
+      const intro = read.length && !replaced ? learnedIntro(read, apps) : suggestions.intro;
+      return { ...suggestions, intro, accounts, seen, read };
     } catch (error) {
       signal.throwIfAborted();
       logFailure('first_tasks_fallback', error);
@@ -701,13 +701,107 @@ export function createOnboardingSuggestions(options: {
     refresh();
   }
 
+  async function offered(client?: PoolClient) {
+    const found = await (client ?? pool).query<{
+      cards: TaskSuggestions;
+      prepared: PreparedSuggestions | null;
+    }>(
+      `SELECT cards.suggestions AS cards,s.suggestions AS prepared FROM onboarding_suggestions s
+       JOIN threads t ON t.owner_id=s.owner_id AND t.archived_at IS NULL AND t.chat_cleared_at IS NULL
+       JOIN messages cards ON cards.owner_id=s.owner_id AND cards.thread_id=t.id AND cards.role='assistant'
+         AND cards.suggestions IS NOT NULL AND cards.hidden_at IS NULL
+       CROSS JOIN LATERAL (SELECT (array_agg(m.id))[1] AS id,count(*) AS count FROM (
+         SELECT m.id FROM messages m WHERE m.owner_id=s.owner_id AND m.thread_id=t.id AND m.role='user' LIMIT 2) m) owner_messages
+       JOIN messages request ON request.id=owner_messages.id AND owner_messages.count=1
+       JOIN turns u ON u.id=request.turn_id AND u.owner_id=s.owner_id
+       WHERE s.owner_id=$1 AND s.posted_at IS NOT NULL AND s.offered_at IS NULL
+         AND u.status='succeeded' AND u.channel='web' AND u.background=false
+         AND u.finished_at>now()-interval '${offerWindowHours} hours'
+         AND (SELECT max(f.finished_at) FROM turns f WHERE f.owner_id=$1 AND f.thread_id=t.id)<=now()-interval '${offerQuietMinutes} minutes'
+         AND NOT EXISTS (SELECT 1 FROM turns w WHERE w.owner_id=$1 AND w.status IN ('queued','running','waiting'))
+         AND NOT EXISTS (SELECT 1 FROM tasks k WHERE k.owner_id=$1 AND k.state='open')
+         AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(cards.suggestions->'tasks') task WHERE task->>'title'=request.text)
+       ORDER BY cards.created_at,cards.id LIMIT 1`,
+      [owner],
+    );
+    const row = found.rows[0];
+    if (!row) return;
+    const accounts = Array.isArray(row.prepared?.accounts) ? row.prepared.accounts : [];
+    const read = Array.isArray(row.prepared?.read) ? row.prepared.read : [];
+    for (const task of row.cards.tasks ?? []) {
+      if (task.origin !== 'learned' || !read.includes(task.source)) continue;
+      for (const account of accounts.filter((entry) => entry.slug === task.source))
+        if (await options.discovery.current([account], client))
+          return { task, name: sourceName(task.source, accounts) };
+    }
+  }
+
+  async function recordAnswer() {
+    const answered = await pool.query<{ started: boolean | null }>(
+      `UPDATE onboarding_suggestions s SET offer_answered_at=now()
+       FROM messages offer CROSS JOIN LATERAL (
+         SELECT m.text FROM messages m WHERE m.owner_id=offer.owner_id AND m.thread_id=offer.thread_id
+           AND m.role='user' AND m.approval_answer IS NULL AND (m.created_at,m.id)>(offer.created_at,offer.id)
+         ORDER BY m.created_at,m.id LIMIT 1) reply
+       WHERE s.owner_id=$1 AND s.offer_answered_at IS NULL AND offer.id=s.offer_message_id AND offer.owner_id=s.owner_id
+       RETURNING CASE WHEN reply.text<>'/clear' THEN reply.text=offer.suggestions->'tasks'->0->>'title' END AS started`,
+      [owner],
+    );
+    for (const row of answered.rows)
+      if (row.started !== null)
+        options.analytics?.({
+          event: 'onboarding_offer_answered',
+          properties: { started: row.started },
+        });
+  }
+
+  async function offer() {
+    await recordAnswer();
+    if (
+      options.signal?.aborted ||
+      !(await offered()) ||
+      (await options.quiet?.()) ||
+      (await options.paused?.())
+    )
+      return;
+    const sent = await transaction(async (client) => {
+      const thread = await lockThread(client, owner);
+      const chosen = await offered(client);
+      if (!chosen || options.signal?.aborted) return;
+      const claimed = await client.query(
+        'UPDATE onboarding_suggestions SET offered_at=now() WHERE owner_id=$1 AND offered_at IS NULL',
+        [owner],
+      );
+      if (!claimed.rowCount) return;
+      const intro = `Here’s one thing I can do next from what I saw in your ${chosen.name}. Want me to start?`;
+      const id = await insert(client, thread.id, `${intro}\n- ${chosen.task.title}`, {
+        intro,
+        tasks: [chosen.task],
+        offer: true,
+      });
+      await client.query(
+        'UPDATE onboarding_suggestions SET offer_message_id=$2 WHERE owner_id=$1',
+        [owner, id],
+      );
+      afterCommit(client, refresh);
+      return chosen.task;
+    }, pool);
+    if (sent)
+      options.analytics?.({
+        event: 'onboarding_offer_sent',
+        properties: { kind: sent.kind === 'ongoing' ? 'ongoing' : 'immediate' },
+      });
+  }
+
   async function initialize() {
     await pool.query(`CREATE TABLE IF NOT EXISTS onboarding_suggestions (
       owner_id text PRIMARY KEY, suggestions jsonb, greeted_at timestamptz, posted_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now()
     );
     ALTER TABLE onboarding_suggestions DROP COLUMN IF EXISTS brief, DROP COLUMN IF EXISTS brief_at;
-    ALTER TABLE onboarding_suggestions ADD COLUMN IF NOT EXISTS greeting_message_id uuid`);
+    ALTER TABLE onboarding_suggestions ADD COLUMN IF NOT EXISTS greeting_message_id uuid;
+    ALTER TABLE onboarding_suggestions ADD COLUMN IF NOT EXISTS offered_at timestamptz,
+      ADD COLUMN IF NOT EXISTS offer_message_id uuid, ADD COLUMN IF NOT EXISTS offer_answered_at timestamptz`);
     const unfinished = await pool.query(
       'SELECT 1 FROM onboarding_suggestions WHERE owner_id=$1 AND greeted_at IS NOT NULL AND posted_at IS NULL',
       [owner],
@@ -741,6 +835,7 @@ export function createOnboardingSuggestions(options: {
     initialize,
     prepare,
     complete,
+    offer,
     delivered: () => delivering ?? Promise.resolve(),
     planning: () => (delivering === undefined ? undefined : (step ?? '')),
     cancel: () => preparingController?.abort(),

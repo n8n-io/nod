@@ -423,8 +423,13 @@ test(
     let planAnswer: (owner: string) => unknown = () => null;
     let planGate: Promise<void> | undefined;
     const suggestionApps = new Map<string, Connection[]>();
-    const onboardingFor = (owner: string, configured = () => true) =>
+    const onboardingFor = (
+      owner: string,
+      configured = () => true,
+      extra: Partial<Parameters<typeof createOnboardingSuggestions>[0]> = {},
+    ) =>
       createOnboardingSuggestions({
+        ...extra,
         ownerId: owner,
         timeZone: async () => 'UTC',
         curator: {
@@ -6779,8 +6784,24 @@ test(
                 [owner],
               );
               assert.doesNotMatch(JSON.stringify(cached.rows[0]?.suggestions), /owner@n8n\.io/);
+              assert.deepEqual(
+                new Set(cached.rows[0]?.suggestions.read),
+                new Set(['slack', 'fixture-mcp']),
+              );
             } else {
               if (['unknown', 'invalid', 'refused'].includes(mode)) assert.equal(calls.length, 0);
+              if (mode === 'refused') {
+                assert.equal(posted[0]!.suggestions.tasks[0].origin, 'learned');
+                assert.deepEqual(
+                  (
+                    await db.pool.query(
+                      'SELECT suggestions FROM onboarding_suggestions WHERE owner_id=$1',
+                      [owner],
+                    )
+                  ).rows[0].suggestions.read,
+                  [],
+                );
+              }
               if (
                 [
                   'unknown',
@@ -7005,6 +7026,281 @@ test(
             ],
           );
           planAnswer = () => null;
+        },
+      );
+
+      await t.test(
+        'a quiet new owner gets one next step from their own cards, once, and accepting it starts owner work',
+        async () => {
+          const { assertStartedByOwner } = await import('../src/server/owner-started.ts');
+          const { recentOwnerWords } = await import('../src/server/owner-instructions.ts');
+          await waitFor(settledThread);
+          const original = (await thread.activeThread()).id;
+          const saved = (
+            await db.pool.query('SELECT * FROM onboarding_suggestions WHERE owner_id=$1', [ownerId])
+          ).rows[0];
+          const connectionId = randomUUID();
+          const slack = {
+            connectionId,
+            slug: 'slack',
+            name: 'Slack',
+            status: 'connected',
+          } as Connection;
+          const gmail = {
+            connectionId: randomUUID(),
+            slug: 'gmail',
+            name: 'Gmail',
+            status: 'connected',
+          } as Connection;
+          let quiet = false;
+          let paused = false;
+          const offers = onboardingFor(ownerId, () => true, {
+            quiet: async () => quiet,
+            paused: async () => paused,
+            analytics: captureAnalytics,
+          });
+          const title = 'Draft replies to the Juniper workshop thread';
+          const cards = (tasks: Array<Record<string, string>>) => ({
+            intro: 'Choose a first task.',
+            tasks: tasks.map((task) => ({ id: randomUUID(), ...task })),
+          });
+          const learned = cards([
+            {
+              kind: 'now',
+              title: 'Compare synthetic supplier quotes',
+              source: 'web',
+              origin: 'learned',
+            },
+            { kind: 'now', title, source: 'slack', origin: 'learned' },
+            {
+              kind: 'ongoing',
+              title: 'Brief me on new email every morning',
+              source: 'gmail',
+              origin: 'fixed',
+            },
+          ]);
+          const generic = cards([
+            { kind: 'now', title: 'Draft replies waiting on me', source: 'gmail', origin: 'fixed' },
+            {
+              kind: 'ongoing',
+              title: 'Brief me on my day every morning',
+              source: 'web',
+              origin: 'common',
+            },
+            { kind: 'now', title: 'Plan the launch week', source: 'web', origin: 'learned' },
+          ]);
+          const offerMessages = async () =>
+            (
+              await db.pool.query(
+                "SELECT text,suggestions,turn_id FROM messages WHERE owner_id=$1 AND thread_id=$2 AND suggestions->>'offer'='true'",
+                [ownerId, (await thread.activeThread()).id],
+              )
+            ).rows;
+          const fresh = async (
+            suggestions: object,
+            first = 'Synthetic first request',
+            read = ['slack'],
+          ) => {
+            await waitFor(settledThread);
+            await db.pool.query(
+              'UPDATE threads SET archived_at=now() WHERE owner_id=$1 AND archived_at IS NULL',
+              [ownerId],
+            );
+            const threadId = (await thread.activeThread()).id;
+            await db.pool.query(
+              `INSERT INTO onboarding_suggestions(owner_id,suggestions,greeted_at,posted_at) VALUES($1,$2,now(),now())
+               ON CONFLICT(owner_id) DO UPDATE SET suggestions=EXCLUDED.suggestions,posted_at=now(),offered_at=NULL,offer_message_id=NULL,offer_answered_at=NULL`,
+              [
+                ownerId,
+                JSON.stringify({
+                  intro: 'Prepared',
+                  tasks: [],
+                  accounts: [slack, gmail].map((app) => ({
+                    connectionId: app.connectionId,
+                    binding: app.connectionId,
+                    slug: app.slug,
+                    name: app.name,
+                  })),
+                  read,
+                }),
+              ],
+            );
+            await db.pool.query(
+              "INSERT INTO messages(id,owner_id,role,text,thread_id,suggestions) VALUES($1,$2,'assistant','Cards',$3,$4)",
+              [randomUUID(), ownerId, threadId, JSON.stringify(suggestions)],
+            );
+            const sent =
+              first === '/clear'
+                ? await thread.clearChatContext(threadId, randomUUID())
+                : await thread.submitUserMessage(first);
+            await waitFor(settled(sent.turnId));
+            assert.equal(await turnStatus(sent.turnId), 'succeeded');
+            return sent;
+          };
+          const quietFor = (turnId: string, age = '11 minutes') =>
+            db.pool.query(`UPDATE turns SET finished_at=now()-interval '${age}' WHERE id=$1`, [
+              turnId,
+            ]);
+          suggestionApps.set(ownerId, [slack, gmail]);
+          try {
+            for (const mode of [
+              'wrote_again',
+              'started_card',
+              'cleared',
+              'nothing_prepared',
+              'unread_source',
+              'disconnected',
+              'telegram',
+            ]) {
+              const first = await fresh(
+                mode === 'nothing_prepared' ? generic : learned,
+                mode === 'started_card' ? title : mode === 'cleared' ? '/clear' : undefined,
+                mode === 'unread_source' ? ['gmail'] : undefined,
+              );
+              await quietFor(first.turnId);
+              if (mode === 'wrote_again') {
+                const again = await thread.submitUserMessage('Synthetic second request');
+                await waitFor(settled(again.turnId));
+                await quietFor(again.turnId);
+              }
+              if (mode === 'telegram')
+                await db.pool.query("UPDATE turns SET channel='telegram' WHERE id=$1", [
+                  first.turnId,
+                ]);
+              suggestionApps.set(ownerId, mode === 'disconnected' ? [gmail] : [slack, gmail]);
+              await offers.offer();
+              assert.deepEqual(await offerMessages(), [], mode);
+            }
+            suggestionApps.set(ownerId, [slack, gmail]);
+            const first = await fresh(learned);
+            const eventsBefore = analyticsEvents.length;
+            await offers.offer();
+            assert.deepEqual(await offerMessages(), []);
+            await quietFor(first.turnId, '25 hours');
+            await offers.offer();
+            assert.deepEqual(await offerMessages(), []);
+            await quietFor(first.turnId);
+            quiet = true;
+            await offers.offer();
+            quiet = false;
+            paused = true;
+            await offers.offer();
+            paused = false;
+            for (const status of ['queued', 'running', 'waiting']) {
+              const busy = randomUUID();
+              await db.pool.query(
+                "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,start_after) VALUES($1,$2,$3,'schedule','Synthetic schedule',$4,true,now()+interval '1 hour')",
+                [busy, ownerId, first.threadId, status],
+              );
+              await offers.offer();
+              await db.pool.query('DELETE FROM turns WHERE id=$1', [busy]);
+              assert.deepEqual(await offerMessages(), [], status);
+            }
+            const child = randomUUID();
+            const task = randomUUID();
+            await db.pool.query(
+              "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,parent_turn_id,finished_at) VALUES($1,$2,$3,'task','Synthetic task','succeeded',true,$4,now()-interval '2 minutes')",
+              [child, ownerId, first.threadId, first.turnId],
+            );
+            await offers.offer();
+            assert.deepEqual(await offerMessages(), []);
+            await quietFor(child);
+            await db.pool.query(
+              "INSERT INTO tasks(id,owner_id,turn_id,title,done_when,now_text) VALUES($1,$2,$3,'Synthetic task','Synthetic result','Working')",
+              [task, ownerId, child],
+            );
+            await offers.offer();
+            await db.pool.query('DELETE FROM tasks WHERE id=$1', [task]);
+            await db.pool.query('DELETE FROM turns WHERE id=$1', [child]);
+            assert.deepEqual(await offerMessages(), []);
+            const turnsBefore = (
+              await db.pool.query('SELECT count(*)::int AS count FROM turns WHERE owner_id=$1', [
+                ownerId,
+              ])
+            ).rows[0].count;
+            await offers.offer();
+            await offers.offer();
+            const offered = await offerMessages();
+            assert.equal(offered.length, 1);
+            assert.equal(offered[0].turn_id, null);
+            assert.equal(offered[0].suggestions.offer, true);
+            assert.deepEqual(
+              offered[0].suggestions.tasks.map((task: { title: string }) => task.title),
+              [title],
+            );
+            assert.match(offered[0].text, /Slack/);
+            assert.equal(
+              (
+                await db.pool.query('SELECT count(*)::int AS count FROM turns WHERE owner_id=$1', [
+                  ownerId,
+                ])
+              ).rows[0].count,
+              turnsBefore,
+            );
+            const offerEvents = () =>
+              analyticsEvents
+                .slice(eventsBefore)
+                .filter(({ event }) => event.startsWith('onboarding_offer_'))
+                .map(({ event, properties }) => ({ event, properties }));
+            assert.equal(offerEvents().length, 1);
+            assert.equal(offerEvents()[0]!.event, 'onboarding_offer_sent');
+            assert.equal(offerEvents()[0]!.properties.kind, 'immediate');
+            assert.doesNotMatch(JSON.stringify(offerEvents()), /Juniper|slack/i);
+
+            const accepted = await thread.submitUserMessage(title);
+            await waitFor(settled(accepted.turnId));
+            assert.equal(
+              await assertStartedByOwner(db.pool, ownerId, accepted, 'Not started by the owner.'),
+              accepted.turnId,
+            );
+            await offers.offer();
+            await offers.offer();
+            assert.equal((await offerMessages()).length, 1);
+            assert.deepEqual(
+              offerEvents().map(({ event, properties }) => [event, properties.started]),
+              [
+                ['onboarding_offer_sent', undefined],
+                ['onboarding_offer_answered', true],
+              ],
+            );
+
+            const second = await fresh(learned);
+            await quietFor(second.turnId);
+            await offers.offer();
+            assert.equal((await offerMessages()).length, 1);
+            const typed = await thread.submitUserMessage('Yes');
+            await waitFor(settled(typed.turnId));
+            const { words } = await recentOwnerWords(db.pool, ownerId, second.threadId, [
+              typed.messageId,
+            ]);
+            const yes = words.userMessages.find((message) => message.id === typed.messageId);
+            assert.equal(yes?.text, 'Yes');
+            assert.equal(yes?.replyTo, undefined);
+            await offers.offer();
+            assert.deepEqual(
+              offerEvents().map(({ event, properties }) => [event, properties.started]),
+              [
+                ['onboarding_offer_sent', undefined],
+                ['onboarding_offer_answered', true],
+                ['onboarding_offer_sent', undefined],
+                ['onboarding_offer_answered', false],
+              ],
+            );
+          } finally {
+            suggestionApps.delete(ownerId);
+            await waitFor(settledThread);
+            await db.pool.query(
+              'UPDATE threads SET archived_at=now() WHERE owner_id=$1 AND archived_at IS NULL',
+              [ownerId],
+            );
+            await db.pool.query('UPDATE threads SET archived_at=NULL WHERE id=$1', [original]);
+            await db.pool.query('DELETE FROM onboarding_suggestions WHERE owner_id=$1', [ownerId]);
+            if (saved)
+              await db.pool.query(
+                'INSERT INTO onboarding_suggestions SELECT * FROM json_populate_record(NULL::onboarding_suggestions,$1)',
+                [JSON.stringify(saved)],
+              );
+          }
         },
       );
 

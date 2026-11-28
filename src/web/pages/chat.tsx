@@ -305,15 +305,19 @@ function TaskCards({
     >
       <div className="task-suggestions">
         <p className="task-bubble">{suggestions.intro}</p>
-        <div className="task-cards">{learned.map(card)}</div>
+        <div className={`task-cards${suggestions.offer ? ' task-cards-offer' : ''}`}>
+          {learned.map(card)}
+        </div>
         {common.length > 0 && (
           <div className="task-cards task-cards-common">
             {common.map((task, index) => card(task, learned.length + index))}
           </div>
         )}
-        <Rise show={shown} index={suggestions.tasks.length} className="task-follow-up">
-          <p className="task-bubble">{moreIdeasLine(seen)}</p>
-        </Rise>
+        {!suggestions.offer && (
+          <Rise show={shown} index={suggestions.tasks.length} className="task-follow-up">
+            <p className="task-bubble">{moreIdeasLine(seen)}</p>
+          </Rise>
+        )}
       </div>
     </article>
   );
@@ -2441,7 +2445,15 @@ export function Chat({
                           persistedIds,
                         )
                       }
-                      disabled={!state.configuration.llmReady || welcoming || spendingPaused}
+                      disabled={
+                        !state.configuration.llmReady ||
+                        welcoming ||
+                        spendingPaused ||
+                        (message.suggestions.offer === true &&
+                          allMessages
+                            .slice(allMessages.findIndex((item) => item.id === message.id) + 1)
+                            .some((item) => item.role === 'user' && !item.cardAnswer))
+                      }
                       onStart={(task, position) => {
                         captureAnalytics('task_card_started', {
                           ...(task.kind
