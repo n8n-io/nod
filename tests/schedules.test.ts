@@ -7,6 +7,7 @@ import type { Job } from 'pg-boss';
 import { z } from 'zod';
 import type { InboundMessage, MessagingTransport } from '../src/ports/messaging.ts';
 import type {
+  PhoneOffer,
   Schedule,
   ScheduleHistory,
   ScheduleRun,
@@ -46,6 +47,7 @@ test(
     const thread = await import('../src/server/thread.ts');
     const { createChannels } = await import('../src/server/channels.ts');
     const { turnOrigin } = await import('../src/server/approvals.ts');
+    const { createPhoneOffer } = await import('../src/server/phone-offer.ts');
     const ownerId = 'local-development';
     let clock = new Date('2035-10-26T12:00:00.000Z');
     type Data = { scheduleId: string; revision: number; scheduledFor: string };
@@ -57,7 +59,20 @@ test(
     let watchPolls = 0;
     let modelPaused = false;
     const clearedBrowsers: string[] = [];
+    let phoneChannels = [{ provider: 'telegram', status: 'configured', ownerLinked: true }];
+    let phoneStatusFails = false;
+    const phoneOffer = createPhoneOffer({
+      pool: db.pool,
+      ownerId,
+      channels: async (client) => {
+        if (phoneStatusFails)
+          await client.query('SELECT synthetic_missing_column FROM preferences');
+        return phoneChannels;
+      },
+      refresh() {},
+    });
     const personal = createPersonalService({
+      phoneOffer,
       pool: db.pool,
       ownerId: 'local-development',
       scheduler: thread.boss,
@@ -89,6 +104,7 @@ test(
         .send({ error: value.message });
     });
     personal.registerRoutes(app);
+    phoneOffer.registerRoutes(app);
     const tasks = createTasks({ pool: db.pool, ownerId });
     tasks.registerRoutes(app);
     const request = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown) =>
@@ -2060,6 +2076,135 @@ test(
       );
       channels = await connect();
       const origin = await receive('Remind me in a minute.');
+
+      await t.test('new schedules offer a phone channel until connected or declined', async () => {
+        const job = (title: string) => ({
+          title,
+          prompt: `Send the ${title.toLowerCase()}.`,
+          kind: 'once',
+          runAt: new Date(clock.getTime() + 60_000).toISOString(),
+          timeZone: 'Europe/Lisbon',
+        });
+        const created: string[] = [];
+        const from = (turnId: string) => ({ turnId, sourceMessageId: origin.sourceMessageId });
+        const save = async (turnId: string, title: string) => {
+          const schedule = (await manageRouted(
+            'schedule_create',
+            job(title),
+            from(turnId),
+          )) as Schedule & { existing?: boolean };
+          created.push(schedule.id);
+          return schedule;
+        };
+        const offered = async () =>
+          (
+            await db.pool.query('SELECT phone_offer_turn FROM preferences WHERE owner_id=$1', [
+              ownerId,
+            ])
+          ).rows[0]?.phone_offer_turn ?? null;
+        const answer = async (choice: string) => {
+          const response = await request('POST', '/api/phone-offer', { choice });
+          assert.equal(response.statusCode, 200, response.body);
+        };
+        const form = async (title: string) => {
+          const response = await request('POST', '/api/schedules', {
+            ...job(title),
+            kind: 'recurring',
+            runAt: undefined,
+            cron: '0 9 * * *',
+          });
+          assert.equal(response.statusCode, 200, response.body);
+          const body = response.json<Schedule & { phoneOffer?: PhoneOffer }>();
+          created.push(body.id);
+          return body.phoneOffer;
+        };
+        const linked = phoneChannels;
+        const unlinked = [
+          { provider: 'telegram', status: 'setup_required', ownerLinked: false },
+          {
+            provider: 'whatsapp',
+            status: 'setup_required',
+            ownerLinked: false,
+            available: false,
+          },
+        ];
+        const providers = ['telegram', 'whatsapp'];
+        try {
+          phoneChannels = unlinked;
+          const approved = await thread.enqueueTurn('Synthetic approved action.', {
+            source: 'resume',
+            parentTurnId: origin.turnId,
+          });
+          await save(approved, 'Phone offer reminder');
+          assert.equal(await offered(), approved);
+          assert.deepEqual(await phoneOffer.pending(), { turnId: approved, channels: providers });
+          await answer('telegram');
+          assert.equal(await phoneOffer.pending(), undefined);
+          assert.equal((await save(origin.turnId, 'Phone offer reminder')).existing, true);
+          await manageRouted(
+            'schedule_update',
+            { id: created[0], title: 'Renamed phone offer reminder' },
+            from(origin.turnId),
+          );
+          assert.equal(await offered(), null);
+          for (const quiet of [
+            await thread.enqueueTurn('Synthetic background work.', {
+              source: 'resume',
+              parentTurnId: origin.turnId,
+              background: true,
+            }),
+            await thread.enqueueTurn('Synthetic scheduled run.', {
+              source: 'schedule',
+              background: false,
+            }),
+          ]) {
+            await save(quiet, `Quiet reminder ${created.length}`);
+            assert.equal(await offered(), null);
+          }
+          assert.deepEqual(await form('Form reminder'), { channels: providers });
+          phoneChannels = [unlinked[0]!, { ...linked[0]!, provider: 'whatsapp' }];
+          await save(origin.turnId, 'Connected reminder');
+          assert.equal(await offered(), null);
+          assert.equal(await form('Connected form reminder'), undefined);
+          phoneChannels = unlinked;
+          phoneStatusFails = true;
+          await save(origin.turnId, 'Unchecked reminder');
+          assert.equal(await offered(), null);
+          assert.equal(await form('Unchecked form reminder'), undefined);
+          phoneStatusFails = false;
+          await save(origin.turnId, 'Second phone offer reminder');
+          assert.equal(await offered(), origin.turnId);
+          phoneStatusFails = true;
+          assert.equal(await phoneOffer.pending(), undefined);
+          assert.equal(await offered(), origin.turnId);
+          phoneStatusFails = false;
+          assert.deepEqual(await phoneOffer.pending(), {
+            turnId: origin.turnId,
+            channels: providers,
+          });
+          phoneChannels = linked;
+          assert.equal(await phoneOffer.pending(), undefined);
+          assert.equal(await offered(), null);
+          phoneChannels = unlinked;
+          assert.equal(await phoneOffer.pending(), undefined);
+          await save(origin.turnId, 'Third phone offer reminder');
+          assert.equal(await offered(), origin.turnId);
+          await answer('not_now');
+          assert.equal(await offered(), null);
+          await save(origin.turnId, 'Declined reminder');
+          assert.equal(await offered(), null);
+          assert.equal(await phoneOffer.pending(), undefined);
+          assert.equal(await form('Declined form reminder'), undefined);
+          assert.equal(
+            (await request('POST', '/api/phone-offer', { choice: 'sms' })).statusCode,
+            400,
+          );
+        } finally {
+          phoneStatusFails = false;
+          phoneChannels = linked;
+          for (const id of new Set(created)) await request('DELETE', `/api/schedules/${id}`);
+        }
+      });
 
       await t.test(
         'scheduled runs start in the chat app the owner used last and keep their instruction',

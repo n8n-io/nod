@@ -77,6 +77,8 @@ type AnalyticsEvents = {
   };
   answer_choices_viewed: { multiple: boolean; option_count: number };
   answer_choices_selected: { multiple: boolean; option_count: number; selected_count: number };
+  phone_offer_viewed: { path: 'chat' | 'form' };
+  phone_offer_answered: { choice: 'telegram' | 'whatsapp' | 'not_now'; path: 'chat' | 'form' };
   artifact_viewed: { kind: AttachmentKind | 'file'; location: 'message' | 'drawer' };
   artifact_action: {
     kind: AttachmentKind | 'file';
@@ -243,6 +245,8 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     option_count: [1, 2, 3, 4, 5, 6],
     selected_count: [1, 2, 3, 4, 5, 6],
   },
+  phone_offer_viewed: { path: ['chat', 'form'] },
+  phone_offer_answered: { choice: ['telegram', 'whatsapp', 'not_now'], path: ['chat', 'form'] },
   artifact_viewed: { kind: artifactKinds, location: ['message', 'drawer'] },
   artifact_action: {
     kind: artifactKinds,
@@ -508,6 +512,8 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
   if (
     (event.event === 'answer_choices_viewed' ||
       event.event === 'answer_choices_selected' ||
+      event.event === 'phone_offer_viewed' ||
+      event.event === 'phone_offer_answered' ||
       event.event === 'chat_message_sent' ||
       event.event === 'login_item_observed' ||
       event.event === 'presentation_action') &&
@@ -887,7 +893,8 @@ export function takeAppConnectionAnalytics(id: string) {
 }
 
 export function observeAnalyticsView<
-  Event extends 'presentation_viewed' | 'artifact_viewed' | 'answer_choices_viewed',
+  Event extends
+    'presentation_viewed' | 'artifact_viewed' | 'answer_choices_viewed' | 'phone_offer_viewed',
 >(element: HTMLElement, key: string, event: Event, properties: AnalyticsEvents[Event]) {
   const account = requestAccountVersion();
   let intersecting = false;

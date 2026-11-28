@@ -155,6 +155,7 @@ import {
 import { localArtifacts } from './artifacts.ts';
 import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { createChannels } from './channels.ts';
+import { channelConnected, createPhoneOffer } from './phone-offer.ts';
 import { createChannelSettings, managedChannelEnvironment } from './channel-settings.ts';
 import { createChannelMedia } from './channel-media.ts';
 import { createChannelSessionStore } from './channel-session.ts';
@@ -1083,6 +1084,12 @@ async function initializeApplication(
   });
   const writingStyle = createWritingStyleLearning({ memory, curator });
   let channels: Awaited<ReturnType<typeof createChannels>> | undefined;
+  const phoneOffer = createPhoneOffer({
+    pool,
+    ownerId,
+    channels: async (client) => channels?.status(client),
+    refresh,
+  });
   const communication = createCommunication({
     pool,
     ownerId,
@@ -1136,6 +1143,7 @@ async function initializeApplication(
     enqueueTurn,
     refresh,
     ownerChannel: (client) => channels?.ownerChannel(client) ?? Promise.resolve('web'),
+    phoneOffer,
     retireScheduleConfirmations: (client, id, waitForSend) => {
       if (!retireScheduleConfirmations) throw new Error('Approvals are not ready.');
       return retireScheduleConfirmations(client, id, waitForSend);
@@ -3006,10 +3014,7 @@ async function initializeApplication(
             JSON.stringify(
               (await channels?.status())?.map((channel) => ({
                 channel: channel.provider,
-                connected:
-                  channel.status === 'configured' &&
-                  channel.ownerLinked &&
-                  channel.available !== false,
+                connected: channelConnected(channel),
                 ...(channel.error ? { error: channel.error } : {}),
                 lastMessageFromOwner: channel.lastMessageAt,
               })) ?? [],
@@ -3387,6 +3392,7 @@ async function initializeApplication(
     forgetLearned: devTools ? async () => void (await memory.control({ clear: true })) : undefined,
     activity: activity.current,
     planningTasks: onboardingSuggestions.planning,
+    phoneOffer: phoneOffer.pending,
     computer,
     saveLogin: (login) => vault.saveLogin(login),
     configuration: () => {
@@ -3486,6 +3492,7 @@ async function initializeApplication(
   computerUse.registerRoutes(app);
   personal.registerRoutes(app);
   scheduleIdeas.registerRoutes(app);
+  phoneOffer.registerRoutes(app);
   onboardingSuggestions.registerRoutes(app);
   onboardingProfile.registerRoutes(app);
   tasks.registerRoutes(app);

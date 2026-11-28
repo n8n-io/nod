@@ -64,6 +64,7 @@ import type {
   Message,
   MessageHistoryPage,
   MessageReaction,
+  PhoneOffer,
   Turn,
 } from '../shared/contracts.ts';
 import type { createChatVerification } from './chat-verification.ts';
@@ -284,6 +285,7 @@ export interface AppDependencies {
   taskLedger?: () => Promise<import('../shared/contracts.ts').Task[]>;
   activity?: () => Promise<Activity[]>;
   planningTasks?: () => string | undefined;
+  phoneOffer?: () => Promise<PhoneOffer | undefined>;
   rateLimit?: boolean;
 }
 
@@ -484,6 +486,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       verificationRequests,
       activity,
       recovery,
+      phoneOffer,
     ] = await Promise.all([
       messageRows,
       hiddenMetadata,
@@ -504,6 +507,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       dependencies.verification?.pending() ?? [],
       dependencies.activity?.() ?? [],
       chatRecovery(thread.id),
+      dependencies.phoneOffer?.(),
     ]);
     const hasEarlierMessages = messages.rows.length > 150;
     const visibleIds = new Set(hiddenMessages.rows[0]!.visibleIds);
@@ -531,6 +535,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       verificationRequests,
       planningTasks: planning !== undefined,
       ...(planning ? { planningStep: planning } : {}),
+      ...(phoneOffer ? { phoneOffer } : {}),
       configuration: publicConfiguration(),
     };
   });

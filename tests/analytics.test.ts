@@ -238,6 +238,10 @@ const event=client.capture('settings_viewed',{
 assert.ok(event,'The product-neutral settings_viewed event must be captured');
 check('NR3-bounded',event.properties.tab==='general'&&!Object.keys(event.properties).some(key=>/snapshot|recording|rrweb|sdk_debug_replay/.test(key)));
 check('NR3-session',event.properties.$session_id==='synthetic-session'&&event.properties.$window_id==='synthetic-window');
+const phoneOffer=client.capture('phone_offer_answered',{choice:'telegram',path:'form',schedule:'PRIVATE_SCHEDULE_CANARY',turnId:'PRIVATE_TURN_CANARY'});
+check('PO-bounded',phoneOffer?.properties.choice==='telegram'&&phoneOffer.properties.path==='form'&&!JSON.stringify(phoneOffer).includes('PRIVATE_'));
+check('PO-viewed',client.capture('phone_offer_viewed',{path:'chat',turnId:'PRIVATE_TURN_CANARY'})?.properties.path==='chat'&&client.capture('phone_offer_viewed',{path:'PRIVATE_PATH_CANARY'})===null);
+check('PO-unknown',client.capture('phone_offer_answered',{choice:'PRIVATE_CHOICE_CANARY',path:'chat'})===null&&client.capture('phone_offer_answered',{choice:'not_now',path:'PRIVATE_PATH_CANARY'})===null);
 for(const [path,route] of [
  ['https://private-host.example.test/payments/private-id?code=PRIVATE_URL_CANARY#PRIVATE_FRAGMENT_CANARY','/payments'],
  ['/prepared/00000000-0000-4000-8000-000000000705?token=PRIVATE_URL_CANARY','/prepared'],

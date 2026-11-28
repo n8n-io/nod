@@ -545,8 +545,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     return rows.rows.filter(owned);
   }
 
-  async function status() {
-    const recent = await recentOwners(pool, false);
+  async function status(client: Pool | PoolClient = pool) {
+    const recent = await recentOwners(client, false);
     return configuration.map((channel) => ({
       ...channel,
       ownerLinked: Boolean(
