@@ -6,7 +6,7 @@ import { checkInbox } from './repeat-offer-yes.ts';
 
 export default scenario({
   id: 'repeat-offer-declined',
-  title: 'Decline an inbox schedule and get an answer to a one-off question',
+  title: 'Decline an offer to repeat the inbox check, then ask a one-off question',
   capabilities: ['apps', 'schedules'],
   tier: 'full',
   set: 'happy-path',
