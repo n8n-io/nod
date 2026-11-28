@@ -1569,6 +1569,8 @@ function baseEnvironment() {
       'LOCALAPPDATA',
       'TEMP',
       'TMP',
+      // Lets a launcher such as a Flatpak override point Node's system store at a private CA bundle.
+      'SSL_CERT_FILE',
       ...(developmentDataRoot ? ['NOD_DESKTOP_USER_DATA', 'NOD_COMPOSIO_PROXY_URL'] : []),
       'NOD_FEEDBACK_ENABLED',
       'NOD_FEEDBACK_URL',

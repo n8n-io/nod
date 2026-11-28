@@ -13116,3 +13116,29 @@ test('startup status masks overlapping credentials and private roots in one pass
   assert.ok(!review.content.includes('synthetic-private-cross-tail'));
   assert.ok(!review.content.includes('synthetic-private-path-tail'));
 });
+
+test('the engine environment forwards SSL_CERT_FILE for a private CA bundle', async () => {
+  const source = await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf('function baseEnvironment()');
+  assert.ok(start > -1, 'baseEnvironment must exist');
+  const body = source.slice(start, source.indexOf('\n}', start));
+  assert.match(
+    body,
+    /'SSL_CERT_FILE'/,
+    'baseEnvironment must forward SSL_CERT_FILE, otherwise a Flatpak override never reaches the engine',
+  );
+
+  const engineStart = source.indexOf('async function startEngine(');
+  assert.ok(engineStart > -1, 'startEngine must exist');
+  const engine = source.slice(engineStart, source.indexOf('function restartEngine', engineStart));
+  assert.match(
+    engine,
+    /\.\.\.baseEnvironment\(\)/,
+    'the engine environment is rebuilt from baseEnvironment()',
+  );
+  assert.match(
+    engine,
+    /env: environment/,
+    'that environment is what the engine child process receives',
+  );
+});
