@@ -2634,7 +2634,12 @@ export function Chat({
                     <ChatNotifications ownerId={ownerId} messageId={message.id} />
                   )}
                   {message.id === phoneOfferMessageId && phoneOffer && (
-                    <PhoneOfferCard offer={phoneOffer} path="chat" viewKey={message.id} />
+                    <PhoneOfferCard
+                      offer={phoneOffer}
+                      path="chat"
+                      viewKey={message.id}
+                      onAnswered={() => void refresh().catch(() => {})}
+                    />
                   )}
                 </Fragment>
               ))}
