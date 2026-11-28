@@ -37,7 +37,9 @@ flowchart LR
 
 The workspace is where Nod runs commands and keeps files. The browser is where it visits websites. Neither of them receives your provider keys. The workspace reaches the network only through its [firewall](/deploy/self-host/#what-runs-on-the-server), which blocks private addresses.
 
-`pnpm start` sets the browser and workspace CPU limits to fit the CPUs available to Docker. To check a Docker VM's allocation, run `docker info --format '{{.NCPU}}'`. If Nod runs slowly, stop Nod, raise the VM's CPU or memory allocation, then run `pnpm start` again to recalculate the limits. For example, to give an existing Colima VM four CPUs and 8 GB of memory:
+`pnpm start` sets the browser and workspace CPU limits to fit the CPUs available to Docker. To check a Docker VM's allocation, run `docker info --format '{{json .}}'` and read `NCPU` (or `host.cpus` with Podman). If Nod runs slowly, stop Nod, raise the VM's CPU or memory allocation, then run `pnpm start` again to recalculate the limits. For example, to give an existing Colima VM four CPUs and 8 GB of memory:
+
+Podman does not accept `uid=` or `gid=` on a `tmpfs` mount, and it splits `CMD` healthcheck arguments at spaces. Nod uses `mode=777` for the browser's `/home/node` tmpfs so the `node` user can write there, and a `CMD-SHELL` browser healthcheck. The browser still runs with a read-only root filesystem, dropped capabilities and no new privileges.
 
 ```sh title="Terminal"
 colima stop
@@ -102,6 +104,36 @@ Keep the key with your backup; saved credentials can't be read without it. If en
 :::caution[Access from other devices]
 This source setup listens on your computer's loopback interface. For network access, follow [Host your own server](/deploy/self-host/) to configure a server token and HTTPS.
 :::
+
+## Run Nod at login
+
+On Linux, a systemd user service can start Nod for you when you log in. Use absolute paths for your checkout and for Node.js 24.21.0 or newer:
+
+```ini title="~/.config/systemd/user/nod.service"
+[Unit]
+Description=Nod agent server (local loopback)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/you/nod
+Environment=PATH=/path/to/node24/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/path/to/node24/bin/pnpm start
+Restart=on-failure
+RestartSec=5
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+```
+
+```sh title="Terminal"
+systemctl --user daemon-reload
+systemctl --user enable --now nod.service
+```
+
+`StandardOutput=null` keeps the startup link, which contains your access key, out of the journal. The key stays in `access-key` in your data folder, so a browser that already has the cookie keeps working. To start Nod before you log in, enable [lingering](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html) for your user.
 
 ## Run Nod day to day
 

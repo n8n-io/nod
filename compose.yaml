@@ -33,14 +33,12 @@ services:
       - browser-data:/data
     tmpfs:
       - /tmp:size=1g
-      - /home/node:uid=1000,gid=1000,mode=700,size=256m
+      - /home/node:mode=777,size=256m
     healthcheck:
       test:
         [
-          'CMD',
-          'node',
-          '-e',
-          'const s=require("node:net").connect("/data/control.sock");s.on("connect",()=>{s.end();process.exit(0)});s.on("error",()=>process.exit(1))',
+          'CMD-SHELL',
+          'node -e ''const s=require("node:net").connect("/data/control.sock");s.on("connect",()=>{s.end();process.exit(0)});s.on("error",()=>process.exit(1))''',
         ]
       interval: 2s
       timeout: 3s

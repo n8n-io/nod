@@ -35,8 +35,9 @@ try {
   ]);
   if (wanted !== installed) await run('pnpm', ['install', '--frozen-lockfile', '--prod=false']);
   if (production) await run('pnpm', ['run', 'build']);
-  const { stdout } = await promisify(execFile)('docker', ['info', '--format', '{{.NCPU}}']);
-  const dockerCpus = Number(stdout.trim());
+  const { stdout } = await promisify(execFile)('docker', ['info', '--format', '{{json .}}']);
+  const info = JSON.parse(stdout);
+  const dockerCpus = Number(info.NCPU ?? info.host?.cpus);
   if (!Number.isInteger(dockerCpus) || dockerCpus < 1)
     throw new Error('Docker did not report a usable CPU count.');
   const environment = await withLocalDatabase(process.cwd(), async (database) => {
