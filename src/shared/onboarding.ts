@@ -104,4 +104,5 @@ export type TaskSuggestions = {
   intro: string;
   tasks: SuggestedTask[];
   apps?: string[];
+  offer?: boolean;
 };

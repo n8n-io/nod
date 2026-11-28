@@ -411,6 +411,18 @@ export const analyticsEvent = z.discriminatedUnion('event', [
     .strict(),
   z
     .object({
+      event: z.literal('onboarding_offer_sent'),
+      properties: z.object({ kind: z.enum(['immediate', 'ongoing']) }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal('onboarding_offer_answered'),
+      properties: z.object({ started: z.boolean() }).strict(),
+    })
+    .strict(),
+  z
+    .object({
       event: z.literal('runtime_active'),
       properties: z.object({ started_today: z.boolean() }).strict(),
     })

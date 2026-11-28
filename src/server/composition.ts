@@ -1351,6 +1351,9 @@ async function initializeApplication(
       await sweepArtifacts();
       await sweepExpiredTurns().catch((error) => logFailure('turn_lease_sweep', error));
       await tasks.wakeDue().catch((error) => logFailure('task_wake', error));
+      await onboardingSuggestions
+        .offer()
+        .catch((error) => logFailure('onboarding_offer_failed', error));
     },
     due: () => proactivity.due(),
   });
@@ -2105,6 +2108,9 @@ async function initializeApplication(
     observe: (run) => analytics.withSystemWork(ownerId, 'onboarding', run),
     curator: onboardingCurator,
     timeZone: async () => (await getPreferences()).timeZone,
+    quiet: async () => isQuietTime(await getPreferences()),
+    paused: async () => Boolean(await ledger.reachedLimit()),
+    analytics: captureAnalytics,
     mailCheck,
     answers: async () =>
       (await memory.load()).entries

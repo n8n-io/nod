@@ -311,9 +311,11 @@ function TaskCards({
             {common.map((task, index) => card(task, learned.length + index))}
           </div>
         )}
-        <Rise show={shown} index={suggestions.tasks.length} className="task-follow-up">
-          <p className="task-bubble">{moreIdeasLine(seen)}</p>
-        </Rise>
+        {!suggestions.offer && (
+          <Rise show={shown} index={suggestions.tasks.length} className="task-follow-up">
+            <p className="task-bubble">{moreIdeasLine(seen)}</p>
+          </Rise>
+        )}
       </div>
     </article>
   );
