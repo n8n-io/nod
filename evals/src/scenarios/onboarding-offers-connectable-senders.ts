@@ -6,8 +6,11 @@ import { createApps, gmail, type Mail } from '../world/apps.ts';
 import { daysAgo } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
-const connectable = ['slack', 'linear'];
-const senders = ['notification@slack.com', 'notifications@linear.app', 'notifications@github.com'];
+const connectable = [
+  { slug: 'slack', name: 'Slack', sender: 'notification@slack.com' },
+  { slug: 'linear', name: 'Linear', sender: 'notifications@linear.app' },
+];
+const senders = [...connectable.map((app) => app.sender), 'notifications@github.com'];
 
 function mailbox(now: number): Mail[] {
   return [
@@ -150,11 +153,20 @@ export default scenario({
         { aspect: 'process', failure: 'incomplete' },
       ),
       check(
-        'offers-a-connectable-sender-app',
-        () => ({
-          pass: offered().some((slug) => connectable.includes(slug)),
-          evidence: `offered apps: ${offered().join(', ') || 'none'}`,
-        }),
+        'offers-every-connectable-sender-app',
+        () => {
+          const read = JSON.stringify(world.reads);
+          const due = connectable.filter((app) => read.includes(app.sender));
+          const missing = due.filter(
+            (app) =>
+              !offered().includes(app.slug) ||
+              !offerText().toLowerCase().includes(app.name.toLowerCase()),
+          );
+          return {
+            pass: due.length > 0 && !missing.length,
+            evidence: `read: ${due.map((app) => app.slug).join(', ') || 'none'}; offered apps: ${offered().join(', ') || 'none'}; missing: ${missing.map((app) => app.slug).join(', ') || 'none'}`,
+          };
+        },
         { failure: 'incomplete' },
       ),
       check(
