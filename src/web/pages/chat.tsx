@@ -27,7 +27,8 @@ import type { TrustView } from '../../shared/trust';
 import { appPages } from '../../shared/app-links';
 import { choiceAnswerText, type QuestionAnswer } from '../../shared/answer-choices';
 import { integrationMetadata, integrationServices } from '../../shared/integrations';
-import { moreIdeasLine } from '../../shared/sender-apps';
+import { moreIdeasLine, senderApps } from '../../shared/sender-apps';
+import { ConnectApps } from '../components/presentation-apps';
 import { presentationChoices, presentationPick, presentationText } from '../../shared/presentation';
 import { classifyVerificationReply, securityCodeIn } from '../../shared/verification-code';
 import { ChatTools } from '../components/chat-tools';
@@ -184,6 +185,37 @@ function Working({
   );
 }
 
+function SenderOffer({ apps }: { apps: string[] }) {
+  const connections = usePageData<Connection[]>('/api/apps').data;
+  const catalog = usePageData<Connection[]>('/api/apps/catalog');
+  if (!connections) return <p className="task-bubble">{moreIdeasLine([])}</p>;
+  const connectable = apps.filter(
+    (slug) => Object.hasOwn(senderApps, slug) && catalog.data?.some((entry) => entry.slug === slug),
+  );
+  const offered = connectable
+    .filter(
+      (slug) => !connections.some((entry) => entry.slug === slug && entry.status === 'connected'),
+    )
+    .slice(0, 3);
+  return (
+    <>
+      <p className="task-bubble">{moreIdeasLine(offered)}</p>
+      {connectable.length > 0 && (
+        <ConnectApps
+          entry="suggestions"
+          visual={{
+            version: 1,
+            type: 'apps',
+            title: 'Apps that email you',
+            sources: [],
+            services: offered,
+          }}
+        />
+      )}
+    </>
+  );
+}
+
 function TaskCards({
   id,
   grouped,
@@ -208,9 +240,6 @@ function TaskCards({
   }, []);
   const learned = suggestions.tasks.filter((task) => task.origin !== 'common');
   const common = suggestions.tasks.filter((task) => task.origin === 'common');
-  const seen = (suggestions.apps ?? []).filter(
-    (slug) => !connections.some((entry) => entry.slug === slug && entry.status === 'connected'),
-  );
   const card = (task: SuggestedTask, index: number) => {
     const state = status(task);
     const connection = connections.find((entry) => entry.slug === task.source);
@@ -312,7 +341,11 @@ function TaskCards({
           </div>
         )}
         <Rise show={shown} index={suggestions.tasks.length} className="task-follow-up">
-          <p className="task-bubble">{moreIdeasLine(seen)}</p>
+          {suggestions.apps?.length ? (
+            <SenderOffer apps={suggestions.apps} />
+          ) : (
+            <p className="task-bubble">{moreIdeasLine([])}</p>
+          )}
         </Rise>
       </div>
     </article>

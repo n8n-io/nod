@@ -13,9 +13,11 @@ import type { Ref } from 'react';
 export function ConnectApps({
   visual,
   analyticsRef,
+  entry: source = 'chat',
 }: {
   visual: Extract<Presentation, { type: 'apps' }>;
   analyticsRef?: Ref<HTMLElement>;
+  entry?: 'chat' | 'suggestions';
 }) {
   const apps = usePageData<Connection[]>('/api/apps');
   const catalog = usePageData<Connection[]>('/api/apps/catalog');
@@ -26,7 +28,7 @@ export function ConnectApps({
   const linked = (slug: string) =>
     Boolean(apps.data?.some((item) => item.slug === slug && item.status === 'connected'));
   const signIn = useAppSignIn({
-    entry: 'chat',
+    entry: source,
     name,
     onSettled: () => void apps.refresh(),
     onSetup: (url) => navigate(url),

@@ -23,7 +23,7 @@ export function useAppSignIn({
   onSettled,
   onSetup,
 }: {
-  entry: 'onboarding' | 'chat';
+  entry: 'onboarding' | 'chat' | 'suggestions';
   name(service: string): string;
   onSettled(): void;
   onSetup?(url: string): void;
@@ -290,7 +290,7 @@ export function useAppSignIn({
         next = 'waiting';
       else clearAttempt();
       setError(errorMessage(cause));
-      capture('ui_error', { area: entry, action: 'connect' });
+      capture('ui_error', { area: entry === 'suggestions' ? 'chat' : entry, action: 'connect' });
     } finally {
       if (request.current === controller) {
         request.current = null;

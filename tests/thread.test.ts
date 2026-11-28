@@ -57,6 +57,7 @@ import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createAnalytics, snapshotAnalytics } from '../src/server/analytics.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 import { suggestedTaskStatus } from '../src/web/lib/chat-messages.ts';
+import { moreIdeasLine } from '../src/shared/sender-apps.ts';
 
 test(
   'one thread runs every turn in order on the same session and workspace',
@@ -471,6 +472,7 @@ test(
             ),
         },
         telegram: async () => false,
+        connectable: async () => [],
         mailCheck: async (emails) =>
           emails.map((email) => /verification code/i.test(`${email.subject}\n${email.text}`)),
       });
@@ -6496,6 +6498,10 @@ test(
               signal: closing.signal,
               answers: async () => [],
               telegram: async () => false,
+              connectable: async () => {
+                if (mode === 'unavailable') throw new Error('Synthetic catalog failure.');
+                return ['slack', 'linear', 'fixture-mcp'];
+              },
               mailCheck: async (emails) => {
                 if (mode === 'revoked_privacy') active.clear();
                 return emails.map(({ subject }) => subject === 'Verification code');
@@ -6616,6 +6622,10 @@ test(
                       from: 'no-reply@notion.so',
                       subject: 'Verification code',
                       body: 'Code 482913',
+                    },
+                    {
+                      from: 'Slack <notification@slack.com>',
+                      subject: 'Synthetic mention',
                     },
                     {
                       from: 'notifications@linear.app',
@@ -6764,16 +6774,17 @@ test(
               assert.ok(plannerBriefs.every((brief) => brief.source !== 'gmail'));
               assert.match(JSON.stringify(posted), /Juniper/);
               assert.doesNotMatch(JSON.stringify(posted), /binding-|connectionId|observations/);
-              assert.deepEqual(posted[0]!.suggestions.apps, ['linear', 'googlecalendar']);
-              assert.match(
-                posted[0]!.text,
-                /\nIf you want more ideas, just ask me\. You also get email from Linear and Google Calendar, so connecting them would help me find more\.$/,
-              );
+              const offered = mode === 'unavailable' ? undefined : ['linear'];
+              assert.deepEqual(posted[0]!.suggestions.apps, offered);
+              assert.equal(posted[0]!.text.split('\n').at(-1), moreIdeasLine(offered ?? []));
               assert.match(
                 posted[0]!.suggestions.intro,
                 /^I looked at your recent (?:slack and fixture-mcp|fixture-mcp and slack) and picked the first three ideas/,
               );
-              assert.doesNotMatch(JSON.stringify(posted), /notifications@|Synthetic issue/);
+              assert.doesNotMatch(
+                JSON.stringify(posted),
+                /notifications?@|calendar-notification|Synthetic (?:issue|mention)/,
+              );
               const cached = await db.pool.query(
                 'SELECT suggestions FROM onboarding_suggestions WHERE owner_id=$1',
                 [owner],

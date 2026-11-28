@@ -67,7 +67,7 @@ type AnalyticsEvents = {
       }
     | { setting: 'browser_notifications'; value: 'enabled' | 'disabled' | 'dismissed' };
   notification_opened: { kind: 'reply' };
-  app_connection_completed: { entry: 'apps' | 'chat' | 'onboarding' | 'manage' };
+  app_connection_completed: { entry: 'apps' | 'chat' | 'onboarding' | 'manage' | 'suggestions' };
   app_connection_chat_requested: undefined;
   presentation_viewed: { kind: Presentation['type'] };
   presentation_action: {
@@ -112,7 +112,7 @@ type AnalyticsEvents = {
     method: 'button' | 'context_menu';
   };
   app_connect_clicked: {
-    entry: 'apps' | 'chat' | 'onboarding' | 'manage';
+    entry: 'apps' | 'chat' | 'onboarding' | 'manage' | 'suggestions';
     result: 'opened' | 'needs_access_setup' | 'channels';
   };
   model_selected: {
@@ -229,7 +229,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     value: ['light', 'dark', 'system', 'enabled', 'disabled', 'dismissed'],
   },
   notification_opened: { kind: ['reply'] },
-  app_connection_completed: { entry: ['apps', 'chat', 'onboarding', 'manage'] },
+  app_connection_completed: { entry: ['apps', 'chat', 'onboarding', 'manage', 'suggestions'] },
   app_connection_chat_requested: {},
   presentation_viewed: { kind: presentationKinds },
   presentation_action: {
@@ -278,7 +278,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     method: ['button', 'context_menu'],
   },
   app_connect_clicked: {
-    entry: ['apps', 'chat', 'onboarding', 'manage'],
+    entry: ['apps', 'chat', 'onboarding', 'manage', 'suggestions'],
     result: ['opened', 'needs_access_setup', 'channels'],
   },
   model_selected: {

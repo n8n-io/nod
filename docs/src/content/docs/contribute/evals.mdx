@@ -73,13 +73,13 @@ For a small run, add `--tier pr --repeat 1`. To cap the spend at $20, add `--bud
 
 ### Run the release suite
 
-The release suite adds 244 cases: 197 of everyday work across every connected app, the browser, computer use, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
+The release suite adds 247 cases: 200 of everyday work across every connected app, the browser, computer use, Vault and payments, files, memory, schedules, background events and the trust check, and 47 generated proactivity cases: 45 stress and population cases and two attention cases. Run it on your computer before a release. CI never runs it, because a full pass is several hundred attempts.
 
 ```sh title="Terminal"
 pnpm run eval:capability run --tier release --repeat 3 --concurrency 3 --budget 500
 ```
 
-`--tier release` runs the release cases together with every controlled case, 384 attempts per repeat before time-window skips. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
+`--tier release` runs the release cases together with every controlled case, 387 attempts per repeat before time-window skips. Each attempt starts its own workspace and browser containers; `--concurrency 6` fits in 8 GB of Docker memory. Database connections are a separate limit. Start with concurrency two when you use a standard disposable database. Each attempt starts several connection pools. Parallel campaigns add their load. Increase concurrency only when the database has spare connections. To run one area, add `--capability vault`, or name cases with `--scenario`.
 
 Results go to `.local/capability-evals/<label>/`. Open `report.html` to read every transcript and check. A label never overwrites an earlier run. If a worker fails before it can save checks, its log records the phase: start, prepare, play, collect, or grade.
 
@@ -294,7 +294,7 @@ flowchart TD
 
 ## The suite
 
-The suite has 388 cases: 140 controlled cases, 244 release cases, three live web cases and the harness canary.
+The suite has 391 cases: 140 controlled cases, 247 release cases, three live web cases and the harness canary.
 
 | Status      | Meaning                                                                                                                    |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -554,6 +554,7 @@ Every release case is calibrating until it has been run and sorted. The table li
 | `notion-overdue-tasks`                  | Which of my Notion tasks are overdue?                                                                                             | apps                            |
 | `notion-policy-answer`                  | What's our refund window according to the Notion handbook?                                                                        | apps                            |
 | `notion-save-recipe-from-email`         | Save the recipe Mum emailed me to my Recipes database in Notion                                                                   | apps                            |
+| `onboarding-offers-connectable-senders` | Finish setup with Gmail and be offered only the apps Nod can connect                                                              | apps                            |
 | `paginated-job-list`                    | List every open design job in Lisbon on jobs.portal-emprego.example.org.                                                          | browser, research               |
 | `parallel-venue-research`               | Check which of these five venues can host 40 people on a date                                                                     | research, browser, progress     |
 | `pdf-statement-card-total`              | How much did I spend by card this month? Don't count transfers, and subtract refunds                                              | files                           |

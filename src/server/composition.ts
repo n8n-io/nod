@@ -2106,6 +2106,7 @@ async function initializeApplication(
     curator: onboardingCurator,
     timeZone: async () => (await getPreferences()).timeZone,
     mailCheck,
+    connectable: async () => (await integrations.catalog()).map((service) => service.slug),
     answers: async () =>
       (await memory.load()).entries
         .filter((entry) => entry.origin === 'stated' && entry.slug === 'onboarding')
