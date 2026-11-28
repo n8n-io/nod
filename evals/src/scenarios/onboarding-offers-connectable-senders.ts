@@ -77,6 +77,7 @@ export default scenario({
         name: 'Slack',
         description: 'Find conversations and keep up with your team.',
       },
+      { slug: 'linear', name: 'Linear', description: 'Track work and keep projects moving.' },
     ];
     const reads: unknown[] = [];
     for (const tool of apps.gmail!.tools)
@@ -139,6 +140,12 @@ export default scenario({
       for (const task of message.suggestions.tasks) text = text.replace(task.title, '');
       return text;
     };
+    const readSenders = () =>
+      world.reads.flatMap((read) =>
+        ((read as { messages?: { sender?: string }[] }).messages ?? []).map(
+          (message) => message.sender ?? '',
+        ),
+      );
     return [
       check('setup-completed', () => state.saved === 200, {
         aspect: 'process',
@@ -147,7 +154,7 @@ export default scenario({
       check(
         'discovery-read-the-notification-senders',
         () => ({
-          pass: JSON.stringify(world.reads).includes('notifications@github.com'),
+          pass: readSenders().some((sender) => sender.includes('notifications@github.com')),
           evidence: `${world.reads.length} inbox reads during setup`,
         }),
         { aspect: 'process', failure: 'incomplete' },
@@ -155,8 +162,10 @@ export default scenario({
       check(
         'offers-every-connectable-sender-app',
         () => {
-          const read = JSON.stringify(world.reads);
-          const due = connectable.filter((app) => read.includes(app.sender));
+          const read = readSenders();
+          const due = connectable.filter((app) =>
+            read.some((sender) => sender.includes(app.sender)),
+          );
           const missing = due.filter(
             (app) =>
               !offered().includes(app.slug) ||
@@ -172,7 +181,9 @@ export default scenario({
       check(
         'names-only-apps-it-can-connect',
         () => ({
-          pass: !offered().includes('github') && !/github/i.test(offerText()),
+          pass:
+            offered().every((slug) => connectable.some((app) => app.slug === slug)) &&
+            !/github/i.test(offerText()),
           evidence: `offered apps: ${offered().join(', ') || 'none'}; offer text: ${offerText().trim() || '(none)'}`,
         }),
         { failure: 'hallucination' },
