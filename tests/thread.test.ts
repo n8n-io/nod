@@ -6784,8 +6784,24 @@ test(
                 [owner],
               );
               assert.doesNotMatch(JSON.stringify(cached.rows[0]?.suggestions), /owner@n8n\.io/);
+              assert.deepEqual(
+                new Set(cached.rows[0]?.suggestions.read),
+                new Set(['slack', 'fixture-mcp']),
+              );
             } else {
               if (['unknown', 'invalid', 'refused'].includes(mode)) assert.equal(calls.length, 0);
+              if (mode === 'refused') {
+                assert.equal(posted[0]!.suggestions.tasks[0].origin, 'learned');
+                assert.deepEqual(
+                  (
+                    await db.pool.query(
+                      'SELECT suggestions FROM onboarding_suggestions WHERE owner_id=$1',
+                      [owner],
+                    )
+                  ).rows[0].suggestions.read,
+                  [],
+                );
+              }
               if (
                 [
                   'unknown',
@@ -7017,6 +7033,7 @@ test(
         'a quiet new owner gets one next step from their own cards, once, and accepting it starts owner work',
         async () => {
           const { assertStartedByOwner } = await import('../src/server/owner-started.ts');
+          const { recentOwnerWords } = await import('../src/server/owner-instructions.ts');
           await waitFor(settledThread);
           const original = (await thread.activeThread()).id;
           const saved = (
@@ -7079,7 +7096,11 @@ test(
                 [ownerId, (await thread.activeThread()).id],
               )
             ).rows;
-          const fresh = async (suggestions: object, first = 'Synthetic first request') => {
+          const fresh = async (
+            suggestions: object,
+            first = 'Synthetic first request',
+            read = ['slack'],
+          ) => {
             await waitFor(settledThread);
             await db.pool.query(
               'UPDATE threads SET archived_at=now() WHERE owner_id=$1 AND archived_at IS NULL',
@@ -7100,6 +7121,7 @@ test(
                     slug: app.slug,
                     name: app.name,
                   })),
+                  read,
                 }),
               ],
             );
@@ -7126,11 +7148,14 @@ test(
               'started_card',
               'cleared',
               'nothing_prepared',
+              'unread_source',
               'disconnected',
+              'telegram',
             ]) {
               const first = await fresh(
                 mode === 'nothing_prepared' ? generic : learned,
                 mode === 'started_card' ? title : mode === 'cleared' ? '/clear' : undefined,
+                mode === 'unread_source' ? ['gmail'] : undefined,
               );
               await quietFor(first.turnId);
               if (mode === 'wrote_again') {
@@ -7138,17 +7163,16 @@ test(
                 await waitFor(settled(again.turnId));
                 await quietFor(again.turnId);
               }
+              if (mode === 'telegram')
+                await db.pool.query("UPDATE turns SET channel='telegram' WHERE id=$1", [
+                  first.turnId,
+                ]);
               suggestionApps.set(ownerId, mode === 'disconnected' ? [gmail] : [slack, gmail]);
               await offers.offer();
               assert.deepEqual(await offerMessages(), [], mode);
             }
             suggestionApps.set(ownerId, [slack, gmail]);
             const first = await fresh(learned);
-            const turnsBefore = (
-              await db.pool.query('SELECT count(*)::int AS count FROM turns WHERE owner_id=$1', [
-                ownerId,
-              ])
-            ).rows[0].count;
             const eventsBefore = analyticsEvents.length;
             await offers.offer();
             assert.deepEqual(await offerMessages(), []);
@@ -7162,23 +7186,38 @@ test(
             paused = true;
             await offers.offer();
             paused = false;
+            for (const status of ['queued', 'running', 'waiting']) {
+              const busy = randomUUID();
+              await db.pool.query(
+                "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,start_after) VALUES($1,$2,$3,'schedule','Synthetic schedule',$4,true,now()+interval '1 hour')",
+                [busy, ownerId, first.threadId, status],
+              );
+              await offers.offer();
+              await db.pool.query('DELETE FROM turns WHERE id=$1', [busy]);
+              assert.deepEqual(await offerMessages(), [], status);
+            }
+            const child = randomUUID();
+            const task = randomUUID();
             await db.pool.query(
-              "UPDATE messages SET answer_choices='{}'::jsonb WHERE turn_id=$1 AND role='assistant'",
-              [first.turnId],
+              "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,parent_turn_id,finished_at) VALUES($1,$2,$3,'task','Synthetic task','succeeded',true,$4,now()-interval '2 minutes')",
+              [child, ownerId, first.threadId, first.turnId],
             );
             await offers.offer();
-            await db.pool.query(
-              "UPDATE messages SET answer_choices=NULL WHERE turn_id=$1 AND role='assistant'",
-              [first.turnId],
-            );
-            const running = randomUUID();
-            await db.pool.query(
-              "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background) VALUES($1,$2,$3,'schedule','Synthetic schedule','running',true)",
-              [running, ownerId, first.threadId],
-            );
-            await offers.offer();
-            await db.pool.query('DELETE FROM turns WHERE id=$1', [running]);
             assert.deepEqual(await offerMessages(), []);
+            await quietFor(child);
+            await db.pool.query(
+              "INSERT INTO tasks(id,owner_id,turn_id,title,done_when,now_text) VALUES($1,$2,$3,'Synthetic task','Synthetic result','Working')",
+              [task, ownerId, child],
+            );
+            await offers.offer();
+            await db.pool.query('DELETE FROM tasks WHERE id=$1', [task]);
+            await db.pool.query('DELETE FROM turns WHERE id=$1', [child]);
+            assert.deepEqual(await offerMessages(), []);
+            const turnsBefore = (
+              await db.pool.query('SELECT count(*)::int AS count FROM turns WHERE owner_id=$1', [
+                ownerId,
+              ])
+            ).rows[0].count;
             await offers.offer();
             await offers.offer();
             const offered = await offerMessages();
@@ -7222,6 +7261,29 @@ test(
               [
                 ['onboarding_offer_sent', undefined],
                 ['onboarding_offer_answered', true],
+              ],
+            );
+
+            const second = await fresh(learned);
+            await quietFor(second.turnId);
+            await offers.offer();
+            assert.equal((await offerMessages()).length, 1);
+            const typed = await thread.submitUserMessage('Yes');
+            await waitFor(settled(typed.turnId));
+            const { words } = await recentOwnerWords(db.pool, ownerId, second.threadId, [
+              typed.messageId,
+            ]);
+            const yes = words.userMessages.find((message) => message.id === typed.messageId);
+            assert.equal(yes?.text, 'Yes');
+            assert.equal(yes?.replyTo, undefined);
+            await offers.offer();
+            assert.deepEqual(
+              offerEvents().map(({ event, properties }) => [event, properties.started]),
+              [
+                ['onboarding_offer_sent', undefined],
+                ['onboarding_offer_answered', true],
+                ['onboarding_offer_sent', undefined],
+                ['onboarding_offer_answered', false],
               ],
             );
           } finally {

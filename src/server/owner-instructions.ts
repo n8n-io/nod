@@ -240,14 +240,15 @@ export async function recentOwnerWords(
      LEFT JOIN LATERAL (SELECT a.id,a.text,a.presentation,${withdrawnSql('a')} AS withdrawn FROM messages a
          WHERE a.id=m.reply_to_message_id AND a.owner_id=$1 AND a.thread_id=$2 AND a.role='assistant'
            AND a.hidden_at IS NULL AND (a.text<>'' OR a.presentation IS NOT NULL)) explicit ON TRUE
-     LEFT JOIN LATERAL (SELECT a.id,a.text,a.presentation,${withdrawnSql('a')} AS withdrawn FROM messages a
-         JOIN turns t ON t.id=a.turn_id AND t.owner_id=a.owner_id
+     LEFT JOIN LATERAL (SELECT * FROM (SELECT a.id,a.turn_id,a.text,a.presentation,${withdrawnSql('a')} AS withdrawn FROM messages a
+         LEFT JOIN turns t ON t.id=a.turn_id AND t.owner_id=a.owner_id
          WHERE m.reply_to_message_id IS NULL AND a.owner_id=$1 AND a.thread_id=$2 AND a.role='assistant'
            AND a.hidden_at IS NULL AND (a.text<>'' OR a.presentation IS NOT NULL)
            AND (a.created_at,a.id)<(m.created_at,m.id) AND a.created_at>m.created_at-interval '24 hours'
            AND a.created_at>=CASE WHEN m.created_at>=cleared.at THEN cleared.at ELSE '-infinity'::timestamptz END
-           AND t.channel IS NOT DISTINCT FROM u.channel
-         ORDER BY a.created_at DESC,a.id DESC LIMIT 1) implicit ON TRUE
+           AND CASE WHEN a.turn_id IS NULL THEN COALESCE(a.delivered_channel,'web')=u.channel
+             ELSE t.channel IS NOT DISTINCT FROM u.channel END
+         ORDER BY a.created_at DESC,a.id DESC LIMIT 1) latest WHERE latest.turn_id IS NOT NULL) implicit ON TRUE
      CROSS JOIN LATERAL (SELECT COALESCE(explicit.id,implicit.id) AS id,COALESCE(explicit.text,implicit.text) AS text,
          CASE WHEN explicit.id IS NOT NULL THEN explicit.presentation ELSE implicit.presentation END AS presentation,
          COALESCE(explicit.withdrawn,implicit.withdrawn) AS withdrawn) r

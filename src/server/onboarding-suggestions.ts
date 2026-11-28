@@ -24,6 +24,7 @@ type PreparedSuggestions = {
   tasks: Task[];
   accounts: DiscoveryAccount[];
   seen?: string[];
+  read?: string[];
 };
 type DiscoveryAccount = AppAccount;
 type Checked = {
@@ -512,14 +513,9 @@ export function createOnboardingSuggestions(options: {
       if (!(await options.discovery.current(accounts)))
         return fallbackSuggestions({ gmail: false, telegram });
       signal.throwIfAborted();
-      const intro =
-        briefs.length && !replaced
-          ? learnedIntro(
-              briefs.map((brief) => brief.source),
-              apps,
-            )
-          : suggestions.intro;
-      return { ...suggestions, intro, accounts, seen };
+      const read = [...new Set(briefs.map((brief) => brief.source))];
+      const intro = read.length && !replaced ? learnedIntro(read, apps) : suggestions.intro;
+      return { ...suggestions, intro, accounts, seen, read };
     } catch (error) {
       signal.throwIfAborted();
       logFailure('first_tasks_fallback', error);
@@ -720,10 +716,10 @@ export function createOnboardingSuggestions(options: {
        JOIN turns u ON u.id=request.turn_id AND u.owner_id=s.owner_id
        WHERE s.owner_id=$1 AND s.posted_at IS NOT NULL AND s.offered_at IS NULL
          AND u.status='succeeded' AND u.channel='web' AND u.background=false
-         AND u.finished_at<=now()-interval '${offerQuietMinutes} minutes' AND u.finished_at>now()-interval '${offerWindowHours} hours'
+         AND u.finished_at>now()-interval '${offerWindowHours} hours'
+         AND (SELECT max(f.finished_at) FROM turns f WHERE f.owner_id=$1 AND f.thread_id=t.id)<=now()-interval '${offerQuietMinutes} minutes'
          AND NOT EXISTS (SELECT 1 FROM turns w WHERE w.owner_id=$1 AND w.status IN ('queued','running','waiting'))
-         AND (SELECT a.answer_choices IS NULL FROM messages a WHERE a.owner_id=$1 AND a.turn_id=u.id AND a.role='assistant' AND a.hidden_at IS NULL
-           ORDER BY a.created_at DESC,a.id DESC LIMIT 1)
+         AND NOT EXISTS (SELECT 1 FROM tasks k WHERE k.owner_id=$1 AND k.state='open')
          AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(cards.suggestions->'tasks') task WHERE task->>'title'=request.text)
        ORDER BY cards.created_at,cards.id LIMIT 1`,
       [owner],
@@ -731,9 +727,9 @@ export function createOnboardingSuggestions(options: {
     const row = found.rows[0];
     if (!row) return;
     const accounts = Array.isArray(row.prepared?.accounts) ? row.prepared.accounts : [];
+    const read = Array.isArray(row.prepared?.read) ? row.prepared.read : [];
     for (const task of row.cards.tasks ?? []) {
-      if (task.origin !== 'learned' || task.source === 'web' || task.source === 'telegram')
-        continue;
+      if (task.origin !== 'learned' || !read.includes(task.source)) continue;
       for (const account of accounts.filter((entry) => entry.slug === task.source))
         if (await options.discovery.current([account], client))
           return { task, name: sourceName(task.source, accounts) };
@@ -741,21 +737,22 @@ export function createOnboardingSuggestions(options: {
   }
 
   async function recordAnswer() {
-    const answered = await pool.query<{ started: boolean }>(
+    const answered = await pool.query<{ started: boolean | null }>(
       `UPDATE onboarding_suggestions s SET offer_answered_at=now()
        FROM messages offer CROSS JOIN LATERAL (
-         SELECT m.text FROM messages m WHERE m.owner_id=offer.owner_id AND m.role='user'
-           AND (m.created_at,m.id)>(offer.created_at,offer.id)
+         SELECT m.text FROM messages m WHERE m.owner_id=offer.owner_id AND m.thread_id=offer.thread_id
+           AND m.role='user' AND m.approval_answer IS NULL AND (m.created_at,m.id)>(offer.created_at,offer.id)
          ORDER BY m.created_at,m.id LIMIT 1) reply
        WHERE s.owner_id=$1 AND s.offer_answered_at IS NULL AND offer.id=s.offer_message_id AND offer.owner_id=s.owner_id
-       RETURNING reply.text=offer.suggestions->'tasks'->0->>'title' AS started`,
+       RETURNING CASE WHEN reply.text<>'/clear' THEN reply.text=offer.suggestions->'tasks'->0->>'title' END AS started`,
       [owner],
     );
     for (const row of answered.rows)
-      options.analytics?.({
-        event: 'onboarding_offer_answered',
-        properties: { started: row.started === true },
-      });
+      if (row.started !== null)
+        options.analytics?.({
+          event: 'onboarding_offer_answered',
+          properties: { started: row.started },
+        });
   }
 
   async function offer() {
