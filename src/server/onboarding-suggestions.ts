@@ -306,6 +306,7 @@ export function createOnboardingSuggestions(options: {
   answers(): Promise<string[]>;
   timeZone(): Promise<string | null>;
   telegram(): Promise<boolean>;
+  connectable(): Promise<string[]>;
   mailCheck: MailCheck;
   signal?: AbortSignal;
   discovery: {
@@ -628,10 +629,19 @@ export function createOnboardingSuggestions(options: {
     return id;
   }
 
+  async function offered(seen: string[]) {
+    if (!seen.length) return [];
+    const catalog = await abortable(options.connectable(), AbortSignal.timeout(10_000)).catch(
+      (): string[] => [],
+    );
+    return seen.filter((slug) => catalog.includes(slug));
+  }
+
   function deliver() {
     delivering ??= (async () => {
       let prepared = await prepare();
       if (!(await sameAccounts(prepared.accounts))) prepared = await prepare(true);
+      const apps = await offered(prepared.seen ?? []);
       await transaction(async (client) => {
         const thread = await lockThread(client, owner);
         if (
@@ -652,15 +662,13 @@ export function createOnboardingSuggestions(options: {
         await insert(
           client,
           thread.id,
-          [
-            prepared.intro,
-            ...tasks.map((task) => `- ${task.title}`),
-            moreIdeasLine(prepared.seen ?? []),
-          ].join('\n'),
+          [prepared.intro, ...tasks.map((task) => `- ${task.title}`), moreIdeasLine(apps)].join(
+            '\n',
+          ),
           {
             intro: prepared.intro,
             tasks,
-            ...(prepared.seen?.length ? { apps: prepared.seen } : {}),
+            ...(apps.length ? { apps } : {}),
           },
         );
       }, pool);
