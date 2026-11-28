@@ -187,18 +187,18 @@ function Working({
 
 function SenderOffer({ apps, connections }: { apps: string[]; connections: Connection[] }) {
   const catalog = usePageData<Connection[]>('/api/apps/catalog');
-  const offered = apps
+  const connectable = apps.filter(
+    (slug) => Object.hasOwn(senderApps, slug) && catalog.data?.some((entry) => entry.slug === slug),
+  );
+  const offered = connectable
     .filter(
-      (slug) =>
-        Object.hasOwn(senderApps, slug) &&
-        catalog.data?.some((entry) => entry.slug === slug) &&
-        !connections.some((entry) => entry.slug === slug && entry.status === 'connected'),
+      (slug) => !connections.some((entry) => entry.slug === slug && entry.status === 'connected'),
     )
     .slice(0, 3);
   return (
     <>
       <p className="task-bubble">{moreIdeasLine(offered)}</p>
-      {offered.length > 0 && (
+      {connectable.length > 0 && (
         <ConnectApps
           entry="suggestions"
           visual={{
