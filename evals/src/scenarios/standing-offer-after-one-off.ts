@@ -120,7 +120,7 @@ export default scenario({
       }),
       judge(
         'offers-once-to-keep-doing-it',
-        "After the first draft, the assistant offers once, in one short separate message, to keep helping with this kind of email from now on, such as drafting replies whenever a client chases a delivery or writes in. The offer is specific to client emails, not a list of other things it can do. The reply to the owner's second request does not repeat the offer.",
+        "With or after the first draft, the assistant makes one short offer to keep helping with this kind of email from now on, such as drafting replies whenever a client chases a delivery or writes in. The offer is specific to client emails, not a list of other things it can do. The reply to the owner's second request does not repeat the offer.",
         { failure: 'format' },
       ),
     ];

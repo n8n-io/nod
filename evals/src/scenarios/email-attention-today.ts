@@ -2,9 +2,9 @@ import { check, judge, scenario } from '../scenario.ts';
 import { createApps, gmail, type Mail } from '../world/apps.ts';
 import { dayLabel, duringToday, hoursAgo, inDays, localTime } from '../world/time.ts';
 
-const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
+export const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 
-function mailbox(now: number): Mail[] {
+export function mailbox(now: number): Mail[] {
   const tomorrow = dayLabel(inDays(now, 1));
   const visit = dayLabel(inDays(now, 2));
   return [

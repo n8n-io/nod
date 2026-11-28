@@ -18,7 +18,7 @@ export interface Interaction {
 
 export interface Session {
   followUp(): Promise<void>;
-  say(text: string, options?: { attach?: string[] }): Promise<void>;
+  say(text: string, options?: { attach?: string[]; replyToMessageId?: string }): Promise<void>;
   sayTogether(texts: string[]): Promise<void>;
   interruptWhen(first: string, ready: () => Promise<boolean>): Promise<void>;
   sayDuringWithAttachments(first: string, interjection: string, attach: string[]): Promise<void>;
@@ -450,7 +450,11 @@ export function createSession(options: {
     },
     async say(text, sendOptions) {
       userMessages.push({ at: Date.now(), text });
-      await post('/api/messages', { text, attachmentIds: sendOptions?.attach ?? [] });
+      await post('/api/messages', {
+        text,
+        attachmentIds: sendOptions?.attach ?? [],
+        replyToMessageId: sendOptions?.replyToMessageId,
+      });
       await converse();
     },
     async sayTogether(texts) {
