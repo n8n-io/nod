@@ -2445,7 +2445,15 @@ export function Chat({
                           persistedIds,
                         )
                       }
-                      disabled={!state.configuration.llmReady || welcoming || spendingPaused}
+                      disabled={
+                        !state.configuration.llmReady ||
+                        welcoming ||
+                        spendingPaused ||
+                        (message.suggestions.offer === true &&
+                          allMessages
+                            .slice(allMessages.findIndex((item) => item.id === message.id) + 1)
+                            .some((item) => item.role === 'user'))
+                      }
                       onStart={(task, position) => {
                         captureAnalytics('task_card_started', {
                           ...(task.kind
