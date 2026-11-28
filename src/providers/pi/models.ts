@@ -148,6 +148,7 @@ function modelListRestricted(message = '') {
 }
 
 const levels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+const effortMajority = 2 / 3;
 
 function effortMap(offered: readonly unknown[]) {
   return Object.fromEntries(
@@ -156,6 +157,25 @@ function effortMap(offered: readonly unknown[]) {
       return [level, offered.includes(value) ? value : null];
     }),
   );
+}
+
+function poolEfforts(
+  candidates: readonly string[],
+  catalog: Map<string, { reasoning?: { supported_efforts: string[] } | undefined }>,
+) {
+  const published = candidates.flatMap((id) => {
+    const efforts = catalog.get(id)?.reasoning?.supported_efforts;
+    return efforts?.length ? [efforts] : [];
+  });
+  if (!published.length) return [];
+  const quorum = Math.ceil(effortMajority * published.length);
+  const majority = ['none', ...levels].filter(
+    (level) => published.filter((efforts) => efforts.includes(level)).length >= quorum,
+  );
+  // Long term, send the requested level and let the gateway route; this list is not a guarantee.
+  return majority.length
+    ? majority
+    : ['none', ...levels].filter((level) => published.every((efforts) => efforts.includes(level)));
 }
 
 let endpointConnections: Dispatcher1Wrapper | undefined;
@@ -325,8 +345,16 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
           .object({ supported_efforts: z.array(z.string()) })
           .optional()
           .catch(undefined),
+        trustedrouter: z
+          .object({
+            orchestration_role: z.string(),
+            auto_candidates: z.array(z.string()),
+          })
+          .optional()
+          .catch(undefined),
       }),
     );
+    const candidateCatalog = new Map(listed.map((model) => [model.id, model]));
     const root = found.url.replace(/\/v1$/, '');
     const serverJson = (path: string, init: RequestInit = {}) =>
       request(`${root}${path}`, {
@@ -376,7 +404,11 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
               ? ollamaModel(shown.data)
               : undefined;
           if (known?.usable === false) return [];
-          const offered = entry.reasoning?.supported_efforts ?? [];
+          const offered =
+            entry.reasoning?.supported_efforts ??
+            (entry.trustedrouter?.orchestration_role === 'routing_pool'
+              ? poolEfforts(entry.trustedrouter.auto_candidates, candidateCatalog)
+              : []);
           const thinkingLevelMap = known
             ? known.thinkingLevelMap
             : levels.some((level) => offered.includes(level))
