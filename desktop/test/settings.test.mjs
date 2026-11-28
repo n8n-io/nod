@@ -13119,6 +13119,102 @@ test('startup status masks overlapping credentials and private roots in one pass
   assert.ok(!review.content.includes('synthetic-private-path-tail'));
 });
 
+test('desktop sharing selects the requested monitor, binds image points to a turn and discards a revoked capture', async () => {
+  const { monitorSharing } = await import('../main/paired-screen.mjs');
+  const display = {
+    id: 10,
+    bounds: { x: 0, y: 0, width: 200, height: 100 },
+    scaleFactor: 1,
+    rotation: 0,
+  };
+  const left = { ...display, id: 20, bounds: { ...display.bounds, x: -200 }, scaleFactor: 2 };
+  let version = 1,
+    pause,
+    arrived,
+    protectedWindow = false,
+    captures = 0;
+  const thumbnail = (marker) => ({
+    isEmpty: () => false,
+    resize() {
+      return this;
+    },
+    getSize: () => ({ width: 200, height: 100 }),
+    toPNG: () => Buffer.from([marker]),
+    crop: () => ({ toBitmap: () => Buffer.from([marker]) }),
+  });
+  const positions = [];
+  const monitor = monitorSharing({
+    policy: pairedAppPolicy,
+    screen: {
+      getPrimaryDisplay: () => display,
+      getAllDisplays: () => [display, left],
+      dipToScreenPoint: (p) => ({ x: p.x * 2, y: p.y * 2 }),
+    },
+    desktopCapturer: {
+      getSources: async () => {
+        captures++;
+        if (pause) {
+          arrived();
+          await pause;
+        }
+        return [
+          { display_id: '20', thumbnail: thumbnail(version) },
+          { display_id: '10', thumbnail: thumbnail(65) },
+        ];
+      },
+    },
+    inspect: async (point) => {
+      if (!point) return { programs: protectedWindow ? ['KeePass.exe'] : [] };
+      positions.push(point);
+      return { app: 'sample.exe', pid: 8, window: 'w-8', name: 'Total', role: 'button' };
+    },
+  });
+  const signal = new AbortController().signal;
+  const call = (options, scope = {}) =>
+    monitor({ ownerChat: true, turn: 'first', keptOut: [], ...scope, ...options }, signal);
+  const step = (mode, app, ownerChat) =>
+    scopedWindowsRequest(
+      {},
+      app,
+      () => assert.fail('unexpected approval'),
+      pairedAppPolicy,
+      mode,
+      undefined,
+      monitor,
+    )({ op: 'screen', turn: 'first', ownerChat, keptOut: [] }, randomUUID(), signal);
+  await assert.rejects(step(false, null, true), /Share PC/);
+  await assert.rejects(step(true, 'sample.exe', true), /Share PC/);
+  await assert.rejects(step(true, null, false), /Share PC/);
+  assert.equal(captures, 0);
+  const primary = await call({ op: 'screen' });
+  assert.equal(primary.image, Buffer.from([65]).toString('base64'));
+  const frame = await call({ op: 'screen', display: '20' });
+  assert.equal(frame.image, Buffer.from([1]).toString('base64'));
+  const hit = { op: 'point', frame: frame.frame, x: 3, y: 8 };
+  await assert.rejects(call(hit, { turn: 'second' }), /again/);
+  await assert.rejects(call({ ...hit, x: 200 }), /outside/);
+  assert.equal((await call(hit)).name, 'Total');
+  assert.deepEqual(positions, [{ x: -394, y: 16 }]);
+  version++;
+  await assert.rejects(call(hit), /changed/);
+  protectedWindow = true;
+  await assert.rejects(call({ op: 'screen' }), /protected/);
+  protectedWindow = false;
+  let resume;
+  pause = new Promise((resolve) => {
+    resume = resolve;
+  });
+  const capturing = new Promise((resolve) => {
+    arrived = resolve;
+  });
+  const pending = call({ op: 'screen' });
+  await capturing;
+  monitor.clear();
+  resume();
+  await assert.rejects(pending, /again/);
+  await assert.rejects(call(hit), /again/);
+});
+
 test('paired Windows sharing fences app names and waits for local consent before input', async () => {
   const received = [];
   let allow = false;

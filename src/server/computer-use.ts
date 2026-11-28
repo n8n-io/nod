@@ -27,6 +27,23 @@ const window = z
 const bundle = z.string().min(1).max(255);
 const schemas = {
   COMPUTER_APPS: z.object({}).strict(),
+  COMPUTER_DISPLAYS: z.object({}).strict(),
+  COMPUTER_SCREEN: z
+    .object({
+      display: z
+        .string()
+        .regex(/^-?\d{1,20}$/)
+        .optional(),
+    })
+    .strict(),
+  COMPUTER_POINT: z
+    .object({
+      frame: z.string().uuid(),
+      x: z.number().int().min(0).max(4095),
+      y: z.number().int().min(0).max(4095),
+    })
+    .strict(),
+  COMPUTER_ACTIVATE: z.object({ pid, window: window.unwrap() }).strict(),
   COMPUTER_OPEN: z.object({ bundle }).strict(),
   COMPUTER_SNAPSHOT: z
     .object({ pid, window, ref: ref.optional(), menu: z.boolean().optional() })
@@ -55,6 +72,9 @@ const schemas = {
 type Action = keyof typeof schemas;
 const observing = new Set<Action>([
   'COMPUTER_APPS',
+  'COMPUTER_DISPLAYS',
+  'COMPUTER_SCREEN',
+  'COMPUTER_POINT',
   'COMPUTER_SNAPSHOT',
   'COMPUTER_FIND',
   'COMPUTER_SCREENSHOT',
@@ -503,6 +523,20 @@ export function createComputerUse(
     };
   }
 
+  function requiresSharedMonitor(action: Action) {
+    return ['COMPUTER_DISPLAYS', 'COMPUTER_SCREEN', 'COMPUTER_POINT', 'COMPUTER_ACTIVATE'].includes(
+      action,
+    );
+  }
+
+  function requireOwnerDesktop(directChat: boolean) {
+    if (!directChat || !desktop?.paired)
+      throw new IntegrationError(
+        'This step needs a direct owner chat with the Windows desktop shared.',
+        403,
+      );
+  }
+
   async function prepareStep(
     turn: OwnedTurn,
     action: Action,
@@ -510,8 +544,12 @@ export function createComputerUse(
     signal?: AbortSignal,
   ): Promise<ComputerPrepared> {
     signal = signal ? AbortSignal.any([signal, access.signal]) : access.signal;
-    const { root, keptOut } = await ready(turn);
+    const { root, keptOut, directChat } = await ready(turn);
     const input = validate(action, args);
+    if (requiresSharedMonitor(action)) {
+      requireOwnerDesktop(directChat);
+      if (action !== 'COMPUTER_ACTIVATE') return input;
+    }
     if (action === 'COMPUTER_APPS') return input;
     if (action === 'COMPUTER_OPEN') {
       const app =
@@ -705,6 +743,69 @@ export function createComputerUse(
     signal?.throwIfAborted();
     const { root, keptOut, directChat } = await ready(turn);
     const chatAuthority = desktop?.paired && directChat ? { ownerChat: true } : {};
+    if (requiresSharedMonitor(action)) {
+      requireOwnerDesktop(directChat);
+      if (action !== 'COMPUTER_ACTIVATE')
+        return async () => {
+          const params =
+            action === 'COMPUTER_SCREEN'
+              ? { display: prepared.display }
+              : action === 'COMPUTER_POINT'
+                ? { frame: prepared.frame, x: prepared.x, y: prepared.y }
+                : {};
+          const result = await ask(
+            { op: step(action), ...params, ...chatAuthority, turn: turn.turnId, keptOut },
+            signal,
+          );
+          if (action !== 'COMPUTER_POINT') return result;
+          const hit = z
+            .object({
+              app: z.string().min(1).max(128),
+              pid,
+              window: window.unwrap(),
+              name: z.string().max(250),
+              role: z.string().regex(/^[a-z]{1,40}$/),
+            })
+            .parse(result);
+          const app = (await running(signal)).find(
+            (item) => item.pid === hit.pid && appKey(item.program || item.name) === appKey(hit.app),
+          );
+          if (!app) throw new IntegrationError('The app at this point changed.', 409);
+          allowed(app, keptOut, false);
+          const details = {
+            bundle: app.bundle,
+            pid: hit.pid,
+            window: hit.window,
+            name: redactSecretText(hit.name),
+            role: hit.role,
+          };
+          if (!isGranted(root, app) || !hit.name || hit.name.length > 200) return details;
+          const opened = await appFor(root, hit.pid, keptOut, false, signal);
+          const w = opened.windows?.find((item) => item.id === hit.window && !item.hidden);
+          if (!w) throw new IntegrationError('The window at this point changed.', 409);
+          const resultNodes = (await ask(
+            { op: 'find', app: app.name, bundle: app.bundle, window: w.id, text: hit.name },
+            signal,
+          )) as { matches?: Node[] };
+          const aliases: Record<string, string[]> = {
+            edit: ['textfield', 'textarea', 'textbox'],
+            tabitem: ['tab'],
+            hyperlink: ['link'],
+            text: ['statictext'],
+          };
+          const matches = (resultNodes.matches ?? []).filter(
+            (node) =>
+              node.name === hit.name &&
+              (node.role === hit.role || aliases[hit.role]?.includes(node.role ?? '')),
+          );
+          const node = matches.length === 1 ? matches[0] : undefined;
+          if (!node?.ref_id || !ref.safeParse(node.ref_id).success || secure(node)) return details;
+          remember(root, [
+            [node.ref_id, control(app, { window: w.id, windowTitle: w.title }, node)],
+          ]);
+          return { ...details, ref: node.ref_id };
+        };
+    }
     if (action === 'COMPUTER_APPS') {
       const apps = await Promise.all(
         (await running(signal)).map((app) =>
@@ -842,8 +943,11 @@ export function createComputerUse(
     if (action === 'COMPUTER_SNAPSHOT') return () => snapshot(root, app, prepared, signal);
     if (action === 'COMPUTER_FIND') return () => find(root, app, prepared, signal);
     const scope = { app: app.name, bundle: app.bundle, window: prepared.window };
+    if (action === 'COMPUTER_ACTIVATE')
+      return () => ask({ op: 'activate', ...scope, pid: app.pid, ...chatAuthority }, signal);
     if (action === 'COMPUTER_SCREENSHOT')
-      return () => ask({ op: 'screenshot', ...scope, noSecureFocus: true }, signal);
+      return () =>
+        ask({ op: 'screenshot', ...scope, ...chatAuthority, noSecureFocus: true }, signal);
     checkedWindow(prepared);
     return async () => {
       await ask(

@@ -38,6 +38,7 @@ const appSteps = new Set([
   'inspect',
   'find',
   'screenshot',
+  'activate',
   'press',
   'focus',
   'select',
@@ -994,6 +995,21 @@ export function createComputerHelper({
           ...deadline,
         ]),
       ),
+    activate: async (request) => {
+      const window = await windowOf(request);
+      if (!window || window.pid !== request.pid) throw Error('The selected window changed.');
+      await release(true);
+      try {
+        await waitForOwner(request, window.bounds);
+        await run(['focus-window', ...scope(request)]);
+        const front = await frontmost();
+        if (front?.id !== window.id || front.pid !== window.pid)
+          throw Error('Windows did not bring the selected window to the front.');
+        return { done: true };
+      } finally {
+        unframe();
+      }
+    },
     screenshot: (request) => observe(request, () => screenshot(request)),
     press: (request) => act(request, ['click', check(request.ref, ref, 'ref')]),
     focus: (request) =>

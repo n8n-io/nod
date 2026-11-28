@@ -1,3 +1,4 @@
+import { monitorSharing } from './paired-screen.mjs';
 import { execFile, spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -15,6 +16,7 @@ const idPattern = /^[a-f0-9-]{36}$/;
 const reads = new Set(['windows', 'locate', 'snapshot', 'inspect', 'find']);
 const changes = new Set([
   'open',
+  'activate',
   'press',
   'focus',
   'select',
@@ -75,6 +77,8 @@ async function chatInput(input, taskApp, helper, id, signal) {
   if (input.ownerChat !== true) return false;
   if (input.op === 'open') return true;
   if (!input.window) return false;
+  if (input.op === 'activate') return true;
+  if (input.op === 'screenshot') return input.noSecureFocus === true;
   if (input.op === 'key') {
     if (!input.expected || !input.expectedFocus || !input.noSecureFocus) return false;
     if (taskApp) {
@@ -119,6 +123,7 @@ export function scopedWindowsRequest(
   policy,
   chatOrders = false,
   registeredApp = registeredTaskApp,
+  monitor,
 ) {
   const selected = application && name(application);
   const eligible = (value) =>
@@ -130,6 +135,11 @@ export function scopedWindowsRequest(
     signal.throwIfAborted();
     if (!idPattern.test(id) || !input || typeof input !== 'object')
       throw Error('Invalid Windows step.');
+    if (['screen', 'displays', 'point'].includes(input.op)) {
+      if (!chatOrders || selected || !monitor || input.ownerChat !== true)
+        throw Error('Use Share PC in the Windows toolbar for monitor access in your chat.');
+      return monitor(input, signal);
+    }
     if (input.op === 'permissions') return helper.request({ op: 'permissions' });
     if (input.op === 'apps') {
       const { apps } = await helper.request({ op: 'apps' });
@@ -198,6 +208,7 @@ export function windowsSharing({
     if (!current) return;
     active = undefined;
     current.controller.abort();
+    current.monitor?.clear();
     for (const pending of current.jobs.values()) pending.abort();
     void helper.cancel().catch(() => {});
     current.ssh.kill();
@@ -217,7 +228,7 @@ export function windowsSharing({
       detail:
         origin +
         (chatOrders
-          ? '\nFor your direct chat requests, Nod can open, read and operate eligible Windows apps and switch between them. This includes sending messages and submitting coding tasks. Sharing lasts for this session. Stop it in the Nod toolbar at any time.'
+          ? '\nFor your chat requests, Nod can operate Windows apps, including sending messages, and send pictures of a whole monitor to your configured AI provider. Pictures may include other windows and notifications. This applies across chats until you stop sharing in the Nod toolbar, exit the app or disconnect.'
           : '\nNod can read the windows of the apps you share. You confirm input and window pictures on this PC. Stop in the Nod menu or disconnect to end sharing.'),
     });
     if (
@@ -227,6 +238,11 @@ export function windowsSharing({
       choice !== generation
     )
       return;
+    const monitor =
+      chatOrders && !application
+        ? monitorSharing({ ...(await import('electron')), policy })
+        : undefined;
+    if ((await configuredOrigin()) !== origin || active || choice !== generation) return;
     const args = [
       '-T',
       '-o',
@@ -261,6 +277,7 @@ export function windowsSharing({
       ssh,
       controller: new AbortController(),
       jobs: new Map(),
+      monitor,
       ready: false,
     });
     changed();
@@ -315,6 +332,8 @@ export function windowsSharing({
       },
       policy,
       chatOrders,
+      registeredTaskApp,
+      monitor,
     );
     reader.on('line', async (line) => {
       if (active !== current) return;
