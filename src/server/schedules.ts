@@ -541,8 +541,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     job.signal.throwIfAborted();
     const accepted = await transaction(async (client) => {
       const row = (
-        await client.query<ScheduleRow>(
-          `SELECT ${columns} FROM schedules WHERE id=$1 AND owner_id=$2 FOR UPDATE`,
+        await client.query<ScheduleRow & { pauseNoticed: boolean }>(
+          `SELECT ${columns},pause_noticed AS "pauseNoticed" FROM schedules WHERE id=$1 AND owner_id=$2 FOR UPDATE`,
           [job.data.scheduleId, ownerId],
         )
       ).rows[0];
@@ -574,7 +574,13 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         );
       }
       if (busy) return true;
-      if (row.kind === 'recurring' && dependencies.modelPaused?.(row.model)) {
+      const paused = row.kind === 'recurring' && Boolean(dependencies.modelPaused?.(row.model));
+      if (!paused && row.pauseNoticed)
+        await client.query('UPDATE schedules SET pause_noticed=false WHERE id=$1 AND owner_id=$2', [
+          row.id,
+          ownerId,
+        ]);
+      if (paused && row.pauseNoticed) {
         await client.query(
           `UPDATE schedules SET skipped=(CASE WHEN jsonb_array_length(skipped)>=$4 THEN skipped-0 ELSE skipped END)
              ||jsonb_build_array(jsonb_build_object('at',$3::text,'reason','paused'))
@@ -606,6 +612,11 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       const started = now();
       const missed = missedFires(row, due, started);
       await startRun(client, row, job.id, due, lateNote(row, due, started, missed.length), missed);
+      if (paused)
+        await client.query('UPDATE schedules SET pause_noticed=true WHERE id=$1 AND owner_id=$2', [
+          row.id,
+          ownerId,
+        ]);
       job.signal.throwIfAborted();
       return true;
     });
@@ -651,6 +662,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       ALTER TABLE schedules ADD COLUMN IF NOT EXISTS watch jsonb, ADD COLUMN IF NOT EXISTS watch_marker text;
       ALTER TABLE schedules ADD COLUMN IF NOT EXISTS model jsonb;
       ALTER TABLE schedules ADD COLUMN IF NOT EXISTS skipped jsonb NOT NULL DEFAULT '[]'::jsonb;
+      ALTER TABLE schedules ADD COLUMN IF NOT EXISTS pause_noticed boolean NOT NULL DEFAULT false;
       ALTER TABLE schedules DROP COLUMN IF EXISTS delivery_channel, DROP COLUMN IF EXISTS channel_source_id;
       ALTER TABLE schedule_runs ADD COLUMN IF NOT EXISTS skipped jsonb NOT NULL DEFAULT '[]'::jsonb,
         ADD COLUMN IF NOT EXISTS notice_shown boolean NOT NULL DEFAULT true;

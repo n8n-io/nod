@@ -1832,7 +1832,7 @@ async function failTurn(
         [],
         streamId,
         undefined,
-        modelFailure && cause
+        cause
           ? await scheduleRunNotice(client, turnId, { outcome: 'failed', ...cause })
           : undefined,
       );
@@ -1841,12 +1841,11 @@ async function failTurn(
 }
 
 function failAtLimit(turnId: string, monthlyUsd?: number) {
-  return failTurn(
-    turnId,
-    undefined,
-    monthlyUsd === undefined ? spendingLimitReached : spendingLimitText(monthlyUsd),
-    { next: 'Raise or remove it in [Usage](/usage), or tell me here.' },
-  );
+  const reason = monthlyUsd === undefined ? spendingLimitReached : spendingLimitText(monthlyUsd);
+  return failTurn(turnId, undefined, reason, {
+    next: 'Raise or remove it in [Usage](/usage), or tell me here.',
+    cause: { reason, link: 'usage' },
+  });
 }
 
 export async function startThreadWorkers(dependencies: ThreadDependencies) {
@@ -3103,7 +3102,19 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     await current(async (client) => {
       if (result.status === 'succeeded') {
         await cardInteractions.fulfillSession(client, turn.session_id);
-        return finishTurn(client, turnId, 'succeeded');
+        if (!(await finishTurn(client, turnId, 'succeeded'))) return;
+        const notice = await scheduleRunNotice(client, turnId, { outcome: 'ran' });
+        if (notice)
+          await insertAssistantMessage(
+            client,
+            ref,
+            `“${notice.title}” didn't run on time.`,
+            [],
+            undefined,
+            undefined,
+            notice,
+          );
+        return;
       }
       const waiting = await finishTurn(client, turnId, 'waiting', {
         waitingReason:

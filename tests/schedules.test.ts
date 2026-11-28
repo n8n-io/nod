@@ -1800,7 +1800,7 @@ test(
         },
       );
       await t.test(
-        'a recurring schedule skips planned fires while its model is paused, while Run now and one-time runs still start',
+        'a recurring schedule runs once to report its paused model, then skips planned fires while Run now and one-time runs still start',
         async () => {
           const before = clock;
           const schedule = await create({ cron: '*/15 * * * *' });
@@ -1810,13 +1810,19 @@ test(
             await deliver([job]);
             return (await runs(schedule.id)).length;
           };
+          const settle = async (status: string) => {
+            const [latest] = await runs(schedule.id);
+            await db.pool.query('UPDATE turns SET status=$2 WHERE id=$1', [latest!.turnId, status]);
+          };
           modelPaused = true;
           try {
-            assert.equal(await fire(), 0);
-            assert.equal(await fire(), 0);
+            assert.equal(await fire(), 1);
+            await settle('failed');
+            assert.equal(await fire(), 1);
+            assert.equal(await fire(), 1);
             const manual = await runNow(await saved(schedule.id));
             assert.equal(manual.statusCode, 200, manual.body);
-            assert.equal((await runs(schedule.id)).length, 1);
+            assert.equal((await runs(schedule.id)).length, 2);
             assert.deepEqual(
               (
                 await db.pool.query('SELECT skipped FROM schedule_runs WHERE turn_id=$1', [
@@ -1840,7 +1846,16 @@ test(
           } finally {
             modelPaused = false;
           }
-          assert.equal(await fire(), 2);
+          assert.equal(await fire(), 3);
+          await settle('succeeded');
+          modelPaused = true;
+          try {
+            assert.equal(await fire(), 4);
+            await settle('failed');
+            assert.equal(await fire(), 4);
+          } finally {
+            modelPaused = false;
+          }
           await request('DELETE', `/api/schedules/${schedule.id}`);
           clock = before;
         },
@@ -1849,10 +1864,14 @@ test(
         const before = clock;
         const schedule = await create({ cron: '*/15 * * * *' });
         modelPaused = true;
-        for (let i = 0; i < 2; i++) {
+        for (let i = 0; i < 3; i++) {
           const job = await jobFor(schedule.id);
           clock = new Date(job.data.scheduledFor);
           await deliver([job]);
+          if (i === 0)
+            await db.pool.query("UPDATE turns SET status='failed' WHERE id=$1", [
+              (await runs(schedule.id))[0]!.turnId,
+            ]);
         }
         modelPaused = false;
         const next = (await jobFor(schedule.id)).data.scheduledFor;

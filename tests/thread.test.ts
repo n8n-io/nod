@@ -3894,11 +3894,26 @@ test(
         await waitFor(settled(chat.turnId));
         assert.deepEqual(taken.get(active.turnId), []);
         assert.equal(await turnStatus(active.turnId), 'succeeded');
+        const limitSchedule = randomUUID();
         const background = [
-          await thread.enqueueTurn('limit schedule fixture', {
-            source: 'schedule',
-            sourceId: `schedule:limit:${randomUUID()}:1`,
-          }),
+          await transaction(async (client) => {
+            await client.query(
+              `INSERT INTO schedules(id,owner_id,title,prompt,cron,time_zone,next_run_at)
+               VALUES($1,$2,'limit schedule fixture','limit schedule fixture','0 8 * * *','Europe/Lisbon',now()+interval '1 day')`,
+              [limitSchedule, ownerId],
+            );
+            const id = await thread.enqueueTurn('limit schedule fixture', {
+              source: 'schedule',
+              sourceId: `schedule:${limitSchedule}:${randomUUID()}`,
+              client,
+            });
+            await client.query(
+              `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone)
+               VALUES($1,$2,$3,0,$4,'limit schedule fixture',$5,now(),'Europe/Lisbon')`,
+              [randomUUID(), ownerId, limitSchedule, randomUUID(), id],
+            );
+            return id;
+          }, db.pool),
           await thread.enqueueTurn('limit event fixture', {
             source: 'event',
             sourceId: `notification:limit:${randomUUID()}`,
@@ -3931,6 +3946,34 @@ test(
         await waitFor(async () => (await notices(background[0]!)).length === 1);
         assert.deepEqual(await notices(background[0]!), [notice('“limit schedule fixture”')]);
         assert.deepEqual(await notices(background[1]!), []);
+        const tracks = async (turnId: string) =>
+          (
+            await db.pool.query(
+              "SELECT m.presentation,u.error FROM messages m JOIN turns u ON u.id=m.turn_id WHERE m.turn_id=$1 AND m.role='assistant'",
+              [turnId],
+            )
+          ).rows.map(({ presentation, error }) => ({
+            type: presentation?.type,
+            scheduleId: presentation?.scheduleId,
+            outcome: presentation?.outcome,
+            link: presentation?.link,
+            reason: presentation?.reason === error,
+          }));
+        assert.deepEqual(await tracks(background[0]!), [
+          {
+            type: 'schedule-run',
+            scheduleId: limitSchedule,
+            outcome: 'failed',
+            link: 'usage',
+            reason: true,
+          },
+        ]);
+        assert.deepEqual(
+          (await tracks(background[2]!)).map(({ type }) => type),
+          [undefined],
+        );
+        await db.pool.query('DELETE FROM schedule_runs WHERE schedule_id=$1', [limitSchedule]);
+        await db.pool.query('DELETE FROM schedules WHERE id=$1', [limitSchedule]);
         const taskSession = randomUUID();
         const taskMessage = await transaction(
           (client) =>
@@ -3956,6 +3999,104 @@ test(
         await waitFor(async () => (await notices(checkIn)).length === 1);
         assert.deepEqual(await notices(checkIn), [notice('“Synthetic check-in”')]);
       });
+
+      await t.test(
+        'a scheduled run that sends nothing still shows when it was due and what was skipped',
+        async (t) => {
+          await waitFor(settledThread);
+          const created: string[] = [];
+          t.after(async () => {
+            await db.pool.query('DELETE FROM schedule_runs WHERE schedule_id=ANY($1::uuid[])', [
+              created,
+            ]);
+            await db.pool.query('DELETE FROM schedules WHERE id=ANY($1::uuid[])', [created]);
+          });
+          const scheduled = (prompt: string, lateMinutes: number, skipped: unknown[] = []) =>
+            transaction(async (client) => {
+              const scheduleId = randomUUID();
+              created.push(scheduleId);
+              await client.query(
+                `INSERT INTO schedules(id,owner_id,title,prompt,cron,time_zone,next_run_at)
+                 VALUES($1,$2,$3,$3,'0 8 * * *','Europe/Lisbon',now()+interval '1 day')`,
+                [scheduleId, ownerId, prompt],
+              );
+              const id = await thread.enqueueTurn(prompt, {
+                source: 'schedule',
+                sourceId: `schedule:${scheduleId}:${randomUUID()}`,
+                background: true,
+                client,
+              });
+              await client.query(
+                `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone,skipped)
+                 VALUES($1,$2,$3,0,$4,$5,$6,now()-$7 * interval '1 minute','Europe/Lisbon',$8)`,
+                [
+                  randomUUID(),
+                  ownerId,
+                  scheduleId,
+                  randomUUID(),
+                  prompt,
+                  id,
+                  lateMinutes,
+                  JSON.stringify(skipped),
+                ],
+              );
+              return { id, scheduleId };
+            }, db.pool);
+          const shown = async (turnId: string) =>
+            (
+              await db.pool.query(
+                "SELECT text,presentation FROM messages WHERE turn_id=$1 AND role='assistant'",
+                [turnId],
+              )
+            ).rows as Array<{ text: string; presentation: Record<string, unknown> | null }>;
+          const missedAt = new Date(Date.now() - 60 * 60_000).toISOString();
+          const late = await scheduled('session-fixture-late-run', 72, [
+            { at: missedAt, reason: 'stopped' },
+          ]);
+          const onTime = await scheduled('session-fixture-on-time-run', 0);
+          await waitFor(settled(late.id));
+          await waitFor(settled(onTime.id));
+          assert.equal(await turnStatus(late.id), 'succeeded');
+          const [notice, ...extra] = await shown(late.id);
+          assert.deepEqual(extra, []);
+          assert.deepEqual(
+            {
+              type: notice?.presentation?.type,
+              scheduleId: notice?.presentation?.scheduleId,
+              outcome: notice?.presentation?.outcome,
+              late:
+                Date.parse(String(notice?.presentation?.startedAt)) -
+                  Date.parse(String(notice?.presentation?.dueAt)) >
+                600_000,
+              skipped: notice?.presentation?.skipped,
+              text: Boolean(notice?.text.trim()),
+            },
+            {
+              type: 'schedule-run',
+              scheduleId: late.scheduleId,
+              outcome: 'ran',
+              late: true,
+              skipped: [{ at: missedAt, reason: 'stopped' }],
+              text: true,
+            },
+          );
+          assert.deepEqual(await shown(onTime.id), []);
+          const secret = 'sk-ant-SYNTHETICprivateFailure0123456789';
+          const failing = 'private schedule failure fixture';
+          modelErrors.set(failing, `Synthetic provider rejected the key ${secret}.`);
+          try {
+            const failed = await scheduled(failing, 72);
+            await waitFor(settled(failed.id));
+            await waitFor(async () => (await shown(failed.id)).length === 1);
+            const [message] = await shown(failed.id);
+            assert.equal(message?.presentation?.outcome, 'failed');
+            assert.ok(String(message?.presentation?.reason).includes('Synthetic provider'));
+            assert.doesNotMatch(JSON.stringify(message), /SYNTHETICprivateFailure/);
+          } finally {
+            modelErrors.delete(failing);
+          }
+        },
+      );
 
       await t.test(
         'an uploaded attachment stays in the thread workspace for later turns',
