@@ -185,8 +185,10 @@ function Working({
   );
 }
 
-function SenderOffer({ apps, connections }: { apps: string[]; connections: Connection[] }) {
+function SenderOffer({ apps }: { apps: string[] }) {
+  const connections = usePageData<Connection[]>('/api/apps').data;
   const catalog = usePageData<Connection[]>('/api/apps/catalog');
+  if (!connections) return <p className="task-bubble">{moreIdeasLine([])}</p>;
   const connectable = apps.filter(
     (slug) => Object.hasOwn(senderApps, slug) && catalog.data?.some((entry) => entry.slug === slug),
   );
@@ -340,7 +342,7 @@ function TaskCards({
         )}
         <Rise show={shown} index={suggestions.tasks.length} className="task-follow-up">
           {suggestions.apps?.length ? (
-            <SenderOffer apps={suggestions.apps} connections={connections} />
+            <SenderOffer apps={suggestions.apps} />
           ) : (
             <p className="task-bubble">{moreIdeasLine([])}</p>
           )}

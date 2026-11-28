@@ -9251,6 +9251,105 @@ describe('interface components', { concurrency: interfaceLanes }, () => {
     assert.equal(result.exitCode, 0, result.stdout + result.stderr);
   });
 
+  test('the first idea cards offer only unconnected catalog apps that email the owner and finish their sign-in', async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 60_000,
+      input: String.raw`
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: 'https://nod.fixture.invalid', pretendToBeVisual: true });
+      Object.assign(globalThis, { window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage,
+        IS_REACT_ACT_ENVIRONMENT: true, getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window), cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window) });
+      for (const name of ['Node', 'NodeFilter', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLButtonElement', 'MutationObserver', 'Event', 'KeyboardEvent', 'CustomEvent', 'DOMParser', 'DocumentFragment']) globalThis[name] = dom.window[name];
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      HTMLElement.prototype.scrollTo = () => {};
+      HTMLElement.prototype.scrollIntoView = () => {};
+      globalThis.BroadcastChannel = class { close() {} };
+      window.open = () => ({ closed: false, location: { href: '' }, close() { this.closed = true; } });
+      const { createElement, act } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { Chat } = await import('./src/web/pages/chat.tsx');
+      const { setRequestAccount } = await import('./src/web/lib/api.ts');
+      const { setupLinkHash } = await import('./src/web/lib/connection-url.ts');
+      const { configureAnalytics, setAnalyticsClient } = await import('./src/web/lib/analytics.ts');
+      const url = 'https://example.test/sign-in';
+      const hash = await setupLinkHash(url);
+      const attempt = 'A'.repeat(43);
+      const app = slug => ({ slug, name: slug, status: 'disconnected', triggersEnabled: false, direct: true });
+      const linked = slug => ({ ...app(slug), status: 'connected', connectionId: 'synthetic-' + slug });
+      let connected = false, releaseApps, releaseStatus, holdStatus = false, statusReads = 0;
+      const requests = [], captured = [];
+      globalThis.fetch = async (path, options = {}) => {
+        requests.push([path, options.method ?? 'GET']);
+        if (path === '/api/apps') {
+          const list = connected ? [linked('linear'), linked('slack')] : [linked('linear')];
+          if (!releaseApps) return new Promise(resolve => { releaseApps = () => resolve(Response.json(list)); });
+          return Response.json(list);
+        }
+        if (path === '/api/apps/catalog') return Response.json([app('slack'), app('linear')]);
+        if (path === '/api/apps/slack/connect') return Response.json({ url, attempt });
+        if (path === '/api/apps/setup-status') {
+          statusReads++;
+          const body = () => Response.json({ completed: connected ? [hash] : [], apps: [{ hash, slug: 'slack', name: 'slack', available: true }] });
+          return holdStatus ? new Promise(resolve => { releaseStatus = () => resolve(body()); }) : body();
+        }
+        if (path === '/api/trust') return Response.json({});
+        if (path === '/api/speech') return Response.json({ transcription: false });
+        if (path === '/api/onboarding/introduction') return Response.json({ messageId: null });
+        throw new Error('Unexpected fixture request: ' + path);
+      };
+      setRequestAccount('synthetic-owner');
+      setAnalyticsClient({ init(_key, options) { this.options = options; }, capture(event, properties = {}) {
+        const value = this.options.before_send({ event, properties }); if (value) captured.push(value); return value;
+      }, _send_request() {}, set_config(options) { this.options = { ...this.options, ...options }; }, reset() {} });
+      configureAnalytics({ enabled: true, distinctId: 'synthetic-installation', environment: 'development' }, 'web');
+      const state = {
+        threadId: 'synthetic-thread', turns: [], activity: [], tasks: [], verificationRequests: [], configuration: { llmReady: true },
+        messages: [{ id: 'synthetic-suggestions', role: 'assistant', text: 'Synthetic ideas', attachments: [], turnId: null, createdAt: '2026-10-26T12:00:00Z',
+          suggestions: { intro: 'Synthetic ideas', tasks: [{ id: 'synthetic-task', title: 'Synthetic task', source: 'web', kind: 'now', origin: 'learned' }],
+            apps: ['github', 'linear', 'slack'] } }],
+      };
+      const root = createRoot(document.getElementById('root'));
+      const settle = async check => {
+        for (let i = 0; i < 100 && !check(); i++) await act(async () => new Promise(resolve => setTimeout(resolve, 10)));
+        assert.ok(check(), 'Expected the offer to settle');
+      };
+      const offer = () => document.querySelector('.task-follow-up');
+      const buttons = () => [...offer().querySelectorAll('button')].map(button => button.getAttribute('aria-label'));
+      const events = event => captured.filter(item => item.event === event).map(item => item.properties.entry);
+      try {
+        await act(async () => root.render(createElement(Chat, { ownerId: 'synthetic-owner', state, streams: {}, refresh: async () => {} })));
+        await settle(() => releaseApps && requests.some(([path]) => path === '/api/apps/catalog'));
+        await act(async () => new Promise(resolve => setTimeout(resolve, 50)));
+        assert.deepEqual(buttons(), []);
+        assert.doesNotMatch(offer().textContent, /Linear|Slack|GitHub/);
+        await act(async () => releaseApps());
+        await settle(() => buttons().length);
+        assert.deepEqual(buttons(), ['Connect Slack']);
+        assert.match(offer().textContent, /Slack/);
+        assert.doesNotMatch(offer().textContent, /Linear|GitHub/);
+        await act(async () => offer().querySelector('button').click());
+        await settle(() => statusReads > 0);
+        assert.ok(requests.some(([path, method]) => path === '/api/apps/slack/connect' && method === 'POST'));
+        assert.deepEqual(events('app_connect_clicked'), ['suggestions']);
+        connected = true;
+        holdStatus = true;
+        await act(async () => window.dispatchEvent(new Event('focus')));
+        await settle(() => releaseStatus && !/Slack/.test(offer().textContent));
+        assert.deepEqual(buttons(), []);
+        assert.deepEqual(events('app_connection_completed'), []);
+        await act(async () => releaseStatus());
+        await settle(() => events('app_connection_completed').length);
+        assert.deepEqual(events('app_connection_completed'), ['suggestions']);
+        assert.equal(JSON.stringify(captured).includes(url), false);
+      } finally { configureAnalytics(undefined); await act(async () => root.unmount()); dom.window.close(); }
+    `,
+    });
+    assert.equal(result.exitCode, 0, result.stdout + result.stderr);
+  });
+
   test('Quiet hours follow the clock preference and preserve canonical values', async () => {
     const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
       timeoutMs: 60_000,

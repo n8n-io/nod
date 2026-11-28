@@ -57,6 +57,7 @@ import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createAnalytics, snapshotAnalytics } from '../src/server/analytics.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
 import { suggestedTaskStatus } from '../src/web/lib/chat-messages.ts';
+import { moreIdeasLine } from '../src/shared/sender-apps.ts';
 
 test(
   'one thread runs every turn in order on the same session and workspace',
@@ -6773,15 +6774,9 @@ test(
               assert.ok(plannerBriefs.every((brief) => brief.source !== 'gmail'));
               assert.match(JSON.stringify(posted), /Juniper/);
               assert.doesNotMatch(JSON.stringify(posted), /binding-|connectionId|observations/);
-              const offer = posted[0]!.text.split('\n').at(-1);
-              if (mode === 'unavailable') {
-                assert.equal(posted[0]!.suggestions.apps, undefined);
-                assert.doesNotMatch(offer, /Linear/);
-              } else {
-                assert.deepEqual(posted[0]!.suggestions.apps, ['linear']);
-                assert.match(offer, /Linear/);
-              }
-              assert.doesNotMatch(offer, /Google Calendar|Slack/);
+              const offered = mode === 'unavailable' ? undefined : ['linear'];
+              assert.deepEqual(posted[0]!.suggestions.apps, offered);
+              assert.equal(posted[0]!.text.split('\n').at(-1), moreIdeasLine(offered ?? []));
               assert.match(
                 posted[0]!.suggestions.intro,
                 /^I looked at your recent (?:slack and fixture-mcp|fixture-mcp and slack) and picked the first three ideas/,
