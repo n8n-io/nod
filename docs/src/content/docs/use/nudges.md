@@ -9,7 +9,7 @@ Nod prepares useful work from your connected sources on its own and messages you
 
 Turn on **Automatic preparation** in **Settings → Notifications**. New profiles start with it off. Existing choices stay as saved.
 
-The one next step Nod may offer when you go quiet after your [first conversation](/get-started/first-conversation/#start-your-first-task) isn't a nudge: it reuses an onboarding idea card, doesn't need Automatic preparation and is sent only once.
+The one next step Nod may offer when you go quiet after your [first conversation](/get-started/first-conversation/#start-your-first-task) isn't a nudge. It reuses an idea card that came from something Nod read in one of your apps, and it appears only in Nod's chat. It doesn't need Automatic preparation, and Nod sends it only once.
 
 Nod first checks for a concrete open need, such as an unanswered request, a commitment, a problem, financial risk or recoverable payment that affects you, or work you asked it to watch. Ideas, backlog entries and routine updates alone start no plan, draft or task, even in private. Nod can still use a model to check for an open need. A possible improvement or missing detail does not make the idea urgent. Saving an idea does not ask Nod to develop it.
 
