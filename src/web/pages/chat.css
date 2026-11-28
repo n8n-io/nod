@@ -946,6 +946,12 @@ button.message-work:is(:hover, :focus-visible) {
   width: 100%;
   max-width: 720px;
 }
+.task-cards-offer {
+  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+}
+.task-cards-offer .task-card {
+  min-height: 0;
+}
 .task-cards + .task-cards {
   margin-top: -4px;
 }

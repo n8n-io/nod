@@ -305,7 +305,9 @@ function TaskCards({
     >
       <div className="task-suggestions">
         <p className="task-bubble">{suggestions.intro}</p>
-        <div className="task-cards">{learned.map(card)}</div>
+        <div className={`task-cards${suggestions.offer ? ' task-cards-offer' : ''}`}>
+          {learned.map(card)}
+        </div>
         {common.length > 0 && (
           <div className="task-cards task-cards-common">
             {common.map((task, index) => card(task, learned.length + index))}
