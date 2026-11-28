@@ -116,6 +116,41 @@ body {
   user-select: none;
   pointer-events: none;
 }
+.pc-sharing-control {
+  position: relative;
+  margin-left: auto;
+}
+.pc-sharing-control + .desktop-toolbar-actions {
+  margin-left: 0;
+}
+.pc-sharing-control button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--foreground);
+  font: inherit;
+  background: var(--surface);
+}
+.pc-sharing-control button[aria-pressed='true'] {
+  font-weight: 600;
+}
+.pc-sharing-control [role='alert'] {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 160px;
+  background: var(--canvas);
+}
+@media (max-width: 900px) {
+  .pc-sharing-control button span {
+    display: none;
+  }
+}
 .desktop-toolbar-actions {
   display: flex;
   align-items: center;

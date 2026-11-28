@@ -5,7 +5,7 @@ sidebar:
   order: 6
 ---
 
-Computer use lets Nod work in apps on your computer, for example to write a list in TextEdit, fill a table in Numbers or write a reply into a Mail draft. Nod reads each app's window through the system's accessibility service, the same information screen readers use, and presses its buttons, chooses its menu items and types into its fields. It works in the desktop app, using the open-source [agent-desktop](https://github.com/vercel-labs/agent-desktop) tool bundled in the app, and moves your pointer only for a click in an app it has brought to the front. It works in the background where it can, and brings an app to the front only for steps that need it; see [When Nod brings an app to the front](#when-nod-brings-an-app-to-the-front). A source install and a self-hosted server don't offer it.
+Computer use lets Nod work in apps on your computer, for example to write a list in TextEdit, fill a table in Numbers or write a reply into a Mail draft. Nod reads each app's window through the system's accessibility service, the same information screen readers use, and presses its buttons, chooses its menu items and types into its fields. It works in the desktop app, using the open-source [agent-desktop](https://github.com/vercel-labs/agent-desktop) tool bundled in the app, and moves your pointer only for a click in an app it has brought to the front. It works in the background where it can, and brings an app to the front only for steps that need it; see [When Nod brings an app to the front](#when-nod-brings-an-app-to-the-front). A self-hosted server can use apps on a paired Windows PC during an attended sharing session.
 
 Computer use is experimental on macOS, Windows and Linux: it hasn't been tested on many computers yet. Windows and Linux use the same checks as macOS; see [Windows and Linux](#windows-and-linux) for what differs.
 
@@ -20,6 +20,22 @@ Nod uses computer use last. When a [connected app](/connect/apps/) can do the wo
 Windows needs no permission. On Linux, the desktop's accessibility service must be running; Settings tells you when Nod can't reach it.
 
 Turning computer use off stops it at once and forgets every app Nod opened.
+
+## Share a Windows desktop with a self-hosted server
+
+Connect the Windows desktop app to the same HTTPS Nod server you use for chat. Enable `NOD_PAIRED_WINDOWS=true` on that server and recreate its server container. On Windows, configure an OpenSSH host alias with a verified host key and non-interactive access to the server container. The connection uses SSH standard input and output and a private Unix socket inside that container.
+
+Save a file named `paired-windows.json` in `%APPDATA%\nod\profiles\local`. Set `origin` to your HTTPS origin, `sshHost` to the SSH alias and `container` to the Nod server container name.
+
+```json
+{ "origin": "https://nod.example.org", "sshHost": "my-nod-server", "container": "nod-server-1" }
+```
+
+Turn on computer use in server settings. From the Windows Nod tray menu, choose **Share the Windows desktop with the server…** and confirm desktop sharing. Ask in your usual server chat to work across Windows apps. Nod applies its app and system shortcut restrictions on both devices. Confirm inputs and window pictures in the Windows dialog. End sharing from the desktop overlay or choose **Stop sharing the Windows desktop** in the tray. Closing Nod or losing the connection ends the session. A new session needs a new local choice.
+
+In the Windows app toolbar, choose **Share PC** and confirm the server shown in the native dialog once per session. An explicit request in your server chat can span several eligible Windows apps. For example, Nod can take a total from Calculator and enter it in a Notepad document. Opening, typing, selecting controls, and common editing shortcuts use the same session. Nod checks each action against the request and current window. During this session you can ask about any of your monitors. Nod can send a picture of the selected monitor to your configured AI provider, including other visible windows and notifications. It takes a picture on request during your chat. It can locate a control by its position in that picture, bring its window forward and use the control when Windows identifies it. Other shortcuts and scheduled work retain their local confirmation. Use **Stop sharing PC** to disconnect.
+
+To delegate coding work, name the app, project and task in your chat. Nod can submit the task through the composer in Claude, Codex or Cloudroom on Windows. Some installations list the Codex desktop app as ChatGPT. Select the intended workspace in the coding app if it is not already open. Review any permission request in that app yourself.
 
 ## Start with a request
 

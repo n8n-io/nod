@@ -2725,6 +2725,124 @@ test('computer use on macOS tells an app from its same-named helper processes by
   assert.equal(sent.bundle, mail.bundle);
 });
 
+test('paired Windows resolves a point only to a unique control in the opened window of the owner chat', async () => {
+  const turn = { threadId: 'thread', turnId: 'direct' };
+  const pool = {
+    query: async (sql: string) =>
+      sql.startsWith('WITH RECURSIVE')
+        ? { rows: [{ id: 'direct', source: 'user', message_id: 'message', proactive: false }] }
+        : { rows: [{ computer_use: true, computer_keep_out: [] }] },
+  } as unknown as Pool;
+  const app = { name: 'sample.exe', bundle: 'sample.exe', program: 'sample.exe', pid: 42 };
+  const target = { name: 'Total', role: 'button', ref_id: '@abcdef:e1' };
+  let ambiguous = false;
+  const requests: string[] = [];
+  const pc = createComputerUse(pool, 'owner', {
+    desktop: {
+      paired: true,
+      session: 'shared',
+      request: async (req) => {
+        requests.push(req.op);
+        switch (req.op) {
+          case 'apps':
+            return { apps: [app] };
+          case 'windows':
+            return { windows: [{ id: 'w-42', title: 'Sheet' }] };
+          case 'point':
+            assert.equal(req.turn, 'direct');
+            assert.equal(req.ownerChat, true);
+            return { ...app, app: app.name, window: 'w-42', role: 'button', name: 'Total' };
+          case 'find':
+            return {
+              matches: ambiguous ? [target, { ...target, ref_id: '@abcdef:e2' }] : [target],
+            };
+          case 'snapshot':
+            return { tree: target };
+          case 'inspect':
+            return { context: 'Fixture window', state: '0'.repeat(64) };
+          case 'press':
+            assert.equal(req.ref, target.ref_id);
+            return {};
+          case 'activate':
+            assert.equal(req.pid, 42);
+            assert.equal(req.window, 'w-42');
+            return { done: true };
+          default:
+            throw Error('Unexpected operation ' + req.op);
+        }
+      },
+    },
+  });
+  const args = { frame: 'c77b8050-721c-40f1-8f56-cfb0ebb2ba60', x: 20, y: 30 };
+  const locate = async () =>
+    (await pc.execute(turn, 'COMPUTER_POINT', await pc.prepare(turn, 'COMPUTER_POINT', args))) as {
+      ref?: string;
+    };
+  await assert.rejects(
+    pc.prepare({ ...turn, turnId: 'nested' }, 'COMPUTER_SCREEN', {}),
+    /direct owner/,
+  );
+  assert.equal(requests.length, 0);
+  assert.equal((await locate()).ref, undefined);
+  await pc.execute(
+    turn,
+    'COMPUTER_OPEN',
+    await pc.prepare(turn, 'COMPUTER_OPEN', { bundle: app.bundle }),
+  );
+  ambiguous = true;
+  assert.equal((await locate()).ref, undefined);
+  ambiguous = false;
+  const located = await locate();
+  assert.equal(located.ref, target.ref_id);
+  const press = await pc.prepare(turn, 'COMPUTER_PRESS', { ref: located.ref });
+  assert.equal(pc.needsCheck('COMPUTER_PRESS', press), true);
+  await pc.execute(turn, 'COMPUTER_PRESS', press);
+  await pc.execute(
+    turn,
+    'COMPUTER_ACTIVATE',
+    await pc.prepare(turn, 'COMPUTER_ACTIVATE', { pid: 42, window: 'w-42' }),
+  );
+  assert.equal(requests.includes('press'), true);
+});
+
+test('paired Windows tags only a direct owner chat for session inputs', async () => {
+  const pool = {
+    query: async (sql: string) => {
+      if (sql.startsWith('SELECT computer_use'))
+        return { rows: [{ computer_use: true, computer_keep_out: [] }] };
+      if (sql.startsWith('WITH RECURSIVE'))
+        return {
+          rows: [{ id: 'owner-message', source: 'user', message_id: 'message', proactive: false }],
+        };
+      assert.fail('Unexpected fixture query');
+    },
+  } as unknown as Pool;
+  const tags: unknown[] = [];
+  const computer = createComputerUse(pool, 'owner', {
+    platform: 'win32',
+    desktop: {
+      paired: true,
+      session: 'session',
+      request: async (input) => {
+        if (input.op === 'apps') return { apps: [] };
+        if (input.op === 'locate')
+          return { name: 'Discord', bundle: 'Discord.exe', program: 'Discord.exe' };
+        if (input.op === 'open') {
+          tags.push(input.ownerChat);
+          return { pid: 20 };
+        }
+        assert.fail('Unexpected fixture operation');
+      },
+    },
+  });
+  for (const turnId of ['owner-message', 'child-turn']) {
+    const turn = { turnId, threadId: 'fixture' };
+    const prepared = await computer.prepare(turn, 'COMPUTER_OPEN', { bundle: 'Discord.exe' });
+    await computer.execute(turn, 'COMPUTER_OPEN', prepared);
+  }
+  assert.deepEqual(tags, [true, undefined]);
+});
+
 test('computer use on Windows keeps an opened app granted however the app list names it, and refuses apps it cannot identify', async () => {
   const pool = {
     query: async (sql: string) => {

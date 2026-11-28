@@ -7,6 +7,8 @@ import { usePageData } from '../hooks/use-page-data';
 type Permission = 'granted' | 'denied' | 'not_required' | 'unknown';
 type Status = {
   available: boolean;
+  paired?: boolean;
+  connected?: boolean;
   platform: string;
   enabled: boolean;
   keptOut: string[];
@@ -76,6 +78,13 @@ export function ComputerUseSettings() {
   return (
     <>
       <section className="account-region">
+        {data.paired && (
+          <p className="field-hint">
+            {data.connected
+              ? 'A Windows desktop is being shared with this server.'
+              : 'On your Windows PC, open the Nod tray menu and start desktop sharing. End sharing there at any time.'}
+          </p>
+        )}
         <div className="account-preference-row">
           <span>{label}</span>
           <Switch

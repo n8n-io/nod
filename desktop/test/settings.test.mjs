@@ -1,3 +1,5 @@
+import * as pairedAppPolicy from '../../src/shared/computer-app-policy.mjs';
+import { scopedWindowsRequest } from '../main/paired-windows.mjs';
 import assert from 'node:assert/strict';
 import {
   createCipheriv,
@@ -13115,4 +13117,286 @@ test('startup status masks overlapping credentials and private roots in one pass
   assert.ok(!review.content.includes('Synthetic Private Owner'));
   assert.ok(!review.content.includes('synthetic-private-cross-tail'));
   assert.ok(!review.content.includes('synthetic-private-path-tail'));
+});
+
+test('desktop sharing selects the requested monitor, binds image points to a turn and discards a revoked capture', async () => {
+  const { monitorSharing } = await import('../main/paired-screen.mjs');
+  const display = {
+    id: 10,
+    bounds: { x: 0, y: 0, width: 200, height: 100 },
+    scaleFactor: 1,
+    rotation: 0,
+  };
+  const left = { ...display, id: 20, bounds: { ...display.bounds, x: -200 }, scaleFactor: 2 };
+  let version = 1,
+    pause,
+    arrived,
+    protectedWindow = false,
+    captures = 0;
+  const thumbnail = (marker) => ({
+    isEmpty: () => false,
+    resize() {
+      return this;
+    },
+    getSize: () => ({ width: 200, height: 100 }),
+    toPNG: () => Buffer.from([marker]),
+    crop: () => ({ toBitmap: () => Buffer.from([marker]) }),
+  });
+  const positions = [];
+  const monitor = monitorSharing({
+    policy: pairedAppPolicy,
+    screen: {
+      getPrimaryDisplay: () => display,
+      getAllDisplays: () => [display, left],
+      dipToScreenPoint: (p) => ({ x: p.x * 2, y: p.y * 2 }),
+    },
+    desktopCapturer: {
+      getSources: async () => {
+        captures++;
+        if (pause) {
+          arrived();
+          await pause;
+        }
+        return [
+          { display_id: '20', thumbnail: thumbnail(version) },
+          { display_id: '10', thumbnail: thumbnail(65) },
+        ];
+      },
+    },
+    inspect: async (point) => {
+      if (!point) return { programs: protectedWindow ? ['KeePass.exe'] : [] };
+      positions.push(point);
+      return { app: 'sample.exe', pid: 8, window: 'w-8', name: 'Total', role: 'button' };
+    },
+  });
+  const signal = new AbortController().signal;
+  const call = (options, scope = {}) =>
+    monitor({ ownerChat: true, turn: 'first', keptOut: [], ...scope, ...options }, signal);
+  const step = (mode, app, ownerChat) =>
+    scopedWindowsRequest(
+      {},
+      app,
+      () => assert.fail('unexpected approval'),
+      pairedAppPolicy,
+      mode,
+      undefined,
+      monitor,
+    )({ op: 'screen', turn: 'first', ownerChat, keptOut: [] }, randomUUID(), signal);
+  await assert.rejects(step(false, null, true), /Share PC/);
+  await assert.rejects(step(true, 'sample.exe', true), /Share PC/);
+  await assert.rejects(step(true, null, false), /Share PC/);
+  assert.equal(captures, 0);
+  const primary = await call({ op: 'screen' });
+  assert.equal(primary.image, Buffer.from([65]).toString('base64'));
+  const frame = await call({ op: 'screen', display: '20' });
+  assert.equal(frame.image, Buffer.from([1]).toString('base64'));
+  const hit = { op: 'point', frame: frame.frame, x: 3, y: 8 };
+  await assert.rejects(call(hit, { turn: 'second' }), /again/);
+  await assert.rejects(call({ ...hit, x: 200 }), /outside/);
+  assert.equal((await call(hit)).name, 'Total');
+  assert.deepEqual(positions, [{ x: -394, y: 16 }]);
+  version++;
+  await assert.rejects(call(hit), /changed/);
+  protectedWindow = true;
+  await assert.rejects(call({ op: 'screen' }), /protected/);
+  protectedWindow = false;
+  let resume;
+  pause = new Promise((resolve) => {
+    resume = resolve;
+  });
+  const capturing = new Promise((resolve) => {
+    arrived = resolve;
+  });
+  const pending = call({ op: 'screen' });
+  await capturing;
+  monitor.clear();
+  resume();
+  await assert.rejects(pending, /again/);
+  await assert.rejects(call(hit), /again/);
+});
+
+test('paired Windows sharing fences app names and waits for local consent before input', async () => {
+  const received = [];
+  let allow = false;
+  const helper = {
+    async request(input) {
+      received.push(input);
+      if (input.op === 'apps')
+        return {
+          apps: [
+            { name: 'Notepad.exe', program: 'Notepad.exe' },
+            { name: 'other.exe', program: 'other.exe' },
+          ],
+        };
+      return { done: true };
+    },
+  };
+  const request = scopedWindowsRequest(helper, 'notepad.exe', async () => allow, pairedAppPolicy);
+  const signal = new AbortController();
+  const send = (input) => request(input, randomUUID(), signal.signal);
+  assert.deepEqual(
+    (await send({ op: 'apps' })).apps.map((x) => x.name),
+    ['Notepad.exe'],
+  );
+  await assert.rejects(send({ op: 'open', bundle: 'other.exe', app: 'Notepad' }), /not shared/);
+  await assert.rejects(send({ op: 'inspect', app: 'other.exe' }), /not shared/);
+  await assert.rejects(send({ op: 'type', app: 'Notepad', text: 'example' }), /declined/);
+  await assert.rejects(send({ op: 'screenshot', app: 'Notepad' }), /declined/);
+  assert.equal(received.length, 1);
+  allow = true;
+  await send({ op: 'type', app: 'Notepad', text: 'example', deadline: 0 });
+  assert.equal(received.at(-1).text, 'example');
+  assert.ok(received.at(-1).deadline > Date.now());
+  signal.abort();
+  await assert.rejects(send({ op: 'type', app: 'Notepad', text: 'late' }));
+  assert.equal(received.length, 2);
+});
+
+test('desktop sharing can switch apps but checks restricted targets on the Windows PC', async () => {
+  const completed = [];
+  const helper = {
+    async request(input) {
+      completed.push(input);
+      return { done: true };
+    },
+  };
+  const run = scopedWindowsRequest(helper, null, async () => true, pairedAppPolicy);
+  const send = (input) => run(input, randomUUID(), new AbortController().signal);
+  await send({ op: 'snapshot', app: 'Notepad.exe' });
+  await send({ op: 'snapshot', app: 'mspaint.exe' });
+  await send({ op: 'type', app: 'Notepad.exe', text: 'fixture' });
+  await send({ op: 'inspect', app: 'msedge.exe' });
+  await assert.rejects(send({ op: 'type', app: 'msedge.exe', text: 'fixture' }), /view-only/);
+  await assert.rejects(send({ op: 'open', bundle: 'cmd.exe' }), /not shared/);
+  await assert.rejects(send({ op: 'locate', bundle: 'KeePass.exe' }), /not shared/);
+  await assert.rejects(send({ op: 'key', app: 'Notepad.exe', keys: 'win+r' }), /System shortcuts/);
+  assert.equal(completed.length, 4);
+});
+
+test('chat sharing carries a direct owner request across Windows apps', async () => {
+  const actions = [];
+  let prompts = 0;
+  const run = scopedWindowsRequest(
+    {
+      async request(input) {
+        actions.push(input.op);
+        return {};
+      },
+    },
+    null,
+    async () => {
+      prompts++;
+      return false;
+    },
+    pairedAppPolicy,
+    true,
+  );
+  const signal = new AbortController();
+  const send = (input) => run(input, randomUUID(), signal.signal);
+  const target = {
+    app: 'Discord.exe',
+    ownerChat: true,
+    window: 'w',
+    ref: '@abcdef:e1',
+    control: { name: 'Chat', role: 'textfield' },
+    role: 'textfield',
+    expected: 'window-state',
+  };
+  await send({ op: 'open', bundle: 'Discord.exe', ownerChat: true });
+  await send({ ...target, op: 'type', text: 'Fixture message' });
+  await send({
+    ...target,
+    op: 'key',
+    keys: 'Enter',
+    expectedFocus: 'focus-state',
+    noSecureFocus: true,
+  });
+  await send({ ...target, app: 'Notepad.exe', op: 'set_value', text: 'Fixture summary' });
+  await send({
+    ...target,
+    app: 'Notepad.exe',
+    op: 'key',
+    keys: 'ctrl+s',
+    expectedFocus: 'focus-state',
+    noSecureFocus: true,
+  });
+  assert.equal(prompts, 0);
+  for (const input of [
+    { ...target, op: 'type', ownerChat: false },
+    { ...target, op: 'type', expected: '' },
+    { ...target, op: 'type', app: 'Notepad.exe', ownerChat: false },
+    { ...target, op: 'key', keys: 'ctrl+shift+i' },
+    { ...target, op: 'screenshot' },
+  ])
+    await assert.rejects(send(input), /declined/);
+  assert.equal(prompts, 5);
+  assert.deepEqual(actions, ['open', 'type', 'key', 'set_value', 'key']);
+  signal.abort();
+  await assert.rejects(send({ ...target, op: 'press' }));
+  assert.equal(actions.length, 5);
+});
+
+test('chat sharing submits coding tasks in the composer and leaves provider approvals to the owner', async () => {
+  const delivered = [];
+  let focused;
+  let activation;
+  const helper = {
+    async request(input) {
+      if (input.op === 'inspect') return { focus: 'bound', focused: [focused] };
+      delivered.push(input.op);
+      return {};
+    },
+  };
+  const run = scopedWindowsRequest(
+    helper,
+    null,
+    async () => assert.fail('Unexpected input confirmation'),
+    pairedAppPolicy,
+    true,
+    async (app, op) => {
+      activation = [app.program, op];
+      return { pid: 42 };
+    },
+  );
+  const signal = new AbortController().signal;
+  const send = (input) => run({ ownerChat: true, ...input }, randomUUID(), signal);
+  for (const [app, label] of [
+    ['Claude.exe', 'Prompt'],
+    ['ChatGPT.exe', 'Mit Codex arbeiten'],
+    ['Cloudroom.exe', 'Build anything...'],
+  ]) {
+    const target = {
+      app,
+      ref: '@abcdef:e1',
+      window: 'w',
+      role: 'textfield',
+      control: { role: 'textfield', name: label },
+      expected: 'state',
+    };
+    await send({ op: 'open', bundle: app === 'ChatGPT.exe' ? 'Codex' : app });
+    assert.deepEqual(activation, [app, 'open']);
+    await send({ ...target, op: 'type', text: 'Add a unit test for date formatting.' });
+    focused = target.control;
+    const enter = {
+      op: 'key',
+      app,
+      window: 'w',
+      keys: 'enter',
+      expected: 'state',
+      expectedFocus: 'bound',
+      noSecureFocus: true,
+    };
+    await send(enter);
+    focused = { role: 'button', name: 'Allow always' };
+    await assert.rejects(send(enter), /task composer/);
+    await assert.rejects(
+      send({ ...target, op: 'press', role: 'button', control: focused }),
+      /task composer/,
+    );
+    await assert.rejects(
+      send({ ...target, op: 'type', control: { role: 'textfield', name: 'Terminal' } }),
+      /task composer/,
+    );
+  }
+  assert.deepEqual(delivered, ['type', 'key', 'type', 'key', 'type', 'key']);
 });

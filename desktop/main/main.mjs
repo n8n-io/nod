@@ -55,6 +55,7 @@ import {
   watchAssistantMessages,
 } from './notifications.mjs';
 import { createAppPreferencesStore } from './app-preferences.mjs';
+import { windowsSharing } from './paired-windows.mjs';
 import { createComputerHelper } from './computer-helper.mjs';
 import { createComputerOverlay } from './computer-overlay.mjs';
 import { createChatReadCursorStore } from './chat-read-cursors.mjs';
@@ -157,8 +158,10 @@ const systemAwake =
           void writeDiagnostic(`Windows keep-awake failed. ${reason}`).catch(() => {}),
       })
     : undefined;
+let windowsShare;
 const computerOverlay = createComputerOverlay({
   onStop: () => {
+    windowsShare?.stop();
     void computerHelper.cancel();
     void engineRequest('/api/thread/stop', { method: 'POST' }).catch(() => {});
   },
@@ -191,6 +194,27 @@ const computerHelper = createComputerHelper({
       );
   },
 });
+if (process.platform === 'win32') {
+  windowsShare = windowsSharing({
+    helper: computerHelper,
+    profile: profileRoot,
+    loadPolicy: () =>
+      import(pathToFileURL(join(engineRoot, 'src', 'shared', 'computer-app-policy.mjs')).href),
+    menu: Menu,
+    dialog,
+    configuredOrigin: async () => {
+      const url = (await settings.get()).serverUrl;
+      return url && new URL(url).origin;
+    },
+    changed: () => {
+      refreshTray();
+      for (const window of engineWindows)
+        if (!window.isDestroyed() && trustedAppURL(window.webContents.getURL()))
+          window.webContents.send('nod:pc-sharing:changed', windowsShare.state);
+    },
+    sshExecutable: join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'OpenSSH', 'ssh.exe'),
+  });
+}
 const freshLocalProfile = await stat(profileRoot).then(
   () => false,
   (error) => error.code === 'ENOENT',
@@ -2258,6 +2282,7 @@ async function updateWhenIdle(current) {
 }
 
 async function stopEngine() {
+  windowsShare?.stop();
   void computerHelper.cancel().catch(() => {});
   waiting = undefined;
   stayAwake(false);
@@ -2676,6 +2701,16 @@ function refreshTray() {
       : []),
     { type: 'separator' },
     { label: 'Open Nod', click: showEngine },
+    ...(windowsShare && status.remote
+      ? [
+          {
+            label: windowsShare.enabled
+              ? 'Stop sharing the Windows desktop'
+              : 'Share the Windows desktop with the server…',
+            click: () => void windowsShare.shareDesktop(),
+          },
+        ]
+      : []),
     { label: 'Settings…', click: () => showSettings() },
     { label: 'Report bug…', click: showFeedback },
     {
@@ -3829,6 +3864,24 @@ else {
         headers: authenticationHeaders,
         window: () => engineWindow,
         icon: join(desktopRoot, 'assets/nod-macos.png'),
+      });
+      const allowPcSharing = (event) => {
+        if (!windowsShare || !status.remote || !isEngine(event))
+          throw Error('Windows desktop sharing is unavailable in this window.');
+      };
+      ipcMain.handle('nod:pc-sharing:state', (event) => {
+        allowPcSharing(event);
+        return windowsShare.state;
+      });
+      ipcMain.handle('nod:pc-sharing:start', async (event) => {
+        allowPcSharing(event);
+        await windowsShare.shareForChat();
+        return windowsShare.state;
+      });
+      ipcMain.handle('nod:pc-sharing:stop', (event) => {
+        allowPcSharing(event);
+        windowsShare.stop();
+        return windowsShare.state;
       });
       ipcMain.handle('nod:renderer-ready', (event) => {
         const window = isSetup(event)
