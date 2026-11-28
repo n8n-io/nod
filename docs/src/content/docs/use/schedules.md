@@ -48,7 +48,7 @@ These checks are background work, like memory upkeep: they work from your first 
 
 ## Run a schedule now
 
-Open **Scheduled** and select **Run now**, the play button on a schedule's row. The row opens so you can follow the run. The new result opens when it is available. A run that failed in chat offers **Run now** too. If you changed the schedule after that run failed, Nod refuses and asks you to review it first.
+Open **Scheduled** and select **Run now**, the play button on a schedule's row. The row opens so you can follow the run. The new result opens when it is available. A run that failed in chat at the model or at your spending limit offers **Run now** too. If you changed the schedule after that run failed, Nod refuses and asks you to review it first.
 
 The extra run uses the saved instruction and does its work now, even when the instruction names another day or time. The usual approval checks still apply, and the time named in the instruction never makes them ask. It does not change the next scheduled time or resume a paused schedule. You can also run a completed one-time schedule again.
 
