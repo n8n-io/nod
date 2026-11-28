@@ -6,7 +6,9 @@ import { createApps, gmail } from '../world/apps.ts';
 import { mailbox, owner } from './email-attention-today.ts';
 
 export async function checkInbox(session: Session) {
-  await session.say('Morning! Which unread emails need something from me today?');
+  await session.say(
+    'Morning! I start each workday by checking which unread emails need me. What needs my attention today?',
+  );
   return session.findAssistantMessage(
     'Nod offers to repeat this inbox check on a recurring schedule. The offer can be part of the result or a separate message. A one-time reminder or a deadline in an email does not qualify.',
   );
