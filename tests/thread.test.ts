@@ -3972,6 +3972,14 @@ test(
           (await tracks(background[2]!)).map(({ type }) => type),
           [undefined],
         );
+        assert.equal(
+          (
+            await db.pool.query('SELECT model_failed FROM schedule_runs WHERE turn_id=$1', [
+              background[0],
+            ])
+          ).rows[0]?.model_failed,
+          false,
+        );
         await db.pool.query('DELETE FROM schedule_runs WHERE schedule_id=$1', [limitSchedule]);
         await db.pool.query('DELETE FROM schedules WHERE id=$1', [limitSchedule]);
         const taskSession = randomUUID();
@@ -4053,16 +4061,20 @@ test(
           const late = await scheduled('session-fixture-late-run', 72, [
             { at: missedAt, reason: 'stopped' },
           ]);
+          const afterSkips = await scheduled('session-fixture-after-skips-run', 0, [
+            { at: missedAt, reason: 'paused' },
+          ]);
           const onTime = await scheduled('session-fixture-on-time-run', 0);
           await waitFor(settled(late.id));
+          await waitFor(settled(afterSkips.id));
           await waitFor(settled(onTime.id));
           assert.equal(await turnStatus(late.id), 'succeeded');
-          const [notice, ...extra] = await shown(late.id);
-          assert.deepEqual(extra, []);
-          assert.deepEqual(
-            {
+          const track = async (run: { id: string; scheduleId: string }) => {
+            const [notice, ...extra] = await shown(run.id);
+            assert.deepEqual(extra, []);
+            assert.equal(notice?.presentation?.scheduleId, run.scheduleId);
+            return {
               type: notice?.presentation?.type,
-              scheduleId: notice?.presentation?.scheduleId,
               outcome: notice?.presentation?.outcome,
               late:
                 Date.parse(String(notice?.presentation?.startedAt)) -
@@ -4070,17 +4082,30 @@ test(
                 600_000,
               skipped: notice?.presentation?.skipped,
               text: Boolean(notice?.text.trim()),
-            },
-            {
-              type: 'schedule-run',
-              scheduleId: late.scheduleId,
-              outcome: 'ran',
-              late: true,
-              skipped: [{ at: missedAt, reason: 'stopped' }],
-              text: true,
-            },
-          );
+            };
+          };
+          assert.deepEqual(await track(late), {
+            type: 'schedule-run',
+            outcome: 'ran',
+            late: true,
+            skipped: [{ at: missedAt, reason: 'stopped' }],
+            text: true,
+          });
+          assert.deepEqual(await track(afterSkips), {
+            type: 'schedule-run',
+            outcome: 'ran',
+            late: false,
+            skipped: [{ at: missedAt, reason: 'paused' }],
+            text: true,
+          });
           assert.deepEqual(await shown(onTime.id), []);
+          const modelFailed = async (turnId: string) =>
+            (
+              await db.pool.query('SELECT model_failed FROM schedule_runs WHERE turn_id=$1', [
+                turnId,
+              ])
+            ).rows[0]?.model_failed;
+          assert.equal(await modelFailed(late.id), false);
           const secret = 'sk-ant-SYNTHETICprivateFailure0123456789';
           const failing = 'private schedule failure fixture';
           modelErrors.set(failing, `Synthetic provider rejected the key ${secret}.`);
@@ -4092,6 +4117,7 @@ test(
             assert.equal(message?.presentation?.outcome, 'failed');
             assert.ok(String(message?.presentation?.reason).includes('Synthetic provider'));
             assert.doesNotMatch(JSON.stringify(message), /SYNTHETICprivateFailure/);
+            assert.equal(await modelFailed(failed.id), true);
           } finally {
             modelErrors.delete(failing);
           }

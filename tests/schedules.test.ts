@@ -1810,19 +1810,28 @@ test(
             await deliver([job]);
             return (await runs(schedule.id)).length;
           };
-          const settle = async (status: string) => {
+          const settle = async (status: string, modelFailed = false) => {
             const [latest] = await runs(schedule.id);
             await db.pool.query('UPDATE turns SET status=$2 WHERE id=$1', [latest!.turnId, status]);
+            await db.pool.query('UPDATE schedule_runs SET model_failed=$2 WHERE turn_id=$1', [
+              latest!.turnId,
+              modelFailed,
+            ]);
           };
           modelPaused = true;
           try {
             assert.equal(await fire(), 1);
-            await settle('failed');
+            await settle('failed', true);
             assert.equal(await fire(), 1);
-            assert.equal(await fire(), 1);
+            modelPaused = false;
+            assert.equal(await fire(), 2);
+            await settle('failed', true);
+            modelPaused = true;
+            assert.equal(await fire(), 2);
+            assert.equal(await fire(), 2);
             const manual = await runNow(await saved(schedule.id));
             assert.equal(manual.statusCode, 200, manual.body);
-            assert.equal((await runs(schedule.id)).length, 2);
+            assert.equal((await runs(schedule.id)).length, 3);
             assert.deepEqual(
               (
                 await db.pool.query('SELECT skipped FROM schedule_runs WHERE turn_id=$1', [
@@ -1831,9 +1840,12 @@ test(
               ).rows[0].skipped.map((skip: { reason: string }) => skip.reason),
               ['paused', 'paused'],
             );
-            await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [
-              manual.json().turnId,
-            ]);
+            await settle('succeeded');
+            assert.equal(await fire(), 4);
+            await settle('failed');
+            assert.equal(await fire(), 5);
+            await settle('failed', true);
+            assert.equal(await fire(), 5);
             const once = await create({
               kind: 'once',
               runAt: new Date(clock.getTime() + 60_000).toISOString(),
@@ -1846,16 +1858,8 @@ test(
           } finally {
             modelPaused = false;
           }
-          assert.equal(await fire(), 3);
+          assert.equal(await fire(), 6);
           await settle('succeeded');
-          modelPaused = true;
-          try {
-            assert.equal(await fire(), 4);
-            await settle('failed');
-            assert.equal(await fire(), 4);
-          } finally {
-            modelPaused = false;
-          }
           await request('DELETE', `/api/schedules/${schedule.id}`);
           clock = before;
         },
@@ -1868,10 +1872,13 @@ test(
           const job = await jobFor(schedule.id);
           clock = new Date(job.data.scheduledFor);
           await deliver([job]);
-          if (i === 0)
-            await db.pool.query("UPDATE turns SET status='failed' WHERE id=$1", [
-              (await runs(schedule.id))[0]!.turnId,
+          if (i === 0) {
+            const [run] = await runs(schedule.id);
+            await db.pool.query("UPDATE turns SET status='failed' WHERE id=$1", [run!.turnId]);
+            await db.pool.query('UPDATE schedule_runs SET model_failed=true WHERE turn_id=$1', [
+              run!.turnId,
             ]);
+          }
         }
         modelPaused = false;
         const next = (await jobFor(schedule.id)).data.scheduledFor;
