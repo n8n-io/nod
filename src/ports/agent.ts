@@ -134,7 +134,6 @@ export interface RuntimeContext {
   automatic?: boolean;
   speech?: { mode: SpeechReplyMode; available: boolean };
   firstConversationTurn?: boolean;
-  scheduleOffer?: { open: boolean; record(answer: 'offer' | 'declined'): Promise<void> };
   replyTo?: {
     id: string;
     role: string;

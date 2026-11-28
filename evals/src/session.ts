@@ -4,6 +4,8 @@ import type pg from 'pg';
 import { approvalOrder, type Stack } from './stack.ts';
 import type { UserScript } from './scenario.ts';
 import type { Simulator } from './judge.ts';
+import type { AppState } from '../../src/shared/contracts.ts';
+import { presentationText } from '../../src/shared/presentation.ts';
 
 export interface Interaction {
   kind:
@@ -18,7 +20,8 @@ export interface Interaction {
 
 export interface Session {
   followUp(): Promise<void>;
-  say(text: string, options?: { attach?: string[] }): Promise<void>;
+  say(text: string, options?: { attach?: string[]; replyToMessageId?: string }): Promise<void>;
+  findAssistantMessage(description: string): Promise<{ id: string; text: string } | undefined>;
   sayTogether(texts: string[]): Promise<void>;
   interruptWhen(first: string, ready: () => Promise<boolean>): Promise<void>;
   sayDuringWithAttachments(first: string, interjection: string, attach: string[]): Promise<void>;
@@ -450,8 +453,32 @@ export function createSession(options: {
     },
     async say(text, sendOptions) {
       userMessages.push({ at: Date.now(), text });
-      await post('/api/messages', { text, attachmentIds: sendOptions?.attach ?? [] });
+      await post('/api/messages', {
+        text,
+        attachmentIds: sendOptions?.attach ?? [],
+        replyToMessageId: sendOptions?.replyToMessageId,
+      });
       await converse();
+    },
+    async findAssistantMessage(description) {
+      if (!options.simulator) throw new Error('Message selection needs a simulated owner.');
+      const state: AppState = await (await stack.request('/api/state')).json();
+      const messages = state.messages
+        .filter((message) => message.role === 'assistant')
+        .map((message) => ({
+          id: message.id,
+          text: [
+            message.displayText ?? message.text,
+            message.presentation && presentationText(message.presentation),
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        }));
+      const index = await options.simulator.selectMessage(
+        description,
+        messages.map((message) => message.text),
+      );
+      return index === null ? undefined : messages[index];
     },
     async sayTogether(texts) {
       for (const text of texts) {

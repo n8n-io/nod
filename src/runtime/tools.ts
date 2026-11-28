@@ -461,13 +461,12 @@ export const toolDefinitions = {
   ),
   send_message: defineTool(
     'send_message',
-    'Deliver a checked result, decision or task handoff. A partial result must stand alone. intent "final" completes the request, ends the turn and settles a task without task finish; "handoff" acknowledges right before starting a task; omit or "update" continues. Prefer presentation over Markdown lists/tables for short results (use share_file for longer reports/guides); plain text for short replies. Base: {version:1, type, title, sources:[{label,url}], asOf?}. items {items:[{title, sub?, badge?, tags?, value?, valueSub?, status?:{label,tone:"new"|"waiting"|"done"|"failed"}, detail?, facts?, url?, image?:"photo src or own site, not a map", location?}], ranked?, note?, pick?:{question,multiple?}}. compare {columns:[{label,sub?:price,url:own product page,image?}], rows:[{label, values, best?, amounts?}], winner?, verdict?, pick?}. facts {stats?:[{label,value,sub?}], items?:[{label,value,strong?}], status?}. schedule {items:[{day?, start, end?, title, detail?, quiet?}]}. flights {options:[{id, recommended?}], pick?}. draft for emails you write. Other types: skills read visual-replies. Add pick {question} only when the turn cannot finish until the owner chooses (omit intent "final"; never on a recommendation, comparison, brief or brainstorm). Keep text to caveats, recommendation or links not in the card; empty if self-contained. No delivery recaps. Background final text stays private. scheduleOffer "offer" marks a message that offers to run a result on a schedule; "declined" marks your reply when the owner says no to it.',
+    'Deliver a checked result, decision or task handoff. A partial result must stand alone. intent "final" completes the request, ends the turn and settles a task without task finish; "handoff" acknowledges right before starting a task; omit or "update" continues. Prefer presentation over Markdown lists/tables for short results (use share_file for longer reports/guides); plain text for short replies. Base: {version:1, type, title, sources:[{label,url}], asOf?}. items {items:[{title, sub?, badge?, tags?, value?, valueSub?, status?:{label,tone:"new"|"waiting"|"done"|"failed"}, detail?, facts?, url?, image?:"photo src or own site, not a map", location?}], ranked?, note?, pick?:{question,multiple?}}. compare {columns:[{label,sub?:price,url:own product page,image?}], rows:[{label, values, best?, amounts?}], winner?, verdict?, pick?}. facts {stats?:[{label,value,sub?}], items?:[{label,value,strong?}], status?}. schedule {items:[{day?, start, end?, title, detail?, quiet?}]}. flights {options:[{id, recommended?}], pick?}. draft for emails you write. Other types: skills read visual-replies. Add pick {question} only when the turn cannot finish until the owner chooses (omit intent "final"; never on a recommendation, comparison, brief or brainstorm). Keep text to caveats, recommendation or links not in the card; empty if self-contained. No delivery recaps. Background final text stays private.',
     Type.Object({
       text: Type.String(),
       presentation: Type.Optional(presentation),
       replyToMessageId: Type.Optional(Type.String({ pattern: '^[0-9a-fA-F-]{36}$' })),
       intent: Type.Optional(literals(['update', 'final', 'handoff'])),
-      scheduleOffer: Type.Optional(literals(['offer', 'declined'])),
     }),
     true,
   ),
@@ -1453,8 +1452,6 @@ export function nodTools(
               false,
               p.intent === 'update',
             );
-      if (p.scheduleOffer && delivery.delivered)
-        await context.scheduleOffer?.record(p.scheduleOffer);
       const outcome = {
         none: 'The text answer is already visible to the owner.',
         original: 'The visual and accompanying text are already visible to the owner.',
@@ -1482,7 +1479,7 @@ export function nodTools(
       }
       return {
         ...delivery,
-        message: `${outcome} If this completes the request, finish with no additional text. Continue only for substantive new results, caveats, remaining work or an offer to repeat it on a schedule; do not announce or recap delivery.`,
+        message: `${outcome} If this completes the request, finish with no additional text. Continue only for substantive new results, caveats or remaining work; do not announce or recap delivery.`,
       };
     }),
     ...(turn.delegate
