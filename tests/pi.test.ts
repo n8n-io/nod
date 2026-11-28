@@ -14007,6 +14007,194 @@ test('compatible servers offer the effort levels they publish for each model', a
   );
 });
 
+test('routing pools offer the effort levels most of their publishing candidates support', async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => (globalThis.fetch = original));
+  globalThis.fetch = async (input) => {
+    const path = new URL(new Request(input).url).pathname;
+    if (path === '/v1/models')
+      return Response.json({
+        data: [
+          {
+            id: 'confidential-1',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['none', 'low', 'high', 'max'] },
+          },
+          {
+            id: 'confidential-2',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['none', 'low', 'high', 'max'] },
+          },
+          {
+            id: 'confidential-3',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['none', 'low', 'high', 'max'] },
+          },
+          {
+            id: 'confidential-4',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['none', 'low', 'high', 'max'] },
+          },
+          {
+            id: 'confidential-5',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['none', 'low', 'high', 'max'] },
+          },
+          {
+            id: 'confidential-6',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['low', 'high', 'max'] },
+          },
+          {
+            id: 'confidential-7',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['low', 'medium', 'high'] },
+          },
+          {
+            id: 'confidential-8',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['low', 'medium'] },
+          },
+          {
+            id: 'green-1',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['none', 'low', 'medium'] },
+          },
+          {
+            id: 'green-2',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['none', 'low', 'high'] },
+          },
+          {
+            id: 'green-3',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['none', 'medium', 'high'] },
+          },
+          {
+            id: 'green-4',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['low', 'medium'] },
+          },
+          {
+            id: 'green-5',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['low', 'high'] },
+          },
+          {
+            id: 'green-6',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['medium', 'high'] },
+          },
+          {
+            id: 'split-low',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['low'] },
+          },
+          {
+            id: 'split-medium',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['medium'] },
+          },
+          {
+            id: 'split-high',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['high'] },
+          },
+          { id: 'pool-candidate-silent', context_length: 32768 },
+          {
+            id: 'pool-candidate-empty',
+            context_length: 32768,
+            reasoning: { supported_efforts: [] },
+          },
+          { id: 'pool-candidate-null', context_length: 32768, reasoning: null },
+          {
+            id: 'pool-candidate-malformed',
+            context_length: 32768,
+            reasoning: { supported_efforts: 'medium' },
+          },
+          {
+            id: 'gateway-pool-confidential',
+            context_length: 32768,
+            trustedrouter: {
+              orchestration_role: 'routing_pool',
+              auto_candidates: [
+                'confidential-1',
+                'confidential-2',
+                'confidential-3',
+                'confidential-4',
+                'confidential-5',
+                'confidential-6',
+                'confidential-7',
+                'confidential-8',
+                'pool-candidate-silent',
+                'pool-candidate-empty',
+                'pool-candidate-null',
+                'pool-candidate-malformed',
+              ],
+            },
+          },
+          {
+            id: 'gateway-pool-green',
+            context_length: 32768,
+            trustedrouter: {
+              orchestration_role: 'routing_pool',
+              auto_candidates: ['green-1', 'green-2', 'green-3', 'green-4', 'green-5', 'green-6'],
+            },
+          },
+          {
+            id: 'gateway-pool-split',
+            context_length: 32768,
+            trustedrouter: {
+              orchestration_role: 'routing_pool',
+              auto_candidates: ['split-low', 'split-medium', 'split-high'],
+            },
+          },
+          {
+            id: 'gateway-pool-silent',
+            context_length: 32768,
+            trustedrouter: {
+              orchestration_role: 'routing_pool',
+              auto_candidates: [
+                'pool-candidate-silent',
+                'pool-candidate-empty',
+                'pool-candidate-null',
+                'pool-candidate-malformed',
+              ],
+            },
+          },
+          {
+            id: 'gateway-pool-missing-candidate',
+            context_length: 32768,
+            trustedrouter: {
+              orchestration_role: 'routing_pool',
+              auto_candidates: ['confidential-4', 'pool-candidate-not-listed'],
+            },
+          },
+          {
+            id: 'gateway-named',
+            context_length: 32768,
+            reasoning: { supported_efforts: ['none', 'low', 'high'] },
+          },
+        ],
+      });
+    return new Response(null, { status: 404 });
+  };
+  const definitions = await createPiModelBackend({ fetch: globalThis.fetch }).catalog(
+    'compatible',
+    'api_key',
+    { type: 'endpoint', url: 'http://127.0.0.1:1/v1' },
+  );
+  const efforts = Object.fromEntries(
+    definitions.map((entry) => [entry.choice.id, entry.choice.efforts]),
+  );
+  assert.deepEqual(efforts['gateway-pool-confidential'], ['low', 'high', 'max']);
+  assert.deepEqual(efforts['gateway-pool-green'], ['low', 'medium', 'high']);
+  assert.deepEqual(efforts['gateway-pool-split'], ['off']);
+  assert.deepEqual(efforts['gateway-pool-silent'], ['off']);
+  assert.deepEqual(efforts['gateway-pool-missing-candidate'], ['off', 'low', 'high', 'max']);
+  assert.deepEqual(efforts['gateway-named'], ['off', 'low', 'high']);
+});
+
 test('new and saved Ollama models keep the effort value the server reads', async (t) => {
   const original = globalThis.fetch;
   t.after(() => (globalThis.fetch = original));
