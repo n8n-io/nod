@@ -112,9 +112,18 @@ Use a normal PowerShell window, not **Run as administrator**. It finds the lates
 
 The Linux x64 app is a Flatpak preview. It needs a 64-bit Intel or AMD computer, Flatpak, and a desktop secret store. A local assistant also needs hardware virtualization and access to `/dev/kvm`. GNOME Keyring and KWallet are supported secret stores. Nod refuses to save keys without secure storage.
 
+:::note[Desktops without a secret store]
+Outside a KDE session the Flatpak starts Nod with `--password-store=gnome-libsecret`, so Nod needs a Secret Service provider such as GNOME Keyring. A standalone window manager session usually starts none. Install `gnome-keyring`, start it with your session, and unlock the login keyring at login. List your user bus to see whether a provider is there:
+
+```sh title="Terminal"
+busctl --user list | grep org.freedesktop.secrets
+```
+
+:::
+
 <Steps>
 
-1. Install Flatpak with your Linux distribution's package manager. Add Flathub for the desktop runtime:
+1. Install Flatpak by following the [setup instructions for your distribution](https://flathub.org/setup), then add Flathub for the desktop runtime:
 
    ```sh title="Terminal"
    flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
@@ -141,7 +150,7 @@ Linux setup copies and verifies the guest image before it starts the private com
 
 ## Keep Nod running
 
-A local assistant is on or off, not open or closed. Closing the window, or pressing `Cmd+Q` on a Mac, closes the app and leaves Nod on in the menu bar on a Mac, or the tray on Windows and Linux. On a Mac, the Dock icon goes away until you open a window again. The first time you close the app, a notification says where Nod is, if notifications are on. Linux tray support depends on your desktop.
+A local assistant is on or off, not open or closed. Closing the window, or pressing `Cmd+Q` on a Mac, closes the app and leaves Nod on in the menu bar on a Mac, or the tray on Windows and Linux. On a Mac, the Dock icon goes away until you open a window again. The first time you close the app, a notification says where Nod is, if notifications are on. On Linux the tray icon appears only where the desktop or panel provides StatusNotifier support, such as a KDE or Cinnamon panel, GNOME with the AppIndicator extension, or a Waybar or Quickshell setup with a tray.
 
 The menu bar or tray shows whether Nod is on, working or needs attention, and when the next scheduled task runs. Choose **Open Nod** to bring the window back.
 
