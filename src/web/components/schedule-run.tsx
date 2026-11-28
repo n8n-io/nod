@@ -191,6 +191,11 @@ export function ScheduleRunTrack({ run }: { run: ScheduleRunPresentation }) {
                 Check the model in {appPages['/settings/models']}
               </a>
             )}
+            {run.link === 'usage' && (
+              <a className="schedule-run-hint" href="/usage">
+                Raise or remove the limit in {appPages['/usage']}
+              </a>
+            )}
           </div>
         </div>
       ) : (

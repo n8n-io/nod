@@ -1598,21 +1598,24 @@ function offlineFailure(error: unknown, provider: string | undefined) {
   };
 }
 
-let scheduleRunNotices = false;
+let scheduleRunsReady = false;
+
+async function scheduleRuns(client: PoolClient) {
+  return (scheduleRunsReady ||= Boolean(
+    (
+      await client.query(
+        "SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('schedule_runs') AND attname='model_failed'",
+      )
+    ).rowCount,
+  ));
+}
 
 async function scheduleRunNotice(
   client: PoolClient,
   turnId: string,
   run: Pick<ScheduleRunPresentation, 'outcome' | 'reason' | 'code' | 'link'>,
 ) {
-  scheduleRunNotices ||= Boolean(
-    (
-      await client.query(
-        "SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('schedule_runs') AND attname='notice_shown'",
-      )
-    ).rowCount,
-  );
-  if (!scheduleRunNotices) return;
+  if (!(await scheduleRuns(client))) return;
   const row = (
     await client.query<{
       scheduleId: string;
@@ -1832,21 +1835,26 @@ async function failTurn(
         [],
         streamId,
         undefined,
-        modelFailure && cause
+        cause
           ? await scheduleRunNotice(client, turnId, { outcome: 'failed', ...cause })
           : undefined,
+      );
+    if (modelFailure && (await scheduleRuns(client)))
+      await client.query(
+        `UPDATE schedule_runs r SET model_failed=true FROM turns u
+         WHERE u.id=$1 AND u.owner_id=$2 AND r.owner_id=u.owner_id AND r.turn_id=u.session_id`,
+        [turnId, ownerId],
       );
   }, pool);
   return true;
 }
 
 function failAtLimit(turnId: string, monthlyUsd?: number) {
-  return failTurn(
-    turnId,
-    undefined,
-    monthlyUsd === undefined ? spendingLimitReached : spendingLimitText(monthlyUsd),
-    { next: 'Raise or remove it in [Usage](/usage), or tell me here.' },
-  );
+  const reason = monthlyUsd === undefined ? spendingLimitReached : spendingLimitText(monthlyUsd);
+  return failTurn(turnId, undefined, reason, {
+    next: 'Raise or remove it in [Usage](/usage), or tell me here.',
+    cause: { reason, link: 'usage' },
+  });
 }
 
 export async function startThreadWorkers(dependencies: ThreadDependencies) {
@@ -3103,7 +3111,19 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     await current(async (client) => {
       if (result.status === 'succeeded') {
         await cardInteractions.fulfillSession(client, turn.session_id);
-        return finishTurn(client, turnId, 'succeeded');
+        if (!(await finishTurn(client, turnId, 'succeeded'))) return;
+        const notice = await scheduleRunNotice(client, turnId, { outcome: 'ran' });
+        if (notice?.type === 'schedule-run')
+          await insertAssistantMessage(
+            client,
+            ref,
+            `“${notice.title}” ${Date.parse(notice.startedAt) - Date.parse(notice.dueAt) > 10 * 60_000 ? "didn't run on time" : 'ran after skipped runs'}.`,
+            [],
+            undefined,
+            undefined,
+            notice,
+          );
+        return;
       }
       const waiting = await finishTurn(client, turnId, 'waiting', {
         waitingReason:

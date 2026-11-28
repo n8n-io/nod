@@ -574,7 +574,17 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         );
       }
       if (busy) return true;
-      if (row.kind === 'recurring' && dependencies.modelPaused?.(row.model)) {
+      if (
+        row.kind === 'recurring' &&
+        dependencies.modelPaused?.(row.model) &&
+        (
+          await client.query<{ modelFailed: boolean }>(
+            `SELECT model_failed AS "modelFailed" FROM schedule_runs WHERE owner_id=$1 AND schedule_id=$2
+             ORDER BY created_at DESC,id DESC LIMIT 1`,
+            [ownerId, row.id],
+          )
+        ).rows[0]?.modelFailed
+      ) {
         await client.query(
           `UPDATE schedules SET skipped=(CASE WHEN jsonb_array_length(skipped)>=$4 THEN skipped-0 ELSE skipped END)
              ||jsonb_build_array(jsonb_build_object('at',$3::text,'reason','paused'))
@@ -653,7 +663,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       ALTER TABLE schedules ADD COLUMN IF NOT EXISTS skipped jsonb NOT NULL DEFAULT '[]'::jsonb;
       ALTER TABLE schedules DROP COLUMN IF EXISTS delivery_channel, DROP COLUMN IF EXISTS channel_source_id;
       ALTER TABLE schedule_runs ADD COLUMN IF NOT EXISTS skipped jsonb NOT NULL DEFAULT '[]'::jsonb,
-        ADD COLUMN IF NOT EXISTS notice_shown boolean NOT NULL DEFAULT true;
+        ADD COLUMN IF NOT EXISTS notice_shown boolean NOT NULL DEFAULT true,
+        ADD COLUMN IF NOT EXISTS model_failed boolean NOT NULL DEFAULT false;
       ALTER TABLE schedule_runs ALTER COLUMN notice_shown SET DEFAULT false;
       ALTER TABLE schedule_runs ADD COLUMN IF NOT EXISTS baseline_observation jsonb,
         ADD COLUMN IF NOT EXISTS observation jsonb, ADD COLUMN IF NOT EXISTS observed_at timestamptz;

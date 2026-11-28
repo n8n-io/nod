@@ -158,7 +158,7 @@ const scheduleRunPresentation = z.strictObject({
   skipped: z.array(z.strictObject({ at: instant, reason: z.enum(['stopped', 'paused']) })).max(100),
   reason: text(2400).optional(),
   code: text(40).optional(),
-  link: z.enum(['server', 'models']).optional(),
+  link: z.enum(['server', 'models', 'usage']).optional(),
   nextRunAt: instant.optional(),
   timeZone: text(80),
 });
