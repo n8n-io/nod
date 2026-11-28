@@ -700,6 +700,7 @@ async function runningDesktop(
       isPackaged: packaged,
       commandLine: { removeSwitch() {} },
       setName() {},
+      setAppUserModelId() {},
       setPath: (name, path) => paths.set(name, path),
       getPath: (name) => paths.get(name) || dirname(storage.path),
       getVersion: () => version,

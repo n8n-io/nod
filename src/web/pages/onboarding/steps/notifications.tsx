@@ -3,7 +3,6 @@ import { useDesktopSettings } from '../../../components/desktop-settings';
 import { Ellipsis, X } from '../../../components/icons';
 import { Rise } from '../../../components/motion';
 import { Button } from '../../../components/ui';
-import { browserNotificationStatus } from '../../../lib/browser-notifications';
 import { desktopSettingsAvailable } from '../../../lib/desktop';
 import type { StepProps } from '..';
 import { Bubble, Footer, Messages, useReveal, type RevealStep } from '../motion';
@@ -11,9 +10,10 @@ import { Bubble, Footer, Messages, useReveal, type RevealStep } from '../motion'
 type Choice = {
   on: boolean;
   retry?: boolean;
+  tab?: boolean;
   busy: boolean;
   error: string;
-  enable(): Promise<boolean>;
+  enable(): Promise<unknown>;
   dismiss(): void;
 };
 
@@ -72,12 +72,7 @@ function DesktopNotifications(props: StepProps) {
         busy: native.busy || native.loading,
         error: native.error,
         enable: () =>
-          native.settings
-            ? native.save({ notifications: true }).then(
-                (value) => value.notifications,
-                () => false,
-              )
-            : native.refresh().then(() => false),
+          native.settings ? native.save({ notifications: true }).catch(() => {}) : native.refresh(),
         dismiss() {},
       }}
     />
@@ -91,12 +86,10 @@ function BrowserNotifications(props: StepProps) {
       {...props}
       choice={{
         on: browser.enabled,
+        tab: true,
         busy: browser.busy,
         error: browser.error,
-        enable: async () => {
-          await browser.change(true);
-          return browserNotificationStatus(props.ownerId).enabled;
-        },
+        enable: () => browser.change(true),
         dismiss: browser.dismiss,
       }}
     />
@@ -130,7 +123,9 @@ function NotificationsStep({
       </Rise>
       <Rise show={done} className="ob-choices">
         {choice.on ? (
-          <Button onClick={onNext}>Continue</Button>
+          <Button autoFocus onClick={onNext}>
+            Continue
+          </Button>
         ) : (
           <>
             <Button
@@ -147,11 +142,7 @@ function NotificationsStep({
             <Button
               disabled={choice.busy}
               aria-busy={choice.busy}
-              onClick={() =>
-                void choice.enable().then((enabled) => {
-                  if (enabled) onNext();
-                })
-              }
+              onClick={() => void choice.enable()}
             >
               {choice.retry ? 'Try again' : 'Turn on notifications'}
             </Button>
@@ -163,7 +154,8 @@ function NotificationsStep({
           </p>
         ) : (
           <p className="ob-notify-note">
-            {choice.on ? 'Notifications are on.' : 'No sound.'} Change it anytime in Settings.
+            {choice.on ? 'Notifications are on.' : 'No sound.'}
+            {choice.tab && ' Keep this tab open.'} Change it anytime in Settings.
           </p>
         )}
       </Rise>
