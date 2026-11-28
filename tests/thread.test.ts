@@ -7029,6 +7029,12 @@ test(
             name: 'Slack',
             status: 'connected',
           } as Connection;
+          const gmail = {
+            connectionId: randomUUID(),
+            slug: 'gmail',
+            name: 'Gmail',
+            status: 'connected',
+          } as Connection;
           let quiet = false;
           let paused = false;
           const offers = onboardingFor(ownerId, () => true, {
@@ -7088,7 +7094,12 @@ test(
                 JSON.stringify({
                   intro: 'Prepared',
                   tasks: [],
-                  accounts: [{ connectionId, binding: connectionId, slug: 'slack', name: 'Slack' }],
+                  accounts: [slack, gmail].map((app) => ({
+                    connectionId: app.connectionId,
+                    binding: app.connectionId,
+                    slug: app.slug,
+                    name: app.name,
+                  })),
                 }),
               ],
             );
@@ -7096,7 +7107,10 @@ test(
               "INSERT INTO messages(id,owner_id,role,text,thread_id,suggestions) VALUES($1,$2,'assistant','Cards',$3,$4)",
               [randomUUID(), ownerId, threadId, JSON.stringify(suggestions)],
             );
-            const sent = await thread.submitUserMessage(first);
+            const sent =
+              first === '/clear'
+                ? await thread.clearChatContext(threadId, randomUUID())
+                : await thread.submitUserMessage(first);
             await waitFor(settled(sent.turnId));
             assert.equal(await turnStatus(sent.turnId), 'succeeded');
             return sent;
@@ -7105,17 +7119,18 @@ test(
             db.pool.query(`UPDATE turns SET finished_at=now()-interval '${age}' WHERE id=$1`, [
               turnId,
             ]);
-          suggestionApps.set(ownerId, [slack]);
+          suggestionApps.set(ownerId, [slack, gmail]);
           try {
             for (const mode of [
               'wrote_again',
               'started_card',
+              'cleared',
               'nothing_prepared',
               'disconnected',
             ]) {
               const first = await fresh(
                 mode === 'nothing_prepared' ? generic : learned,
-                mode === 'started_card' ? title : undefined,
+                mode === 'started_card' ? title : mode === 'cleared' ? '/clear' : undefined,
               );
               await quietFor(first.turnId);
               if (mode === 'wrote_again') {
@@ -7123,11 +7138,11 @@ test(
                 await waitFor(settled(again.turnId));
                 await quietFor(again.turnId);
               }
-              suggestionApps.set(ownerId, mode === 'disconnected' ? [] : [slack]);
+              suggestionApps.set(ownerId, mode === 'disconnected' ? [gmail] : [slack, gmail]);
               await offers.offer();
               assert.deepEqual(await offerMessages(), [], mode);
             }
-            suggestionApps.set(ownerId, [slack]);
+            suggestionApps.set(ownerId, [slack, gmail]);
             const first = await fresh(learned);
             const turnsBefore = (
               await db.pool.query('SELECT count(*)::int AS count FROM turns WHERE owner_id=$1', [

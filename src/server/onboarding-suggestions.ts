@@ -711,7 +711,7 @@ export function createOnboardingSuggestions(options: {
       prepared: PreparedSuggestions | null;
     }>(
       `SELECT cards.suggestions AS cards,s.suggestions AS prepared FROM onboarding_suggestions s
-       JOIN threads t ON t.owner_id=s.owner_id AND t.archived_at IS NULL
+       JOIN threads t ON t.owner_id=s.owner_id AND t.archived_at IS NULL AND t.chat_cleared_at IS NULL
        JOIN messages cards ON cards.owner_id=s.owner_id AND cards.thread_id=t.id AND cards.role='assistant'
          AND cards.suggestions IS NOT NULL AND cards.hidden_at IS NULL
        CROSS JOIN LATERAL (SELECT (array_agg(m.id))[1] AS id,count(*) AS count FROM (
